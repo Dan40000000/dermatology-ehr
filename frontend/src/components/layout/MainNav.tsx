@@ -299,8 +299,9 @@ const navItems: NavItem[] = [
     activePaths: ['/financials', '/analytics', '/reports'],
     module: ['financials', 'analytics'],
     dropdown: [
-      { label: 'Overview', path: '/financials', section: 'Financials', module: 'financials' },
       { label: 'Revenue', path: '/financials?tab=revenue', section: 'Financials', module: 'financials' },
+      { label: 'Collections', path: '/financials', section: 'Financials', module: 'financials' },
+      { label: 'Historical Trends', path: '/financials?tab=snapshots', section: 'Financials', module: 'financials' },
       { label: 'Bills', path: '/financials?tab=bills', section: 'Financials', module: 'financials' },
       { label: 'Payments', path: '/financials?tab=payments', section: 'Financials', module: 'financials' },
       { label: 'Dashboard', path: '/analytics', section: 'Analytics', module: 'analytics' },

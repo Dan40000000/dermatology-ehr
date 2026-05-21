@@ -183,7 +183,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
               <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto', gap: '6px', alignItems: 'center' }}>
                 <input
                   type="date"
-                  aria-label="Overview start date"
+                  aria-label="Collections start date"
                   value={rangeControl.startDate}
                   onChange={(event) => rangeControl.onStartDateChange(event.target.value)}
                   style={{
@@ -199,7 +199,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
                 <span style={{ color: '#374151', fontWeight: 800 }}>to</span>
                 <input
                   type="date"
-                  aria-label="Overview end date"
+                  aria-label="Collections end date"
                   value={rangeControl.endDate}
                   onChange={(event) => rangeControl.onEndDateChange(event.target.value)}
                   style={{

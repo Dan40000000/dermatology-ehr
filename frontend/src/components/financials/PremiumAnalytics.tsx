@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
+import { fetchCollectionsTrend } from '../../api/financials';
+import { getClinicBusinessDate } from '../../utils/practiceDateTime';
 
 interface AnalyticsCategory {
   id: string;
@@ -17,44 +20,153 @@ interface Props {
   onExportReport?: (reportType: string) => void;
 }
 
+type PremiumDateRange = 'mtd' | 'qtd' | 'ytd' | 'custom';
+
+interface TrendPoint {
+  bucketStartDate: string;
+  revenueEarnedCents?: number;
+  paymentsCollectedCents?: number;
+  patientPaymentsCents?: number;
+  payerPaymentsCents?: number;
+  storePaymentsCents?: number;
+  badDebtCents?: number;
+}
+
+interface TrendSummary {
+  totalRevenueEarnedCents?: number;
+  totalPaymentsCollectedCents?: number;
+  totalPatientPaymentsCents?: number;
+  totalPayerPaymentsCents?: number;
+  totalStorePaymentsCents?: number;
+  totalBadDebtCents?: number;
+  collectionRate?: number;
+  revenueCategories?: Array<{
+    key: string;
+    label: string;
+    revenueCents: number;
+    itemCount: number;
+  }>;
+}
+
 const ANALYTICS_CATEGORIES: AnalyticsCategory[] = [
   { id: 'administrative', name: 'Administrative', description: 'Visit volume, scheduling, staff productivity', icon: '' },
   { id: 'provider', name: 'Provider', description: 'Outcomes, E&M distribution, referrals', icon: '' },
   { id: 'financial', name: 'Financial', description: 'Reimbursement, charges/payments, A/R', icon: '' },
 ];
 
-const MOCK_REVENUE_BY_PAYER: ChartData[] = [
-  { label: 'Blue Cross', value: 4250000, change: 8.5 },
-  { label: 'Aetna', value: 2850000, change: -2.3 },
-  { label: 'Medicare', value: 3120000, change: 5.1 },
-  { label: 'UnitedHealthcare', value: 2450000, change: 12.4 },
-  { label: 'Cigna', value: 1980000, change: 3.2 },
-  { label: 'Self-Pay', value: 890000, change: 15.8 },
-];
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
 
-const MOCK_PROCEDURES_REVENUE: ChartData[] = [
-  { label: '99214 - Office Visit Mod', value: 2850000 },
-  { label: '99213 - Office Visit Est', value: 2150000 },
-  { label: '11102 - Tangential Biopsy', value: 1850000 },
-  { label: '17311 - Mohs Surgery', value: 3250000 },
-  { label: '96372 - Injection', value: 950000 },
-  { label: '17000 - Destruction', value: 1450000 },
-];
+function addDays(baseIsoDate: string, days: number): string {
+  const date = new Date(`${baseIsoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return toIsoDate(date);
+}
 
-const MOCK_MONTHLY_REVENUE: { month: string; charges: number; payments: number; adjustments: number }[] = [
-  { month: 'Aug', charges: 12500000, payments: 10250000, adjustments: 1250000 },
-  { month: 'Sep', charges: 11800000, payments: 9800000, adjustments: 1100000 },
-  { month: 'Oct', charges: 13200000, payments: 11100000, adjustments: 1350000 },
-  { month: 'Nov', charges: 12100000, payments: 10400000, adjustments: 1200000 },
-  { month: 'Dec', charges: 10500000, payments: 8900000, adjustments: 980000 },
-  { month: 'Jan', charges: 14200000, payments: 12750000, adjustments: 1400000 },
-];
+function startOfQuarter(today: string): string {
+  const date = new Date(`${today}T00:00:00Z`);
+  const quarterStartMonth = Math.floor(date.getUTCMonth() / 3) * 3;
+  return toIsoDate(new Date(Date.UTC(date.getUTCFullYear(), quarterStartMonth, 1)));
+}
+
+function getPremiumRange(range: PremiumDateRange, customStartDate?: string, customEndDate?: string) {
+  const today = getClinicBusinessDate();
+  const current = new Date(`${today}T00:00:00Z`);
+  if (range === 'mtd') {
+    return {
+      startDate: toIsoDate(new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1))),
+      endDate: today,
+    };
+  }
+  if (range === 'qtd') {
+    return { startDate: startOfQuarter(today), endDate: today };
+  }
+  if (range === 'ytd') {
+    return {
+      startDate: toIsoDate(new Date(Date.UTC(current.getUTCFullYear(), 0, 1))),
+      endDate: today,
+    };
+  }
+  return {
+    startDate: customStartDate || addDays(today, -29),
+    endDate: customEndDate || today,
+  };
+}
+
+function rangeLabel(startDate: string, endDate: string): string {
+  if (startDate === endDate) return startDate;
+  return `${startDate} to ${endDate}`;
+}
+
+function aggregateTrend(points: TrendPoint[]) {
+  const shouldUseMonths = points.length > 62;
+  const map = new Map<string, { month: string; charges: number; payments: number; adjustments: number }>();
+  points.forEach((point) => {
+    const bucket = shouldUseMonths ? String(point.bucketStartDate || '').slice(0, 7) : String(point.bucketStartDate || '').slice(5, 10);
+    const current = map.get(bucket) || { month: bucket, charges: 0, payments: 0, adjustments: 0 };
+    current.charges += Number(point.revenueEarnedCents || 0);
+    current.payments += Number(point.paymentsCollectedCents || 0);
+    current.adjustments += Number(point.badDebtCents || 0);
+    map.set(bucket, current);
+  });
+  return Array.from(map.values()).slice(-14);
+}
 
 export function PremiumAnalytics({ onExportReport }: Props) {
+  const { session } = useAuth();
   const [activeCategory, setActiveCategory] = useState<string>('financial');
-  const [dateRange, setDateRange] = useState<'mtd' | 'qtd' | 'ytd' | 'custom'>('mtd');
+  const [dateRange, setDateRange] = useState<PremiumDateRange>('mtd');
+  const initialRange = getPremiumRange('mtd');
+  const [customStartDate, setCustomStartDate] = useState(addDays(initialRange.endDate, -29));
+  const [customEndDate, setCustomEndDate] = useState(initialRange.endDate);
+  const [appliedRange, setAppliedRange] = useState(initialRange);
+  const [trendData, setTrendData] = useState<TrendPoint[]>([]);
+  const [trendSummary, setTrendSummary] = useState<TrendSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
   const [selectedLocation, setSelectedLocation] = useState<string>('all');
+
+  const applyPreset = (range: PremiumDateRange) => {
+    setDateRange(range);
+    if (range === 'custom') {
+      return;
+    }
+    setAppliedRange(getPremiumRange(range, customStartDate, customEndDate));
+  };
+
+  const applyCustomRange = () => {
+    const nextRange = getPremiumRange('custom', customStartDate, customEndDate);
+    if (nextRange.startDate > nextRange.endDate) {
+      setError('Start date must be before end date.');
+      return;
+    }
+    setDateRange('custom');
+    setAppliedRange(nextRange);
+  };
+
+  const loadAnalytics = useCallback(async () => {
+    if (!session) return;
+    setLoading(true);
+    setError('');
+    try {
+      const trendResponse = await fetchCollectionsTrend(
+        { tenantId: session.tenantId, accessToken: session.accessToken },
+        { startDate: appliedRange.startDate, endDate: appliedRange.endDate, granularity: 'day' },
+      );
+      setTrendData(Array.isArray(trendResponse?.data) ? trendResponse.data : []);
+      setTrendSummary((trendResponse?.summary || null) as TrendSummary | null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load premium analytics');
+    } finally {
+      setLoading(false);
+    }
+  }, [appliedRange.endDate, appliedRange.startDate, session]);
+
+  useEffect(() => {
+    loadAnalytics();
+  }, [loadAnalytics]);
 
   const formatCurrency = (cents: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -65,9 +177,30 @@ export function PremiumAnalytics({ onExportReport }: Props) {
     }).format(cents / 100);
   };
 
-  const maxRevenue = Math.max(...MOCK_REVENUE_BY_PAYER.map(d => d.value));
-  const maxProcedureRevenue = Math.max(...MOCK_PROCEDURES_REVENUE.map(d => d.value));
-  const maxMonthlyValue = Math.max(...MOCK_MONTHLY_REVENUE.map(d => Math.max(d.charges, d.payments)));
+  const totalCharges = Number(trendSummary?.totalRevenueEarnedCents || 0);
+  const totalPayments = Number(trendSummary?.totalPaymentsCollectedCents || 0);
+  const totalAdjustments = Number(trendSummary?.totalBadDebtCents || 0);
+  const netCollectionRate = totalCharges > 0 ? (totalPayments / totalCharges) * 100 : Number(trendSummary?.collectionRate || 0);
+  const revenueGap = Math.max(0, totalCharges - totalPayments - totalAdjustments);
+
+  const collectionSourceRows: ChartData[] = useMemo(() => ([
+    { label: 'Payer Payments', value: Number(trendSummary?.totalPayerPaymentsCents || 0) },
+    { label: 'Patient Payments', value: Number(trendSummary?.totalPatientPaymentsCents || 0) },
+    { label: 'Store Payments', value: Number(trendSummary?.totalStorePaymentsCents || 0) },
+    { label: 'Open Revenue Gap', value: revenueGap },
+  ].filter((row) => row.value > 0)), [revenueGap, trendSummary]);
+
+  const revenueCategoryRows: ChartData[] = useMemo(() => (
+    (trendSummary?.revenueCategories || []).map((category) => ({
+      label: category.label,
+      value: Number(category.revenueCents || 0),
+    })).filter((row) => row.value > 0)
+  ), [trendSummary]);
+
+  const trendBars = useMemo(() => aggregateTrend(trendData), [trendData]);
+  const maxRevenue = Math.max(1, ...collectionSourceRows.map(d => d.value));
+  const maxProcedureRevenue = Math.max(1, ...revenueCategoryRows.map(d => d.value));
+  const maxMonthlyValue = Math.max(1, ...trendBars.map(d => Math.max(d.charges, d.payments, d.adjustments)));
 
   return (
     <div className="premium-analytics">
@@ -148,7 +281,7 @@ export function PremiumAnalytics({ onExportReport }: Props) {
             {(['mtd', 'qtd', 'ytd', 'custom'] as const).map(range => (
               <button
                 key={range}
-                onClick={() => setDateRange(range)}
+                onClick={() => applyPreset(range)}
                 style={{
                   padding: '0.5rem 1rem',
                   border: 'none',
@@ -164,6 +297,42 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               </button>
             ))}
           </div>
+          <div style={{ marginTop: '0.45rem', color: '#6b7280', fontSize: '0.78rem', fontWeight: 600 }}>
+            {rangeLabel(appliedRange.startDate, appliedRange.endDate)}
+          </div>
+          {dateRange === 'custom' && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.6rem', alignItems: 'center' }}>
+              <input
+                aria-label="Premium analytics start date"
+                type="date"
+                value={customStartDate}
+                onChange={(event) => setCustomStartDate(event.target.value)}
+                style={{ padding: '0.45rem 0.6rem', border: '2px solid #e5e7eb', borderRadius: '8px', fontWeight: 600 }}
+              />
+              <input
+                aria-label="Premium analytics end date"
+                type="date"
+                value={customEndDate}
+                onChange={(event) => setCustomEndDate(event.target.value)}
+                style={{ padding: '0.45rem 0.6rem', border: '2px solid #e5e7eb', borderRadius: '8px', fontWeight: 600 }}
+              />
+              <button
+                type="button"
+                onClick={applyCustomRange}
+                style={{
+                  padding: '0.48rem 0.8rem',
+                  border: 'none',
+                  background: '#059669',
+                  color: '#ffffff',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Apply Range
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Provider Filter */}
@@ -214,6 +383,20 @@ export function PremiumAnalytics({ onExportReport }: Props) {
           </select>
         </div>
       </div>
+
+      {(loading || error) && (
+        <div style={{
+          marginBottom: '1.25rem',
+          padding: '0.8rem 1rem',
+          borderRadius: '10px',
+          border: error ? '1px solid #fecaca' : '1px solid #d1fae5',
+          background: error ? '#fef2f2' : '#f0fdf4',
+          color: error ? '#991b1b' : '#047857',
+          fontWeight: 700,
+        }}>
+          {error || 'Refreshing analytics...'}
+        </div>
+      )}
 
       {/* Category Tabs */}
       <div style={{
@@ -271,9 +454,9 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               color: 'white',
             }}>
               <div style={{ fontSize: '0.85rem', opacity: 0.9, marginBottom: '0.5rem' }}>Total Charges</div>
-              <div style={{ fontSize: '2rem', fontWeight: '800' }}>$142,000</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800' }}>{formatCurrency(totalCharges)}</div>
               <div style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                <span style={{ color: '#bbf7d0' }}>+12.4%</span> vs last period
+                Earned revenue in range
               </div>
             </div>
             <div style={{
@@ -283,9 +466,9 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               border: '2px solid #e5e7eb',
             }}>
               <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.5rem' }}>Total Payments</div>
-              <div style={{ fontSize: '2rem', fontWeight: '800', color: '#059669' }}>$127,500</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800', color: '#059669' }}>{formatCurrency(totalPayments)}</div>
               <div style={{ fontSize: '0.85rem', color: '#059669', marginTop: '0.5rem' }}>
-                +8.7% vs last period
+                Patient, payer, and store cash
               </div>
             </div>
             <div style={{
@@ -294,10 +477,10 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               padding: '1.5rem',
               border: '2px solid #e5e7eb',
             }}>
-              <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.5rem' }}>Total Adjustments</div>
-              <div style={{ fontSize: '2rem', fontWeight: '800', color: '#dc2626' }}>$14,000</div>
+              <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.5rem' }}>Loss / Write-Offs</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800', color: '#dc2626' }}>{formatCurrency(totalAdjustments)}</div>
               <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                9.8% of charges
+                {totalCharges > 0 ? `${((totalAdjustments / totalCharges) * 100).toFixed(1)}% of charges` : 'No charge base yet'}
               </div>
             </div>
             <div style={{
@@ -307,9 +490,9 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               border: '2px solid #e5e7eb',
             }}>
               <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.5rem' }}>Net Collection Rate</div>
-              <div style={{ fontSize: '2rem', fontWeight: '800', color: '#059669' }}>94.5%</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800', color: '#059669' }}>{netCollectionRate.toFixed(1)}%</div>
               <div style={{ fontSize: '0.85rem', color: '#059669', marginTop: '0.5rem' }}>
-                +1.2% vs last period
+                {formatCurrency(revenueGap)} open gap
               </div>
             </div>
           </div>
@@ -321,7 +504,7 @@ export function PremiumAnalytics({ onExportReport }: Props) {
             gap: '2rem',
             marginBottom: '2rem',
           }}>
-            {/* Revenue by Payer */}
+            {/* Collections by Source */}
             <div style={{
               background: 'white',
               borderRadius: '16px',
@@ -329,10 +512,12 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               border: '2px solid #e5e7eb',
             }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827', marginBottom: '1.5rem' }}>
-                Revenue by Payer
+                Collections by Source
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {MOCK_REVENUE_BY_PAYER.map((item, index) => (
+                {collectionSourceRows.length === 0 ? (
+                  <div style={{ color: '#6b7280', fontSize: '0.9rem' }}>No collection activity in this range.</div>
+                ) : collectionSourceRows.map((item, index) => (
                   <div key={item.label}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                       <span style={{ fontSize: '0.9rem', color: '#374151' }}>{item.label}</span>
@@ -367,7 +552,7 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               </div>
             </div>
 
-            {/* Revenue by Procedure */}
+            {/* Revenue by Category */}
             <div style={{
               background: 'white',
               borderRadius: '16px',
@@ -375,10 +560,12 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               border: '2px solid #e5e7eb',
             }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827', marginBottom: '1.5rem' }}>
-                Revenue by Procedure
+                Revenue by Category
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {MOCK_PROCEDURES_REVENUE.map((item, index) => (
+                {revenueCategoryRows.length === 0 ? (
+                  <div style={{ color: '#6b7280', fontSize: '0.9rem' }}>No categorized revenue in this range.</div>
+                ) : revenueCategoryRows.map((item) => (
                   <div key={item.label}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                       <span style={{ fontSize: '0.85rem', color: '#374151' }}>{item.label}</span>
@@ -412,12 +599,12 @@ export function PremiumAnalytics({ onExportReport }: Props) {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827' }}>
-                Monthly Revenue Trend
+                Revenue and Collections Trend
               </h3>
               <div style={{ display: 'flex', gap: '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <div style={{ width: '12px', height: '12px', borderRadius: '2px', background: '#10b981' }} />
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Charges</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Revenue</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <div style={{ width: '12px', height: '12px', borderRadius: '2px', background: '#3b82f6' }} />
@@ -438,7 +625,9 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               height: '250px',
               padding: '0 1rem',
             }}>
-              {MOCK_MONTHLY_REVENUE.map((month) => (
+              {trendBars.length === 0 ? (
+                <div style={{ color: '#6b7280', alignSelf: 'center' }}>No trend rows in this range.</div>
+              ) : trendBars.map((month) => (
                 <div key={month.month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '200px' }}>
                     <div
@@ -448,7 +637,7 @@ export function PremiumAnalytics({ onExportReport }: Props) {
                         background: '#10b981',
                         borderRadius: '4px 4px 0 0',
                       }}
-                      title={`Charges: ${formatCurrency(month.charges)}`}
+                      title={`Revenue: ${formatCurrency(month.charges)}`}
                     />
                     <div
                       style={{

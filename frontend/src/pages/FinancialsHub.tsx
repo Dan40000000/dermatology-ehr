@@ -658,9 +658,9 @@ function calculatePayerPerformance(
 }
 
 const TABS: TabConfig[] = [
-  { key: 'dashboard', label: 'Overview', icon: LayoutDashboard, description: 'Key metrics & A/R overview' },
   { key: 'revenue', label: 'Revenue', icon: TrendingUp, description: 'Revenue mix, gaps & category story' },
-  { key: 'snapshots', label: 'Snapshots', icon: CalendarRange, description: 'Daily, weekly, monthly deep dives' },
+  { key: 'dashboard', label: 'Collections', icon: LayoutDashboard, description: 'Payments, A/R & collection work' },
+  { key: 'snapshots', label: 'Historical Trends', icon: CalendarRange, description: 'Daily, weekly, monthly deep dives' },
   { key: 'insurance', label: 'Insurance', icon: ShieldCheck, description: 'Payer time, money & denials' },
   { key: 'bills', label: 'Bills', icon: ReceiptText, description: 'Patient billing & statements' },
   { key: 'payments', label: 'Payments', icon: CreditCard, description: 'Patient payments & plans' },
@@ -895,7 +895,7 @@ export function FinancialsHub() {
         sourceNote: snapshots.sourceNote || '',
       });
     } catch (err) {
-      showError('Unable to load financial snapshot');
+      showError('Unable to load financial trends');
     } finally {
       setLoading(false);
     }
@@ -1107,7 +1107,7 @@ export function FinancialsHub() {
         pendingAppeals: atRiskClaimBacklog.length,
       });
     } catch (error: any) {
-      const message = error?.message || 'Unable to load overview breakdown';
+      const message = error?.message || 'Unable to load collections breakdown';
       setDashboardError(message);
       showError(message);
     } finally {
@@ -1136,7 +1136,7 @@ export function FinancialsHub() {
     }
 
     if (tab === 'dashboard') {
-      // Remove tab parameter for dashboard (default view)
+      // Remove tab parameter for collections (default view)
       setSearchParams({});
       return;
     }
@@ -1500,7 +1500,7 @@ export function FinancialsHub() {
   const drilldownMeta: Record<string, { title: string; subtitle: string; action?: string; actionTarget?: TabType | 'claims' | 'bills' | 'payments' }> = {
     collections: {
       title: 'Clinical Collections Detail',
-      subtitle: 'Patient and payer payments collected in the selected overview range. Store revenue is shown separately.',
+      subtitle: 'Patient and payer payments collected in the selected collections range. Store revenue is shown separately.',
       action: 'Open Payments',
       actionTarget: 'payments',
     },
@@ -1530,7 +1530,7 @@ export function FinancialsHub() {
     },
     'store-revenue': {
       title: 'Store Revenue Detail',
-      subtitle: 'Retail product payments captured in this overview range.',
+      subtitle: 'Retail product payments captured in this collections range.',
       action: 'Open Revenue',
       actionTarget: 'revenue',
     },
@@ -2212,7 +2212,7 @@ export function FinancialsHub() {
               })}
             </nav>
 
-            {/* Revenue Snapshots in Sidebar */}
+            {/* Historical Trends in Sidebar */}
             {!sidebarCollapsed && (
               <div style={{
                 marginTop: '16px',
@@ -2222,7 +2222,7 @@ export function FinancialsHub() {
                 border: '1px solid #D1FAE5',
               }}>
                 <div style={{ fontSize: '0.88rem', color: '#166534', marginBottom: '0.85rem', fontWeight: '800', letterSpacing: '0.01em' }}>
-                  Revenue Snapshots
+                  Historical Trends
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {snapshotCards.map((card) => (
@@ -2397,11 +2397,11 @@ export function FinancialsHub() {
                       ) : null}
                       {card.completedAppointments === 0 && card.totalRevenueCents === 0 ? (
                         <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '0.72rem' }}>
-                          No posted revenue in this snapshot yet.
+                          No posted revenue in this range yet.
                         </div>
                       ) : null}
                       <div style={{ marginTop: '0.7rem', fontSize: '0.75rem', color: '#047857', fontWeight: 700 }}>
-                        Open breakdown
+                        Open trend breakdown
                       </div>
                     </button>
                   ))}
@@ -2433,7 +2433,7 @@ export function FinancialsHub() {
             minHeight: 'calc(100% - 40px)',
             boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04)',
           }}>
-            {/* Dashboard Tab (Overview) */}
+            {/* Collections Tab */}
             {activeTab === 'dashboard' && (
               <>
                 {dashboardError && (
@@ -2481,7 +2481,7 @@ export function FinancialsHub() {
             {/* Revenue Tab */}
             {activeTab === 'revenue' && renderRevenuePage()}
 
-            {/* Snapshots Tab */}
+            {/* Historical Trends Tab */}
             {activeTab === 'snapshots' && (
               <div>
                 <div style={{
@@ -2494,10 +2494,10 @@ export function FinancialsHub() {
                 }}>
                   <div>
                     <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#111827', marginBottom: '0.25rem' }}>
-                      Snapshot Breakdown
+                      Historical Trends
                     </h2>
                     <p style={{ color: '#6b7280', fontSize: '0.9rem' }}>
-                      Open daily, weekly, monthly, or custom financial detail pages.
+                      Open daily, weekly, monthly, or custom financial trend pages.
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -2601,7 +2601,7 @@ export function FinancialsHub() {
                     </button>
                   </div>
                   <div style={{ marginTop: '0.65rem', fontSize: '0.82rem', color: '#065f46' }}>
-                    Viewing {snapshotPeriodLabels[snapshotPeriod]} page for {formatIsoDateForUi(snapshotStartDate)} to {formatIsoDateForUi(snapshotEndDate)}.
+                    Viewing {snapshotPeriodLabels[snapshotPeriod]} trend for {formatIsoDateForUi(snapshotStartDate)} to {formatIsoDateForUi(snapshotEndDate)}.
                   </div>
                 </div>
 
@@ -2666,7 +2666,7 @@ export function FinancialsHub() {
                         Revenue Categories
                       </div>
                       <div style={{ fontSize: '0.84rem', color: '#6b7280', marginBottom: '0.85rem' }}>
-                        What made up this snapshot range.
+                        What made up this historical range.
                       </div>
                       {(snapshotSummary.revenueCategories || []).length === 0 ? (
                         <div style={{ fontSize: '0.84rem', color: '#6b7280' }}>

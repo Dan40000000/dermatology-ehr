@@ -1300,20 +1300,73 @@ financialMetricsRouter.get("/revenue-by-payer", requireAuth, async (req: AuthedR
 
   try {
     const result = await pool.query(
-      `select
-        coalesce(p.insurance_plan_name, 'Self-Pay') as payer,
-        count(distinct b.id) as claim_count,
-        sum(b.total_charges_cents) as charges,
-        sum(pp.amount_cents) + coalesce(sum(ppy.applied_amount_cents), 0) as collections
-       from bills b
-       join patients p on p.id = b.patient_id
-       left join patient_payments pp on pp.patient_id = b.patient_id and pp.status = 'posted'
-       left join payer_payments ppy on ppy.tenant_id = b.tenant_id
-       where b.tenant_id = $1
-         and b.bill_date >= $2
-         and b.bill_date <= $3
-       group by coalesce(p.insurance_plan_name, 'Self-Pay')
-       order by collections desc
+      `with claim_by_encounter as (
+         select
+           encounter_id,
+           max(coalesce(payer_name, payer)) as payer_name,
+           count(*)::int as claim_count
+         from claims
+         where tenant_id = $1
+         group by encounter_id
+       ),
+       patient_applied_by_bill as (
+         select
+           applied_to_invoice_id as bill_id,
+           coalesce(sum(amount_cents), 0) as patient_collections_cents
+         from patient_payments
+         where tenant_id = $1
+           and status = 'posted'
+           and applied_to_invoice_id is not null
+           and payment_date >= $2::date
+           and payment_date <= $3::date
+         group by applied_to_invoice_id
+       ),
+       payer_applied_by_encounter as (
+         select
+           c.encounter_id,
+           coalesce(sum(ppli.amount_cents), 0) as payer_collections_cents
+         from payer_payment_line_items ppli
+         join claims c
+           on c.id = ppli.claim_id
+          and c.tenant_id = ppli.tenant_id
+         join payer_payments pp
+           on pp.id = ppli.payer_payment_id
+          and pp.tenant_id = ppli.tenant_id
+         where ppli.tenant_id = $1
+           and pp.payment_date >= $2::date
+           and pp.payment_date <= $3::date
+         group by c.encounter_id
+       ),
+       bill_rows as (
+         select
+           b.id,
+           coalesce(cbe.payer_name, p.insurance_plan_name, 'Self-Pay') as payer,
+           coalesce(cbe.claim_count, 0) as claim_count,
+           coalesce(b.total_charges_cents, 0) as charges_cents,
+           coalesce(pabb.patient_collections_cents, 0) as patient_collections_cents,
+           coalesce(pabe.payer_collections_cents, 0) as payer_collections_cents
+         from bills b
+         join patients p
+           on p.id = b.patient_id
+          and p.tenant_id = b.tenant_id
+         left join claim_by_encounter cbe
+           on cbe.encounter_id = b.encounter_id
+         left join patient_applied_by_bill pabb
+           on pabb.bill_id = b.id
+         left join payer_applied_by_encounter pabe
+           on pabe.encounter_id = b.encounter_id
+         where b.tenant_id = $1
+           and b.bill_date >= $2::date
+           and b.bill_date <= $3::date
+       )
+       select
+         payer,
+         sum(claim_count)::int as claim_count,
+         coalesce(sum(charges_cents), 0)::bigint as charges,
+         coalesce(sum(patient_collections_cents + payer_collections_cents), 0)::bigint as collections
+       from bill_rows
+       group by payer
+       order by collections desc, charges desc
        limit 10`,
       [tenantId, start, end],
     );
@@ -1339,15 +1392,21 @@ financialMetricsRouter.get("/revenue-by-procedure", requireAuth, async (req: Aut
   try {
     const result = await pool.query(
       `select
-        c.cpt_code as "cptCode",
-        c.description,
-        count(*) as procedure_count,
-        sum(c.fee_cents * c.quantity) as revenue
+        coalesce(c.cpt_code, 'UNSPECIFIED') as "cptCode",
+        coalesce(c.description, 'Unspecified service') as description,
+        count(*)::int as procedure_count,
+        coalesce(sum(coalesce(c.amount_cents, c.fee_cents * coalesce(c.quantity, 1), 0)), 0)::bigint as revenue
        from charges c
-       join encounters e on e.id = c.encounter_id
+       left join encounters e
+         on e.id = c.encounter_id
+        and e.tenant_id = c.tenant_id
+       left join appointments a
+         on a.id = e.appointment_id
+        and a.tenant_id = c.tenant_id
        where c.tenant_id = $1
-         and e.check_in_time >= $2
-         and e.check_in_time <= $3
+         and coalesce(c.status, 'posted') <> 'void'
+         and coalesce(c.service_date, a.completed_at::date, c.created_at::date) >= $2::date
+         and coalesce(c.service_date, a.completed_at::date, c.created_at::date) <= $3::date
        group by c.cpt_code, c.description
        order by revenue desc
        limit 15`,
@@ -1377,15 +1436,34 @@ financialMetricsRouter.get("/provider-productivity", requireAuth, async (req: Au
       `select
         pr.id as "providerId",
         pr.full_name as "providerName",
-        count(distinct e.id) as "encounterCount",
-        count(distinct e.patient_id) as "patientCount",
-        sum(c.fee_cents * c.quantity) as "totalCharges",
-        avg(extract(epoch from (e.check_out_time - e.check_in_time)) / 60)::int as "avgVisitMinutes"
+        count(distinct e.id)::int as "encounterCount",
+        count(distinct e.patient_id)::int as "patientCount",
+        coalesce(sum(coalesce(c.amount_cents, c.fee_cents * coalesce(c.quantity, 1), 0)), 0)::bigint as "totalCharges",
+        coalesce(
+          avg(extract(epoch from (coalesce(a.completed_at, a.scheduled_end) - coalesce(a.checked_in_at, a.scheduled_start))) / 60)
+            filter (where a.id is not null and a.completed_at is not null),
+          0
+        )::int as "avgVisitMinutes"
        from providers pr
-       left join encounters e on e.provider_id = pr.id and e.tenant_id = $1
-       left join charges c on c.encounter_id = e.id
+       left join encounters e
+         on e.provider_id = pr.id
+        and e.tenant_id = $1
+       left join appointments a
+         on a.id = e.appointment_id
+        and a.tenant_id = e.tenant_id
+       left join charges c
+         on c.encounter_id = e.id
+        and c.tenant_id = e.tenant_id
+        and coalesce(c.status, 'posted') <> 'void'
        where pr.tenant_id = $1
-         and (e.check_in_time is null or (e.check_in_time >= $2 and e.check_in_time <= $3))
+         and (
+           e.id is null
+           or coalesce(c.service_date, a.completed_at::date, a.scheduled_start::date, e.created_at::date) >= $2::date
+         )
+         and (
+           e.id is null
+           or coalesce(c.service_date, a.completed_at::date, a.scheduled_start::date, e.created_at::date) <= $3::date
+         )
        group by pr.id, pr.full_name
        order by "totalCharges" desc nulls last`,
       [tenantId, start, end],
@@ -1415,13 +1493,19 @@ financialMetricsRouter.get("/em-distribution", requireAuth, async (req: AuthedRe
       `select
         c.cpt_code as "cptCode",
         c.description,
-        count(*) as count
+        count(*)::int as count
        from charges c
-       join encounters e on e.id = c.encounter_id
+       left join encounters e
+         on e.id = c.encounter_id
+        and e.tenant_id = c.tenant_id
+       left join appointments a
+         on a.id = e.appointment_id
+        and a.tenant_id = c.tenant_id
        where c.tenant_id = $1
          and c.cpt_code like '992%'
-         and e.check_in_time >= $2
-         and e.check_in_time <= $3
+         and coalesce(c.status, 'posted') <> 'void'
+         and coalesce(c.service_date, a.completed_at::date, c.created_at::date) >= $2::date
+         and coalesce(c.service_date, a.completed_at::date, c.created_at::date) <= $3::date
        group by c.cpt_code, c.description
        order by c.cpt_code`,
       [tenantId, start, end],
@@ -1440,44 +1524,53 @@ financialMetricsRouter.get("/em-distribution", requireAuth, async (req: AuthedRe
 // Get claims aging report
 financialMetricsRouter.get("/claims-aging", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
+  const requestedAsOfDate = req.query.asOfDate;
+  const parsedAsOfDate = parseIsoDateOrNull(requestedAsOfDate);
+  const asOfDate = parsedAsOfDate || toIsoDate(new Date());
+
+  if (requestedAsOfDate && !parsedAsOfDate) {
+    return res.status(400).json({ error: "asOfDate must be a valid ISO date (YYYY-MM-DD)" });
+  }
 
   try {
-    const date30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const date60 = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const date90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const date30 = addDays(asOfDate, -30);
+    const date60 = addDays(asOfDate, -60);
+    const date90 = addDays(asOfDate, -90);
 
     const result = await pool.query(
-      `select
-        case
-          when submitted_at >= $2 then 'Current'
-          when submitted_at >= $3 and submitted_at < $2 then '30-60 Days'
-          when submitted_at >= $4 and submitted_at < $3 then '60-90 Days'
-          else '90+ Days'
-        end as bucket,
-        count(*) as claim_count,
-        sum(total_cents) as total_amount
-       from claims
-       where tenant_id = $1
-         and status not in ('paid', 'rejected')
-         and submitted_at is not null
-       group by
-        case
-          when submitted_at >= $2 then 'Current'
-          when submitted_at >= $3 and submitted_at < $2 then '30-60 Days'
-          when submitted_at >= $4 and submitted_at < $3 then '60-90 Days'
-          else '90+ Days'
-        end
-       order by
-        case
-          when submitted_at >= $2 then 1
-          when submitted_at >= $3 and submitted_at < $2 then 2
-          when submitted_at >= $4 and submitted_at < $3 then 3
-          else 4
-        end`,
-      [tenantId, date30, date60, date90],
+      `with aged_claims as (
+         select
+           case
+             when submitted_at::date >= $2::date then 'Current'
+             when submitted_at::date >= $3::date and submitted_at::date < $2::date then '30-60 Days'
+             when submitted_at::date >= $4::date and submitted_at::date < $3::date then '60-90 Days'
+             else '90+ Days'
+           end as bucket,
+           case
+             when submitted_at::date >= $2::date then 1
+             when submitted_at::date >= $3::date and submitted_at::date < $2::date then 2
+             when submitted_at::date >= $4::date and submitted_at::date < $3::date then 3
+             else 4
+           end as sort_order,
+           coalesce(total_cents, 0) as total_cents
+         from claims
+         where tenant_id = $1
+           and status not in ('paid', 'rejected')
+           and submitted_at is not null
+           and submitted_at::date <= $5::date
+       )
+       select
+         bucket,
+         count(*)::int as claim_count,
+         coalesce(sum(total_cents), 0)::bigint as total_amount
+       from aged_claims
+       group by bucket, sort_order
+       order by sort_order`,
+      [tenantId, date30, date60, date90, asOfDate],
     );
 
     res.json({
+      asOfDate,
       claimsAging: result.rows,
     });
   } catch (error: any) {

@@ -9,12 +9,18 @@ import type { Order, Patient, Provider, ResultFlagType } from '../types';
 import { ResultFlagBadge, ResultFlagSelect, ResultFlagFilter, QuickFilterButtons } from '../components/ResultFlagBadge';
 import { InsuranceStatusBadge } from '../components/Insurance';
 import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
+import {
+  isLabOrderType,
+  isOpenLabPathOrder,
+  isPathOrderType,
+  normalizeLabPathValue,
+} from '../utils/labPathOrders';
 
 // Main tab type
 type MainTab = 'path' | 'lab';
 
 // Sub-tab type
-type SubTab = 'pending-results' | 'pending-plan' | 'completed' | 'unresolved';
+type SubTab = 'open' | 'pending-results' | 'pending-plan' | 'completed' | 'unresolved';
 
 // Filter state interface
 interface FilterState {
@@ -82,6 +88,26 @@ const COMMON_DERM_LABS = [
   { name: 'Bacterial culture', code: '87070' },
 ];
 
+const VALID_SUB_TABS = new Set<SubTab>(['open', 'pending-results', 'pending-plan', 'completed', 'unresolved']);
+
+function parseLabsTab(value: string | null): { mainTab: MainTab; subTab: SubTab } {
+  if (!value) return { mainTab: 'path', subTab: 'open' };
+
+  if (value.startsWith('lab-')) {
+    const candidate = value.substring(4) as SubTab;
+    return {
+      mainTab: 'lab',
+      subTab: VALID_SUB_TABS.has(candidate) ? candidate : 'open',
+    };
+  }
+
+  const candidate = value as SubTab;
+  return {
+    mainTab: 'path',
+    subTab: VALID_SUB_TABS.has(candidate) ? candidate : 'open',
+  };
+}
+
 export function LabsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -94,7 +120,7 @@ export function LabsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
 
   const [mainTab, setMainTab] = useState<MainTab>('path');
-  const [subTab, setSubTab] = useState<SubTab>('pending-results');
+  const [subTab, setSubTab] = useState<SubTab>('open');
 
   const [filters, setFilters] = useState<FilterState>({
     provider: '',
@@ -157,9 +183,9 @@ export function LabsPage() {
 
       const allOrders = (ordersRes.orders || []) as PathLabResult[];
 
-      // Separate path and lab orders
-      const paths = allOrders.filter((o: PathLabResult) => o.type === 'pathology' || o.type === 'path');
-      const labs = allOrders.filter((o: PathLabResult) => o.type === 'lab' || o.type === 'laboratory');
+      // Separate path and lab orders using the same type normalization as the Command Center.
+      const paths = allOrders.filter((o: PathLabResult) => isPathOrderType(o.type));
+      const labs = allOrders.filter((o: PathLabResult) => isLabOrderType(o.type));
 
       setPathResults(paths);
       setLabResults(labs);
@@ -179,18 +205,9 @@ export function LabsPage() {
   // Handle URL query parameters on initial load
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam) {
-      if (tabParam.startsWith('lab-')) {
-        // Extract the sub-tab portion (e.g., 'lab-completed' -> 'completed')
-        const subTabValue = tabParam.substring(4) as SubTab;
-        setMainTab('lab');
-        setSubTab(subTabValue);
-      } else {
-        // Use the tab directly as subTab (e.g., 'pending-results')
-        setMainTab('path');
-        setSubTab(tabParam as SubTab);
-      }
-    }
+    const parsed = parseLabsTab(tabParam);
+    setMainTab(parsed.mainTab);
+    setSubTab(parsed.subTab);
   }, [searchParams]);
 
   const handleCreateEntry = async () => {
@@ -278,10 +295,12 @@ export function LabsPage() {
 
     let filtered = currentData.filter((item) => {
       // Filter by sub-tab status
-      if (subTab === 'pending-results' && item.status !== 'pending') return false;
-      if (subTab === 'pending-plan' && item.status !== 'in-progress') return false;
-      if (subTab === 'completed' && item.status !== 'completed') return false;
-      if (subTab === 'unresolved' && item.status !== 'cancelled') return false;
+      const normalizedStatus = normalizeLabPathValue(item.status);
+      if (subTab === 'open' && !isOpenLabPathOrder(item)) return false;
+      if (subTab === 'pending-results' && !['ordered', 'pending', 'sent', 'received_by_lab', 'processing'].includes(normalizedStatus)) return false;
+      if (subTab === 'pending-plan' && !['in-progress', 'in_progress', 'resulted', 'reviewed'].includes(normalizedStatus)) return false;
+      if (subTab === 'completed' && normalizedStatus !== 'completed') return false;
+      if (subTab === 'unresolved' && !['cancelled', 'canceled', 'failed'].includes(normalizedStatus)) return false;
 
       // Filter by provider
       if (filters.provider && item.providerId !== filters.provider) return false;
@@ -450,10 +469,17 @@ export function LabsPage() {
 
   // Count by sub-tab
   const currentData = mainTab === 'path' ? pathResults : labResults;
-  const pendingResultsCount = currentData.filter((i) => i.status === 'pending').length;
-  const pendingPlanCount = currentData.filter((i) => i.status === 'in-progress').length;
-  const completedCount = currentData.filter((i) => i.status === 'completed').length;
-  const unresolvedCount = currentData.filter((i) => i.status === 'cancelled').length;
+  const openCount = currentData.filter(isOpenLabPathOrder).length;
+  const pendingResultsCount = currentData.filter((i) =>
+    ['ordered', 'pending', 'sent', 'received_by_lab', 'processing'].includes(normalizeLabPathValue(i.status))
+  ).length;
+  const pendingPlanCount = currentData.filter((i) =>
+    ['in-progress', 'in_progress', 'resulted', 'reviewed'].includes(normalizeLabPathValue(i.status))
+  ).length;
+  const completedCount = currentData.filter((i) => normalizeLabPathValue(i.status) === 'completed').length;
+  const unresolvedCount = currentData.filter((i) =>
+    ['cancelled', 'canceled', 'failed'].includes(normalizeLabPathValue(i.status))
+  ).length;
 
   return (
     <div style={{
@@ -554,6 +580,37 @@ export function LabsPage() {
           background: '#f9fafb',
           borderBottom: '1px solid #e5e7eb',
         }}>
+          <button
+            type="button"
+            onClick={() => {
+              setSubTab('open');
+              setSearchParams({ tab: mainTab === 'lab' ? 'lab-open' : 'open' });
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              background: subTab === 'open' ? '#ffffff' : 'transparent',
+              border: subTab === 'open' ? '2px solid #fb7185' : '2px solid transparent',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: subTab === 'open' ? '#f43f5e' : '#6b7280',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            Open
+            <span style={{
+              marginLeft: '0.5rem',
+              padding: '0.125rem 0.5rem',
+              background: subTab === 'open' ? '#fb7185' : '#e5e7eb',
+              color: subTab === 'open' ? '#ffffff' : '#6b7280',
+              borderRadius: '12px',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+            }}>
+              {openCount}
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => {

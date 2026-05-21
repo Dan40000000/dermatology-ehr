@@ -139,10 +139,12 @@ const navItems: NavItem[] = [
     module: 'labs',
     dropdown: [
       { label: 'Biopsy Safety', path: '/biopsies', section: 'PATH' },
+      { label: 'Open Orders', path: '/labs?tab=open', section: 'PATH' },
       { label: 'Pending Results', path: '/labs?tab=pending-results', section: 'PATH' },
       { label: 'Pending Plan', path: '/labs?tab=pending-plan', section: 'PATH' },
       { label: 'Completed', path: '/labs?tab=completed', section: 'PATH' },
       { label: 'Unresolved', path: '/labs?tab=unresolved', section: 'PATH' },
+      { label: 'Open Orders', path: '/labs?tab=lab-open', section: 'LAB' },
       { label: 'Pending Results', path: '/labs?tab=lab-pending-results', section: 'LAB' },
       { label: 'Pending Plan', path: '/labs?tab=lab-pending-plan', section: 'LAB' },
       { label: 'Completed', path: '/labs?tab=lab-completed', section: 'LAB' },

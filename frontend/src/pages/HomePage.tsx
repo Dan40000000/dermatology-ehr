@@ -76,6 +76,7 @@ import {
   ISO_DATE_PATTERN,
   setClinicBusinessDate,
 } from '../utils/practiceDateTime';
+import { isOpenLabPathOrder } from '../utils/labPathOrders';
 import type { Appointment, AppointmentType, Availability, Location, Patient, Provider } from '../types';
 
 interface Encounter {
@@ -971,13 +972,7 @@ export function HomePage() {
         .slice(0, 5);
       setSchedulePulse({ nextAppointments, attentionAppointments });
 
-      const pendingOrderStatuses = new Set(['pending', 'in-progress', 'in_progress']);
-      const labOrderTypes = new Set(['lab', 'pathology', 'dermpath', 'biopsy']);
-      const pendingLabOrders = orders.filter((order: any) => {
-        const orderType = String(order.type || '').toLowerCase();
-        const orderStatus = String(order.status || '').toLowerCase();
-        return labOrderTypes.has(orderType) && pendingOrderStatuses.has(orderStatus);
-      }).length;
+      const pendingLabOrders = orders.filter(isOpenLabPathOrder).length;
 
       const unsignedNotesToday = encountersData.filter((encounter: Encounter) => {
         return isOnLocalDay(encounter.updatedAt || encounter.createdAt, todayStr) && isEncounterOpen(encounter.status);
@@ -1578,7 +1573,7 @@ export function HomePage() {
       value: stats.notesWrittenToday + stats.pendingLabOrders,
       detail: `${stats.notesWrittenToday} notes written ${dayScopeLower}, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
-      access: ['notes', 'orders'],
+      access: ['notes', 'labs'],
       icon: Stethoscope,
       tone: 'violet',
     },
@@ -1653,7 +1648,7 @@ export function HomePage() {
       value: stats.myNotesNeedingWork + stats.pendingLabOrders,
       detail: `${stats.myNotesNeedingWork} my notes, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
-      access: ['notes', 'orders'],
+      access: ['notes', 'labs'],
       icon: FileText,
       severity: stats.myNotesNeedingWork + stats.pendingLabOrders > 0 ? 'warning' : 'steady',
     },
@@ -2085,10 +2080,10 @@ export function HomePage() {
               </span>
               <b>{loading ? '-' : stats.teamNotesNeedingWork}</b>
             </button>
-            <button type="button" className="command-work-row" onClick={() => navigate('/orders')}>
+            <button type="button" className="command-work-row" onClick={() => navigate('/labs?tab=open')}>
               <ClipboardCheck size={17} aria-hidden="true" />
               <span>
-                <strong>Pending Lab/Path Orders</strong>
+                <strong>Open Lab/Path Orders</strong>
                 <small>Unsigned notes {dayScopeLower}: {stats.unsignedNotesToday}</small>
               </span>
               <b>{loading ? '-' : stats.pendingLabOrders}</b>

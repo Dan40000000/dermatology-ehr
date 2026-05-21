@@ -17,7 +17,7 @@ import {
 } from '../utils/labPathOrders';
 
 // Main tab type
-type MainTab = 'path' | 'lab';
+type MainTab = 'all' | 'path' | 'lab';
 
 // Sub-tab type
 type SubTab = 'open' | 'pending-results' | 'pending-plan' | 'completed' | 'unresolved';
@@ -91,7 +91,15 @@ const COMMON_DERM_LABS = [
 const VALID_SUB_TABS = new Set<SubTab>(['open', 'pending-results', 'pending-plan', 'completed', 'unresolved']);
 
 function parseLabsTab(value: string | null): { mainTab: MainTab; subTab: SubTab } {
-  if (!value) return { mainTab: 'path', subTab: 'open' };
+  if (!value) return { mainTab: 'all', subTab: 'open' };
+
+  if (value.startsWith('all-')) {
+    const candidate = value.substring(4) as SubTab;
+    return {
+      mainTab: 'all',
+      subTab: VALID_SUB_TABS.has(candidate) ? candidate : 'open',
+    };
+  }
 
   if (value.startsWith('lab-')) {
     const candidate = value.substring(4) as SubTab;
@@ -108,6 +116,12 @@ function parseLabsTab(value: string | null): { mainTab: MainTab; subTab: SubTab 
   };
 }
 
+function buildLabsTabParam(mainTab: MainTab, subTab: SubTab): string {
+  if (mainTab === 'all') return `all-${subTab}`;
+  if (mainTab === 'lab') return `lab-${subTab}`;
+  return subTab;
+}
+
 export function LabsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -119,7 +133,7 @@ export function LabsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
 
-  const [mainTab, setMainTab] = useState<MainTab>('path');
+  const [mainTab, setMainTab] = useState<MainTab>('all');
   const [subTab, setSubTab] = useState<SubTab>('open');
 
   const [filters, setFilters] = useState<FilterState>({
@@ -291,7 +305,7 @@ export function LabsPage() {
   };
 
   const applyFilters = () => {
-    const currentData = mainTab === 'path' ? pathResults : labResults;
+    const currentData = mainTab === 'all' ? [...pathResults, ...labResults] : mainTab === 'path' ? pathResults : labResults;
 
     let filtered = currentData.filter((item) => {
       // Filter by sub-tab status
@@ -468,7 +482,7 @@ export function LabsPage() {
   const filteredData = sortData(applyFilters());
 
   // Count by sub-tab
-  const currentData = mainTab === 'path' ? pathResults : labResults;
+  const currentData = mainTab === 'all' ? [...pathResults, ...labResults] : mainTab === 'path' ? pathResults : labResults;
   const openCount = currentData.filter(isOpenLabPathOrder).length;
   const pendingResultsCount = currentData.filter((i) =>
     ['ordered', 'pending', 'sent', 'received_by_lab', 'processing'].includes(normalizeLabPathValue(i.status))
@@ -480,6 +494,8 @@ export function LabsPage() {
   const unresolvedCount = currentData.filter((i) =>
     ['cancelled', 'canceled', 'failed'].includes(normalizeLabPathValue(i.status))
   ).length;
+  const currentTabLabel = mainTab === 'all' ? 'Lab/Path' : mainTab === 'path' ? 'Pathology' : 'Lab';
+  const currentTabIcon = mainTab === 'lab' ? '🧪' : '🔬';
 
   return (
     <div style={{
@@ -524,12 +540,35 @@ export function LabsPage() {
         }}>
           <button
             type="button"
+            className={`ema-tab ${mainTab === 'all' ? 'active' : ''}`}
+            onClick={() => {
+              setMainTab('all');
+              setSelectedItems(new Set());
+              setSearchParams({ tab: buildLabsTabParam('all', subTab) });
+            }}
+            style={{
+              padding: '1rem 1.5rem',
+              background: mainTab === 'all' ? 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)' : 'transparent',
+              color: mainTab === 'all' ? '#ffffff' : '#6b7280',
+              border: 'none',
+              borderBottom: mainTab === 'all' ? '3px solid #f43f5e' : '3px solid transparent',
+              fontSize: '0.95rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              borderRadius: '8px 8px 0 0',
+            }}
+          >
+            All
+          </button>
+          <button
+            type="button"
             className={`ema-tab ${mainTab === 'path' ? 'active' : ''}`}
             onClick={() => {
               setMainTab('path');
               setSelectedItems(new Set());
               // Update URL with current sub-tab
-              setSearchParams({ tab: subTab });
+              setSearchParams({ tab: buildLabsTabParam('path', subTab) });
             }}
             style={{
               padding: '1rem 1.5rem',
@@ -553,7 +592,7 @@ export function LabsPage() {
               setMainTab('lab');
               setSelectedItems(new Set());
               // Update URL with lab- prefix
-              setSearchParams({ tab: `lab-${subTab}` });
+              setSearchParams({ tab: buildLabsTabParam('lab', subTab) });
             }}
             style={{
               padding: '1rem 1.5rem',
@@ -584,7 +623,7 @@ export function LabsPage() {
             type="button"
             onClick={() => {
               setSubTab('open');
-              setSearchParams({ tab: mainTab === 'lab' ? 'lab-open' : 'open' });
+              setSearchParams({ tab: buildLabsTabParam(mainTab, 'open') });
             }}
             style={{
               padding: '0.5rem 1rem',
@@ -615,7 +654,7 @@ export function LabsPage() {
             type="button"
             onClick={() => {
               setSubTab('pending-results');
-              setSearchParams({ tab: mainTab === 'lab' ? 'lab-pending-results' : 'pending-results' });
+              setSearchParams({ tab: buildLabsTabParam(mainTab, 'pending-results') });
             }}
             style={{
               padding: '0.5rem 1rem',
@@ -646,7 +685,7 @@ export function LabsPage() {
             type="button"
             onClick={() => {
               setSubTab('pending-plan');
-              setSearchParams({ tab: mainTab === 'lab' ? 'lab-pending-plan' : 'pending-plan' });
+              setSearchParams({ tab: buildLabsTabParam(mainTab, 'pending-plan') });
             }}
             style={{
               padding: '0.5rem 1rem',
@@ -677,7 +716,7 @@ export function LabsPage() {
             type="button"
             onClick={() => {
               setSubTab('completed');
-              setSearchParams({ tab: mainTab === 'lab' ? 'lab-completed' : 'completed' });
+              setSearchParams({ tab: buildLabsTabParam(mainTab, 'completed') });
             }}
             style={{
               padding: '0.5rem 1rem',
@@ -708,7 +747,7 @@ export function LabsPage() {
             type="button"
             onClick={() => {
               setSubTab('unresolved');
-              setSearchParams({ tab: mainTab === 'lab' ? 'lab-unresolved' : 'unresolved' });
+              setSearchParams({ tab: buildLabsTabParam(mainTab, 'unresolved') });
             }}
             style={{
               padding: '0.5rem 1rem',
@@ -1026,10 +1065,10 @@ export function LabsPage() {
           border: '1px solid #e5e7eb',
         }}>
           <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>
-            {mainTab === 'path' ? '🔬' : '🧪'}
+            {currentTabIcon}
           </div>
           <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>
-            No {mainTab === 'path' ? 'Pathology' : 'Lab'} Results Found
+            No {currentTabLabel} Results Found
           </h3>
           <p style={{ color: '#6b7280', margin: 0 }}>
             Try adjusting your filters or add a new entry
@@ -1220,7 +1259,7 @@ export function LabsPage() {
                   <strong>Patient:</strong> {getPatientName(selectedItemForFlag.patientId)}
                 </div>
                 <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>
-                  <strong>Type:</strong> {mainTab === 'path' ? 'Pathology' : 'Lab'}
+                  <strong>Type:</strong> {currentTabLabel}
                 </div>
                 <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
                   <strong>Procedure/Tests:</strong> {selectedItemForFlag.details || '--'}

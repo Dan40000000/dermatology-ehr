@@ -2080,7 +2080,7 @@ export function HomePage() {
               </span>
               <b>{loading ? '-' : stats.teamNotesNeedingWork}</b>
             </button>
-            <button type="button" className="command-work-row" onClick={() => navigate('/labs?tab=open')}>
+            <button type="button" className="command-work-row" onClick={() => navigate('/labs?tab=all-open')}>
               <ClipboardCheck size={17} aria-hidden="true" />
               <span>
                 <strong>Open Lab/Path Orders</strong>

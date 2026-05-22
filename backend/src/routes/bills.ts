@@ -49,6 +49,8 @@ const resolveWorkQueueItemSchema = z.object({
 
 export const billsRouter = Router();
 
+const BILLING_WORK_QUEUE_ROLES = ["admin", "billing", "front_desk", "manager", "compliance_officer"];
+
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -135,7 +137,7 @@ billsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 // Financial work queue for billing failures that need human review.
-billsRouter.get("/work-queue", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
+billsRouter.get("/work-queue", requireAuth, requireRoles(BILLING_WORK_QUEUE_ROLES), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const status = typeof req.query.status === "string" ? req.query.status : "open";
   const params: any[] = [tenantId];
@@ -190,7 +192,7 @@ billsRouter.get("/work-queue", requireAuth, requireRoles(["admin", "billing", "f
   }
 });
 
-billsRouter.post("/work-queue/:id/resolve", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
+billsRouter.post("/work-queue/:id/resolve", requireAuth, requireRoles(BILLING_WORK_QUEUE_ROLES), async (req: AuthedRequest, res) => {
   const parsed = resolveWorkQueueItemSchema.safeParse(req.body || {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 

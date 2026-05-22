@@ -18,7 +18,7 @@ export interface ClearinghouseConfig {
   id: string;
   tenantId: string;
   name: string;
-  type: "change_healthcare" | "availity" | "trizetto" | "waystar" | "custom";
+  type: "stedi" | "change_healthcare" | "availity" | "trizetto" | "waystar" | "custom";
   isActive: boolean;
   isDefault: boolean;
   apiEndpoint?: string;

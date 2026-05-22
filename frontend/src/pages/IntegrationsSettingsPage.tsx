@@ -120,8 +120,8 @@ const externalTypeLabels: Record<ExternalIntegrationType, string> = {
 };
 
 const defaultExternalProviders: Record<ExternalIntegrationType, string> = {
-  clearinghouse: "change_healthcare",
-  eligibility: "availity",
+  clearinghouse: "stedi",
+  eligibility: "stedi",
   eprescribe: "surescripts",
   lab: "labcorp",
   ambient_transcription: "abridge",
@@ -129,8 +129,22 @@ const defaultExternalProviders: Record<ExternalIntegrationType, string> = {
   fax: "phaxio",
 };
 
-const externalDocsLinks: Partial<Record<ExternalIntegrationType, string>> = {
-  eligibility: "https://developer.availity.com/blog/2025/3/25/hipaa-transactions",
+const externalProviderOptions: Partial<
+  Record<ExternalIntegrationType, Array<{ value: string; label: string }>>
+> = {
+  clearinghouse: [
+    { value: "stedi", label: "Stedi" },
+    { value: "change_healthcare", label: "Change Healthcare" },
+    { value: "availity", label: "Availity" },
+    { value: "trizetto", label: "Trizetto" },
+    { value: "waystar", label: "Waystar" },
+    { value: "custom", label: "Custom" },
+  ],
+  eligibility: [
+    { value: "stedi", label: "Stedi" },
+    { value: "availity", label: "Availity" },
+    { value: "custom", label: "Custom" },
+  ],
 };
 
 type AmbientProvider = "abridge" | "nabla" | "aws_healthscribe" | "wispr_flow";
@@ -278,8 +292,61 @@ const buildDefaultConfigTemplate = (
   type: ExternalIntegrationType,
   provider?: string
 ): Record<string, any> => {
+  const normalizedProvider = String(provider || defaultExternalProviders[type] || "").trim().toLowerCase();
+
   switch (type) {
+    case "clearinghouse":
+      if (normalizedProvider === "stedi") {
+        return {
+          baseUrl: "https://healthcare.us.stedi.com/2024-04-01",
+          professionalClaimsPath: "/change/medicalnetwork/professionalclaims/v3",
+          claimStatusPath: "/change/medicalnetwork/claim/status/v3",
+          eraReportPath: "/reports/835",
+          environment: "mock",
+          notes: "Claims remain in internal mock mode until Stedi production claim enrollment and 837P mapping are enabled.",
+        };
+      }
+      return {};
     case "eligibility":
+      if (normalizedProvider === "stedi") {
+        return {
+          baseUrl: "https://healthcare.us.stedi.com/2024-04-01",
+          eligibilityPath: "/change/medicalnetwork/eligibility/v3",
+          environment: "test",
+          defaultServiceType: "30",
+          amountUnit: "dollars",
+          useApprovedMockRequestForEligibility: true,
+          mapTestResponseToRequestedPatient: true,
+          provider: {
+            organizationName: "Dermatology Test Clinic",
+            npi: "1999999984",
+          },
+          testRequest: {
+            encounter: {
+              serviceTypeCodes: ["30"],
+            },
+            externalPatientId: "STEDI-TEST-PATIENT",
+            provider: {
+              npi: "1999999984",
+              organizationName: "Provider Name",
+            },
+            subscriber: {
+              firstName: "John",
+              lastName: "Doe",
+              memberId: "AETNA9wcSu",
+            },
+            dependents: [
+              {
+                firstName: "Jordan",
+                lastName: "Doe",
+                dateOfBirth: "20010714",
+              },
+            ],
+            tradingPartnerServiceId: "60054",
+          },
+        };
+      }
+
       return {
         baseUrl: "https://api.availity.com",
         tokenPath: "/v1/token",
@@ -301,8 +368,23 @@ const buildDefaultCredentialsTemplate = (
   type: ExternalIntegrationType,
   provider?: string
 ): Record<string, any> => {
+  const normalizedProvider = String(provider || defaultExternalProviders[type] || "").trim().toLowerCase();
+
   switch (type) {
+    case "clearinghouse":
+      if (normalizedProvider === "stedi") {
+        return {
+          apiKey: "",
+        };
+      }
+      return {};
     case "eligibility":
+      if (normalizedProvider === "stedi") {
+        return {
+          apiKey: "",
+        };
+      }
+
       return {
         clientId: "",
         clientSecret: "",
@@ -354,6 +436,68 @@ const getAmbientSetupCopy = (provider: AmbientProvider): { title: string; body: 
         ],
       };
   }
+};
+
+const getExternalDocsLink = (type: ExternalIntegrationType, provider?: string): string | undefined => {
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+
+  if (type === "eligibility" && normalizedProvider === "stedi") {
+    return "https://www.stedi.com/docs/healthcare/api-reference/post-healthcare-eligibility";
+  }
+
+  if (type === "clearinghouse" && normalizedProvider === "stedi") {
+    return "https://www.stedi.com/docs/healthcare/api-reference";
+  }
+
+  if (type === "eligibility") {
+    return "https://developer.availity.com/blog/2025/3/25/hipaa-transactions";
+  }
+
+  if (type === "ambient_transcription") {
+    return undefined;
+  }
+
+  return undefined;
+};
+
+const getEligibilitySetupCopy = (provider?: string): { title: string; body: string[] } => {
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+
+  if (normalizedProvider === "stedi") {
+    return {
+      title: "Stedi test-mode setup",
+      body: [
+        "Create a Stedi test API key in the Stedi portal and paste it into credentials.apiKey.",
+        "The connection test sends Stedi's approved mock eligibility request, so it can validate the key without sending real patient data to a payer.",
+        "In test mode, patient eligibility checks also use an approved Stedi mock request and map the returned benefits onto the requested patient so the office workflow can be tested safely.",
+        "For real office eligibility checks, keep the same adapter and switch the Stedi key/config to production only after payer enrollment is complete.",
+      ],
+    };
+  }
+
+  return {
+    title: "Availity setup",
+    body: [
+      "Use your Availity client credentials here. The app will exchange them for an OAuth token and run live coverages checks through the configured endpoint.",
+      "Keep amountUnit set to dollars unless your Availity payload is already returning cents.",
+    ],
+  };
+};
+
+const getClearinghouseSetupCopy = (provider?: string): { title: string; body: string[] } | null => {
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+
+  if (normalizedProvider !== "stedi") {
+    return null;
+  }
+
+  return {
+    title: "Stedi claims setup",
+    body: [
+      "Stedi is selected as the clearinghouse vendor, but claim submission stays in internal mock mode here until production payer enrollment and the 837P JSON mapping are turned on.",
+      "Use eligibility first; it is the fastest test-mode connection to validate the account and payer workflow.",
+    ],
+  };
 };
 
 const parseError = (err: any, fallback: string): string => {
@@ -1014,9 +1158,16 @@ export default function IntegrationsSettingsPage() {
               ? normalizeAmbientProvider(form.provider || integration.provider)
               : null;
             const ambientSetup = ambientProvider ? getAmbientSetupCopy(ambientProvider) : null;
+            const eligibilitySetup = integration.type === "eligibility"
+              ? getEligibilitySetupCopy(form.provider || integration.provider)
+              : null;
+            const clearinghouseSetup = integration.type === "clearinghouse"
+              ? getClearinghouseSetupCopy(form.provider || integration.provider)
+              : null;
             const docsLink = integration.type === "ambient_transcription" && ambientProvider
               ? ambientDocsLinks[ambientProvider]
-              : externalDocsLinks[integration.type];
+              : getExternalDocsLink(integration.type, form.provider || integration.provider);
+            const providerOptions = externalProviderOptions[integration.type];
 
             return (
               <div
@@ -1057,11 +1208,21 @@ export default function IntegrationsSettingsPage() {
                     </div>
                   )}
 
-                  {integration.type === "eligibility" && (
+                  {eligibilitySetup && (
                     <div className="bg-sky-50 border border-sky-200 text-sky-900 px-4 py-3 rounded-lg text-sm space-y-1">
-                      <p className="font-medium">Availity setup</p>
-                      <p>Use your Availity client credentials here. The app will exchange them for an OAuth token and run live coverages checks through the configured endpoint.</p>
-                      <p>Keep <code>amountUnit</code> set to <code>dollars</code> unless your Availity payload is already returning cents.</p>
+                      <p className="font-medium">{eligibilitySetup.title}</p>
+                      {eligibilitySetup.body.map((line) => (
+                        <p key={line}>{line}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {clearinghouseSetup && (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-lg text-sm space-y-1">
+                      <p className="font-medium">{clearinghouseSetup.title}</p>
+                      {clearinghouseSetup.body.map((line) => (
+                        <p key={line}>{line}</p>
+                      ))}
                     </div>
                   )}
 
@@ -1092,6 +1253,28 @@ export default function IntegrationsSettingsPage() {
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                           >
                             {ambientProviderOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-gray-500">Changing the provider reloads the config and credential templates for that provider.</p>
+                        </div>
+                      ) : providerOptions ? (
+                        <div className="space-y-2">
+                          <select
+                            value={form.provider}
+                            onChange={(e) => {
+                              const provider = e.target.value;
+                              updateExternalForm(integration.type, {
+                                provider,
+                                configJson: JSON.stringify(buildDefaultConfigTemplate(integration.type, provider), null, 2),
+                                credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate(integration.type, provider), null, 2),
+                              });
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          >
+                            {providerOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>

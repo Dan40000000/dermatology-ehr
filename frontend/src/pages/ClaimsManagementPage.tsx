@@ -14,6 +14,7 @@ import ClaimStatusTracker from '../components/billing/ClaimStatusTracker';
 import ClaimQueue from '../components/billing/ClaimQueue';
 
 type TabView = 'submit' | 'pending' | 'remittances' | 'clearinghouses';
+type ClearinghouseFormType = 'stedi' | 'change_healthcare' | 'availity' | 'trizetto' | 'waystar' | 'custom';
 
 interface Clearinghouse {
   id: string;
@@ -74,7 +75,7 @@ export default function ClaimsManagementPage() {
   const [editingClearinghouse, setEditingClearinghouse] = useState<Clearinghouse | null>(null);
   const [clearinghouseForm, setClearinghouseForm] = useState({
     name: '',
-    type: 'change_healthcare' as const,
+    type: 'stedi' as ClearinghouseFormType,
     apiEndpoint: '',
     submissionFormat: '837P',
     submissionMethod: 'api',
@@ -212,7 +213,7 @@ export default function ClaimsManagementPage() {
       setEditingClearinghouse(null);
       setClearinghouseForm({
         name: '',
-        type: 'change_healthcare',
+        type: 'stedi',
         apiEndpoint: '',
         submissionFormat: '837P',
         submissionMethod: 'api',
@@ -257,7 +258,7 @@ export default function ClaimsManagementPage() {
     setEditingClearinghouse(ch);
     setClearinghouseForm({
       name: ch.name,
-      type: ch.type as 'change_healthcare' | 'availity' | 'trizetto' | 'waystar' | 'custom',
+      type: ch.type as ClearinghouseFormType,
       apiEndpoint: ch.apiEndpoint || '',
       submissionFormat: ch.submissionFormat,
       submissionMethod: ch.submissionMethod,
@@ -513,7 +514,7 @@ export default function ClaimsManagementPage() {
                   setEditingClearinghouse(null);
                   setClearinghouseForm({
                     name: '',
-                    type: 'change_healthcare',
+                    type: 'stedi',
                     apiEndpoint: '',
                     submissionFormat: '837P',
                     submissionMethod: 'api',
@@ -627,10 +628,11 @@ export default function ClaimsManagementPage() {
                   value={clearinghouseForm.type}
                   onChange={(e) => setClearinghouseForm({
                     ...clearinghouseForm,
-                    type: e.target.value as 'change_healthcare' | 'availity' | 'trizetto' | 'waystar' | 'custom'
+                    type: e.target.value as ClearinghouseFormType
                   })}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                 >
+                  <option value="stedi">Stedi</option>
                   <option value="change_healthcare">Change Healthcare</option>
                   <option value="availity">Availity</option>
                   <option value="trizetto">Trizetto</option>

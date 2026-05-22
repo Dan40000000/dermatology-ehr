@@ -466,7 +466,7 @@ export class IntegrationService {
       const adapterUseMock = this.resolveAdapterMockMode(config);
       const adapter = createClearinghouseAdapter(
         this.tenantId,
-        config?.provider || 'change_healthcare',
+        config?.provider || 'stedi',
         adapterUseMock
       );
       if (config) {
@@ -609,8 +609,8 @@ export class IntegrationService {
 
   private getDefaultProvider(type: IntegrationType): string {
     const defaults: Record<IntegrationType, string> = {
-      clearinghouse: 'change_healthcare',
-      eligibility: 'availity',
+      clearinghouse: 'stedi',
+      eligibility: 'stedi',
       eprescribe: 'surescripts',
       lab: 'labcorp',
       payment: 'stripe',
@@ -627,6 +627,16 @@ export class IntegrationService {
 
     if (!config) {
       return true;
+    }
+
+    if (config.integrationType === 'eligibility' && config.provider === 'stedi') {
+      const mode = String(
+        config.config?.environment || config.config?.mode || ''
+      )
+        .trim()
+        .toLowerCase();
+
+      return mode === 'mock' || config.config?.useMock === true;
     }
 
     const configuredEnvironment = String(

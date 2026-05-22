@@ -1673,7 +1673,7 @@ export interface CartItem extends Product {
 }
 
 // Clearinghouse Types
-export type ClearinghouseType = 'change_healthcare' | 'availity' | 'trizetto' | 'waystar' | 'custom';
+export type ClearinghouseType = 'stedi' | 'change_healthcare' | 'availity' | 'trizetto' | 'waystar' | 'custom';
 export type ClearinghouseSubmissionFormat = '837P' | '837I' | 'CMS1500' | 'UB04';
 export type ClearinghouseSubmissionMethod = 'api' | 'sftp' | 'direct';
 export type ClaimSubmissionStatus =

@@ -2,7 +2,7 @@
  * Insurance Eligibility Adapter
  *
  * Handles real-time eligibility verification with clearinghouses
- * (Availity, Change Healthcare, etc.) using 270/271 transactions.
+ * (Stedi, Availity, Change Healthcare, etc.) using 270/271 transactions.
  */
 
 import crypto from 'crypto';
@@ -155,7 +155,19 @@ function normalizeDate(value: unknown): string | undefined {
   const raw = typeof value === 'string' ? value : value instanceof Date ? value.toISOString() : String(value);
   if (!raw.trim()) return undefined;
   const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match?.[1] || undefined;
+  if (match?.[1]) return match[1];
+
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  }
+
+  return undefined;
+}
+
+function formatStediDate(value: unknown): string | undefined {
+  const normalized = normalizeDate(value);
+  return normalized ? normalized.replace(/-/g, '') : undefined;
 }
 
 function normalizeMoney(value: unknown, amountUnit: 'dollars' | 'cents'): number | undefined {
@@ -326,11 +338,17 @@ export class EligibilityAdapter extends BaseAdapter {
 
     const startTime = Date.now();
     try {
-      await this.fetchAvailityAccessToken();
+      if (this.provider === 'stedi') {
+        await this.testStediConnection();
+      } else {
+        await this.fetchAvailityAccessToken();
+      }
 
       await this.logIntegration({
         direction: 'outbound',
-        endpoint: `${this.getTokenPath()}`,
+        endpoint: this.provider === 'stedi'
+          ? `${this.getBaseUrl()}${this.getStediEligibilityPath()}`
+          : `${this.getTokenPath()}`,
         method: 'POST',
         status: 'success',
         durationMs: Date.now() - startTime,
@@ -689,6 +707,11 @@ export class EligibilityAdapter extends BaseAdapter {
     request: EligibilityRequest,
     requestId: string
   ): Promise<EligibilityResponse> {
+    if (this.provider === 'stedi') {
+      const stediResponse = await this.requestStediEligibility(request);
+      return this.parseStediEligibilityResponse(stediResponse, request, requestId);
+    }
+
     if (this.provider !== 'availity') {
       throw new Error(`Unsupported live eligibility provider: ${this.provider}`);
     }
@@ -746,6 +769,14 @@ export class EligibilityAdapter extends BaseAdapter {
   }
 
   private getBaseUrl(): string {
+    if (this.provider === 'stedi') {
+      return String(
+        this.config?.config?.baseUrl ||
+        process.env.STEDI_API_BASE_URL ||
+        'https://healthcare.us.stedi.com/2024-04-01'
+      ).replace(/\/+$/, '');
+    }
+
     return String(this.config?.config?.baseUrl || 'https://api.availity.com').replace(/\/+$/, '');
   }
 
@@ -755,6 +786,14 @@ export class EligibilityAdapter extends BaseAdapter {
 
   private getCoveragesPath(): string {
     return String(this.config?.config?.coveragesPath || '/v1/coverages');
+  }
+
+  private getStediEligibilityPath(): string {
+    return String(
+      this.config?.config?.eligibilityPath ||
+      process.env.STEDI_ELIGIBILITY_PATH ||
+      '/change/medicalnetwork/eligibility/v3'
+    );
   }
 
   private getAmountUnit(): 'dollars' | 'cents' {
@@ -779,6 +818,174 @@ export class EligibilityAdapter extends BaseAdapter {
       return configured.trim();
     }
     return undefined;
+  }
+
+  private getStediApiKey(): string {
+    const credentials = this.getCredentials();
+    const apiKey = firstNonEmptyString(
+      credentials.apiKey,
+      credentials.api_key,
+      credentials.stediApiKey,
+      process.env.STEDI_API_KEY
+    );
+
+    if (!apiKey) {
+      throw new Error('Missing Stedi API key');
+    }
+
+    return apiKey;
+  }
+
+  private getStediProvider(): Record<string, string> {
+    const config = this.config?.config || {};
+    const configuredProvider = config.provider && typeof config.provider === 'object'
+      ? config.provider
+      : {};
+
+    const provider: Record<string, string> = {};
+    const organizationName = firstNonEmptyString(
+      configuredProvider.organizationName,
+      config.providerOrganizationName,
+      config.organizationName,
+      'Dermatology Test Clinic'
+    );
+    const providerNpi = firstNonEmptyString(
+      configuredProvider.npi,
+      config.providerNpi
+    );
+    const firstName = firstNonEmptyString(configuredProvider.firstName, config.providerFirstName);
+    const lastName = firstNonEmptyString(configuredProvider.lastName, config.providerLastName);
+    const taxId = firstNonEmptyString(configuredProvider.taxId, config.providerTaxId);
+
+    if (organizationName) provider.organizationName = organizationName;
+    if (providerNpi) provider.npi = providerNpi;
+    if (!organizationName && firstName && lastName) {
+      provider.firstName = firstName;
+      provider.lastName = lastName;
+    }
+    if (taxId) provider.taxId = taxId;
+
+    return provider;
+  }
+
+  private buildStediEligibilityBody(request: EligibilityRequest): Record<string, any> {
+    const config = this.config?.config || {};
+    const serviceType = request.serviceType || config.defaultServiceType || '30';
+    const serviceDate = formatStediDate(request.serviceDate);
+
+    const body: Record<string, any> = {
+      externalPatientId: request.patientId.substring(0, 36),
+      tradingPartnerServiceId: request.payerId,
+      provider: this.getStediProvider(),
+      subscriber: {
+        memberId: request.memberId,
+        firstName: request.patientFirstName,
+        lastName: request.patientLastName,
+        dateOfBirth: formatStediDate(request.patientDob),
+      },
+      encounter: {
+        serviceTypeCodes: Array.isArray(serviceType) ? serviceType : [String(serviceType)],
+      },
+    };
+
+    const tradingPartnerName = firstNonEmptyString(config.tradingPartnerName, config.payerName);
+    if (tradingPartnerName) {
+      body.tradingPartnerName = tradingPartnerName;
+    }
+
+    if (serviceDate) {
+      body.encounter.dateOfService = serviceDate;
+    }
+
+    return body;
+  }
+
+  private buildStediConnectionTestBody(): Record<string, any> {
+    const configured = this.config?.config?.testRequest;
+    if (configured && typeof configured === 'object' && !Array.isArray(configured)) {
+      return configured;
+    }
+
+    return {
+      encounter: {
+        serviceTypeCodes: ['30'],
+      },
+      externalPatientId: 'STEDI-TEST-PATIENT',
+      provider: {
+        npi: '1999999984',
+        organizationName: 'Provider Name',
+      },
+      subscriber: {
+        firstName: 'John',
+        lastName: 'Doe',
+        memberId: 'AETNA9wcSu',
+      },
+      dependents: [
+        {
+          firstName: 'Jordan',
+          lastName: 'Doe',
+          dateOfBirth: '20010714',
+        },
+      ],
+      tradingPartnerServiceId: '60054',
+    };
+  }
+
+  private isStediTestMode(): boolean {
+    const mode = String(
+      this.config?.config?.environment ||
+      this.config?.config?.mode ||
+      ''
+    ).trim().toLowerCase();
+
+    return mode === 'test' || mode === 'sandbox';
+  }
+
+  private async testStediConnection(): Promise<void> {
+    if (!this.isStediTestMode()) {
+      this.getStediApiKey();
+      return;
+    }
+
+    await this.postStediEligibility(this.buildStediConnectionTestBody());
+  }
+
+  private async requestStediEligibility(request: EligibilityRequest): Promise<any> {
+    const useApprovedMockRequest = this.isStediTestMode() &&
+      this.config?.config?.useApprovedMockRequestForEligibility !== false;
+    const body = useApprovedMockRequest
+      ? this.buildStediConnectionTestBody()
+      : this.buildStediEligibilityBody(request);
+
+    return this.postStediEligibility(body);
+  }
+
+  private async postStediEligibility(body: Record<string, any>): Promise<any> {
+    const endpoint = `${this.getBaseUrl()}${this.getStediEligibilityPath()}`;
+    const apiKey = this.getStediApiKey();
+    const authorization = /^(key|bearer)\s+/i.test(apiKey) ? apiKey : `Key ${apiKey}`;
+    const headers: Record<string, string> = {
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+
+    if (this.config?.config?.sendStediTestHeader === true) {
+      headers['stedi-test'] = 'true';
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Stedi eligibility request failed: ${response.status} ${errorText}`);
+    }
+
+    return response.json();
   }
 
   private async fetchAvailityAccessToken(): Promise<string> {
@@ -1098,6 +1305,243 @@ export class EligibilityAdapter extends BaseAdapter {
       },
       messages,
       rawResponse,
+    };
+  }
+
+  private parseStediEligibilityResponse(
+    rawResponse: any,
+    request: EligibilityRequest,
+    requestId: string
+  ): EligibilityResponse {
+    const benefits = Array.isArray(rawResponse?.benefitsInformation)
+      ? rawResponse.benefitsInformation
+      : [];
+    const errors = [
+      ...(Array.isArray(rawResponse?.errors) ? rawResponse.errors : []),
+      ...(Array.isArray(rawResponse?.payer?.aaaErrors) ? rawResponse.payer.aaaErrors : []),
+      ...(Array.isArray(rawResponse?.subscriber?.aaaErrors) ? rawResponse.subscriber.aaaErrors : []),
+    ];
+    const warnings = Array.isArray(rawResponse?.warnings) ? rawResponse.warnings : [];
+
+    const hasActiveCoverage = benefits.some((benefit: any) =>
+      String(benefit?.code || '').trim() === '1' ||
+      String(benefit?.name || '').toLowerCase().includes('active coverage')
+    );
+    const hasInactiveCoverage = benefits.some((benefit: any) =>
+      String(benefit?.code || '').trim() === '6' ||
+      String(benefit?.name || '').toLowerCase().includes('inactive')
+    );
+    const coverageStatus: 'active' | 'inactive' | 'unknown' | 'error' = errors.length > 0
+      ? 'error'
+      : hasActiveCoverage
+        ? 'active'
+        : hasInactiveCoverage
+          ? 'inactive'
+          : 'unknown';
+
+    const subscriber = rawResponse?.subscriber || {};
+    const mapTestResponseToRequestedPatient = this.isStediTestMode() &&
+      this.config?.config?.mapTestResponseToRequestedPatient !== false;
+    const planInfo = rawResponse?.planInformation || {};
+    const planDates = rawResponse?.planDateInformation || {};
+    const activeBenefit = benefits.find((benefit: any) =>
+      String(benefit?.code || '').trim() === '1' ||
+      String(benefit?.name || '').toLowerCase().includes('active coverage')
+    );
+
+    const individualInNetworkDeductible = this.findStediBenefit(benefits, {
+      code: 'C',
+      coverageLevelCode: 'IND',
+      inPlanNetworkIndicatorCode: 'Y',
+    }) || this.findStediBenefit(benefits, { code: 'C', coverageLevelCode: 'IND' });
+    const familyInNetworkDeductible = this.findStediBenefit(benefits, {
+      code: 'C',
+      coverageLevelCode: 'FAM',
+      inPlanNetworkIndicatorCode: 'Y',
+    }) || this.findStediBenefit(benefits, { code: 'C', coverageLevelCode: 'FAM' });
+    const individualInNetworkOop = this.findStediBenefit(benefits, {
+      code: 'G',
+      coverageLevelCode: 'IND',
+      inPlanNetworkIndicatorCode: 'Y',
+    }) || this.findStediBenefit(benefits, { code: 'G', coverageLevelCode: 'IND' });
+    const familyInNetworkOop = this.findStediBenefit(benefits, {
+      code: 'G',
+      coverageLevelCode: 'FAM',
+      inPlanNetworkIndicatorCode: 'Y',
+    }) || this.findStediBenefit(benefits, { code: 'G', coverageLevelCode: 'FAM' });
+    const copay = this.findStediCopay(benefits);
+    const coinsurance = this.findStediBenefit(benefits, {
+      code: 'A',
+      coverageLevelCode: 'IND',
+      inPlanNetworkIndicatorCode: 'Y',
+    }) || this.findStediBenefit(benefits, { code: 'A', coverageLevelCode: 'IND' });
+
+    const priorAuthBenefits = benefits.filter((benefit: any) =>
+      String(benefit?.authOrCertIndicator || '').trim().toUpperCase() === 'Y'
+    );
+
+    const messages = [
+      ...errors.map((item: any) => ({
+        type: 'error' as const,
+        message: firstNonEmptyString(item?.message, item?.description, item?.followupAction, item?.code) || 'Stedi eligibility error',
+      })),
+      ...warnings.map((item: any) => ({
+        type: 'warning' as const,
+        message: firstNonEmptyString(item?.message, item?.description, item?.code) || 'Stedi eligibility warning',
+      })),
+    ];
+
+    return {
+      success: coverageStatus !== 'error' && coverageStatus !== 'unknown',
+      requestId: rawResponse?.id || requestId,
+      status: coverageStatus,
+      payer: {
+        payerId: firstNonEmptyString(rawResponse?.tradingPartnerServiceId, request.payerId) || request.payerId,
+        payerName: firstNonEmptyString(rawResponse?.payer?.name, rawResponse?.payer?.payorIdentification, request.payerId) || request.payerId,
+      },
+      patient: {
+        memberId: mapTestResponseToRequestedPatient
+          ? request.memberId
+          : firstNonEmptyString(subscriber.memberId, planInfo.memberId, request.memberId) || request.memberId,
+        firstName: mapTestResponseToRequestedPatient
+          ? request.patientFirstName
+          : firstNonEmptyString(subscriber.firstName, request.patientFirstName) || request.patientFirstName,
+        lastName: mapTestResponseToRequestedPatient
+          ? request.patientLastName
+          : firstNonEmptyString(subscriber.lastName, request.patientLastName) || request.patientLastName,
+        dob: mapTestResponseToRequestedPatient
+          ? request.patientDob
+          : normalizeDate(subscriber.dateOfBirth) || request.patientDob,
+        groupNumber: firstNonEmptyString(subscriber.groupNumber, planInfo.groupNumber, planInfo.policyNumber),
+      },
+      subscriber: {
+        firstName: mapTestResponseToRequestedPatient
+          ? request.patientFirstName
+          : firstNonEmptyString(subscriber.firstName, request.patientFirstName) || request.patientFirstName,
+        lastName: mapTestResponseToRequestedPatient
+          ? request.patientLastName
+          : firstNonEmptyString(subscriber.lastName, request.patientLastName) || request.patientLastName,
+        dob: mapTestResponseToRequestedPatient
+          ? request.patientDob
+          : normalizeDate(subscriber.dateOfBirth) || request.patientDob,
+        relationship: firstNonEmptyString(subscriber.relationToSubscriber, subscriber.relationToSubscriberCode, 'self') || 'self',
+      },
+      coverage: {
+        status: coverageStatus === 'error' ? 'unknown' : coverageStatus,
+        effectiveDate: normalizeDate(planDates.planBegin || planDates.eligibilityBegin || planDates.policyEffective || planDates.plan),
+        terminationDate: normalizeDate(planDates.planEnd || planDates.eligibilityEnd || planDates.policyExpiration),
+        planName: firstNonEmptyString(
+          activeBenefit?.planCoverage,
+          subscriber.planDescription,
+          planInfo.planDescription,
+          planInfo.groupDescription,
+          planInfo.planNetworkIdDescription
+        ),
+        planType: firstNonEmptyString(activeBenefit?.insuranceType, activeBenefit?.insuranceTypeCode),
+        coverageLevel: firstNonEmptyString(activeBenefit?.coverageLevel, activeBenefit?.coverageLevelCode),
+      },
+      benefits: {
+        copays: {
+          specialist: this.normalizeStediBenefitAmount(copay),
+        },
+        deductible: {
+          individual: this.buildStediMoneySummary(individualInNetworkDeductible),
+          family: this.buildStediMoneySummary(familyInNetworkDeductible),
+        },
+        coinsurance: this.buildStediCoinsurance(coinsurance),
+        outOfPocketMax: {
+          individual: this.buildStediMoneySummary(individualInNetworkOop),
+          family: this.buildStediMoneySummary(familyInNetworkOop),
+        },
+        priorAuth: {
+          required: priorAuthBenefits.length > 0,
+          services: priorAuthBenefits.flatMap((benefit: any) =>
+            Array.isArray(benefit?.serviceTypes) ? benefit.serviceTypes.map(String) : []
+          ),
+        },
+        referral: {
+          required: benefits.some((benefit: any) =>
+            this.stediBenefitAdditionalText(benefit).toLowerCase().includes('referral')
+          ),
+        },
+      },
+      network: {
+        inNetwork: benefits.some((benefit: any) => String(benefit?.inPlanNetworkIndicatorCode || '').toUpperCase() === 'Y') ||
+          !benefits.some((benefit: any) => String(benefit?.inPlanNetworkIndicatorCode || '').toUpperCase() === 'N'),
+        networkName: firstNonEmptyString(subscriber.planNetworkDescription, planInfo.planNetworkIdDescription),
+      },
+      messages,
+      rawResponse,
+    };
+  }
+
+  private findStediBenefit(
+    benefits: any[],
+    filters: {
+      code?: string;
+      coverageLevelCode?: string;
+      inPlanNetworkIndicatorCode?: string;
+    }
+  ): any | undefined {
+    return benefits.find((benefit: any) => {
+      if (filters.code && String(benefit?.code || '').trim() !== filters.code) return false;
+      if (filters.coverageLevelCode && String(benefit?.coverageLevelCode || '').trim() !== filters.coverageLevelCode) return false;
+      if (filters.inPlanNetworkIndicatorCode && String(benefit?.inPlanNetworkIndicatorCode || '').trim() !== filters.inPlanNetworkIndicatorCode) return false;
+      return true;
+    });
+  }
+
+  private findStediCopay(benefits: any[]): any | undefined {
+    const inNetworkCopays = benefits.filter((benefit: any) =>
+      String(benefit?.code || '').trim() === 'B' &&
+      String(benefit?.inPlanNetworkIndicatorCode || '').trim() !== 'N'
+    );
+
+    return inNetworkCopays.find((benefit: any) => {
+      const haystack = [
+        benefit?.name,
+        ...(Array.isArray(benefit?.serviceTypes) ? benefit.serviceTypes : []),
+        this.stediBenefitAdditionalText(benefit),
+      ].join(' ').toLowerCase();
+
+      return haystack.includes('specialist') ||
+        haystack.includes('physician') ||
+        haystack.includes('office') ||
+        haystack.includes('professional');
+    }) || inNetworkCopays[0];
+  }
+
+  private stediBenefitAdditionalText(benefit: any): string {
+    const additional = [
+      ...(Array.isArray(benefit?.additionalInformation) ? benefit.additionalInformation : []),
+      ...(Array.isArray(benefit?.eligibilityAdditionalInformationList) ? benefit.eligibilityAdditionalInformationList : []),
+    ];
+
+    return additional
+      .map((item: any) => firstNonEmptyString(item?.description, item?.industry, item?.industryCode))
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  private normalizeStediBenefitAmount(benefit: any): number | undefined {
+    return normalizeMoney(benefit?.benefitAmount, 'dollars');
+  }
+
+  private buildStediMoneySummary(benefit: any): { total: number; met: number; remaining: number } | undefined {
+    const total = this.normalizeStediBenefitAmount(benefit);
+    if (total === undefined) return undefined;
+    return {
+      total,
+      met: 0,
+      remaining: total,
+    };
+  }
+
+  private buildStediCoinsurance(benefit: any): { percentage: number } | undefined {
+    const percent = Number.parseFloat(String(benefit?.benefitPercent || '').trim());
+    if (!Number.isFinite(percent)) return undefined;
+    return {
+      percentage: percent <= 1 ? Math.round(percent * 100) : Math.round(percent),
     };
   }
 }

@@ -78,7 +78,7 @@ const processRemittanceSchema = z.object({
 
 const clearinghouseConfigSchema = z.object({
   name: z.string().min(1).max(100),
-  type: z.enum(["change_healthcare", "availity", "trizetto", "waystar", "custom"]),
+  type: z.enum(["stedi", "change_healthcare", "availity", "trizetto", "waystar", "custom"]),
   isActive: z.boolean().default(true),
   isDefault: z.boolean().default(false),
   apiEndpoint: z.string().url().optional(),

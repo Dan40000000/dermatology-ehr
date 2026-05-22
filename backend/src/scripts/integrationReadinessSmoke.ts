@@ -406,14 +406,14 @@ async function evaluateDatabaseChecks(env: NodeJS.ProcessEnv): Promise<SmokeChec
         `SELECT provider, COUNT(*)::int AS count
          FROM integration_configs
          WHERE is_active = true
-           AND provider IN ('surescripts', 'availity', 'change_healthcare', 'trizetto', 'waystar')
+           AND provider IN ('surescripts', 'stedi', 'availity', 'change_healthcare', 'trizetto', 'waystar')
          GROUP BY provider
          ORDER BY provider`
       );
       const providerCounts = providerCountsResult.rows as Array<{ provider: string; count: number }>;
       const providerLabels = providerCounts.map((row) => `${row.provider}:${row.count}`);
       const hasSurescripts = providerCounts.some((row) => row.provider === 'surescripts');
-      const hasEligibility = providerCounts.some((row) => row.provider === 'availity');
+      const hasEligibility = providerCounts.some((row) => row.provider === 'stedi' || row.provider === 'availity');
 
       checks.push(
         hasSurescripts
@@ -438,14 +438,14 @@ async function evaluateDatabaseChecks(env: NodeJS.ProcessEnv): Promise<SmokeChec
               'db:eligibility-config',
               'pass',
               'Eligibility integration config',
-              `Active Availity integration config present (${providerLabels.join(', ')}).`
+              `Active Stedi/Availity eligibility integration config present (${providerLabels.join(', ')}).`
             )
           : check(
               'db:eligibility-config',
               'warn',
               'Eligibility integration config',
-              'No active Availity integration config found in integration_configs.',
-              'Create an active provider=availity integration config when subscription is live.'
+              'No active Stedi or Availity integration config found in integration_configs.',
+              'Create an active provider=stedi eligibility integration config when the Stedi test API key is ready.'
             )
       );
     }

@@ -333,7 +333,9 @@ const navItems: NavItem[] = [
       { label: 'Denied', path: '/claims?status=denied', section: 'Claims', module: 'claims' },
       { label: 'Dashboard', path: '/clearinghouse', section: 'Clearinghouse', module: 'clearinghouse' },
       { label: 'Submissions', path: '/clearinghouse?tab=submissions', section: 'Clearinghouse', module: 'clearinghouse' },
-      { label: 'Responses', path: '/clearinghouse?tab=responses', section: 'Clearinghouse', module: 'clearinghouse' },
+      { label: 'ERA', path: '/clearinghouse?tab=era', section: 'Clearinghouse', module: 'clearinghouse' },
+      { label: 'EFT', path: '/clearinghouse?tab=eft', section: 'Clearinghouse', module: 'clearinghouse' },
+      { label: 'Reconciliation', path: '/clearinghouse?tab=reconciliation', section: 'Clearinghouse', module: 'clearinghouse' },
     ]
   },
   {

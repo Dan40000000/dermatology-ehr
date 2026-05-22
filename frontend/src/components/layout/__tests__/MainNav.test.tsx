@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { act } from 'react';
 import { MainNav } from '../MainNav';
 
 let mockRole = 'admin';
@@ -77,6 +78,26 @@ describe('MainNav role-based visibility', () => {
     expect(screen.getByText('Claims / Clearinghouse')).toBeInTheDocument();
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+  });
+
+  it('links clearinghouse submenu directly to ERA, EFT, and reconciliation tabs', async () => {
+    mockRole = 'billing';
+    renderNav();
+
+    const claimsMenuLink = screen.getByRole('link', { name: /Claims \/ Clearinghouse/ });
+    const claimsMenuItem = claimsMenuLink.closest('.ema-nav-item');
+    expect(claimsMenuItem).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.mouseEnter(claimsMenuItem!);
+    });
+
+    expect(screen.getByRole('menuitem', { name: 'ERA' })).toHaveAttribute('href', '/clearinghouse?tab=era');
+    expect(screen.getByRole('menuitem', { name: 'EFT' })).toHaveAttribute('href', '/clearinghouse?tab=eft');
+    expect(screen.getByRole('menuitem', { name: 'Reconciliation' })).toHaveAttribute(
+      'href',
+      '/clearinghouse?tab=reconciliation',
+    );
   });
 
   it('does not fetch unread mail count for roles without mail access', () => {

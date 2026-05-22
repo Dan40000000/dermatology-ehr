@@ -1716,6 +1716,33 @@ const authedGet = async (tenantId: string, accessToken: string, path: string) =>
   return res.json();
 };
 
+export type ExternalIntegrationType =
+  | "clearinghouse"
+  | "eligibility"
+  | "eprescribe"
+  | "lab"
+  | "payment"
+  | "fax"
+  | "ambient_transcription";
+
+export interface ExternalIntegrationStatus {
+  type: ExternalIntegrationType;
+  provider: string;
+  isConfigured: boolean;
+  isActive: boolean;
+  syncFrequencyMinutes?: number;
+  connectionStatus: "connected" | "disconnected" | "error" | "unknown";
+  lastError?: string;
+}
+
+export async function fetchExternalIntegrationStatus(
+  tenantId: string,
+  accessToken: string,
+  type: ExternalIntegrationType
+): Promise<{ integration: ExternalIntegrationStatus }> {
+  return authedGet(tenantId, accessToken, `/api/external-integrations/${type}`);
+}
+
 const authedPost = async (tenantId: string, accessToken: string, path: string, body: any) => {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",

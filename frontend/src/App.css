@@ -7359,6 +7359,59 @@ pre {
   font-weight: 500;
 }
 
+.claims-page .claims-insurance-sync {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+
+.claims-page .claims-sync-items {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(105px, 1fr));
+  gap: 0.65rem;
+  flex: 1;
+}
+
+.claims-page .claims-sync-item {
+  min-height: 4rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.claims-page .claims-sync-item.warning {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.claims-page .claims-sync-item span,
+.claims-page .claims-sync-item strong {
+  display: block;
+}
+
+.claims-page .claims-sync-item span {
+  margin-bottom: 0.35rem;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.claims-page .claims-sync-item strong {
+  color: #0f172a;
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
 .claims-page .claims-kpis {
   margin-bottom: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
@@ -7658,6 +7711,13 @@ pre {
   color: var(--gray-700);
 }
 
+.claims-page .claims-eligibility-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 9.5rem;
+}
+
 .claims-page .claims-status-pill {
   font-size: 0.75rem;
   letter-spacing: 0.01em;
@@ -7804,6 +7864,14 @@ pre {
   .claims-page .claims-followup-grid,
   .claims-page .claims-payments-grid {
     grid-template-columns: 1fr;
+  }
+
+  .claims-page .claims-insurance-sync {
+    flex-direction: column;
+  }
+
+  .claims-page .claims-sync-items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

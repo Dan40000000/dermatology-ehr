@@ -4,9 +4,11 @@ import { externalIntegrationsRouter } from '../externalIntegrations';
 
 const configureIntegrationMock = jest.fn();
 const testConnectionMock = jest.fn();
+const getIntegrationTypeStatusMock = jest.fn();
 const getIntegrationServiceMock = jest.fn(() => ({
   configureIntegration: configureIntegrationMock,
   testConnection: testConnectionMock,
+  getIntegrationTypeStatus: getIntegrationTypeStatusMock,
 }));
 const auditLogMock = jest.fn();
 
@@ -37,14 +39,34 @@ app.use('/api/external-integrations', externalIntegrationsRouter);
 beforeEach(() => {
   configureIntegrationMock.mockReset();
   testConnectionMock.mockReset();
+  getIntegrationTypeStatusMock.mockReset();
   getIntegrationServiceMock.mockClear();
   auditLogMock.mockReset();
 
   configureIntegrationMock.mockResolvedValue({ configId: 'cfg-1' });
   testConnectionMock.mockResolvedValue({ success: true, message: 'Connected to Stripe (mock mode)' });
+  getIntegrationTypeStatusMock.mockResolvedValue({
+    type: 'eligibility',
+    provider: 'stedi',
+    isConfigured: true,
+    isActive: true,
+    connectionStatus: 'connected',
+  });
 });
 
 describe('External integrations Stripe setup routes', () => {
+  it('GET /api/external-integrations/eligibility returns read-only connection status', async () => {
+    const response = await request(app).get('/api/external-integrations/eligibility');
+
+    expect(response.status).toBe(200);
+    expect(response.body.integration).toMatchObject({
+      type: 'eligibility',
+      provider: 'stedi',
+      connectionStatus: 'connected',
+    });
+    expect(getIntegrationTypeStatusMock).toHaveBeenCalledWith('eligibility');
+  });
+
   it('POST /api/external-integrations/payments/stripe/configure rejects invalid key formats', async () => {
     const response = await request(app)
       .post('/api/external-integrations/payments/stripe/configure')

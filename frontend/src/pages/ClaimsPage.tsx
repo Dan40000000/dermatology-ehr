@@ -11,7 +11,9 @@ import {
   fetchPatients,
   fetchClaimMetrics,
   releaseClaimFromCodingReview,
+  fetchExternalIntegrationStatus,
 } from '../api';
+import type { ExternalIntegrationStatus } from '../api';
 import type { Claim, ClaimWithDetails, ClaimStatus, Patient } from '../types';
 
 type ActiveTab = 'claims' | 'payments';
@@ -56,6 +58,14 @@ interface ClaimRecord {
   codingReviewStatus?: string;
   codingReviewedAt?: string;
   codingReviewNotes?: string;
+  eligibilityStatus?: string;
+  eligibilityVerifiedAt?: string;
+  eligibilityPayerName?: string;
+  eligibilityHasIssues?: boolean;
+  eligibilityIssueNotes?: string;
+  eligibilitySource?: string;
+  eligibilityCopayCents?: number;
+  eligibilityDeductibleRemainingCents?: number;
 }
 
 interface AgingBucket {
@@ -535,6 +545,48 @@ function getStatusColor(status: ClaimUiStatus): string {
   }
 }
 
+function normalizeEligibilityStatus(status?: string): string {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (!normalized) return 'Not checked';
+  if (normalized === 'active') return 'Active';
+  if (normalized === 'inactive') return 'Inactive';
+  if (normalized === 'error') return 'Error';
+  if (normalized === 'pending') return 'Pending';
+  if (normalized === 'unknown') return 'Unknown';
+  return normalized.replace(/_/g, ' ');
+}
+
+function getEligibilityColor(claim: ClaimRecord): string {
+  const status = String(claim.eligibilityStatus || '').toLowerCase();
+  if (claim.eligibilityHasIssues || status === 'inactive' || status === 'error') return 'red';
+  if (status === 'active') return 'green';
+  if (status === 'pending' || status === 'unknown') return 'yellow';
+  return 'gray';
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) return 'not checked';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'not checked';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatConnectionStatus(integration?: ExternalIntegrationStatus | null): string {
+  if (!integration) return 'Unavailable';
+  const provider = integration.provider ? integration.provider.replace(/_/g, ' ') : 'Not configured';
+  const status = integration.connectionStatus === 'connected'
+    ? 'connected'
+    : integration.isActive
+      ? integration.connectionStatus
+      : 'inactive';
+  return `${provider} ${status}`;
+}
+
 function normalizeClaimRecord(raw: Record<string, unknown>, patients: Patient[]): ClaimRecord {
   const id = String(raw.id || '');
   const patientId = String(raw.patientId || raw.patient_id || '');
@@ -559,6 +611,18 @@ function normalizeClaimRecord(raw: Record<string, unknown>, patients: Patient[])
   const codingReviewStatus = raw.codingReviewStatus ? String(raw.codingReviewStatus) : undefined;
   const codingReviewedAt = raw.codingReviewedAt ? String(raw.codingReviewedAt) : undefined;
   const codingReviewNotes = raw.codingReviewNotes ? String(raw.codingReviewNotes) : undefined;
+  const eligibilityStatus = raw.eligibilityStatus ? String(raw.eligibilityStatus) : undefined;
+  const eligibilityVerifiedAt = raw.eligibilityVerifiedAt ? String(raw.eligibilityVerifiedAt) : undefined;
+  const eligibilityPayerName = raw.eligibilityPayerName ? String(raw.eligibilityPayerName) : undefined;
+  const eligibilityHasIssues = raw.eligibilityHasIssues === true || raw.eligibilityHasIssues === 'true';
+  const eligibilityIssueNotes = raw.eligibilityIssueNotes ? String(raw.eligibilityIssueNotes) : undefined;
+  const eligibilitySource = raw.eligibilitySource ? String(raw.eligibilitySource) : undefined;
+  const eligibilityCopayCents = raw.eligibilityCopayCents == null
+    ? undefined
+    : Math.round(toFiniteNumber(raw.eligibilityCopayCents));
+  const eligibilityDeductibleRemainingCents = raw.eligibilityDeductibleRemainingCents == null
+    ? undefined
+    : Math.round(toFiniteNumber(raw.eligibilityDeductibleRemainingCents));
 
   const joinedName = raw.patientLastName && raw.patientFirstName
     ? `${String(raw.patientLastName)}, ${String(raw.patientFirstName)}`
@@ -589,6 +653,14 @@ function normalizeClaimRecord(raw: Record<string, unknown>, patients: Patient[])
     codingReviewStatus,
     codingReviewedAt,
     codingReviewNotes,
+    eligibilityStatus,
+    eligibilityVerifiedAt,
+    eligibilityPayerName,
+    eligibilityHasIssues,
+    eligibilityIssueNotes,
+    eligibilitySource,
+    eligibilityCopayCents,
+    eligibilityDeductibleRemainingCents,
   };
 }
 
@@ -785,6 +857,8 @@ export function ClaimsPage() {
   const [usingDemoData, setUsingDemoData] = useState(false);
   const [forceDemoData, setForceDemoData] = useState(false);
   const [lastRefreshAt, setLastRefreshAt] = useState<string>('');
+  const [eligibilityIntegration, setEligibilityIntegration] = useState<ExternalIntegrationStatus | null>(null);
+  const [clearinghouseIntegration, setClearinghouseIntegration] = useState<ExternalIntegrationStatus | null>(null);
 
   const [claimDetailsCache, setClaimDetailsCache] = useState<Record<string, ClaimWithDetails>>({});
   const [metricsSnapshot, setMetricsSnapshot] = useState<MetricsSnapshot | null>(null);
@@ -851,6 +925,12 @@ export function ClaimsPage() {
         }),
         fetchPatients(session.tenantId, session.accessToken),
       ]);
+      const [eligibilityStatusRes, clearinghouseStatusRes] = await Promise.all([
+        fetchExternalIntegrationStatus(session.tenantId, session.accessToken, 'eligibility').catch(() => null),
+        fetchExternalIntegrationStatus(session.tenantId, session.accessToken, 'clearinghouse').catch(() => null),
+      ]);
+      setEligibilityIntegration(eligibilityStatusRes?.integration ?? null);
+      setClearinghouseIntegration(clearinghouseStatusRes?.integration ?? null);
 
       const resolvedPatients = (patientsRes.patients || patientsRes.data || []) as Patient[];
       const incomingClaims = Array.isArray(claimsRes.claims) ? claimsRes.claims : [];
@@ -1337,6 +1417,9 @@ export function ClaimsPage() {
   }, [claimDetailsCache, claims]);
 
   const metrics = metricsSnapshot || computeMetrics(filteredClaims);
+  const claimsWithEligibility = claims.filter((claim) => claim.eligibilityVerifiedAt).length;
+  const claimsWithEligibilityIssues = claims.filter((claim) => claim.eligibilityHasIssues).length;
+  const stediBackedClaims = claims.filter((claim) => String(claim.eligibilitySource || '').includes('stedi')).length;
 
   if (loading) {
     return (
@@ -1380,6 +1463,37 @@ export function ClaimsPage() {
           Demo dataset active for claims testing.
         </div>
       )}
+
+      <div className="claims-insurance-sync" aria-label="Insurance data sync status">
+        <div>
+          <div className="claims-section-heading">Insurance Data Sync</div>
+          <div className="muted claims-micro-copy">
+            Claims include the patient&apos;s latest eligibility verification so billing can see coverage context before submission.
+          </div>
+        </div>
+        <div className="claims-sync-items">
+          <div className="claims-sync-item">
+            <span>Eligibility</span>
+            <strong>{formatConnectionStatus(eligibilityIntegration)}</strong>
+          </div>
+          <div className="claims-sync-item">
+            <span>Claims clearinghouse</span>
+            <strong>{formatConnectionStatus(clearinghouseIntegration)}</strong>
+          </div>
+          <div className="claims-sync-item">
+            <span>Verified on claims</span>
+            <strong>{claimsWithEligibility}/{claims.length}</strong>
+          </div>
+          <div className="claims-sync-item">
+            <span>Stedi-backed checks</span>
+            <strong>{stediBackedClaims}</strong>
+          </div>
+          <div className={`claims-sync-item ${claimsWithEligibilityIssues > 0 ? 'warning' : ''}`}>
+            <span>Coverage issues</span>
+            <strong>{claimsWithEligibilityIssues}</strong>
+          </div>
+        </div>
+      </div>
 
       <div className="financial-stats claims-kpis">
         <div className="stat-card">
@@ -1658,6 +1772,7 @@ export function ClaimsPage() {
                     <th>DOS</th>
                     <th>Patient</th>
                     <th>Payer</th>
+                    <th>Eligibility</th>
                     <th>Status</th>
                     <th>Queue</th>
                     <th>Billed</th>
@@ -1671,7 +1786,7 @@ export function ClaimsPage() {
                 <tbody>
                   {filteredClaims.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className="claims-empty-cell">
+                      <td colSpan={13} className="claims-empty-cell">
                         No claims found for the selected filters.
                       </td>
                     </tr>
@@ -1684,6 +1799,20 @@ export function ClaimsPage() {
                           <td className="muted">{new Date(claim.serviceDate || claim.createdAt).toLocaleDateString()}</td>
                           <td>{claim.patientName}</td>
                           <td className="muted">{claim.payer}</td>
+                          <td>
+                            <div className="claims-eligibility-cell">
+                              <span
+                                className={`pill claims-status-pill ${getEligibilityColor(claim)}`}
+                                title={claim.eligibilityIssueNotes || claim.eligibilityPayerName || undefined}
+                              >
+                                {normalizeEligibilityStatus(claim.eligibilityStatus)}
+                              </span>
+                              <span className="muted tiny">
+                                {claim.eligibilitySource ? `${claim.eligibilitySource.replace(/_/g, ' ')} • ` : ''}
+                                {formatDateTime(claim.eligibilityVerifiedAt)}
+                              </span>
+                            </div>
+                          </td>
                           <td>
                             <span className={`pill claims-status-pill ${getStatusColor(claim.status)}`}>{toStatusLabel(claim.status)}</span>
                           </td>

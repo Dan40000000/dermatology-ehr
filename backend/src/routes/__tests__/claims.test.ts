@@ -124,6 +124,10 @@ describe("Claims routes", () => {
     const res = await request(app).get("/claims");
     expect(res.status).toBe(200);
     expect(res.body.claims).toHaveLength(1);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining('iv.verification_status as "eligibilityStatus"'),
+      ["tenant-1"],
+    );
   });
 
   it("GET /claims/:id returns 404 when missing", async () => {

@@ -149,6 +149,17 @@ const sendFaxSchema = z.object({
   priority: z.enum(['normal', 'high']).optional(),
 });
 
+const INTEGRATION_STATUS_ROLES = [
+  'admin',
+  'manager',
+  'billing',
+  'front_desk',
+  'provider',
+  'ma',
+  'nurse',
+  'compliance_officer',
+];
+
 // ============================================================================
 // INTEGRATION CONFIGURATION ROUTES
 // ============================================================================
@@ -232,7 +243,7 @@ router.get('/stats', requireAuth, requireRoles(['admin']), async (req: AuthedReq
  *     summary: Get detailed status of specific integration
  *     tags: [External Integrations]
  */
-router.get(`/${integrationTypePath}`, requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+router.get(`/${integrationTypePath}`, requireAuth, requireRoles(INTEGRATION_STATUS_ROLES), async (req: AuthedRequest, res) => {
   try {
     const type = integrationTypeSchema.parse(req.params.type);
     const service = getIntegrationService(req.user!.tenantId);

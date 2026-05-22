@@ -428,9 +428,18 @@ claimsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       c.appeal_status as "appealStatus",
       c.created_at as "createdAt", c.updated_at as "updatedAt",
       p.first_name as "patientFirstName", p.last_name as "patientLastName",
+      iv.verification_status as "eligibilityStatus",
+      iv.verified_at as "eligibilityVerifiedAt",
+      iv.payer_name as "eligibilityPayerName",
+      iv.has_issues as "eligibilityHasIssues",
+      iv.issue_notes as "eligibilityIssueNotes",
+      iv.verification_source as "eligibilitySource",
+      iv.copay_amount_cents as "eligibilityCopayCents",
+      iv.deductible_remaining_cents as "eligibilityDeductibleRemainingCents",
       pr.full_name as "providerName"
     from claims c
-    join patients p on p.id = c.patient_id
+    join patients p on p.id = c.patient_id and p.tenant_id = c.tenant_id
+    left join insurance_verifications iv on iv.id = p.latest_verification_id and iv.tenant_id = c.tenant_id
     left join encounters e on e.id = c.encounter_id
     left join providers pr on pr.id = e.provider_id
     where c.tenant_id = $1

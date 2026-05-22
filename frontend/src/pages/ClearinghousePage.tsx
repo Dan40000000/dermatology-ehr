@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   fetchClaims,
@@ -10,14 +11,43 @@ import {
   fetchEFTTransactions,
   reconcilePayments,
   fetchClosingReport,
+  fetchExternalIntegrationStatus,
 } from "../api";
+import type { ExternalIntegrationStatus } from "../api";
+
+type ClearinghouseTab = "submit" | "era" | "eft" | "reconcile" | "reports";
+
+const tabParamMap: Record<string, ClearinghouseTab> = {
+  submit: "submit",
+  submissions: "submit",
+  responses: "era",
+  era: "era",
+  eft: "eft",
+  reconcile: "reconcile",
+  reconciliation: "reconcile",
+  reports: "reports",
+};
+
+function formatIntegrationStatus(integration?: ExternalIntegrationStatus | null): string {
+  if (!integration) return "Unavailable";
+  const provider = integration.provider ? integration.provider.replace(/_/g, " ") : "Not configured";
+  const status = integration.connectionStatus === "connected"
+    ? "connected"
+    : integration.isActive
+      ? integration.connectionStatus
+      : "inactive";
+  return `${provider} ${status}`;
+}
 
 export function ClearinghousePage() {
   const { session } = useAuth();
-  const [activeTab, setActiveTab] = useState<"submit" | "era" | "eft" | "reconcile" | "reports">("submit");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<ClearinghouseTab>("submit");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [eligibilityIntegration, setEligibilityIntegration] = useState<ExternalIntegrationStatus | null>(null);
+  const [clearinghouseIntegration, setClearinghouseIntegration] = useState<ExternalIntegrationStatus | null>(null);
 
   // Submit Claims Tab
   const [claims, setClaims] = useState<any[]>([]);
@@ -50,6 +80,32 @@ export function ClearinghousePage() {
   useEffect(() => {
     loadInitialData();
   }, [activeTab]);
+
+  useEffect(() => {
+    const requestedTab = searchParams.get("tab");
+    if (requestedTab && tabParamMap[requestedTab] && tabParamMap[requestedTab] !== activeTab) {
+      setActiveTab(tabParamMap[requestedTab]);
+    }
+  }, [activeTab, searchParams]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    void Promise.all([
+      fetchExternalIntegrationStatus(session.tenantId, session.accessToken, "eligibility").catch(() => null),
+      fetchExternalIntegrationStatus(session.tenantId, session.accessToken, "clearinghouse").catch(() => null),
+    ]).then(([eligibilityStatus, clearinghouseStatus]) => {
+      setEligibilityIntegration(eligibilityStatus?.integration ?? null);
+      setClearinghouseIntegration(clearinghouseStatus?.integration ?? null);
+    });
+  }, [session]);
+
+  const selectTab = (tab: ClearinghouseTab) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", tab);
+    setSearchParams(params);
+  };
 
   const loadInitialData = async () => {
     if (!session) return;
@@ -228,6 +284,39 @@ export function ClearinghousePage() {
         Submit claims, process remittance advice, track payments, and reconcile transactions
       </p>
 
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "0.75rem",
+          marginBottom: "1.5rem",
+        }}
+        aria-label="Insurance connection status"
+      >
+        <div style={{ background: "white", border: "1px solid #d1fae5", borderRadius: "8px", padding: "1rem" }}>
+          <div style={{ color: "#047857", fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase" }}>
+            Eligibility connection
+          </div>
+          <div style={{ color: "#0f172a", fontWeight: 700, marginTop: "0.25rem" }}>
+            {formatIntegrationStatus(eligibilityIntegration)}
+          </div>
+          <div style={{ color: "#64748b", fontSize: "0.82rem", marginTop: "0.35rem" }}>
+            Patient coverage checks and claim context use the latest eligibility verification.
+          </div>
+        </div>
+        <div style={{ background: "white", border: "1px solid #fde68a", borderRadius: "8px", padding: "1rem" }}>
+          <div style={{ color: "#92400e", fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase" }}>
+            Claims clearinghouse
+          </div>
+          <div style={{ color: "#0f172a", fontWeight: 700, marginTop: "0.25rem" }}>
+            {formatIntegrationStatus(clearinghouseIntegration)}
+          </div>
+          <div style={{ color: "#64748b", fontSize: "0.82rem", marginTop: "0.35rem" }}>
+            Claim submission and ERA/EFT workflows are internal test-mode until production payer enrollment is enabled.
+          </div>
+        </div>
+      </div>
+
       {/* Tab Navigation */}
       <div style={{ display: "flex", gap: "0.5rem", borderBottom: "2px solid #e5e7eb", marginBottom: "2rem" }}>
         {[
@@ -239,7 +328,7 @@ export function ClearinghousePage() {
         ].map((tab) => (
           <button
             key={tab.key}
-            onClick={() => setActiveTab(tab.key as any)}
+            onClick={() => selectTab(tab.key as ClearinghouseTab)}
             style={{
               padding: "0.75rem 1.5rem",
               border: "none",

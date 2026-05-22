@@ -3123,7 +3123,7 @@ function handleProviderRoute(
         completedCount: includedAppointments.filter((appointment) => ['completed', 'checked_out'].includes(String(appointment.status || '').toLowerCase())).length,
         waitingCount: includedAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'checked_in').length,
         inRoomsCount: includedAppointments.filter((appointment) => ['in_room', 'with_provider'].includes(String(appointment.status || '').toLowerCase())).length,
-        checkoutCount: includedAppointments.filter((appointment) => ['completed', 'checked_out'].includes(String(appointment.status || '').toLowerCase())).length,
+        checkoutCount: includedAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'checkout').length,
         staleScheduledCount,
         noShowCount: includedAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'no_show').length,
         cancelledCount: dayAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'cancelled').length,

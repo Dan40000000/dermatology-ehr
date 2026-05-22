@@ -942,7 +942,8 @@ export function HomePage() {
 
       const waitingCount = overviewAppointments.filter((a: any) => isCheckedIn(a.status)).length;
       const inRoomsCount = overviewAppointments.filter((a: any) => isInRooms(a.status)).length;
-      const checkoutCount = scopedAppointments.filter((a: any) => isCompletedVisit(a.status)).length;
+      const completedCount = scopedAppointments.filter((a: any) => isCompletedVisit(a.status)).length;
+      const checkoutCount = scopedAppointments.filter((a: any) => normalizeStatus(a.status) === 'checkout').length;
       const noShowCount = scopedAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'no_show').length;
       const cancelledCount = scopedAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'cancelled').length;
       const needsInsuranceVerification = scopedAppointments.filter((a: any) => a.insuranceVerified === false).length;
@@ -1030,7 +1031,7 @@ export function HomePage() {
         appointmentsCount: summaryNumber(totalScheduleCount, summarySchedule?.appointmentsCount),
         activeAppointmentsCount: summaryNumber(scopedAppointments.length, summarySchedule?.activeAppointmentsCount),
         checkedInCount: summaryNumber(waitingCount, summarySchedule?.checkedInCount),
-        completedCount: summaryNumber(checkoutCount, summarySchedule?.completedCount),
+        completedCount: summaryNumber(completedCount, summarySchedule?.completedCount),
         waitingCount: summaryNumber(waitingCount, summarySchedule?.waitingCount),
         inRoomsCount: summaryNumber(inRoomsCount, summarySchedule?.inRoomsCount),
         checkoutCount: summaryNumber(checkoutCount, summarySchedule?.checkoutCount),
@@ -1058,7 +1059,7 @@ export function HomePage() {
         claimsInQueue: summaryNumber(claims.filter(isClaimInQueue).length, summaryClaims?.claimsInQueue),
         claimsDeniedRejected: summaryNumber(claims.filter(isClaimAtRisk).length, summaryClaims?.claimsDeniedRejected),
       };
-      const visitsNeedingClaimReview = Math.max(0, officialScheduleStats.checkoutCount - claimsCreatedToday);
+      const visitsNeedingClaimReview = Math.max(0, officialScheduleStats.completedCount - claimsCreatedToday);
       const revenueCollectionGapCents = Math.max(0, officialFinancialStats.revenueTodayCents - officialFinancialStats.netCollectionsCents);
       const loadedCriticalPathologyCount = biopsyRes?.queues?.critical?.length || 0;
 

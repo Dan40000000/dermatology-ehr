@@ -176,7 +176,7 @@ async function loadScheduleSummary(
        count(*) filter (where status in ('completed', 'checked_out')) as completed_count,
        count(*) filter (where status = 'checked_in') as waiting_count,
        count(*) filter (where status in ('in_room', 'with_provider')) as in_rooms_count,
-       count(*) filter (where status in ('completed', 'checked_out')) as checkout_count,
+       count(*) filter (where status = 'checkout') as checkout_count,
        count(*) filter (
          where status = 'scheduled'
            and coalesce(scheduled_end, scheduled_start) + interval '15 minutes' < $4::timestamptz

@@ -50,7 +50,7 @@ function mockCommandCenterQueries() {
             completed_count: "26",
             waiting_count: "1",
             in_rooms_count: "2",
-            checkout_count: "26",
+            checkout_count: "1",
             stale_scheduled_count: "1",
             no_show_count: "2",
             cancelled_count: "1",
@@ -135,6 +135,7 @@ describe("Command Center routes", () => {
     expect(res.body.businessDate).toBe("2026-05-18");
     expect(res.body.schedule.appointmentsCount).toBe(31);
     expect(res.body.schedule.completedCount).toBe(26);
+    expect(res.body.schedule.checkoutCount).toBe(1);
     expect(res.body.claims.claimsInQueue).toBe(8);
     expect(res.body.claims.claimsDeniedRejected).toBe(3);
     expect(res.body.financials.revenueTodayCents).toBe(410000);
@@ -147,6 +148,8 @@ describe("Command Center routes", () => {
 
     const scheduleSql = String(queryMock.mock.calls.find(([sql]) => String(sql).includes("with day_appointments"))?.[0] || "");
     expect(scheduleSql).toContain("count(*) as appointments_count");
+    expect(scheduleSql).toContain("status = 'checkout') as checkout_count");
+    expect(scheduleSql).not.toContain("status in ('completed', 'checked_out')) as checkout_count");
     expect(scheduleSql).not.toContain("status <> 'cancelled') as appointments_count");
   });
 

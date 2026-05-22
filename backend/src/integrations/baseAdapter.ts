@@ -380,21 +380,46 @@ export async function saveIntegrationConfig(
   credentials?: Record<string, any>
 ): Promise<string> {
   const credentialsEncrypted = credentials ? encryptCredentials(credentials) : null;
+  const syncFrequencyMinutes = Number.isInteger(config.syncFrequencyMinutes)
+    ? config.syncFrequencyMinutes
+    : 60;
+  const client = await pool.connect();
 
-  const result = await pool.query(
-    `INSERT INTO integration_configs
-     (tenant_id, integration_type, provider, config, credentials_encrypted, is_active)
-     VALUES ($1, $2, $3, $4, $5, true)
-     ON CONFLICT (tenant_id, integration_type, provider)
-     DO UPDATE SET
-       config = EXCLUDED.config,
-       credentials_encrypted = COALESCE(EXCLUDED.credentials_encrypted, integration_configs.credentials_encrypted),
-       updated_at = NOW()
-     RETURNING id`,
-    [tenantId, integrationType, provider, JSON.stringify(config), credentialsEncrypted]
-  );
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE integration_configs
+       SET is_active = false, updated_at = NOW()
+       WHERE tenant_id = $1
+         AND integration_type = $2
+         AND provider <> $3
+         AND is_active = true`,
+      [tenantId, integrationType, provider]
+    );
 
-  return result.rows[0].id;
+    const result = await client.query(
+      `INSERT INTO integration_configs
+       (tenant_id, integration_type, provider, config, credentials_encrypted, is_active, sync_frequency_minutes)
+       VALUES ($1, $2, $3, $4, $5, true, $6)
+       ON CONFLICT (tenant_id, integration_type, provider)
+       DO UPDATE SET
+         config = EXCLUDED.config,
+         credentials_encrypted = COALESCE(EXCLUDED.credentials_encrypted, integration_configs.credentials_encrypted),
+         is_active = true,
+         sync_frequency_minutes = EXCLUDED.sync_frequency_minutes,
+         updated_at = NOW()
+       RETURNING id`,
+      [tenantId, integrationType, provider, JSON.stringify(config), credentialsEncrypted, syncFrequencyMinutes]
+    );
+
+    await client.query('COMMIT');
+    return result.rows[0].id;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**

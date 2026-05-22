@@ -72,6 +72,8 @@ describe("Analytics routes", () => {
     queryMock.mockResolvedValueOnce({ rows: [{ status: "scheduled", count: "2" }] });
     const res = await request(app).get("/analytics/status-counts?startDate=2025-01-01&endDate=2025-01-10&providerId=provider-1");
     expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[0][0]).toContain("scheduled_start < ($4::date + interval '1 day')");
+    expect(queryMock.mock.calls[0][1]).toEqual(["tenant-1", "provider-1", "2025-01-01", "2025-01-10"]);
   });
 
   it("GET /analytics/revenue-by-day", async () => {
@@ -189,6 +191,9 @@ describe("Analytics routes", () => {
     expect(res.body.summary.collectionRate).toBe(50);
     expect(res.body.paymentMethods).toHaveLength(1);
     expect(res.body.topProcedures).toHaveLength(1);
+    expect(queryMock.mock.calls[1][0]).toContain("status = 'posted'");
+    expect(queryMock.mock.calls[1][0]).toContain("payment_date < ($3::date + interval '1 day')");
+    expect(queryMock.mock.calls[1][1]).toEqual(["tenant-1", "2025-01-01", "2025-01-31"]);
   });
 
   it("GET /analytics/patients", async () => {

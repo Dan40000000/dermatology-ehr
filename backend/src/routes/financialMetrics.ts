@@ -60,6 +60,29 @@ function logFinancialMetricsError(message: string, error: unknown): void {
   });
 }
 
+function isMissingOptionalFinancialSchemaError(error: unknown): boolean {
+  const code = (error as any)?.code;
+  return code === "42P01" || code === "42703";
+}
+
+async function optionalFinancialQuery<T extends Record<string, any>>(
+  query: string,
+  params: unknown[],
+  fallbackRows: T[],
+): Promise<{ rows: T[] }> {
+  try {
+    return await pool.query(query, params);
+  } catch (error) {
+    if (isMissingOptionalFinancialSchemaError(error)) {
+      logger.warn("Optional financial reporting table or column is unavailable", {
+        error: toSafeErrorMessage(error),
+      });
+      return { rows: fallbackRows };
+    }
+    throw error;
+  }
+}
+
 function isIsoDate(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -1108,14 +1131,22 @@ financialMetricsRouter.get("/bills-summary", requireAuth, async (req: AuthedRequ
 // Get comprehensive RCM dashboard metrics
 financialMetricsRouter.get("/rcm-dashboard", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const { period = 'mtd' } = req.query;
+  const { period = 'mtd', startDate: requestedStartDate, endDate: requestedEndDate } = req.query;
 
   const today = new Date();
   let startDate: Date;
   let endDate = today;
+  const explicitStartDate = parseIsoDateOrNull(requestedStartDate);
+  const explicitEndDate = parseIsoDateOrNull(requestedEndDate);
 
   // Calculate date range based on period
-  if (period === 'mtd') {
+  if (explicitStartDate && explicitEndDate) {
+    if (explicitStartDate > explicitEndDate) {
+      return res.status(400).json({ error: "startDate must be on or before endDate" });
+    }
+    startDate = new Date(`${explicitStartDate}T00:00:00Z`);
+    endDate = new Date(`${explicitEndDate}T00:00:00Z`);
+  } else if (period === 'mtd') {
     startDate = new Date(today.getFullYear(), today.getMonth(), 1);
   } else if (period === 'qtd') {
     const quarterStart = Math.floor(today.getMonth() / 3) * 3;
@@ -1166,9 +1197,13 @@ financialMetricsRouter.get("/rcm-dashboard", requireAuth, async (req: AuthedRequ
 
     // Days Sales Outstanding (DSO) - Average days to collect
     const dsoResult = await pool.query(
-      `select avg(extract(epoch from (payment_date - bill_date)) / 86400)::int as avg_days
+      `select avg(pp.payment_date::date - b.bill_date::date)::int as avg_days
        from patient_payments pp
-       join bills b on b.patient_id = pp.patient_id
+       join bills b on b.tenant_id = pp.tenant_id
+        and (
+          b.patient_id = pp.patient_id
+          or b.id = pp.applied_to_invoice_id
+        )
        where pp.tenant_id = $1
          and pp.status = 'posted'
          and pp.payment_date >= $2
@@ -1183,16 +1218,16 @@ financialMetricsRouter.get("/rcm-dashboard", requireAuth, async (req: AuthedRequ
        from claims
        where tenant_id = $1
          and submitted_at >= $2
-         and submitted_at <= $3`,
+         and submitted_at < ($3::date + interval '1 day')`,
       [tenantId, startDateStr, endDateStr],
     );
 
-    const acceptedFirstPassResult = await pool.query(
+    const acceptedFirstPassResult = await optionalFinancialQuery(
       `select count(*) as accepted
        from claims c
        where c.tenant_id = $1
          and c.submitted_at >= $2
-         and c.submitted_at <= $3
+         and c.submitted_at < ($3::date + interval '1 day')
          and c.status in ('accepted', 'paid')
          and not exists (
            select 1 from claim_status_history csh
@@ -1200,10 +1235,11 @@ financialMetricsRouter.get("/rcm-dashboard", requireAuth, async (req: AuthedRequ
              and csh.status = 'rejected'
          )`,
       [tenantId, startDateStr, endDateStr],
+      [{ accepted: "0" }],
     );
 
     const totalClaims = parseInt(totalClaimsResult.rows[0].total);
-    const acceptedFirstPass = parseInt(acceptedFirstPassResult.rows[0].accepted);
+    const acceptedFirstPass = parseInt(acceptedFirstPassResult.rows[0]?.accepted || "0");
     const firstPassClaimRate = totalClaims > 0 ? Math.round((acceptedFirstPass / totalClaims) * 100) / 100 : 0.95;
 
     // Clean Claim Rate
@@ -1216,7 +1252,7 @@ financialMetricsRouter.get("/rcm-dashboard", requireAuth, async (req: AuthedRequ
        where tenant_id = $1
          and status = 'rejected'
          and submitted_at >= $2
-         and submitted_at <= $3`,
+         and submitted_at < ($3::date + interval '1 day')`,
       [tenantId, startDateStr, endDateStr],
     );
     const deniedClaims = parseInt(deniedResult.rows[0].denied);
@@ -1278,7 +1314,7 @@ financialMetricsRouter.get("/rcm-dashboard", requireAuth, async (req: AuthedRequ
       },
       arAging,
       period: {
-        type: period,
+        type: explicitStartDate && explicitEndDate ? "custom" : period,
         startDate: startDateStr,
         endDate: endDateStr,
       },

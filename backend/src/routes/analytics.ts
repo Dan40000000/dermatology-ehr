@@ -21,6 +21,64 @@ function parseDateRange(query: any): DateRange {
   };
 }
 
+function isDateOnlyQueryValue(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function addDateStartFilter(where: string, params: any[], column: string, value: unknown): string {
+  if (!value) {
+    return where;
+  }
+
+  params.push(value);
+  return `${where} and ${column} >= $${params.length}`;
+}
+
+function addDateEndFilter(where: string, params: any[], column: string, value: unknown): string {
+  if (!value) {
+    return where;
+  }
+
+  params.push(value);
+  if (isDateOnlyQueryValue(value)) {
+    return `${where} and ${column} < ($${params.length}::date + interval '1 day')`;
+  }
+
+  return `${where} and ${column} <= $${params.length}`;
+}
+
+function addDateRangeFilters(where: string, params: any[], column: string, startDate: unknown, endDate: unknown): string {
+  return addDateEndFilter(addDateStartFilter(where, params, column, startDate), params, column, endDate);
+}
+
+function toDateRangeStart(value: unknown, fallback: Date): Date {
+  if (isDateOnlyQueryValue(value)) {
+    return new Date(`${value}T00:00:00Z`);
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+  }
+
+  return fallback;
+}
+
+function toDateRangeExclusiveEnd(value: unknown, fallback: Date): Date {
+  if (isDateOnlyQueryValue(value)) {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    parsed.setUTCDate(parsed.getUTCDate() + 1);
+    return parsed;
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+  }
+
+  return fallback;
+}
+
 analyticsRouter.use(rateLimit({ windowMs: 60_000, max: 120 }));
 analyticsRouter.use(requireAuth, requireModuleAccess("analytics"));
 
@@ -55,14 +113,7 @@ analyticsRouter.get("/appointments-by-day", async (req: AuthedRequest, res) => {
     params.push(providerId);
     where += ` and provider_id = $${params.length}`;
   }
-  if (startDate) {
-    params.push(startDate);
-    where += ` and scheduled_start >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and scheduled_start <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "scheduled_start", startDate, endDate);
   const result = await pool.query(
     `select date_trunc('day', scheduled_start) as day, count(*) as count
      from appointments
@@ -84,14 +135,7 @@ analyticsRouter.get("/appointments-by-provider", async (req: AuthedRequest, res)
     params.push(providerId);
     where += ` and a.provider_id = $${params.length}`;
   }
-  if (startDate) {
-    params.push(startDate);
-    where += ` and a.scheduled_start >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and a.scheduled_start <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "a.scheduled_start", startDate, endDate);
   const result = await pool.query(
     `select pr.full_name as provider, count(*) as count
      from appointments a
@@ -113,14 +157,7 @@ analyticsRouter.get("/status-counts", async (req: AuthedRequest, res) => {
     params.push(providerId);
     where += ` and provider_id = $${params.length}`;
   }
-  if (startDate) {
-    params.push(startDate);
-    where += ` and scheduled_start >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and scheduled_start <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "scheduled_start", startDate, endDate);
   const result = await pool.query(
     `select status, count(*) as count from appointments where ${where} group by status`,
     params,
@@ -133,14 +170,7 @@ analyticsRouter.get("/revenue-by-day", async (req: AuthedRequest, res) => {
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
   let where = "tenant_id = $1";
-  if (startDate) {
-    params.push(startDate);
-    where += ` and created_at >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and created_at <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "created_at", startDate, endDate);
   const result = await pool.query(
     `select date_trunc('day', created_at) as day, sum(amount_cents) as amount
      from charges
@@ -207,14 +237,7 @@ analyticsRouter.get("/appointments/trend", async (req: AuthedRequest, res) => {
   const params: any[] = [tenantId];
   let where = "tenant_id = $1";
 
-  if (startDate) {
-    params.push(startDate);
-    where += ` and scheduled_start >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and scheduled_start <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "scheduled_start", startDate, endDate);
 
   const result = await pool.query(
     `select date_trunc('day', scheduled_start) as date, count(*) as count
@@ -235,14 +258,7 @@ analyticsRouter.get("/revenue/trend", async (req: AuthedRequest, res) => {
   const params: any[] = [tenantId];
   let where = "tenant_id = $1";
 
-  if (startDate) {
-    params.push(startDate);
-    where += ` and created_at >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and created_at <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "created_at", startDate, endDate);
 
   const result = await pool.query(
     `select date_trunc('day', created_at) as date, sum(amount_cents) as revenue
@@ -265,14 +281,7 @@ analyticsRouter.get("/top-diagnoses", async (req: AuthedRequest, res) => {
 
   if (startDate || endDate) {
     where += " and e.id in (select id from encounters where tenant_id = $1";
-    if (startDate) {
-      params.push(startDate);
-      where += ` and created_at >= $${params.length}`;
-    }
-    if (endDate) {
-      params.push(endDate);
-      where += ` and created_at <= $${params.length}`;
-    }
+    where = addDateRangeFilters(where, params, "created_at", startDate, endDate);
     where += ")";
   }
 
@@ -297,14 +306,7 @@ analyticsRouter.get("/top-procedures", async (req: AuthedRequest, res) => {
   const params: any[] = [tenantId];
   let where = "tenant_id = $1 and description is not null";
 
-  if (startDate) {
-    params.push(startDate);
-    where += ` and created_at >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and created_at <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "created_at", startDate, endDate);
 
   const result = await pool.query(
     `select description as name, count(*) as count
@@ -336,9 +338,13 @@ analyticsRouter.get("/provider-productivity", async (req: AuthedRequest, res) =>
   }
   if (endDate) {
     params.push(endDate);
-    appointmentWhere += ` and a.scheduled_start <= $${params.length}`;
-    encounterWhere += ` and e.created_at <= $${params.length}`;
-    chargeWhere += ` and c.created_at <= $${params.length}`;
+    const endClause = isDateOnlyQueryValue(endDate)
+      ? `$${params.length}::date + interval '1 day'`
+      : `$${params.length}`;
+    const endOperator = isDateOnlyQueryValue(endDate) ? "<" : "<=";
+    appointmentWhere += ` and a.scheduled_start ${endOperator} (${endClause})`;
+    encounterWhere += ` and e.created_at ${endOperator} (${endClause})`;
+    chargeWhere += ` and c.created_at ${endOperator} (${endClause})`;
   }
 
   const result = await pool.query(
@@ -407,14 +413,7 @@ analyticsRouter.get("/appointment-types", async (req: AuthedRequest, res) => {
   const params: any[] = [tenantId];
   let where = "a.tenant_id = $1";
 
-  if (startDate) {
-    params.push(startDate);
-    where += ` and a.scheduled_start >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and a.scheduled_start <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "a.scheduled_start", startDate, endDate);
 
   const result = await pool.query(
     `select
@@ -437,13 +436,13 @@ analyticsRouter.get("/overview", async (req: AuthedRequest, res) => {
   const { startDate, endDate } = req.query;
 
   // Calculate comparison period (previous period of same length)
-  let currentStart = startDate ? new Date(startDate as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  let currentEnd = endDate ? new Date(endDate as string) : new Date();
-  const periodLength = currentEnd.getTime() - currentStart.getTime();
+  const currentStart = toDateRangeStart(startDate, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const currentEndExclusive = toDateRangeExclusiveEnd(endDate, new Date());
+  const periodLength = currentEndExclusive.getTime() - currentStart.getTime();
   const previousStart = new Date(currentStart.getTime() - periodLength);
   const previousEnd = new Date(currentStart.getTime());
 
-  const params = [tenantId, currentStart.toISOString(), currentEnd.toISOString()];
+  const params = [tenantId, currentStart.toISOString(), currentEndExclusive.toISOString()];
   const prevParams = [tenantId, previousStart.toISOString(), previousEnd.toISOString()];
 
   const [
@@ -458,37 +457,37 @@ analyticsRouter.get("/overview", async (req: AuthedRequest, res) => {
   ] = await Promise.all([
     // Current period new patients
     pool.query(
-      `select count(*) from patients where tenant_id = $1 and created_at >= $2 and created_at <= $3`,
+      `select count(*) from patients where tenant_id = $1 and created_at >= $2 and created_at < $3`,
       params
     ),
     // Previous period new patients
     pool.query(
-      `select count(*) from patients where tenant_id = $1 and created_at >= $2 and created_at <= $3`,
+      `select count(*) from patients where tenant_id = $1 and created_at >= $2 and created_at < $3`,
       prevParams
     ),
     // Current period appointments
     pool.query(
-      `select count(*) from appointments where tenant_id = $1 and scheduled_start >= $2 and scheduled_start <= $3`,
+      `select count(*) from appointments where tenant_id = $1 and scheduled_start >= $2 and scheduled_start < $3`,
       params
     ),
     // Previous period appointments
     pool.query(
-      `select count(*) from appointments where tenant_id = $1 and scheduled_start >= $2 and scheduled_start <= $3`,
+      `select count(*) from appointments where tenant_id = $1 and scheduled_start >= $2 and scheduled_start < $3`,
       prevParams
     ),
     // Current period revenue
     pool.query(
-      `select coalesce(sum(amount_cents), 0) as total from charges where tenant_id = $1 and created_at >= $2 and created_at <= $3`,
+      `select coalesce(sum(amount_cents), 0) as total from charges where tenant_id = $1 and created_at >= $2 and created_at < $3`,
       params
     ),
     // Previous period revenue
     pool.query(
-      `select coalesce(sum(amount_cents), 0) as total from charges where tenant_id = $1 and created_at >= $2 and created_at <= $3`,
+      `select coalesce(sum(amount_cents), 0) as total from charges where tenant_id = $1 and created_at >= $2 and created_at < $3`,
       prevParams
     ),
     // Appointment status breakdown for current period
     pool.query(
-      `select status, count(*) as count from appointments where tenant_id = $1 and scheduled_start >= $2 and scheduled_start <= $3 group by status`,
+      `select status, count(*) as count from appointments where tenant_id = $1 and scheduled_start >= $2 and scheduled_start < $3 group by status`,
       params
     ),
     // Collection rate
@@ -562,8 +561,12 @@ analyticsRouter.get("/appointments", async (req: AuthedRequest, res) => {
   }
   if (endDate) {
     params.push(endDate);
-    where += ` and scheduled_start <= $${params.length}`;
-    appointmentWhere += ` and a.scheduled_start <= $${params.length}`;
+    const endClause = isDateOnlyQueryValue(endDate)
+      ? `$${params.length}::date + interval '1 day'`
+      : `$${params.length}`;
+    const endOperator = isDateOnlyQueryValue(endDate) ? "<" : "<=";
+    where += ` and scheduled_start ${endOperator} (${endClause})`;
+    appointmentWhere += ` and a.scheduled_start ${endOperator} (${endClause})`;
   }
 
   const [statusBreakdown, typeBreakdown, providerBreakdown, avgWaitTime] = await Promise.all([
@@ -613,14 +616,11 @@ analyticsRouter.get("/revenue", async (req: AuthedRequest, res) => {
   const params: any[] = [tenantId];
   let where = "tenant_id = $1";
 
-  if (startDate) {
-    params.push(startDate);
-    where += ` and created_at >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and created_at <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "created_at", startDate, endDate);
+
+  const paymentParams: any[] = [tenantId];
+  let paymentWhere = "tenant_id = $1 and status = 'posted'";
+  paymentWhere = addDateRangeFilters(paymentWhere, paymentParams, "payment_date", startDate, endDate);
 
   const [chargeStats, paymentStats, procedureRevenue] = await Promise.all([
     pool.query(
@@ -641,11 +641,9 @@ analyticsRouter.get("/revenue", async (req: AuthedRequest, res) => {
         count(*) as count,
         sum(amount_cents) as total_amount
        from patient_payments
-       where tenant_id = $1 and status = 'completed'
-       ${startDate ? `and created_at >= $${params.length}` : ''}
-       ${endDate ? `and created_at <= $${params.length + (startDate ? 1 : 0)}` : ''}
+       where ${paymentWhere}
        group by payment_method`,
-      startDate || endDate ? [...params.slice(1)] : []
+      paymentParams
     ),
     // Top revenue generating procedures
     pool.query(
@@ -685,6 +683,9 @@ analyticsRouter.get("/revenue", async (req: AuthedRequest, res) => {
 analyticsRouter.get("/patients", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
+  const newPatientParams: any[] = [tenantId];
+  let newPatientWhere = "tenant_id = $1";
+  newPatientWhere = addDateRangeFilters(newPatientWhere, newPatientParams, "created_at", startDate, endDate);
 
   const [totalPatients, newPatients, demographics, payerMix] = await Promise.all([
     pool.query(`select count(*) from patients where tenant_id = $1`, [tenantId]),
@@ -693,15 +694,11 @@ analyticsRouter.get("/patients", async (req: AuthedRequest, res) => {
         date_trunc('month', created_at) as month,
         count(*) as count
        from patients
-       where tenant_id = $1
-       ${startDate ? `and created_at >= $2` : ''}
-       ${endDate ? `and created_at <= $${startDate ? '3' : '2'}` : ''}
+       where ${newPatientWhere}
        group by date_trunc('month', created_at)
        order by month desc
        limit 12`,
-      startDate || endDate
-        ? [tenantId, ...(startDate ? [startDate] : []), ...(endDate ? [endDate] : [])]
-        : [tenantId]
+      newPatientParams
     ),
     pool.query(
       `select
@@ -777,8 +774,12 @@ analyticsRouter.get("/providers", async (req: AuthedRequest, res) => {
   }
   if (endDate) {
     params.push(endDate);
-    appointmentWhere += ` and a.scheduled_start <= $${params.length}`;
-    encounterWhere += ` and e.created_at <= $${params.length}`;
+    const endClause = isDateOnlyQueryValue(endDate)
+      ? `$${params.length}::date + interval '1 day'`
+      : `$${params.length}`;
+    const endOperator = isDateOnlyQueryValue(endDate) ? "<" : "<=";
+    appointmentWhere += ` and a.scheduled_start ${endOperator} (${endClause})`;
+    encounterWhere += ` and e.created_at ${endOperator} (${endClause})`;
   }
 
   const result = await pool.query(
@@ -816,14 +817,7 @@ analyticsRouter.get("/quality", async (req: AuthedRequest, res) => {
   const params: any[] = [tenantId];
   let where = "tenant_id = $1";
 
-  if (startDate) {
-    params.push(startDate);
-    where += ` and created_at >= $${params.length}`;
-  }
-  if (endDate) {
-    params.push(endDate);
-    where += ` and created_at <= $${params.length}`;
-  }
+  where = addDateRangeFilters(where, params, "created_at", startDate, endDate);
 
   const [
     encounterCompletionRate,

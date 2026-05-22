@@ -8,6 +8,29 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
 
+function isMissingOptionalRevenueCycleSchemaError(error: unknown): boolean {
+  const code = (error as any)?.code;
+  return code === '42P01' || code === '42703';
+}
+
+async function optionalRevenueCycleQuery<T extends Record<string, any>>(
+  query: string,
+  params: unknown[],
+  fallbackRows: T[],
+): Promise<{ rows: T[] }> {
+  try {
+    return await pool.query(query, params);
+  } catch (error) {
+    if (isMissingOptionalRevenueCycleSchemaError(error)) {
+      logger.warn('Optional revenue cycle table or column is unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { rows: fallbackRows };
+    }
+    throw error;
+  }
+}
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -1357,14 +1380,15 @@ export async function getRevenueDashboard(tenantId: string): Promise<RevenueDash
   );
 
   // Denial Metrics
-  const denialResult = await pool.query(
+  const denialResult = await optionalRevenueCycleQuery(
     `SELECT
       COUNT(*) as total_denials,
       COALESCE(SUM(amount_cents), 0) as denial_amount,
       COUNT(*) FILTER (WHERE appeal_status = 'pending' OR appeal_status = 'in_progress') as pending_appeals
      FROM claim_denials
      WHERE tenant_id = $1 AND created_at > NOW() - INTERVAL '90 days'`,
-    [tenantId]
+    [tenantId],
+    [{ total_denials: '0', denial_amount: '0', pending_appeals: '0' }],
   );
 
   // Denial rate calculation
@@ -1373,33 +1397,37 @@ export async function getRevenueDashboard(tenantId: string): Promise<RevenueDash
      WHERE tenant_id = $1 AND created_at > NOW() - INTERVAL '90 days'`,
     [tenantId]
   );
-  const totalClaims = parseInt(claimCountResult.rows[0].total) || 1;
-  const totalDenials = parseInt(denialResult.rows[0].total_denials) || 0;
+  const denialRow = denialResult.rows[0] ?? { total_denials: '0', denial_amount: '0', pending_appeals: '0' };
+  const totalClaims = parseInt(claimCountResult.rows[0]?.total || '0') || 1;
+  const totalDenials = parseInt(denialRow.total_denials) || 0;
   const denialRate = (totalDenials / totalClaims) * 100;
 
   // Appeal success rate
-  const appealResult = await pool.query(
+  const appealResult = await optionalRevenueCycleQuery(
     `SELECT
       COUNT(*) FILTER (WHERE outcome = 'approved' OR outcome = 'partially_approved') as success_count,
       COUNT(*) FILTER (WHERE outcome IS NOT NULL) as total_resolved
      FROM claim_appeals
      WHERE tenant_id = $1`,
-    [tenantId]
+    [tenantId],
+    [{ success_count: '0', total_resolved: '0' }],
   );
+  const appealRow = appealResult.rows[0] ?? { success_count: '0', total_resolved: '0' };
   const appealSuccessRate =
-    parseInt(appealResult.rows[0].total_resolved) > 0
-      ? (parseInt(appealResult.rows[0].success_count) /
-          parseInt(appealResult.rows[0].total_resolved)) *
+    parseInt(appealRow.total_resolved) > 0
+      ? (parseInt(appealRow.success_count) /
+          parseInt(appealRow.total_resolved)) *
         100
       : 0;
 
   // Denials by category
-  const categoryResult = await pool.query(
+  const categoryResult = await optionalRevenueCycleQuery<{ denial_category: string; count: string }>(
     `SELECT denial_category, COUNT(*) as count
      FROM claim_denials
      WHERE tenant_id = $1 AND created_at > NOW() - INTERVAL '90 days'
      GROUP BY denial_category`,
-    [tenantId]
+    [tenantId],
+    [],
   );
   const denialsByCategory: Record<string, number> = {};
   categoryResult.rows.forEach((row) => {
@@ -1409,7 +1437,7 @@ export async function getRevenueDashboard(tenantId: string): Promise<RevenueDash
   // Collection Metrics
   const collectionResult = await pool.query(
     `SELECT
-      COALESCE(SUM(total_cents), 0) as gross_charges
+      COALESCE(SUM(amount_cents), 0) as gross_charges
      FROM charges
      WHERE tenant_id = $1 AND created_at > NOW() - INTERVAL '90 days'`,
     [tenantId]
@@ -1423,12 +1451,12 @@ export async function getRevenueDashboard(tenantId: string): Promise<RevenueDash
     [tenantId]
   );
 
-  const grossCharges = parseInt(collectionResult.rows[0].gross_charges) || 1;
-  const totalPayments = parseInt(paymentResult.rows[0].total_payments) || 0;
+  const grossCharges = parseInt(collectionResult.rows[0]?.gross_charges || '0') || 1;
+  const totalPayments = parseInt(paymentResult.rows[0]?.total_payments || '0') || 0;
   const netCollectionRate = (totalPayments / grossCharges) * 100;
 
   // Payment Plan Metrics
-  const planResult = await pool.query(
+  const planResult = await optionalRevenueCycleQuery(
     `SELECT
       COUNT(*) FILTER (WHERE status = 'active') as active_plans,
       COALESCE(SUM(remaining_amount_cents) FILTER (WHERE status = 'active'), 0) as total_balance,
@@ -1437,15 +1465,23 @@ export async function getRevenueDashboard(tenantId: string): Promise<RevenueDash
       COUNT(*) as total_plans
      FROM payment_plans
      WHERE tenant_id = $1`,
-    [tenantId]
+    [tenantId],
+    [{ active_plans: '0', total_balance: '0', monthly_expected: '0', defaulted_plans: '0', total_plans: '0' }],
   );
 
-  const totalPlans = parseInt(planResult.rows[0].total_plans) || 1;
-  const defaultedPlans = parseInt(planResult.rows[0].defaulted_plans) || 0;
+  const planRow = planResult.rows[0] ?? {
+    active_plans: '0',
+    total_balance: '0',
+    monthly_expected: '0',
+    defaulted_plans: '0',
+    total_plans: '0',
+  };
+  const totalPlans = parseInt(planRow.total_plans) || 1;
+  const defaultedPlans = parseInt(planRow.defaulted_plans) || 0;
   const defaultRate = (defaultedPlans / totalPlans) * 100;
 
   // Underpayment Metrics
-  const underpaymentResult = await pool.query(
+  const underpaymentResult = await optionalRevenueCycleQuery(
     `SELECT
       COUNT(*) as total_identified,
       COALESCE(SUM(ABS(variance_cents)), 0) as total_variance,
@@ -1453,26 +1489,43 @@ export async function getRevenueDashboard(tenantId: string): Promise<RevenueDash
       COUNT(*) FILTER (WHERE status = 'identified' OR status = 'under_review') as pending_review
      FROM underpayments
      WHERE tenant_id = $1`,
-    [tenantId]
+    [tenantId],
+    [{ total_identified: '0', total_variance: '0', recovered: '0', pending_review: '0' }],
   );
+
+  const arRow = arResult.rows[0] ?? {
+    total_ar: '0',
+    ar_current: '0',
+    ar_31_60: '0',
+    ar_61_90: '0',
+    ar_91_120: '0',
+    ar_over_120: '0',
+  };
+  const daysInARRow = daysInARResult.rows[0] ?? { avg_days: '0' };
+  const underpaymentRow = underpaymentResult.rows[0] ?? {
+    total_identified: '0',
+    total_variance: '0',
+    recovered: '0',
+    pending_review: '0',
+  };
 
   return {
     arMetrics: {
-      totalARCents: parseInt(arResult.rows[0].total_ar) || 0,
-      daysInAR: Math.round(parseFloat(daysInARResult.rows[0].avg_days) || 0),
+      totalARCents: parseInt(arRow.total_ar) || 0,
+      daysInAR: Math.round(parseFloat(daysInARRow.avg_days) || 0),
       arAgingBuckets: {
-        current: parseInt(arResult.rows[0].ar_current) || 0,
-        days31_60: parseInt(arResult.rows[0].ar_31_60) || 0,
-        days61_90: parseInt(arResult.rows[0].ar_61_90) || 0,
-        days91_120: parseInt(arResult.rows[0].ar_91_120) || 0,
-        over120: parseInt(arResult.rows[0].ar_over_120) || 0,
+        current: parseInt(arRow.ar_current) || 0,
+        days31_60: parseInt(arRow.ar_31_60) || 0,
+        days61_90: parseInt(arRow.ar_61_90) || 0,
+        days91_120: parseInt(arRow.ar_91_120) || 0,
+        over120: parseInt(arRow.ar_over_120) || 0,
       },
     },
     denialMetrics: {
       totalDenials,
       denialRate: Math.round(denialRate * 100) / 100,
-      denialAmountCents: parseInt(denialResult.rows[0].denial_amount) || 0,
-      pendingAppeals: parseInt(denialResult.rows[0].pending_appeals) || 0,
+      denialAmountCents: parseInt(denialRow.denial_amount) || 0,
+      pendingAppeals: parseInt(denialRow.pending_appeals) || 0,
       appealSuccessRate: Math.round(appealSuccessRate * 100) / 100,
       denialsByCategory,
     },
@@ -1484,16 +1537,16 @@ export async function getRevenueDashboard(tenantId: string): Promise<RevenueDash
       insuranceCollectionsCents: 0, // Would need separate tracking
     },
     paymentPlanMetrics: {
-      activePlans: parseInt(planResult.rows[0].active_plans) || 0,
-      totalBalanceCents: parseInt(planResult.rows[0].total_balance) || 0,
-      monthlyExpectedCents: parseInt(planResult.rows[0].monthly_expected) || 0,
+      activePlans: parseInt(planRow.active_plans) || 0,
+      totalBalanceCents: parseInt(planRow.total_balance) || 0,
+      monthlyExpectedCents: parseInt(planRow.monthly_expected) || 0,
       defaultRate: Math.round(defaultRate * 100) / 100,
     },
     underpaymentMetrics: {
-      totalIdentified: parseInt(underpaymentResult.rows[0].total_identified) || 0,
-      totalVarianceCents: parseInt(underpaymentResult.rows[0].total_variance) || 0,
-      recoveredCents: parseInt(underpaymentResult.rows[0].recovered) || 0,
-      pendingReview: parseInt(underpaymentResult.rows[0].pending_review) || 0,
+      totalIdentified: parseInt(underpaymentRow.total_identified) || 0,
+      totalVarianceCents: parseInt(underpaymentRow.total_variance) || 0,
+      recoveredCents: parseInt(underpaymentRow.recovered) || 0,
+      pendingReview: parseInt(underpaymentRow.pending_review) || 0,
     },
   };
 }

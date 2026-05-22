@@ -5,20 +5,22 @@ import { MainNav, MobileNav } from './MainNav';
 import { Footer } from './Footer';
 import { DemoIntegrationBanner } from './DemoIntegrationBanner';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAccessControl } from '../../contexts/AccessControlContext';
 import { fetchPatients } from '../../api';
 import type { Patient } from '../../types';
-import { canAccessModule, getModuleForPath } from '../../config/moduleAccess';
+import { getModuleForPath } from '../../config/moduleAccess';
 import { getEffectiveRoles } from '../../utils/roles';
 
 export function AppLayout() {
   const { isAuthenticated, session, user } = useAuth();
+  const accessControl = useAccessControl();
   const location = useLocation();
   const [patients, setPatients] = useState<Patient[]>([]);
 
   const loadPatients = useCallback(async () => {
     if (!session) return;
     const effectiveRoles = getEffectiveRoles(user || session.user);
-    if (!canAccessModule(effectiveRoles, 'patients')) {
+    if (!accessControl.canAccessModule('patients', effectiveRoles)) {
       setPatients([]);
       return;
     }
@@ -29,7 +31,7 @@ export function AppLayout() {
     } catch {
       // Silently fail for patient search
     }
-  }, [session, user]);
+  }, [accessControl, session, user]);
 
   useEffect(() => {
     loadPatients();
@@ -47,7 +49,7 @@ export function AppLayout() {
 
   const activeModule = getModuleForPath(location.pathname);
   const effectiveRoles = getEffectiveRoles(user || session?.user);
-  if (activeModule && !canAccessModule(effectiveRoles, activeModule)) {
+  if (activeModule && !accessControl.canAccessModule(activeModule, effectiveRoles)) {
     return <Navigate to="/home" replace />;
   }
 

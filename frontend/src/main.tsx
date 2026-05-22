@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './contexts/AuthContext';
+import { AccessControlProvider } from './contexts/AccessControlContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { RecordingProvider } from './contexts/RecordingContext';
 import { WebSocketProvider } from './contexts/WebSocketContext';
@@ -26,13 +27,15 @@ createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <WebSocketProvider>
-            <ToastProvider>
-              <RecordingProvider>
-                <RouterProvider router={router} />
-              </RecordingProvider>
-            </ToastProvider>
-          </WebSocketProvider>
+          <AccessControlProvider>
+            <WebSocketProvider>
+              <ToastProvider>
+                <RecordingProvider>
+                  <RouterProvider router={router} />
+                </RecordingProvider>
+              </ToastProvider>
+            </WebSocketProvider>
+          </AccessControlProvider>
         </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>

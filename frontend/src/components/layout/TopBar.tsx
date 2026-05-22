@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { canAccessModule, type ModuleKey } from '../../config/moduleAccess';
+import { useAccessControl } from '../../contexts/AccessControlContext';
+import { type ModuleKey } from '../../config/moduleAccess';
 import { getEffectiveRoles } from '../../utils/roles';
 import { HelpModal } from '../HelpModal';
 import { LanguageSwitcher } from '../LanguageSwitcher';
@@ -105,9 +106,10 @@ async function capturePageScreenshot(): Promise<File | null> {
 
 export function TopBar({ patients = [], onRefresh }: TopBarProps) {
   const { user, session, logout } = useAuth();
+  const accessControl = useAccessControl();
   const navigate = useNavigate();
   const effectiveRoles = getEffectiveRoles(user || session?.user);
-  const showAiAssistantLink = canAccessModule(effectiveRoles, 'ai_assistant');
+  const showAiAssistantLink = accessControl.canAccessModule('ai_assistant', effectiveRoles);
   const [searchValue, setSearchValue] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showFeedbackMarkupModal, setShowFeedbackMarkupModal] = useState(false);
@@ -130,7 +132,7 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
   const [activeEncounter, setActiveEncounterState] = useState(() => getActiveEncounter());
   const defaultPageOptions = DEFAULT_PAGE_OPTIONS.filter((option) => {
     const moduleKey = DEFAULT_PAGE_MODULES[option.value];
-    return moduleKey ? canAccessModule(user?.role, moduleKey) : false;
+    return moduleKey ? accessControl.canAccessModule(moduleKey, effectiveRoles) : false;
   });
 
   useEffect(() => {

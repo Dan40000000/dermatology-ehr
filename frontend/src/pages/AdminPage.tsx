@@ -1,9 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAccessControl } from '../contexts/AccessControlContext';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL } from '../utils/apiBase';
+import { updateAccessSettings } from '../api';
 import { buildEffectiveRoles, hasRole, normalizeRoleArray } from '../utils/roles';
 import { canViewProfessionalFeedback } from '../utils/feedbackAccess';
+import {
+  COMMAND_CENTER_LABELS,
+  COMMAND_CENTER_SECTION_KEYS,
+  MANAGEABLE_ACCESS_ROLES,
+  MODULE_KEYS,
+  MODULE_LABELS,
+  ROLE_LABELS,
+  resolveCommandCenterAccess,
+  resolveModuleAccess,
+  type AccessSettingsPayload,
+  type CommandCenterSectionKey,
+  type ModuleKey,
+  type Role,
+} from '../config/moduleAccess';
 import {
   formatDowntimeDeviceShortId,
   getOrCreateDowntimeBrowserDevice,
@@ -277,7 +293,7 @@ const roleLabels: Record<string, string> = {
   compliance_officer: 'Compliance Officer',
 };
 
-type AdminTab = 'facilities' | 'rooms' | 'providers' | 'users' | 'settings';
+type AdminTab = 'facilities' | 'rooms' | 'providers' | 'users' | 'permissions' | 'settings';
 
 const DEFAULT_ADMIN_TAB: AdminTab = 'facilities';
 
@@ -287,6 +303,7 @@ function resolveAdminTab(rawValue: string | null): AdminTab {
     case 'rooms':
     case 'providers':
     case 'users':
+    case 'permissions':
     case 'settings':
       return rawValue;
     default:
@@ -299,6 +316,7 @@ const adminTabLabels: Record<AdminTab, string> = {
   rooms: 'Rooms',
   providers: 'Providers',
   users: 'Users',
+  permissions: 'Access Control',
   settings: 'Settings',
 };
 
@@ -469,6 +487,7 @@ export function AdminPage() {
           if (signal?.aborted || !isMountedRef.current) return;
           setUsers(userData.users || []);
           break;
+        case 'permissions':
         case 'settings':
           break;
       }
@@ -620,6 +639,7 @@ export function AdminPage() {
     { key: 'rooms', label: 'Rooms' },
     { key: 'providers', label: 'Providers' },
     { key: 'users', label: 'Users' },
+    { key: 'permissions', label: 'Access Control' },
     { key: 'settings', label: 'Settings' },
   ] as const;
 
@@ -738,6 +758,31 @@ export function AdminPage() {
               </div>
             </div>
           </Link>
+          <Link to="/admin?tab=permissions" style={{ textDecoration: 'none' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #0f766e 0%, #0e7490 100%)',
+              padding: '1.5rem',
+              borderRadius: '12px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 6px rgba(15, 118, 110, 0.3)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 8px 16px rgba(15, 118, 110, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 6px rgba(15, 118, 110, 0.3)';
+            }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Access</div>
+              <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Access Control</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
+                Control pages and Command Center visibility
+              </div>
+            </div>
+          </Link>
         </div>
 
         <div style={tabsContainerStyle}>
@@ -757,7 +802,7 @@ export function AdminPage() {
             <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#111827' }}>
               {adminTabLabels[activeTab]}
             </h2>
-            {activeTab !== 'settings' ? (
+            {activeTab !== 'settings' && activeTab !== 'permissions' ? (
               <button onClick={openAddModal} style={btnPrimaryStyle}>
                 + Add {activeTab === 'facilities' ? 'Facility' : activeTab.slice(0, -1)}
               </button>
@@ -774,12 +819,13 @@ export function AdminPage() {
               {activeTab === 'rooms' && <RoomsTable rooms={rooms} onEdit={openEditModal} onDelete={handleDelete} />}
               {activeTab === 'providers' && <ProvidersTable providers={providers} onEdit={openEditModal} onDelete={handleDelete} />}
               {activeTab === 'users' && <UsersTable users={users} onEdit={openEditModal} onDelete={handleDelete} />}
+              {activeTab === 'permissions' && <AccessControlPanel />}
               {activeTab === 'settings' && <AdminSettingsPanel />}
             </>
           )}
         </div>
 
-        {showModal && activeTab !== 'settings' && (
+        {showModal && activeTab !== 'settings' && activeTab !== 'permissions' && (
           <Modal
             type={activeTab}
             item={editingItem}
@@ -791,6 +837,230 @@ export function AdminPage() {
             onSave={handleSave}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+function AccessControlPanel() {
+  const { session } = useAuth();
+  const accessControl = useAccessControl();
+  const [selectedRole, setSelectedRole] = useState<Role>('front_desk');
+  const [moduleAccess, setModuleAccess] = useState(() => resolveModuleAccess(accessControl.settings.moduleAccess));
+  const [commandCenterAccess, setCommandCenterAccess] = useState(() =>
+    resolveCommandCenterAccess(accessControl.settings.commandCenterAccess)
+  );
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setModuleAccess(resolveModuleAccess(accessControl.settings.moduleAccess));
+    setCommandCenterAccess(resolveCommandCenterAccess(accessControl.settings.commandCenterAccess));
+  }, [accessControl.settings.commandCenterAccess, accessControl.settings.moduleAccess]);
+
+  const toggleRoleInModule = (moduleKey: ModuleKey) => {
+    if (selectedRole === 'admin') return;
+    if (moduleKey === 'home') return;
+
+    setModuleAccess((current) => {
+      const currentRoles = current[moduleKey] || [];
+      const hasRole = currentRoles.includes(selectedRole);
+      return {
+        ...current,
+        [moduleKey]: hasRole
+          ? currentRoles.filter((role) => role !== selectedRole)
+          : [...currentRoles, selectedRole],
+      };
+    });
+  };
+
+  const toggleRoleInCommandSection = (sectionKey: CommandCenterSectionKey) => {
+    if (selectedRole === 'admin') return;
+
+    setCommandCenterAccess((current) => {
+      const currentRoles = current[sectionKey] || [];
+      const hasRole = currentRoles.includes(selectedRole);
+      return {
+        ...current,
+        [sectionKey]: hasRole
+          ? currentRoles.filter((role) => role !== selectedRole)
+          : [...currentRoles, selectedRole],
+      };
+    });
+  };
+
+  const saveAccessControl = async () => {
+    if (!session) return;
+    setSaving(true);
+    setSaveStatus(null);
+    try {
+      const payload: Pick<AccessSettingsPayload, 'moduleAccess' | 'commandCenterAccess'> = {
+        moduleAccess,
+        commandCenterAccess,
+      };
+      await updateAccessSettings(session.tenantId, session.accessToken, payload);
+      await accessControl.reload();
+      setSaveStatus('Access control settings saved.');
+    } catch (error) {
+      setSaveStatus(error instanceof Error ? error.message : 'Failed to save access control settings.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetToDefaults = () => {
+    setModuleAccess(resolveModuleAccess());
+    setCommandCenterAccess(resolveCommandCenterAccess());
+    setSaveStatus('Defaults staged. Save to apply them.');
+  };
+
+  const selectedRoleLabel = ROLE_LABELS[selectedRole] || selectedRole;
+  const pageCount = MODULE_KEYS.filter((moduleKey) => moduleAccess[moduleKey]?.includes(selectedRole)).length;
+  const commandCount = COMMAND_CENTER_SECTION_KEYS.filter((sectionKey) =>
+    commandCenterAccess[sectionKey]?.includes(selectedRole)
+  ).length;
+
+  return (
+    <div style={{ display: 'grid', gap: '1.25rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div>
+          <h3 style={{ margin: 0, color: '#111827', fontSize: '1.1rem' }}>Role permissions</h3>
+          <p style={{ margin: '0.35rem 0 0', color: '#6b7280', fontSize: '0.9rem' }}>
+            Pick a role, then choose which pages and Command Center sections that role can use.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" style={btnSecondaryStyle} onClick={resetToDefaults}>
+            Reset defaults
+          </button>
+          <button type="button" style={btnPrimaryStyle} onClick={saveAccessControl} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Access Control'}
+          </button>
+        </div>
+      </div>
+
+      {accessControl.error && (
+        <div style={{ border: '1px solid #fecaca', borderRadius: '10px', padding: '0.8rem 1rem', background: '#fef2f2', color: '#991b1b' }}>
+          {accessControl.error}. Showing default permissions until the server responds.
+        </div>
+      )}
+      {saveStatus && (
+        <div style={{ border: '1px solid #bfdbfe', borderRadius: '10px', padding: '0.8rem 1rem', background: '#eff6ff', color: '#1e3a8a' }}>
+          {saveStatus}
+        </div>
+      )}
+
+      <div style={{ ...segmentedGroupStyle, gap: '0.45rem' }}>
+        {MANAGEABLE_ACCESS_ROLES.map((role) => (
+          <button
+            key={role}
+            type="button"
+            style={segmentedButtonStyle(selectedRole === role)}
+            onClick={() => setSelectedRole(role)}
+          >
+            {ROLE_LABELS[role] || role}
+          </button>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: '1rem',
+          alignItems: 'start',
+        }}
+      >
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', overflow: 'hidden', background: '#ffffff' }}>
+          <div style={{ padding: '1rem', background: '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
+            <h3 style={{ margin: 0, color: '#111827', fontSize: '1rem' }}>Pages for {selectedRoleLabel}</h3>
+            <p style={{ margin: '0.3rem 0 0', color: '#64748b', fontSize: '0.85rem' }}>{pageCount} pages enabled. Command Center stays available to staff roles.</p>
+          </div>
+          <div style={{ display: 'grid', gap: '0.15rem', padding: '0.75rem' }}>
+            {MODULE_KEYS.map((moduleKey) => {
+              const checked = Boolean(moduleAccess[moduleKey]?.includes(selectedRole));
+              const locked = selectedRole === 'admin' || moduleKey === 'home';
+              return (
+                <label
+                  key={moduleKey}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    padding: '0.65rem 0.7rem',
+                    borderRadius: '8px',
+                    background: checked ? '#f0fdf4' : '#ffffff',
+                    border: checked ? '1px solid #bbf7d0' : '1px solid transparent',
+                    color: '#334155',
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  <span>
+                    <strong>{MODULE_LABELS[moduleKey]}</strong>
+                    {moduleKey === 'home' && <small style={{ display: 'block', color: '#64748b' }}>Use Command Center settings below to hide Home content.</small>}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={locked}
+                    onChange={() => toggleRoleInModule(moduleKey)}
+                    aria-label={`${MODULE_LABELS[moduleKey]} access for ${selectedRoleLabel}`}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', overflow: 'hidden', background: '#ffffff' }}>
+          <div style={{ padding: '1rem', background: '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
+            <h3 style={{ margin: 0, color: '#111827', fontSize: '1rem' }}>Command Center for {selectedRoleLabel}</h3>
+            <p style={{ margin: '0.3rem 0 0', color: '#64748b', fontSize: '0.85rem' }}>
+              {commandCount} Home sections enabled. Financial cards are separate from front desk operations.
+            </p>
+          </div>
+          <div style={{ display: 'grid', gap: '0.15rem', padding: '0.75rem' }}>
+            {COMMAND_CENTER_SECTION_KEYS.map((sectionKey) => {
+              const checked = Boolean(commandCenterAccess[sectionKey]?.includes(selectedRole));
+              const locked = selectedRole === 'admin';
+              const isFinancial =
+                sectionKey.includes('revenue') ||
+                sectionKey.includes('billing') ||
+                sectionKey.includes('collections') ||
+                sectionKey === 'priority_claims';
+              return (
+                <label
+                  key={sectionKey}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    padding: '0.65rem 0.7rem',
+                    borderRadius: '8px',
+                    background: checked ? (isFinancial ? '#fff7ed' : '#eff6ff') : '#ffffff',
+                    border: checked ? (isFinancial ? '1px solid #fed7aa' : '1px solid #bfdbfe') : '1px solid transparent',
+                    color: '#334155',
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  <span>
+                    <strong>{COMMAND_CENTER_LABELS[sectionKey]}</strong>
+                    {isFinancial && <small style={{ display: 'block', color: '#9a3412' }}>Financial / revenue visibility</small>}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={locked}
+                    onChange={() => toggleRoleInCommandSection(sectionKey)}
+                    aria-label={`${COMMAND_CENTER_LABELS[sectionKey]} visibility for ${selectedRoleLabel}`}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );

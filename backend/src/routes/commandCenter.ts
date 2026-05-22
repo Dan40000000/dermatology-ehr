@@ -2,10 +2,8 @@ import { Router } from "express";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import {
-  FINANCIAL_DASHBOARD_ROLES,
-  REVENUE_CYCLE_ROLES,
-  userHasAnyRole,
-} from "../lib/roles";
+  canAccessTenantModule,
+} from "../services/accessSettings";
 import {
   getDateKeyInTimeZone,
   getPracticeTimeZone,
@@ -17,18 +15,6 @@ import { logger } from "../lib/logger";
 export const commandCenterRouter = Router();
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const COMMAND_CENTER_SCHEDULE_ROLES = [
-  "admin",
-  "front_desk",
-  "scheduler",
-  "manager",
-  "provider",
-  "ma",
-  "nurse",
-  "billing",
-  "compliance_officer",
-];
-
 type FailedSource = {
   source: string;
   message: string;
@@ -421,9 +407,16 @@ commandCenterRouter.get("/summary", requireAuth, async (req: AuthedRequest, res)
   const timeZone = getPracticeTimeZone();
   const businessDate = queryDate || getDateKeyInTimeZone(new Date(), timeZone);
   const failedSources: FailedSource[] = [];
-  const canSeeSchedule = userHasAnyRole(req.user, COMMAND_CENTER_SCHEDULE_ROLES);
-  const canSeeClaims = userHasAnyRole(req.user, REVENUE_CYCLE_ROLES) || userHasAnyRole(req.user, FINANCIAL_DASHBOARD_ROLES);
-  const canSeeFinancials = userHasAnyRole(req.user, FINANCIAL_DASHBOARD_ROLES);
+  const roles = req.user?.roles || [req.user?.role].filter(Boolean) as string[];
+  const [canSeeSchedule, canSeeClaims, canSeeFinancials] = await Promise.all([
+    canAccessTenantModule(tenantId, roles as any, "schedule"),
+    Promise.all([
+      canAccessTenantModule(tenantId, roles as any, "claims"),
+      canAccessTenantModule(tenantId, roles as any, "clearinghouse"),
+      canAccessTenantModule(tenantId, roles as any, "financials"),
+    ]).then((results) => results.some(Boolean)),
+    canAccessTenantModule(tenantId, roles as any, "financials"),
+  ]);
 
   const [schedule, claims, financials] = await Promise.all([
     canSeeSchedule

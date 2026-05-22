@@ -35,6 +35,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAccessControl } from '../contexts/AccessControlContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { AppointmentFinderWorkspace } from '../components/schedule/AppointmentFinderWorkspace';
@@ -68,7 +69,7 @@ import {
   fetchFinancialWorkQueue,
   fetchPaymentsSummary,
 } from '../api/financials';
-import { canAccessModule, getModuleForPath, type ModuleKey } from '../config/moduleAccess';
+import { getModuleForPath, type CommandCenterSectionKey, type ModuleKey } from '../config/moduleAccess';
 import { getEffectiveRoles } from '../utils/roles';
 import {
   getClinicBusinessDate,
@@ -180,6 +181,7 @@ interface HomeActionQueueItem {
   detail: string;
   route: string;
   access?: ModuleKey | ModuleKey[];
+  commandSection?: CommandCenterSectionKey;
   icon: LucideIcon;
   tone: 'red' | 'amber' | 'emerald' | 'blue' | 'violet' | 'slate';
 }
@@ -652,6 +654,7 @@ const INITIAL_COMMAND_QUEUES: HomeCommandQueues = {
 
 export function HomePage() {
   const { session, user } = useAuth();
+  const accessControl = useAccessControl();
   const { showError, showSuccess } = useToast();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -704,27 +707,32 @@ export function HomePage() {
   };
 
   const effectiveRoles = useMemo(() => getEffectiveRoles(user || session?.user), [session?.user, user]);
+  const canViewCommandSection = useCallback(
+    (sectionKey: CommandCenterSectionKey): boolean => accessControl.canAccessCommandCenterSection(sectionKey, effectiveRoles),
+    [accessControl, effectiveRoles],
+  );
   const canAccessAnyModule = useCallback(
     (module: ModuleKey | ModuleKey[] | undefined): boolean => {
       if (!module) return true;
       const modules = Array.isArray(module) ? module : [module];
-      return modules.some((moduleKey) => canAccessModule(effectiveRoles, moduleKey));
+      return modules.some((moduleKey) => accessControl.canAccessModule(moduleKey, effectiveRoles));
     },
-    [effectiveRoles]
+    [accessControl, effectiveRoles]
   );
   const canOpenAction = useCallback(
-    (action: { access?: ModuleKey | ModuleKey[]; route?: string }): boolean => {
+    (action: { access?: ModuleKey | ModuleKey[]; route?: string; commandSection?: CommandCenterSectionKey }): boolean => {
+      if (action.commandSection && !canViewCommandSection(action.commandSection)) return false;
       if (action.access) return canAccessAnyModule(action.access);
       if (!action.route) return true;
       const pathname = action.route.split(/[?#]/)[0] || '/home';
       const moduleKey = getModuleForPath(pathname);
       return moduleKey ? canAccessAnyModule(moduleKey) : true;
     },
-    [canAccessAnyModule]
+    [canAccessAnyModule, canViewCommandSection]
   );
   const canUseAppointmentFinder = useMemo(
-    () => canAccessModule(effectiveRoles, 'schedule'),
-    [effectiveRoles]
+    () => canAccessAnyModule('schedule') && canViewCommandSection('quick_actions'),
+    [canAccessAnyModule, canViewCommandSection]
   );
 
   const finderSummary = useMemo(() => {
@@ -769,13 +777,29 @@ export function HomePage() {
       queryStart.setDate(queryStart.getDate() - 1);
       const queryEnd = new Date(Math.max(endOfDay(todayDate).getTime(), scheduleRange.end.getTime()));
       queryEnd.setDate(queryEnd.getDate() + 1);
-      const canLoadAppointments = canAccessModule(effectiveRoles, 'schedule');
-      const canLoadEncounters = canAccessModule(effectiveRoles, 'notes');
-      const canLoadOrders = canAccessModule(effectiveRoles, 'orders');
-      const canLoadUnreadMessages = canAccessModule(effectiveRoles, 'mail');
-      const canLoadBiopsySafety = canAccessModule(effectiveRoles, 'labs');
-      const canLoadFinancials = canAccessModule(effectiveRoles, 'financials');
-      const canLoadClaims = canAccessModule(effectiveRoles, 'claims') || canAccessModule(effectiveRoles, 'clearinghouse') || canLoadFinancials;
+      const canLoadAppointments = canAccessAnyModule('schedule');
+      const canLoadEncounters = canAccessAnyModule('notes');
+      const canLoadOrders = canAccessAnyModule('orders');
+      const canLoadUnreadMessages = canAccessAnyModule('mail');
+      const canLoadBiopsySafety = canAccessAnyModule('labs') && canViewCommandSection('banner_pathology');
+      const canLoadFinancials =
+        canAccessAnyModule('financials') &&
+        (
+          canViewCommandSection('metric_revenue') ||
+          canViewCommandSection('metric_collections') ||
+          canViewCommandSection('metric_revenue_cycle') ||
+          canViewCommandSection('priority_billing') ||
+          canViewCommandSection('panel_revenue_pulse') ||
+          canViewCommandSection('panel_revenue_cycle')
+        );
+      const canLoadClaims =
+        (canAccessAnyModule('claims') || canAccessAnyModule('clearinghouse') || canLoadFinancials) &&
+        (
+          canViewCommandSection('metric_revenue_cycle') ||
+          canViewCommandSection('priority_claims') ||
+          canViewCommandSection('panel_risk_queue') ||
+          canViewCommandSection('panel_end_of_day')
+        );
       const canLoadCommandSummary = canLoadAppointments || canLoadClaims || canLoadFinancials;
 
       const [
@@ -1109,6 +1133,7 @@ export function HomePage() {
             detail: 'Still scheduled past the check-in grace window',
             route: '/schedule',
             access: 'schedule',
+            commandSection: 'panel_risk_queue',
             icon: TimerReset,
             tone: officialScheduleStats.staleScheduledCount > 0 ? 'red' : 'emerald',
           },
@@ -1119,6 +1144,7 @@ export function HomePage() {
             detail: 'Checked-in patients waiting longer than target',
             route: `/office-flow?date=${todayStr}&status=checked_in`,
             access: 'office_flow',
+            commandSection: 'panel_risk_queue',
             icon: Hourglass,
             tone: waitingOverLimitCount > 0 ? 'amber' : 'emerald',
           },
@@ -1129,6 +1155,7 @@ export function HomePage() {
             detail: 'Patients roomed longer than target',
             route: `/office-flow?date=${todayStr}&status=in_room`,
             access: 'office_flow',
+            commandSection: 'panel_risk_queue',
             icon: DoorOpen,
             tone: roomDwellOverLimitCount > 0 ? 'amber' : 'emerald',
           },
@@ -1139,6 +1166,7 @@ export function HomePage() {
             detail: 'Denied, rejected, appealed, or aging claims',
             route: `/claims?queue=denials&status=denied&startDate=${todayStr}&endDate=${todayStr}`,
             access: 'claims',
+            commandSection: 'priority_claims',
             icon: BadgeAlert,
             tone: officialClaimsStats.claimsDeniedRejected > 0 ? 'red' : 'emerald',
           },
@@ -1151,6 +1179,7 @@ export function HomePage() {
             detail: 'Scheduled arrivals that need readiness checks now',
             route: '/schedule',
             access: 'schedule',
+            commandSection: 'panel_front_desk',
             icon: UserCheck,
             tone: upcomingThirtyMinuteCount > 0 ? 'blue' : 'slate',
           },
@@ -1161,6 +1190,7 @@ export function HomePage() {
             detail: 'Eligibility or coverage checks blocking a clean visit',
             route: '/front-desk',
             access: 'office_flow',
+            commandSection: 'panel_front_desk',
             icon: ClipboardCheck,
             tone: officialScheduleStats.needsInsuranceVerification > 0 ? 'amber' : 'emerald',
           },
@@ -1171,6 +1201,7 @@ export function HomePage() {
             detail: `${currencyFromCents(officialScheduleStats.copayDueCents)} in expected copays`,
             route: '/front-desk',
             access: 'office_flow',
+            commandSection: 'panel_front_desk',
             icon: CircleDollarSign,
             tone: officialScheduleStats.balanceDueAppointments > 0 ? 'amber' : 'emerald',
           },
@@ -1181,6 +1212,7 @@ export function HomePage() {
             detail: 'Intake, consent, or portal paperwork still incomplete',
             route: '/documents?section=forms',
             access: 'documents',
+            commandSection: 'panel_front_desk',
             icon: ClipboardList,
             tone: intakeIncompleteCount > 0 ? 'amber' : 'emerald',
           },
@@ -1193,6 +1225,7 @@ export function HomePage() {
             detail: 'Appointments still scheduled after their visit window',
             route: '/schedule',
             access: 'schedule',
+            commandSection: 'panel_end_of_day',
             icon: ClipboardX,
             tone: officialScheduleStats.staleScheduledCount > 0 ? 'red' : 'emerald',
           },
@@ -1203,6 +1236,7 @@ export function HomePage() {
             detail: 'Waiting, roomed, provider, or checkout statuses still open',
             route: '/office-flow',
             access: 'office_flow',
+            commandSection: 'panel_end_of_day',
             icon: UsersRound,
             tone: activeVisitNotClosedCount > 0 ? 'amber' : 'emerald',
           },
@@ -1213,6 +1247,7 @@ export function HomePage() {
             detail: `Notes from ${todayStr} that still need completion or signature`,
             route: '/notes?tab=unsigned',
             access: 'notes',
+            commandSection: 'panel_end_of_day',
             icon: FileCheck2,
             tone: unsignedNotesToday > 0 ? 'amber' : 'emerald',
           },
@@ -1223,6 +1258,7 @@ export function HomePage() {
             detail: `${claimsCreatedToday} claims created for ${todayStr} from completed visits`,
             route: `/claims?startDate=${todayStr}&endDate=${todayStr}`,
             access: 'claims',
+            commandSection: 'priority_claims',
             icon: ReceiptText,
             tone: visitsNeedingClaimReview > 0 ? 'amber' : 'emerald',
           },
@@ -1233,6 +1269,7 @@ export function HomePage() {
             detail: 'Posted revenue not yet matched by collections today',
             route: `/financials?tab=revenue&startDate=${todayStr}&endDate=${todayStr}`,
             access: 'financials',
+            commandSection: 'panel_revenue_cycle',
             icon: WalletCards,
             tone: revenueCollectionGapCents > 0 ? 'amber' : 'emerald',
           },
@@ -1243,6 +1280,7 @@ export function HomePage() {
             detail: 'Critical pathology follow-up before end of day',
             route: '/biopsies',
             access: 'labs',
+            commandSection: 'banner_pathology',
             icon: ShieldCheck,
             tone: loadedCriticalPathologyCount > 0 ? 'red' : 'emerald',
           },
@@ -1314,7 +1352,7 @@ export function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [businessDate, effectiveRoles, overviewLocationFilter, session, showError]);
+  }, [businessDate, canAccessAnyModule, canViewCommandSection, overviewLocationFilter, session, showError]);
 
   const handleBusinessDateChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextDate = event.target.value;
@@ -1500,13 +1538,14 @@ export function HomePage() {
 
   const criticalPathologyCount = biopsySafety?.critical.length || 0;
   const totalPathologyOpenLoops = biopsySafety?.summary.total_open_loops || 0;
+  const showHeaderBillingBacklog = canViewCommandSection('header_billing_backlog');
   const commandUrgentCount =
-    criticalPathologyCount +
-    stats.claimsDeniedRejected +
+    (canViewCommandSection('priority_pathology') ? criticalPathologyCount : 0) +
+    (canViewCommandSection('priority_claims') ? stats.claimsDeniedRejected : 0) +
     stats.needsInsuranceVerification +
     stats.balanceDueAppointments +
     stats.staleScheduledCount;
-  const commandBacklogCount = stats.billingWorkQueueCount;
+  const commandBacklogCount = showHeaderBillingBacklog ? stats.billingWorkQueueCount : 0;
   const operationalCompletionRate =
     stats.appointmentsCount > 0 ? Math.round((stats.completedCount / stats.appointmentsCount) * 100) : 0;
   const isCurrentBusinessDate = businessDate === getDateKeyInPracticeTimeZone(new Date());
@@ -1535,6 +1574,7 @@ export function HomePage() {
     detail: string;
     route: string;
     access?: ModuleKey | ModuleKey[];
+    commandSection?: CommandCenterSectionKey;
     icon: LucideIcon;
     tone: 'blue' | 'emerald' | 'amber' | 'red' | 'violet' | 'slate';
   }> = [
@@ -1546,6 +1586,7 @@ export function HomePage() {
       }`,
       route: withBusinessDateRoute('/schedule'),
       access: 'schedule',
+      commandSection: 'metric_schedule',
       icon: CalendarDays,
       tone: 'blue',
     },
@@ -1557,6 +1598,7 @@ export function HomePage() {
       }`,
       route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
+      commandSection: 'metric_revenue',
       icon: DollarSign,
       tone: 'emerald',
     },
@@ -1566,6 +1608,7 @@ export function HomePage() {
       detail: `${currencyFromCents(stats.patientCollectionsCents)} patient, ${currencyFromCents(stats.payerCollectionsCents)} payer`,
       route: withBusinessDateRoute('/financials?tab=payments'),
       access: 'financials',
+      commandSection: 'metric_collections',
       icon: CreditCard,
       tone: 'emerald',
     },
@@ -1575,6 +1618,7 @@ export function HomePage() {
       detail: `${stats.notesWrittenToday} notes written ${dayScopeLower}, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
       access: ['notes', 'labs'],
+      commandSection: 'metric_clinical_work',
       icon: Stethoscope,
       tone: 'violet',
     },
@@ -1584,6 +1628,7 @@ export function HomePage() {
       detail: `${stats.needsInsuranceVerification} insurance checks, ${stats.balanceDueAppointments} balances`,
       route: '/front-desk',
       access: 'office_flow',
+      commandSection: 'metric_patient_access',
       icon: ClipboardCheck,
       tone: 'amber',
     },
@@ -1593,6 +1638,7 @@ export function HomePage() {
       detail: `${stats.claimsInQueue} active, ${stats.claimsDeniedRejected} urgent, ${stats.billingWorkQueueCount} backlog`,
       route: canAccessAnyModule('financials') ? withBusinessDateRoute('/financials') : withBusinessDateRoute('/claims'),
       access: ['financials', 'claims'],
+      commandSection: 'metric_revenue_cycle',
       icon: DollarSign,
       tone: stats.claimsDeniedRejected > 0 ? 'red' : stats.billingWorkQueueCount > 0 ? 'amber' : 'emerald',
     },
@@ -1602,6 +1648,7 @@ export function HomePage() {
       detail: `${stats.pendingTasks} open tasks, ${stats.unreadMessageThreads} unread threads`,
       route: '/clinical-inbox',
       access: 'clinical_inbox',
+      commandSection: 'metric_clinical_inbox',
       icon: Inbox,
       tone: stats.unreadMessageThreads > 0 ? 'amber' : 'slate',
     },
@@ -1614,6 +1661,7 @@ export function HomePage() {
       detail: `${totalPathologyOpenLoops} open biopsy loops`,
       route: '/biopsies',
       access: 'labs',
+      commandSection: 'priority_pathology' as CommandCenterSectionKey,
       icon: ShieldCheck,
       severity: criticalPathologyCount > 0 ? 'critical' : 'steady',
     },
@@ -1623,6 +1671,7 @@ export function HomePage() {
       detail: `${stats.claimsDeniedRejected} denied, rejected, appealed, or at-risk claims`,
       route: withBusinessDateRoute('/claims?queue=denials&status=denied'),
       access: 'claims',
+      commandSection: 'priority_claims' as CommandCenterSectionKey,
       icon: AlertTriangle,
       severity: stats.claimsDeniedRejected > 0 ? 'critical' : 'steady',
     },
@@ -1632,6 +1681,7 @@ export function HomePage() {
       detail: `${currencyFromCents(stats.arTotalCents)} open A/R; ${currencyFromCents(stats.arOver90Cents)} older than 90 days`,
       route: withBusinessDateRoute('/financials?tab=bills'),
       access: 'financials',
+      commandSection: 'priority_billing' as CommandCenterSectionKey,
       icon: CreditCard,
       severity: stats.billingWorkQueueCount > 0 ? 'warning' : 'steady',
     },
@@ -1641,6 +1691,7 @@ export function HomePage() {
       detail: `${stats.needsInsuranceVerification} insurance, ${currencyFromCents(stats.copayDueCents)} copays due`,
       route: '/front-desk',
       access: 'office_flow',
+      commandSection: 'priority_patient_ready' as CommandCenterSectionKey,
       icon: ClipboardCheck,
       severity: stats.needsInsuranceVerification + stats.balanceDueAppointments > 0 ? 'warning' : 'steady',
     },
@@ -1650,19 +1701,20 @@ export function HomePage() {
       detail: `${stats.myNotesNeedingWork} my notes, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
       access: ['notes', 'labs'],
+      commandSection: 'priority_provider_desk' as CommandCenterSectionKey,
       icon: FileText,
       severity: stats.myNotesNeedingWork + stats.pendingLabOrders > 0 ? 'warning' : 'steady',
     },
   ].filter(canOpenAction);
 
   const quickActions = [
-    { label: 'New Patient', route: '/patients/new', access: 'patients' as ModuleKey, icon: UserPlus },
-    { label: 'Schedule', route: withBusinessDateRoute('/schedule'), access: 'schedule' as ModuleKey, icon: CalendarDays },
-    { label: 'Tasks', route: '/tasks', access: 'tasks' as ModuleKey, icon: ClipboardCheck },
-    { label: 'Financials', route: withBusinessDateRoute('/financials'), access: 'financials' as ModuleKey, icon: DollarSign },
-    { label: 'Analytics', route: '/analytics', access: 'analytics' as ModuleKey, icon: BarChart3 },
-    { label: 'Clinical Inbox', route: '/clinical-inbox', access: 'clinical_inbox' as ModuleKey, icon: Inbox },
-    { label: 'Mail', route: '/mail', access: 'mail' as ModuleKey, icon: Mail },
+    { label: 'New Patient', route: '/patients/new', access: 'patients' as ModuleKey, commandSection: 'quick_actions' as CommandCenterSectionKey, icon: UserPlus },
+    { label: 'Schedule', route: withBusinessDateRoute('/schedule'), access: 'schedule' as ModuleKey, commandSection: 'quick_actions' as CommandCenterSectionKey, icon: CalendarDays },
+    { label: 'Tasks', route: '/tasks', access: 'tasks' as ModuleKey, commandSection: 'quick_actions' as CommandCenterSectionKey, icon: ClipboardCheck },
+    { label: 'Financials', route: withBusinessDateRoute('/financials'), access: 'financials' as ModuleKey, commandSection: 'quick_actions' as CommandCenterSectionKey, icon: DollarSign },
+    { label: 'Analytics', route: '/analytics', access: 'analytics' as ModuleKey, commandSection: 'quick_actions' as CommandCenterSectionKey, icon: BarChart3 },
+    { label: 'Clinical Inbox', route: '/clinical-inbox', access: 'clinical_inbox' as ModuleKey, commandSection: 'quick_actions' as CommandCenterSectionKey, icon: Inbox },
+    { label: 'Mail', route: '/mail', access: 'mail' as ModuleKey, commandSection: 'quick_actions' as CommandCenterSectionKey, icon: Mail },
   ].filter(canOpenAction);
 
   const revenuePulseItems: HomeActionQueueItem[] = [
@@ -1673,6 +1725,7 @@ export function HomePage() {
       detail: 'Posted clinical revenue in the selected day',
       route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
+      commandSection: 'panel_revenue_pulse',
       icon: DollarSign,
       tone: stats.revenueTodayCents > 0 ? 'emerald' : 'slate',
     },
@@ -1683,6 +1736,7 @@ export function HomePage() {
       detail: `${currencyFromCents(stats.patientCollectionsCents)} patient · ${currencyFromCents(stats.payerCollectionsCents)} payer`,
       route: withBusinessDateRoute('/financials?tab=payments'),
       access: 'financials',
+      commandSection: 'panel_revenue_pulse',
       icon: WalletCards,
       tone: stats.netCollectionsCents > 0 ? 'emerald' : 'slate',
     },
@@ -1693,6 +1747,7 @@ export function HomePage() {
       detail: `${stats.collectionRateToday}% collection rate ${dayScopeLower}`,
       route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
+      commandSection: 'panel_revenue_pulse',
       icon: CircleDollarSign,
       tone: stats.revenueTodayCents > stats.netCollectionsCents ? 'amber' : 'emerald',
     },
@@ -1703,6 +1758,7 @@ export function HomePage() {
       detail: 'Retail payments tied to the office store',
       route: '/store-ops?tab=payments',
       access: 'store',
+      commandSection: 'panel_revenue_pulse',
       icon: Store,
       tone: stats.storeCollectionsCents > 0 ? 'emerald' : 'slate',
     },
@@ -1712,14 +1768,20 @@ export function HomePage() {
     riskItems: commandQueues.riskItems.filter(canOpenAction),
     frontDeskItems: commandQueues.frontDeskItems.filter(canOpenAction),
     readinessItems: commandQueues.readinessItems.filter(canOpenAction),
-    providerThroughput: canAccessAnyModule('schedule') ? commandQueues.providerThroughput : [],
+    providerThroughput: canAccessAnyModule('schedule') && canViewCommandSection('panel_provider_throughput')
+      ? commandQueues.providerThroughput
+      : [],
   };
-  const showRevenuePulsePanel = revenuePulseItems.length > 0;
-  const showFrontDeskPanel = canAccessAnyModule('office_flow') || visibleCommandQueues.frontDeskItems.length > 0;
-  const showProviderThroughputPanel = canAccessAnyModule('schedule');
-  const showPatientFlowSection = canAccessAnyModule(['schedule', 'office_flow']);
-  const showClinicalWorkSection = canAccessAnyModule(['notes', 'orders', 'labs']);
-  const showRevenueCycleSection = canAccessAnyModule('financials');
+  const showRiskQueuePanel = canViewCommandSection('panel_risk_queue');
+  const showRevenuePulsePanel = canViewCommandSection('panel_revenue_pulse') && revenuePulseItems.length > 0;
+  const showFrontDeskPanel =
+    canViewCommandSection('panel_front_desk') &&
+    (canAccessAnyModule('office_flow') || visibleCommandQueues.frontDeskItems.length > 0);
+  const showProviderThroughputPanel = canAccessAnyModule('schedule') && canViewCommandSection('panel_provider_throughput');
+  const showEndOfDayPanel = canViewCommandSection('panel_end_of_day');
+  const showPatientFlowSection = canAccessAnyModule(['schedule', 'office_flow']) && canViewCommandSection('panel_patient_flow');
+  const showClinicalWorkSection = canAccessAnyModule(['notes', 'orders', 'labs']) && canViewCommandSection('panel_clinical_work');
+  const showRevenueCycleSection = canAccessAnyModule('financials') && canViewCommandSection('panel_revenue_cycle');
 
   const renderQueueItems = (items: HomeActionQueueItem[], emptyLabel: string) => (
     items.length === 0 ? (
@@ -1758,7 +1820,7 @@ export function HomePage() {
             <span>{stats.scheduleDateLabel || new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
             <span>{operationalCompletionRate}% complete</span>
             <span>{commandUrgentCount} urgent today</span>
-            <span>{commandBacklogCount} billing backlog</span>
+            {showHeaderBillingBacklog && <span>{commandBacklogCount} billing backlog</span>}
           </div>
         </div>
         <div className="command-center-toolbar">
@@ -1853,6 +1915,7 @@ export function HomePage() {
       </section>
 
       <section className="command-insight-grid" aria-label="Command center action queues">
+        {showRiskQueuePanel && (
         <div className="command-insight-panel">
           <div className="command-insight-panel__header">
             <span className="command-insight-panel__icon command-insight-panel__icon--red">
@@ -1867,6 +1930,7 @@ export function HomePage() {
             {renderQueueItems(visibleCommandQueues.riskItems, 'No urgent operational risks in this view.')}
           </div>
         </div>
+        )}
 
         {showRevenuePulsePanel && (
           <div className="command-insight-panel">
@@ -1958,6 +2022,7 @@ export function HomePage() {
           </div>
         )}
 
+        {showEndOfDayPanel && (
         <div className="command-insight-panel command-insight-panel--wide">
           <div className="command-insight-panel__header">
             <span className="command-insight-panel__icon command-insight-panel__icon--amber">
@@ -1972,6 +2037,7 @@ export function HomePage() {
             {renderQueueItems(visibleCommandQueues.readinessItems, 'Nothing is blocking end-of-day closeout.')}
           </div>
         </div>
+        )}
       </section>
 
       <section className="command-center-grid" aria-label="Daily operations command center">
@@ -2152,7 +2218,7 @@ export function HomePage() {
         )}
       </section>
 
-      {canAccessAnyModule('labs') && biopsySafety && totalPathologyOpenLoops > 0 && (
+      {canAccessAnyModule('labs') && canViewCommandSection('banner_pathology') && biopsySafety && totalPathologyOpenLoops > 0 && (
         <section className="command-pathology-banner" aria-label="Pathology safety alerts">
           <div>
             <p>Pathology Safety Alerts</p>
@@ -2170,6 +2236,7 @@ export function HomePage() {
         </section>
       )}
 
+      {canViewCommandSection('quick_actions') && (
       <section className="command-actions-bar" aria-label="Command center actions">
         {quickActions.map((action) => {
           const Icon = action.icon;
@@ -2219,6 +2286,7 @@ export function HomePage() {
           )}
         </div>
       </section>
+      )}
 
       <Modal
         isOpen={showAppointmentFinder}

@@ -85,6 +85,10 @@ app.use("/api/handouts", handoutsRouter);
 
 const queryMock = pool.query as jest.Mock;
 
+function nonAccessSettingsQueries() {
+  return queryMock.mock.calls.filter(([sql]) => !String(sql).includes("tenant_access_settings"));
+}
+
 const ALL_ROLES = [
   "admin",
   "provider",
@@ -168,6 +172,32 @@ describe("Module read endpoint authz", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("Insufficient role");
-    expect(queryMock).not.toHaveBeenCalled();
+    expect(nonAccessSettingsQueries()).toHaveLength(0);
+  });
+
+  it("honors admin-managed module access overrides", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("tenant_access_settings")) {
+        return {
+          rows: [
+            {
+              module_access: {
+                inventory: ["admin", "provider"],
+              },
+              command_center_access: {},
+              updated_at: null,
+              updated_by: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      return { rows: [], rowCount: 0 };
+    });
+
+    const res = await request(app).get("/api/inventory").set("x-test-role", "provider");
+
+    expect(res.status).not.toBe(403);
   });
 });

@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "./utils/apiBase";
+import type { AccessSettingsPayload } from "./config/moduleAccess";
 
 const API_BASE = API_BASE_URL;
 const TENANT_HEADER = "x-tenant-id";
@@ -51,6 +52,44 @@ export async function fetchMe(tenantId: string, accessToken: string) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "Failed to fetch user");
+  }
+  return res.json();
+}
+
+export async function fetchAccessSettings(
+  tenantId: string,
+  accessToken: string,
+): Promise<AccessSettingsPayload> {
+  const res = await fetch(`${API_BASE}/api/access-settings`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load access settings");
+  }
+  return res.json();
+}
+
+export async function updateAccessSettings(
+  tenantId: string,
+  accessToken: string,
+  settings: Pick<AccessSettingsPayload, "moduleAccess" | "commandCenterAccess">,
+): Promise<AccessSettingsPayload> {
+  const res = await fetch(`${API_BASE}/api/access-settings`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save access settings");
   }
   return res.json();
 }

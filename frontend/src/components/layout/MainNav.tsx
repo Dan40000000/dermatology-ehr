@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchUnreadCount } from '../../api';
-import { canAccessModule, type ModuleKey } from '../../config/moduleAccess';
+import { useAccessControl } from '../../contexts/AccessControlContext';
+import { type ModuleKey } from '../../config/moduleAccess';
 import { canViewProfessionalFeedback } from '../../utils/feedbackAccess';
 import { getEffectiveRoles } from '../../utils/roles';
 
@@ -378,6 +379,7 @@ const navItems: NavItem[] = [
       { label: 'Rooms', path: '/admin?tab=rooms' },
       { label: 'Providers', path: '/admin?tab=providers' },
       { label: 'Users', path: '/admin?tab=users' },
+      { label: 'Access Control', path: '/admin?tab=permissions' },
       { label: 'Settings', path: '/admin?tab=settings' },
       { label: 'Integrations', path: '/admin/integrations' },
       { label: 'Fee Schedules', path: '/admin/fee-schedules' },
@@ -391,6 +393,7 @@ const navItems: NavItem[] = [
 export function MainNav() {
   const location = useLocation();
   const { session, user } = useAuth();
+  const accessControl = useAccessControl();
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
@@ -401,9 +404,9 @@ export function MainNav() {
   const canAccessAnyModule = useCallback(
     (modules: ModuleKey | ModuleKey[]) => {
       const moduleList = Array.isArray(modules) ? modules : [modules];
-      return moduleList.some((module) => canAccessModule(userRole, module));
+      return moduleList.some((module) => accessControl.canAccessModule(module, userRole));
     },
-    [userRole]
+    [accessControl, userRole]
   );
 
   // Filter nav items based on user role
@@ -445,7 +448,7 @@ export function MainNav() {
 
   const loadUnreadCount = useCallback(async () => {
     if (!session) return;
-    if (!canAccessModule(userRole, 'mail')) {
+    if (!accessControl.canAccessModule('mail', userRole)) {
       setUnreadCount(0);
       return;
     }
@@ -457,7 +460,7 @@ export function MainNav() {
       // Silently fail - don't show error for unread count
       console.warn('Failed to load unread count:', err);
     }
-  }, [session, userRole]);
+  }, [accessControl, session, userRole]);
 
   useEffect(() => {
     loadUnreadCount();
@@ -540,7 +543,7 @@ export function MainNav() {
         if (!item?.dropdown) return null;
         const visibleDropdown = item.dropdown.filter((dropdownItem) => {
           if (dropdownItem.requiresFeedbackAccess && !canViewProfessionalFeedback(user)) return false;
-          return !dropdownItem.module || canAccessModule(userRole, dropdownItem.module);
+          return !dropdownItem.module || accessControl.canAccessModule(dropdownItem.module, userRole);
         });
         if (visibleDropdown.length === 0) return null;
 

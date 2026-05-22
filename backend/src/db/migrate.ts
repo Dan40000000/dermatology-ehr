@@ -13268,6 +13268,24 @@ Consider age-appropriate treatments and include family counseling points.',
       ON patients USING GIN (accessibility_profile);
     `,
   },
+  {
+    name: "188_tenant_access_settings",
+    sql: `
+    CREATE TABLE IF NOT EXISTS tenant_access_settings (
+      tenant_id text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+      module_access jsonb NOT NULL DEFAULT '{}'::jsonb,
+      command_center_access jsonb NOT NULL DEFAULT '{}'::jsonb,
+      updated_by text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tenant_access_settings_module_access
+      ON tenant_access_settings USING GIN (module_access);
+
+    CREATE INDEX IF NOT EXISTS idx_tenant_access_settings_command_center_access
+      ON tenant_access_settings USING GIN (command_center_access);
+    `,
+  },
 
 ];
 

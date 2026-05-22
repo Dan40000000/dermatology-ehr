@@ -162,12 +162,13 @@ financialMetricsRouter.get("/dashboard", requireAuth, async (req: AuthedRequest,
   const tenantId = req.user!.tenantId;
   const { date } = req.query;
 
-  const referenceDate = date ? new Date(String(date)) : new Date();
+  const dashboardDate = parseIsoDateOrNull(date);
+  const referenceDate = dashboardDate ? new Date(`${dashboardDate}T00:00:00Z`) : new Date();
   const firstDayOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
   const lastDayOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0);
 
   try {
-    const snapshots = await getFinancialSnapshots(tenantId);
+    const snapshots = await getFinancialSnapshots(tenantId, dashboardDate ?? undefined);
 
     // Get new bills count (created this month, status = 'new')
     const newBillsResult = await pool.query(

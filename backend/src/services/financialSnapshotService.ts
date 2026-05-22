@@ -198,16 +198,19 @@ function addRevenueCategory(
   accumulator[categoryKey].itemCount += 1;
 }
 
-export async function getFinancialSnapshots(tenantId: string): Promise<FinancialSnapshots> {
+export async function getFinancialSnapshots(
+  tenantId: string,
+  referenceDateKey = getDateKeyInTimeZone(new Date()),
+): Promise<FinancialSnapshots> {
   await ensureStoreSchemaAndCatalog(tenantId);
 
-  const now = new Date();
-  const todayDateKey = getDateKeyInTimeZone(now);
+  const todayDateKey = referenceDateKey;
   const weeklyStartDateKey = addDaysToDateKey(todayDateKey, -6);
   const monthlyStartDateKey = getMonthStartDateKey(todayDateKey);
   const dailyStart = startOfPracticeDate(todayDateKey);
   const weeklyStart = startOfPracticeDate(weeklyStartDateKey);
   const monthlyStart = startOfPracticeDate(monthlyStartDateKey);
+  const periodEnd = startOfPracticeDate(addDaysToDateKey(todayDateKey, 1));
   const maxStart = monthlyStart;
 
   const [
@@ -246,9 +249,9 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
        WHERE a.tenant_id = $1
          AND a.status = 'completed'
          AND COALESCE(a.completed_at, a.scheduled_end, a.scheduled_start) >= $2
-         AND COALESCE(a.completed_at, a.scheduled_end, a.scheduled_start) <= $3
+         AND COALESCE(a.completed_at, a.scheduled_end, a.scheduled_start) < $3
        GROUP BY a.id, COALESCE(a.completed_at, a.scheduled_end, a.scheduled_start), at.name, at.duration_minutes`,
-      [tenantId, maxStart.toISOString(), now.toISOString()]
+      [tenantId, maxStart.toISOString(), periodEnd.toISOString()]
     ),
     pool.query(
       `SELECT
@@ -314,8 +317,8 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
          AND ps.status = 'completed'
          AND COALESCE(sof.stripe_payment_status, 'paid') IN ('paid', 'succeeded')
          AND ps.sale_date >= $2
-         AND ps.sale_date <= $3`,
-      [tenantId, maxStart.toISOString(), now.toISOString()]
+         AND ps.sale_date < $3`,
+      [tenantId, maxStart.toISOString(), periodEnd.toISOString()]
     ).catch((error) => {
       if ((error as any)?.code === '42P01' || (error as any)?.code === '42703') {
         return { rows: [] };
@@ -331,8 +334,8 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
        WHERE b.tenant_id = $1
          AND (b.status = 'written_off' OR b.follow_up_status = 'write_off' OR b.written_off_at IS NOT NULL)
          AND COALESCE(b.written_off_at, b.updated_at) >= $2
-         AND COALESCE(b.written_off_at, b.updated_at) <= $3`,
-      [tenantId, maxStart.toISOString(), now.toISOString()]
+         AND COALESCE(b.written_off_at, b.updated_at) < $3`,
+      [tenantId, maxStart.toISOString(), periodEnd.toISOString()]
     ).catch((error) => {
       if ((error as any)?.code === '42703') {
         return { rows: [] };
@@ -351,8 +354,8 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
            b.follow_up_status = 'collections'
            OR b.collections_status IN ('flagged', 'sent_to_collections')
          )
-         AND COALESCE(b.collections_flagged_at, b.updated_at) <= $2`,
-      [tenantId, now.toISOString()]
+         AND COALESCE(b.collections_flagged_at, b.updated_at) < $2`,
+      [tenantId, periodEnd.toISOString()]
     ).catch((error) => {
       if ((error as any)?.code === '42703') {
         return { rows: [] };
@@ -393,7 +396,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
     const totalRevenueCents = actualRevenueCents > 0 ? actualRevenueCents : benchmarkRevenueCents;
 
     for (const period of periods) {
-      if (completedAt < period.start || completedAt > now) {
+      if (completedAt < period.start || completedAt >= periodEnd) {
         continue;
       }
 
@@ -437,7 +440,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
     });
 
     for (const period of periods) {
-      if (billedOn < period.start || billedOn > now) {
+      if (billedOn < period.start || billedOn >= periodEnd) {
         continue;
       }
 
@@ -464,7 +467,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
     }
 
     for (const period of periods) {
-      if (soldOn < period.start || soldOn > now) {
+      if (soldOn < period.start || soldOn >= periodEnd) {
         continue;
       }
 
@@ -489,7 +492,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
     const amountCents = parseCents(collection.amount_cents);
 
     for (const period of periods) {
-      if (collectedOn < period.start || collectedOn > now) {
+      if (collectedOn < period.start || collectedOn >= periodEnd) {
         continue;
       }
 
@@ -510,7 +513,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
       continue;
     }
     for (const period of periods) {
-      if (writtenOffOn < period.start || writtenOffOn > now) {
+      if (writtenOffOn < period.start || writtenOffOn >= periodEnd) {
         continue;
       }
       snapshots[period.key].badDebtCents += amountCents;

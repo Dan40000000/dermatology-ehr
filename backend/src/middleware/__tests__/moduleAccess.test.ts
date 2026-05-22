@@ -1,11 +1,11 @@
 import { requireModuleAccess } from '../moduleAccess';
-import { canAccessModule } from '../../config/moduleAccess';
+import { canAccessTenantModule } from '../../services/accessSettings';
 
-jest.mock('../../config/moduleAccess', () => ({
-  canAccessModule: jest.fn(),
+jest.mock('../../services/accessSettings', () => ({
+  canAccessTenantModule: jest.fn(),
 }));
 
-const canAccessModuleMock = canAccessModule as jest.Mock;
+const canAccessTenantModuleMock = canAccessTenantModule as jest.Mock;
 
 const makeRes = () => ({
   status: jest.fn().mockReturnThis(),
@@ -14,44 +14,44 @@ const makeRes = () => ({
 
 describe('requireModuleAccess', () => {
   beforeEach(() => {
-    canAccessModuleMock.mockReset();
+    canAccessTenantModuleMock.mockReset();
   });
 
-  it('returns 401 when user is missing', () => {
+  it('returns 401 when user is missing', async () => {
     const req = {} as any;
     const res = makeRes();
     const next = jest.fn();
 
-    requireModuleAccess('home')(req, res as any, next);
+    await requireModuleAccess('home')(req, res as any, next);
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'Unauthenticated' });
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('returns 403 when role is insufficient', () => {
-    canAccessModuleMock.mockReturnValue(false);
-    const req = { user: { role: 'provider' } } as any;
+  it('returns 403 when role is insufficient', async () => {
+    canAccessTenantModuleMock.mockResolvedValue(false);
+    const req = { user: { role: 'provider', tenantId: 'tenant-1' } } as any;
     const res = makeRes();
     const next = jest.fn();
 
-    requireModuleAccess('admin')(req, res as any, next);
+    await requireModuleAccess('admin')(req, res as any, next);
 
-    expect(canAccessModuleMock).toHaveBeenCalledWith(['provider'], 'admin');
+    expect(canAccessTenantModuleMock).toHaveBeenCalledWith('tenant-1', ['provider'], 'admin');
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith({ error: 'Insufficient role' });
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('calls next when role is allowed', () => {
-    canAccessModuleMock.mockReturnValue(true);
-    const req = { user: { role: 'admin' } } as any;
+  it('calls next when role is allowed', async () => {
+    canAccessTenantModuleMock.mockResolvedValue(true);
+    const req = { user: { role: 'admin', tenantId: 'tenant-1' } } as any;
     const res = makeRes();
     const next = jest.fn();
 
-    requireModuleAccess('home')(req, res as any, next);
+    await requireModuleAccess('home')(req, res as any, next);
 
-    expect(canAccessModuleMock).toHaveBeenCalledWith(['admin'], 'home');
+    expect(canAccessTenantModuleMock).toHaveBeenCalledWith('tenant-1', ['admin'], 'home');
     expect(next).toHaveBeenCalled();
   });
 });

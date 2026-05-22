@@ -33,13 +33,15 @@ describe("Analytics routes", () => {
   it("blocks provider access to analytics routes", async () => {
     const res = await request(app).get("/analytics/summary").set("x-test-role", "provider");
     expect(res.status).toBe(403);
-    expect(queryMock).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(String(queryMock.mock.calls[0]?.[0])).toContain("tenant_access_settings");
   });
 
   it("blocks billing access to analytics routes", async () => {
     const res = await request(app).get("/analytics/summary").set("x-test-role", "billing");
     expect(res.status).toBe(403);
-    expect(queryMock).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(String(queryMock.mock.calls[0]?.[0])).toContain("tenant_access_settings");
   });
 
   it("GET /analytics/summary", async () => {

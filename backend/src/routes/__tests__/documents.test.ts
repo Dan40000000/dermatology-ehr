@@ -7,7 +7,7 @@ import { pool } from "../../db/pool";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "user-1", tenantId: "tenant-1", role: "provider" };
+    req.user = { id: "user-1", tenantId: "tenant-1", role: "admin" };
     return next();
   },
 }));

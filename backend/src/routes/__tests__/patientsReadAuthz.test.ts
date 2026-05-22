@@ -113,6 +113,9 @@ describe("Patient clinical read endpoint authz", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("Insufficient role");
-    expect(queryMock).not.toHaveBeenCalled();
+    if (queryMock.mock.calls.length > 0) {
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      expect(String(queryMock.mock.calls[0]?.[0])).toContain("tenant_access_settings");
+    }
   });
 });

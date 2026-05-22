@@ -303,6 +303,7 @@ export async function canAccessTenantModule(
       : [];
   const effectiveRoles = buildEffectiveRoles(roles[0], roles.slice(1));
   if (effectiveRoles.length === 0) return false;
+  if (effectiveRoles.includes("admin")) return true;
 
   try {
     const settings = await getTenantAccessSettings(tenantId);

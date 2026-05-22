@@ -42,6 +42,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchEFTTransactions: vi.fn(),
   reconcilePayments: vi.fn(),
   fetchClosingReport: vi.fn(),
+  fetchExternalIntegrationStatus: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -632,6 +633,13 @@ describe('ClearinghousePage', () => {
       eftsReceived: 2,
       reconciliationVarianceCents: 0,
     });
+    apiMocks.fetchExternalIntegrationStatus.mockResolvedValue({
+      integration: {
+        provider: 'stedi',
+        connectionStatus: 'connected',
+        isActive: true,
+      },
+    });
   });
 
   afterEach(() => {
@@ -644,7 +652,11 @@ describe('ClearinghousePage', () => {
   });
 
   it('handles claim submission, ERA review, reconciliation, and reports', async () => {
-    render(<ClearinghousePage session={adminSession} />);
+    render(
+      <MemoryRouter>
+        <ClearinghousePage session={adminSession} />
+      </MemoryRouter>,
+    );
     await screen.findByText('Ready to Submit (1)');
 
     const [headerCheckbox] = screen.getAllByRole('checkbox');

@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   fetchClaims,
@@ -17,6 +17,70 @@ import type { ExternalIntegrationStatus } from "../api";
 
 type ClearinghouseTab = "submit" | "era" | "eft" | "reconcile" | "reports";
 
+type ClaimRow = {
+  id: string;
+  claimNumber?: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  patientName?: string;
+  payer?: string;
+  status?: string;
+  totalCents?: number;
+  totalCharges?: number;
+  totalBilledCents?: number;
+  controlNumber?: string;
+};
+
+type ERARecord = {
+  id: string;
+  eraNumber?: string;
+  payer?: string;
+  paymentAmountCents?: number;
+  claimsPaid?: number;
+  status?: string;
+  checkNumber?: string;
+  checkDate?: string;
+};
+
+type EFTRecord = {
+  id: string;
+  eftTraceNumber?: string;
+  payer?: string;
+  paymentAmountCents?: number;
+  depositDate?: string;
+  transactionType?: string;
+  reconciled?: boolean;
+  varianceCents?: number;
+};
+
+type ClosingReport = {
+  reportType?: string;
+  startDate?: string;
+  endDate?: string;
+  totalChargesCents?: number;
+  totalPaymentsCents?: number;
+  totalAdjustmentsCents?: number;
+  outstandingBalanceCents?: number;
+  claimsSubmitted?: number;
+  claimsPaid?: number;
+  claimsDenied?: number;
+  erasReceived?: number;
+  eftsReceived?: number;
+  reconciliationVarianceCents?: number;
+};
+
+interface ClearinghouseSummary {
+  readyCount: number;
+  readyAmountCents: number;
+  codingReviewCount: number;
+  awaitingPayerCount: number;
+  paidCount: number;
+  eraCount: number;
+  eraAmountCents: number;
+  eftCount: number;
+  eftAmountCents: number;
+}
+
 const tabParamMap: Record<string, ClearinghouseTab> = {
   submit: "submit",
   submissions: "submit",
@@ -27,6 +91,33 @@ const tabParamMap: Record<string, ClearinghouseTab> = {
   reconciliation: "reconcile",
   reports: "reports",
 };
+
+const tabs: Array<{ key: ClearinghouseTab; label: string }> = [
+  { key: "submit", label: "Submit Claims" },
+  { key: "era", label: "ERA" },
+  { key: "eft", label: "EFT" },
+  { key: "reconcile", label: "Reconciliation" },
+  { key: "reports", label: "Reports" },
+];
+
+const emptySummary: ClearinghouseSummary = {
+  readyCount: 0,
+  readyAmountCents: 0,
+  codingReviewCount: 0,
+  awaitingPayerCount: 0,
+  paidCount: 0,
+  eraCount: 0,
+  eraAmountCents: 0,
+  eftCount: 0,
+  eftAmountCents: 0,
+};
+
+function formatCurrency(cents = 0): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
 
 function formatIntegrationStatus(integration?: ExternalIntegrationStatus | null): string {
   if (!integration) return "Unavailable";
@@ -39,6 +130,50 @@ function formatIntegrationStatus(integration?: ExternalIntegrationStatus | null)
   return `${provider} ${status}`;
 }
 
+function claimAmountCents(claim: ClaimRow): number {
+  return Number(claim.totalCents || claim.totalBilledCents || claim.totalCharges || 0);
+}
+
+function claimPatientName(claim: ClaimRow): string {
+  if (claim.patientName) return claim.patientName;
+  const fullName = `${claim.patientFirstName || ""} ${claim.patientLastName || ""}`.trim();
+  return fullName || "Unknown patient";
+}
+
+function statusTone(status?: string): string {
+  const normalized = String(status || "").toLowerCase();
+  if (["accepted", "posted", "reconciled", "paid", "ready"].includes(normalized)) return "green";
+  if (["rejected", "denied", "failed", "error"].includes(normalized)) return "red";
+  if (["pending", "submitted"].includes(normalized)) return "yellow";
+  return "gray";
+}
+
+function titleize(value?: string): string {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function reportTitle(reportType?: string): string {
+  return `${titleize(reportType || "daily")} Closing Report`;
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
+}
+
+function sumClaims(claims: ClaimRow[]): number {
+  return claims.reduce((sum, claim) => sum + claimAmountCents(claim), 0);
+}
+
+function sumERAs(eras: ERARecord[]): number {
+  return eras.reduce((sum, era) => sum + Number(era.paymentAmountCents || 0), 0);
+}
+
+function sumEFTs(efts: EFTRecord[]): number {
+  return efts.reduce((sum, eft) => sum + Number(eft.paymentAmountCents || 0), 0);
+}
+
 export function ClearinghousePage() {
   const { session } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -48,63 +183,76 @@ export function ClearinghousePage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [eligibilityIntegration, setEligibilityIntegration] = useState<ExternalIntegrationStatus | null>(null);
   const [clearinghouseIntegration, setClearinghouseIntegration] = useState<ExternalIntegrationStatus | null>(null);
+  const [summary, setSummary] = useState<ClearinghouseSummary>(emptySummary);
 
-  // Submit Claims Tab
-  const [claims, setClaims] = useState<any[]>([]);
+  const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [selectedClaims, setSelectedClaims] = useState<Set<string>>(new Set());
   const [claimStatusMap, setClaimStatusMap] = useState<Map<string, any>>(new Map());
 
-  // ERA Tab
-  const [eras, setEras] = useState<any[]>([]);
-  const [selectedERA, setSelectedERA] = useState<any | null>(null);
+  const [eras, setEras] = useState<ERARecord[]>([]);
+  const [selectedERA, setSelectedERA] = useState<ERARecord | null>(null);
   const [eraDetails, setEraDetails] = useState<any | null>(null);
   const [eraFilters, setEraFilters] = useState({ status: "", payer: "" });
 
-  // EFT Tab
-  const [efts, setEfts] = useState<any[]>([]);
+  const [efts, setEfts] = useState<EFTRecord[]>([]);
   const [eftFilters, setEftFilters] = useState({ reconciled: "", payer: "" });
 
-  // Reconciliation Tab
   const [selectedERAForReconcile, setSelectedERAForReconcile] = useState("");
   const [selectedEFT, setSelectedEFT] = useState("");
   const [reconcileNotes, setReconcileNotes] = useState("");
 
-  // Reports Tab
-  const [reportData, setReportData] = useState<any | null>(null);
+  const [reportData, setReportData] = useState<ClosingReport | null>(null);
   const [reportDates, setReportDates] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
     reportType: "daily",
   });
 
-  useEffect(() => {
-    loadInitialData();
-  }, [activeTab]);
+  const selectedReadyTotal = useMemo(
+    () => claims.filter((claim) => selectedClaims.has(claim.id)).reduce((sum, claim) => sum + claimAmountCents(claim), 0),
+    [claims, selectedClaims]
+  );
 
-  useEffect(() => {
-    const requestedTab = searchParams.get("tab");
-    if (requestedTab && tabParamMap[requestedTab] && tabParamMap[requestedTab] !== activeTab) {
-      setActiveTab(tabParamMap[requestedTab]);
-    }
-  }, [activeTab, searchParams]);
-
-  useEffect(() => {
+  const loadSummary = async () => {
     if (!session) return;
 
-    void Promise.all([
-      fetchExternalIntegrationStatus(session.tenantId, session.accessToken, "eligibility").catch(() => null),
-      fetchExternalIntegrationStatus(session.tenantId, session.accessToken, "clearinghouse").catch(() => null),
-    ]).then(([eligibilityStatus, clearinghouseStatus]) => {
-      setEligibilityIntegration(eligibilityStatus?.integration ?? null);
-      setClearinghouseIntegration(clearinghouseStatus?.integration ?? null);
-    });
-  }, [session]);
+    const [
+      readyResult,
+      codingReviewResult,
+      submittedResult,
+      acceptedResult,
+      paidResult,
+      eraResult,
+      eftResult,
+    ] = await Promise.allSettled([
+      fetchClaims(session.tenantId, session.accessToken, { status: "ready" }),
+      fetchClaims(session.tenantId, session.accessToken, { status: "coding_review" }),
+      fetchClaims(session.tenantId, session.accessToken, { status: "submitted" }),
+      fetchClaims(session.tenantId, session.accessToken, { status: "accepted" }),
+      fetchClaims(session.tenantId, session.accessToken, { status: "paid" }),
+      fetchRemittanceAdvice(session.tenantId, session.accessToken, {}),
+      fetchEFTTransactions(session.tenantId, session.accessToken, {}),
+    ]);
 
-  const selectTab = (tab: ClearinghouseTab) => {
-    setActiveTab(tab);
-    const params = new URLSearchParams(searchParams);
-    params.set("tab", tab);
-    setSearchParams(params);
+    const readyClaims = readyResult.status === "fulfilled" ? (readyResult.value.claims || []) as ClaimRow[] : [];
+    const codingReviewClaims = codingReviewResult.status === "fulfilled" ? (codingReviewResult.value.claims || []) as ClaimRow[] : [];
+    const submittedClaims = submittedResult.status === "fulfilled" ? (submittedResult.value.claims || []) as ClaimRow[] : [];
+    const acceptedClaims = acceptedResult.status === "fulfilled" ? (acceptedResult.value.claims || []) as ClaimRow[] : [];
+    const paidClaims = paidResult.status === "fulfilled" ? (paidResult.value.claims || []) as ClaimRow[] : [];
+    const eraRows = eraResult.status === "fulfilled" ? (eraResult.value.eras || []) as ERARecord[] : [];
+    const eftRows = eftResult.status === "fulfilled" ? (eftResult.value.efts || []) as EFTRecord[] : [];
+
+    setSummary({
+      readyCount: readyClaims.length,
+      readyAmountCents: sumClaims(readyClaims),
+      codingReviewCount: codingReviewClaims.length,
+      awaitingPayerCount: submittedClaims.length + acceptedClaims.length,
+      paidCount: paidClaims.length,
+      eraCount: eraRows.length,
+      eraAmountCents: sumERAs(eraRows),
+      eftCount: eftRows.length,
+      eftAmountCents: sumEFTs(eftRows),
+    });
   };
 
   const loadInitialData = async () => {
@@ -122,20 +270,55 @@ export function ClearinghousePage() {
       } else if (activeTab === "eft") {
         const result = await fetchEFTTransactions(session.tenantId, session.accessToken, {
           reconciled: eftFilters.reconciled === "" ? undefined : eftFilters.reconciled === "true",
+          payer: eftFilters.payer || undefined,
         });
         setEfts(result.efts || []);
       } else if (activeTab === "reconcile") {
-        // Load both ERAs and EFTs for reconciliation
-        const eraResult = await fetchRemittanceAdvice(session.tenantId, session.accessToken, { status: "posted" });
+        const [eraResult, eftResult] = await Promise.all([
+          fetchRemittanceAdvice(session.tenantId, session.accessToken, { status: "posted" }),
+          fetchEFTTransactions(session.tenantId, session.accessToken, { reconciled: false }),
+        ]);
         setEras(eraResult.eras || []);
-        const eftResult = await fetchEFTTransactions(session.tenantId, session.accessToken, { reconciled: false });
         setEfts(eftResult.efts || []);
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to load clearinghouse data"));
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    const requestedTab = searchParams.get("tab");
+    if (requestedTab && tabParamMap[requestedTab] && tabParamMap[requestedTab] !== activeTab) {
+      setActiveTab(tabParamMap[requestedTab]);
+    }
+  }, [activeTab, searchParams]);
+
+  useEffect(() => {
+    void loadInitialData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, session]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    void Promise.all([
+      fetchExternalIntegrationStatus(session.tenantId, session.accessToken, "eligibility").catch(() => null),
+      fetchExternalIntegrationStatus(session.tenantId, session.accessToken, "clearinghouse").catch(() => null),
+      loadSummary().catch(() => null),
+    ]).then(([eligibilityStatus, clearinghouseStatus]) => {
+      setEligibilityIntegration(eligibilityStatus?.integration ?? null);
+      setClearinghouseIntegration(clearinghouseStatus?.integration ?? null);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  const selectTab = (tab: ClearinghouseTab) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", tab);
+    setSearchParams(params);
   };
 
   const handleSubmitClaims = async () => {
@@ -147,14 +330,14 @@ export function ClearinghousePage() {
 
     setLoading(true);
     setError(null);
-    const results = new Map();
+    const results = new Map<string, any>();
 
     for (const claimId of Array.from(selectedClaims)) {
       try {
         const result = await submitClaimToClearinghouse(session.tenantId, session.accessToken, claimId);
         results.set(claimId, result);
-      } catch (err: any) {
-        results.set(claimId, { error: err.message });
+      } catch (err: unknown) {
+        results.set(claimId, { error: errorMessage(err, "Submission failed"), status: "error" });
       }
     }
 
@@ -162,17 +345,18 @@ export function ClearinghousePage() {
     setSuccess(`Submitted ${selectedClaims.size} claim(s) to clearinghouse`);
     setSelectedClaims(new Set());
     setLoading(false);
-    loadInitialData();
+    await loadInitialData();
+    await loadSummary();
   };
 
   const handleCheckClaimStatus = async (claimId: string) => {
     if (!session) return;
     try {
       const status = await fetchClaimStatus(session.tenantId, session.accessToken, claimId);
-      setClaimStatusMap(new Map(claimStatusMap.set(claimId, status)));
+      setClaimStatusMap((prev) => new Map(prev).set(claimId, status));
       setSuccess("Status updated");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to fetch claim status"));
     }
   };
 
@@ -182,9 +366,9 @@ export function ClearinghousePage() {
     try {
       const details = await fetchERADetails(session.tenantId, session.accessToken, eraId);
       setEraDetails(details);
-      setSelectedERA(eras.find((e) => e.id === eraId));
-    } catch (err: any) {
-      setError(err.message);
+      setSelectedERA(eras.find((era) => era.id === eraId) || null);
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to fetch ERA details"));
     } finally {
       setLoading(false);
     }
@@ -198,11 +382,12 @@ export function ClearinghousePage() {
     try {
       const result = await postERA(session.tenantId, session.accessToken, eraId);
       setSuccess(`Posted ERA successfully. ${result.claimsPosted} claims updated.`);
-      loadInitialData();
       setEraDetails(null);
       setSelectedERA(null);
-    } catch (err: any) {
-      setError(err.message);
+      await loadInitialData();
+      await loadSummary();
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to post ERA"));
     } finally {
       setLoading(false);
     }
@@ -226,15 +411,16 @@ export function ClearinghousePage() {
       setSuccess(
         result.status === "balanced"
           ? "Payment reconciled successfully (balanced)"
-          : `Payment reconciled with variance: $${(Math.abs(result.varianceCents) / 100).toFixed(2)}`
+          : `Payment reconciled with variance: ${formatCurrency(Math.abs(result.varianceCents || 0))}`
       );
 
       setSelectedERAForReconcile("");
       setSelectedEFT("");
       setReconcileNotes("");
-      loadInitialData();
-    } catch (err: any) {
-      setError(err.message);
+      await loadInitialData();
+      await loadSummary();
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to reconcile payments"));
     } finally {
       setLoading(false);
     }
@@ -247,8 +433,8 @@ export function ClearinghousePage() {
       const report = await fetchClosingReport(session.tenantId, session.accessToken, reportDates);
       setReportData(report);
       setSuccess("Report generated");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to fetch closing report"));
     } finally {
       setLoading(false);
     }
@@ -278,302 +464,220 @@ export function ClearinghousePage() {
   };
 
   return (
-    <div style={{ padding: "2rem", maxWidth: "1400px", margin: "0 auto" }}>
-      <h1 style={{ marginBottom: "1rem", fontSize: "2rem", fontWeight: 700 }}>Clearinghouse & Payment Management</h1>
-      <p style={{ color: "#6b7280", marginBottom: "2rem" }}>
-        Submit claims, process remittance advice, track payments, and reconcile transactions
-      </p>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: "0.75rem",
-          marginBottom: "1.5rem",
-        }}
-        aria-label="Insurance connection status"
-      >
-        <div style={{ background: "white", border: "1px solid #d1fae5", borderRadius: "8px", padding: "1rem" }}>
-          <div style={{ color: "#047857", fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase" }}>
-            Eligibility connection
-          </div>
-          <div style={{ color: "#0f172a", fontWeight: 700, marginTop: "0.25rem" }}>
-            {formatIntegrationStatus(eligibilityIntegration)}
-          </div>
-          <div style={{ color: "#64748b", fontSize: "0.82rem", marginTop: "0.35rem" }}>
-            Patient coverage checks and claim context use the latest eligibility verification.
-          </div>
+    <div className="clearinghouse-page">
+      <div className="clearinghouse-header">
+        <div>
+          <div className="clearinghouse-eyebrow">Insurance Money Pipeline</div>
+          <h1>Clearinghouse & Payment Management</h1>
+          <p>
+            Submit clean claims, review payer responses, post remittance advice, and match deposits back to claims.
+          </p>
         </div>
-        <div style={{ background: "white", border: "1px solid #fde68a", borderRadius: "8px", padding: "1rem" }}>
-          <div style={{ color: "#92400e", fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase" }}>
-            Claims clearinghouse
-          </div>
-          <div style={{ color: "#0f172a", fontWeight: 700, marginTop: "0.25rem" }}>
-            {formatIntegrationStatus(clearinghouseIntegration)}
-          </div>
-          <div style={{ color: "#64748b", fontSize: "0.82rem", marginTop: "0.35rem" }}>
-            Claim submission and ERA/EFT workflows are internal test-mode until production payer enrollment is enabled.
-          </div>
+        <button type="button" className="btn-secondary" onClick={() => {
+          void loadInitialData();
+          void loadSummary();
+        }}>
+          Refresh
+        </button>
+      </div>
+
+      <div className="clearinghouse-summary-grid" aria-label="Clearinghouse summary">
+        <div className="clearinghouse-summary-card">
+          <span>Ready to send</span>
+          <strong>{summary.readyCount}</strong>
+          <small>{formatCurrency(summary.readyAmountCents)}</small>
+        </div>
+        <div className="clearinghouse-summary-card warning">
+          <span>Coding review</span>
+          <strong>{summary.codingReviewCount}</strong>
+          <small>Release these before submission</small>
+        </div>
+        <div className="clearinghouse-summary-card">
+          <span>Awaiting payer</span>
+          <strong>{summary.awaitingPayerCount}</strong>
+          <small>Submitted or accepted claims</small>
+        </div>
+        <div className="clearinghouse-summary-card">
+          <span>ERA received</span>
+          <strong>{summary.eraCount}</strong>
+          <small>{formatCurrency(summary.eraAmountCents)}</small>
+        </div>
+        <div className="clearinghouse-summary-card">
+          <span>EFT deposits</span>
+          <strong>{summary.eftCount}</strong>
+          <small>{formatCurrency(summary.eftAmountCents)}</small>
         </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div style={{ display: "flex", gap: "0.5rem", borderBottom: "2px solid #e5e7eb", marginBottom: "2rem" }}>
-        {[
-          { key: "submit", label: "Submit Claims" },
-          { key: "era", label: "ERA" },
-          { key: "eft", label: "EFT" },
-          { key: "reconcile", label: "Reconciliation" },
-          { key: "reports", label: "Reports" },
-        ].map((tab) => (
+      <div className="clearinghouse-status-grid" aria-label="Insurance connection status">
+        <div className="clearinghouse-status-card">
+          <span>Eligibility connection</span>
+          <strong>{formatIntegrationStatus(eligibilityIntegration)}</strong>
+          <small>Coverage checks feed claim context before release.</small>
+        </div>
+        <div className="clearinghouse-status-card">
+          <span>Claims clearinghouse</span>
+          <strong>{formatIntegrationStatus(clearinghouseIntegration)}</strong>
+          <small>Submission and ERA/EFT workflows are internal test-mode until payer enrollment is enabled.</small>
+        </div>
+      </div>
+
+      <div className="clearinghouse-tabs">
+        {tabs.map((tab) => (
           <button
             key={tab.key}
-            onClick={() => selectTab(tab.key as ClearinghouseTab)}
-            style={{
-              padding: "0.75rem 1.5rem",
-              border: "none",
-              background: "transparent",
-              borderBottom: activeTab === tab.key ? "3px solid #3b82f6" : "3px solid transparent",
-              color: activeTab === tab.key ? "#3b82f6" : "#6b7280",
-              fontWeight: activeTab === tab.key ? 600 : 400,
-              cursor: "pointer",
-              fontSize: "0.9375rem",
-            }}
+            type="button"
+            className={`clearinghouse-tab ${activeTab === tab.key ? "active" : ""}`}
+            onClick={() => selectTab(tab.key)}
           >
             {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Error/Success Messages */}
       {error && (
-        <div
-          style={{
-            padding: "1rem",
-            background: "#fee2e2",
-            color: "#dc2626",
-            borderRadius: "8px",
-            marginBottom: "1rem",
-            fontSize: "0.875rem",
-          }}
-        >
+        <div className="clearinghouse-alert error">
           {error}
-          <button
-            onClick={() => setError(null)}
-            style={{
-              float: "right",
-              background: "transparent",
-              border: "none",
-              color: "#dc2626",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            ×
-          </button>
+          <button type="button" onClick={() => setError(null)}>x</button>
         </div>
       )}
 
       {success && (
-        <div
-          style={{
-            padding: "1rem",
-            background: "#d1fae5",
-            color: "#065f46",
-            borderRadius: "8px",
-            marginBottom: "1rem",
-            fontSize: "0.875rem",
-          }}
-        >
+        <div className="clearinghouse-alert success">
           {success}
-          <button
-            onClick={() => setSuccess(null)}
-            style={{
-              float: "right",
-              background: "transparent",
-              border: "none",
-              color: "#065f46",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            ×
-          </button>
+          <button type="button" onClick={() => setSuccess(null)}>x</button>
         </div>
       )}
 
-      {/* Submit Claims Tab */}
       {activeTab === "submit" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <h2 style={{ fontSize: "1.25rem", fontWeight: 600 }}>Ready to Submit ({claims.length})</h2>
+        <section className="clearinghouse-panel">
+          <div className="clearinghouse-panel-header">
+            <div>
+              <h2>Ready to Submit ({claims.length})</h2>
+              <p>Claims land here only after coding review releases them and the scrubber is clean enough to send.</p>
+            </div>
             <button
+              type="button"
+              className="btn-primary"
               onClick={handleSubmitClaims}
               disabled={selectedClaims.size === 0 || loading}
-              style={{
-                padding: "0.75rem 1.5rem",
-                background: selectedClaims.size > 0 ? "#3b82f6" : "#e5e7eb",
-                color: selectedClaims.size > 0 ? "white" : "#9ca3af",
-                border: "none",
-                borderRadius: "8px",
-                cursor: selectedClaims.size > 0 ? "pointer" : "not-allowed",
-                fontWeight: 600,
-              }}
             >
               Submit {selectedClaims.size > 0 ? `(${selectedClaims.size})` : ""} to Clearinghouse
             </button>
           </div>
 
-          <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
-                <tr>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    <input
-                      type="checkbox"
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedClaims(new Set(claims.map((c) => c.id)));
-                        } else {
-                          setSelectedClaims(new Set());
-                        }
-                      }}
-                      checked={selectedClaims.size === claims.length && claims.length > 0}
-                    />
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    CLAIM #
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    PATIENT
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    PAYER
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    AMOUNT
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    STATUS
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    ACTIONS
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {claims.length === 0 && (
-                  <tr>
-                    <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "#9ca3af" }}>
-                      No claims ready to submit
-                    </td>
-                  </tr>
-                )}
-                {claims.map((claim) => {
-                  const status = claimStatusMap.get(claim.id);
-                  return (
-                    <tr key={claim.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                      <td style={{ padding: "0.75rem" }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedClaims.has(claim.id)}
-                          onChange={(e) => {
-                            const newSet = new Set(selectedClaims);
-                            if (e.target.checked) {
-                              newSet.add(claim.id);
-                            } else {
-                              newSet.delete(claim.id);
-                            }
-                            setSelectedClaims(newSet);
-                          }}
-                        />
-                      </td>
-                      <td style={{ padding: "0.75rem", fontWeight: 500 }}>{claim.claimNumber}</td>
-                      <td style={{ padding: "0.75rem" }}>
-                        {claim.patientFirstName} {claim.patientLastName}
-                      </td>
-                      <td style={{ padding: "0.75rem" }}>{claim.payer || "—"}</td>
-                      <td style={{ padding: "0.75rem" }}>${((claim.totalCents || 0) / 100).toFixed(2)}</td>
-                      <td style={{ padding: "0.75rem" }}>
-                        {status ? (
-                          <span
-                            style={{
-                              padding: "0.25rem 0.75rem",
-                              borderRadius: "12px",
-                              fontSize: "0.75rem",
-                              fontWeight: 600,
-                              background: status.status === "accepted" ? "#d1fae5" : status.status === "rejected" ? "#fee2e2" : "#fef3c7",
-                              color: status.status === "accepted" ? "#065f46" : status.status === "rejected" ? "#dc2626" : "#92400e",
-                            }}
-                          >
-                            {status.status}
-                          </span>
-                        ) : (
-                          <span style={{ color: "#6b7280" }}>{claim.status}</span>
-                        )}
-                      </td>
-                      <td style={{ padding: "0.75rem" }}>
-                        <button
-                          onClick={() => handleCheckClaimStatus(claim.id)}
-                          style={{
-                            padding: "0.5rem 1rem",
-                            background: "transparent",
-                            border: "1px solid #e5e7eb",
-                            borderRadius: "6px",
-                            cursor: "pointer",
-                            fontSize: "0.875rem",
-                          }}
-                        >
-                          Check Status
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Submission Timeline */}
-          {claimStatusMap.size > 0 && (
-            <div style={{ marginTop: "2rem", background: "white", padding: "1.5rem", borderRadius: "12px", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ fontSize: "1.125rem", fontWeight: 600, marginBottom: "1rem" }}>Submission Timeline</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                {Array.from(claimStatusMap.entries()).map(([claimId, status]) => (
-                  <div key={claimId} style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
-                    <div
-                      style={{
-                        width: "12px",
-                        height: "12px",
-                        borderRadius: "50%",
-                        background: status.status === "accepted" ? "#10b981" : status.status === "rejected" ? "#ef4444" : "#f59e0b",
-                      }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 500 }}>
-                        {claims.find((c) => c.id === claimId)?.claimNumber || claimId}
-                      </div>
-                      <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
-                        {status.message || status.status} {status.controlNumber && `• Control: ${status.controlNumber}`}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+          {claims.length === 0 ? (
+            <div className="clearinghouse-empty-state">
+              <h3>No claims are ready to submit.</h3>
+              <p>
+                This is empty because there are no claims in the ready bucket right now. Claims usually start in coding review, get fixed, then release into this clearinghouse queue.
+              </p>
+              <div className="clearinghouse-empty-actions">
+                <Link className="btn-primary" to="/claims?queue=coding_review">Open Coding Review</Link>
+                <Link className="btn-secondary" to="/claims?queue=ready">View Ready Claims</Link>
               </div>
             </div>
+          ) : (
+            <>
+              <div className="clearinghouse-selection-bar">
+                <span>{selectedClaims.size} selected</span>
+                <strong>{formatCurrency(selectedReadyTotal)}</strong>
+              </div>
+              <div className="clearinghouse-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>
+                        <input
+                          aria-label="Select all ready claims"
+                          type="checkbox"
+                          onChange={(event) => {
+                            setSelectedClaims(event.target.checked ? new Set(claims.map((claim) => claim.id)) : new Set());
+                          }}
+                          checked={selectedClaims.size === claims.length && claims.length > 0}
+                        />
+                      </th>
+                      <th>Claim #</th>
+                      <th>Patient</th>
+                      <th>Payer</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {claims.map((claim) => {
+                      const status = claimStatusMap.get(claim.id);
+                      return (
+                        <tr key={claim.id}>
+                          <td>
+                            <input
+                              aria-label={`Select ${claim.claimNumber || claim.id}`}
+                              type="checkbox"
+                              checked={selectedClaims.has(claim.id)}
+                              onChange={(event) => {
+                                const next = new Set(selectedClaims);
+                                if (event.target.checked) {
+                                  next.add(claim.id);
+                                } else {
+                                  next.delete(claim.id);
+                                }
+                                setSelectedClaims(next);
+                              }}
+                            />
+                          </td>
+                          <td className="clearinghouse-claim-id">{claim.claimNumber || claim.id}</td>
+                          <td>{claimPatientName(claim)}</td>
+                          <td>{claim.payer || "Unknown payer"}</td>
+                          <td className="clearinghouse-number">{formatCurrency(claimAmountCents(claim))}</td>
+                          <td>
+                            <span className={`clearinghouse-pill ${statusTone(status?.status || claim.status)}`}>
+                              {status?.status || claim.status || "ready"}
+                            </span>
+                          </td>
+                          <td>
+                            <button type="button" className="btn-sm btn-secondary" onClick={() => void handleCheckClaimStatus(claim.id)}>
+                              Check Status
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
-        </div>
+
+          {claimStatusMap.size > 0 && (
+            <div className="clearinghouse-timeline">
+              <h3>Submission Timeline</h3>
+              {Array.from(claimStatusMap.entries()).map(([claimId, status]) => (
+                <div key={claimId} className="clearinghouse-timeline-item">
+                  <span className={`clearinghouse-dot ${statusTone(status.status)}`} />
+                  <div>
+                    <strong>{claims.find((claim) => claim.id === claimId)?.claimNumber || claimId}</strong>
+                    <p>{status.message || status.error || status.status} {status.controlNumber && `| Control: ${status.controlNumber}`}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
-      {/* ERA Tab */}
       {activeTab === "era" && (
-        <div>
-          <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem", flexWrap: "wrap" }}>
-            <select
-              value={eraFilters.status}
-              onChange={(e) => setEraFilters({ ...eraFilters, status: e.target.value })}
-              style={{ padding: "0.5rem", borderRadius: "6px", border: "1px solid #e5e7eb" }}
-            >
+        <section className="clearinghouse-panel">
+          <div className="clearinghouse-panel-header">
+            <div>
+              <h2>Electronic Remittance Advice</h2>
+              <p>Payer explanation of what was paid, adjusted, denied, or moved to patient responsibility.</p>
+            </div>
+            <button type="button" className="btn-secondary" onClick={() => exportToCSV(eras, "eras")}>Export CSV</button>
+          </div>
+
+          <div className="clearinghouse-filter-row">
+            <select value={eraFilters.status} onChange={(event) => setEraFilters({ ...eraFilters, status: event.target.value })}>
               <option value="">All Statuses</option>
               <option value="pending">Pending</option>
               <option value="posted">Posted</option>
@@ -583,216 +687,101 @@ export function ClearinghousePage() {
               type="text"
               placeholder="Filter by payer..."
               value={eraFilters.payer}
-              onChange={(e) => setEraFilters({ ...eraFilters, payer: e.target.value })}
-              style={{ padding: "0.5rem 1rem", borderRadius: "6px", border: "1px solid #e5e7eb", flex: 1, minWidth: "200px" }}
+              onChange={(event) => setEraFilters({ ...eraFilters, payer: event.target.value })}
             />
-            <button
-              onClick={loadInitialData}
-              style={{
-                padding: "0.5rem 1.5rem",
-                background: "#3b82f6",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: "pointer",
-              }}
-            >
-              Apply Filters
-            </button>
-            <button
-              onClick={() => exportToCSV(eras, "eras")}
-              style={{
-                padding: "0.5rem 1.5rem",
-                background: "white",
-                border: "1px solid #e5e7eb",
-                borderRadius: "6px",
-                cursor: "pointer",
-              }}
-            >
-              Export CSV
-            </button>
+            <button type="button" className="btn-primary" onClick={() => void loadInitialData()}>Apply Filters</button>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: eraDetails ? "1fr 1fr" : "1fr", gap: "1rem" }}>
-            <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+          <div className={`clearinghouse-split ${eraDetails ? "with-detail" : ""}`}>
+            <div className="clearinghouse-table">
+              <table>
+                <thead>
                   <tr>
-                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                      ERA #
-                    </th>
-                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                      PAYER
-                    </th>
-                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                      AMOUNT
-                    </th>
-                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                      CLAIMS
-                    </th>
-                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                      STATUS
-                    </th>
-                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                      ACTIONS
-                    </th>
+                    <th>ERA #</th>
+                    <th>Payer</th>
+                    <th>Amount</th>
+                    <th>Claims</th>
+                    <th>Status</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {eras.length === 0 && (
+                  {eras.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ padding: "2rem", textAlign: "center", color: "#9ca3af" }}>
-                        No remittance advice found
-                      </td>
+                      <td colSpan={6} className="clearinghouse-empty-cell">No remittance advice found.</td>
                     </tr>
+                  ) : (
+                    eras.map((era) => (
+                      <tr key={era.id}>
+                        <td className="clearinghouse-claim-id">{era.eraNumber || era.id}</td>
+                        <td>{era.payer || "Unknown payer"}</td>
+                        <td className="clearinghouse-number">{formatCurrency(era.paymentAmountCents || 0)}</td>
+                        <td>{era.claimsPaid || 0}</td>
+                        <td><span className={`clearinghouse-pill ${statusTone(era.status)}`}>{era.status || "pending"}</span></td>
+                        <td>
+                          <div className="clearinghouse-actions">
+                            <button type="button" className="btn-sm btn-secondary" onClick={() => void handleViewERADetails(era.id)}>View</button>
+                            {era.status === "pending" && (
+                              <button type="button" className="btn-sm btn-primary" onClick={() => void handlePostERA(era.id)}>Post</button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
                   )}
-                  {eras.map((era) => (
-                    <tr key={era.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                      <td style={{ padding: "0.75rem", fontWeight: 500 }}>{era.eraNumber}</td>
-                      <td style={{ padding: "0.75rem" }}>{era.payer}</td>
-                      <td style={{ padding: "0.75rem" }}>${((era.paymentAmountCents || 0) / 100).toFixed(2)}</td>
-                      <td style={{ padding: "0.75rem" }}>{era.claimsPaid || 0}</td>
-                      <td style={{ padding: "0.75rem" }}>
-                        <span
-                          style={{
-                            padding: "0.25rem 0.75rem",
-                            borderRadius: "12px",
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            background: era.status === "posted" ? "#d1fae5" : era.status === "reconciled" ? "#dbeafe" : "#fef3c7",
-                            color: era.status === "posted" ? "#065f46" : era.status === "reconciled" ? "#1e40af" : "#92400e",
-                          }}
-                        >
-                          {era.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: "0.75rem" }}>
-                        <button
-                          onClick={() => handleViewERADetails(era.id)}
-                          style={{
-                            padding: "0.5rem 1rem",
-                            background: "transparent",
-                            border: "1px solid #e5e7eb",
-                            borderRadius: "6px",
-                            cursor: "pointer",
-                            fontSize: "0.875rem",
-                            marginRight: "0.5rem",
-                          }}
-                        >
-                          View
-                        </button>
-                        {era.status === "pending" && (
-                          <button
-                            onClick={() => handlePostERA(era.id)}
-                            style={{
-                              padding: "0.5rem 1rem",
-                              background: "#3b82f6",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "6px",
-                              cursor: "pointer",
-                              fontSize: "0.875rem",
-                            }}
-                          >
-                            Post
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
                 </tbody>
               </table>
             </div>
 
-            {/* ERA Details Panel */}
             {eraDetails && selectedERA && (
-              <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", padding: "1.5rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-                  <h3 style={{ fontSize: "1.125rem", fontWeight: 600 }}>ERA Details</h3>
-                  <button
-                    onClick={() => {
-                      setEraDetails(null);
-                      setSelectedERA(null);
-                    }}
-                    style={{ background: "transparent", border: "none", fontSize: "1.5rem", cursor: "pointer", color: "#6b7280" }}
-                  >
-                    ×
-                  </button>
+              <aside className="clearinghouse-detail-panel">
+                <div className="clearinghouse-detail-header">
+                  <h3>ERA Details</h3>
+                  <button type="button" onClick={() => {
+                    setEraDetails(null);
+                    setSelectedERA(null);
+                  }}>x</button>
                 </div>
-
-                <div style={{ marginBottom: "1.5rem" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", fontSize: "0.875rem" }}>
-                    <div>
-                      <div style={{ color: "#6b7280", marginBottom: "0.25rem" }}>ERA Number</div>
-                      <div style={{ fontWeight: 600 }}>{selectedERA.eraNumber}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "#6b7280", marginBottom: "0.25rem" }}>Payer</div>
-                      <div style={{ fontWeight: 600 }}>{selectedERA.payer}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "#6b7280", marginBottom: "0.25rem" }}>Payment Amount</div>
-                      <div style={{ fontWeight: 600 }}>${((selectedERA.paymentAmountCents || 0) / 100).toFixed(2)}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "#6b7280", marginBottom: "0.25rem" }}>Check Number</div>
-                      <div style={{ fontWeight: 600 }}>{selectedERA.checkNumber || "—"}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "#6b7280", marginBottom: "0.25rem" }}>Check Date</div>
-                      <div style={{ fontWeight: 600 }}>{selectedERA.checkDate || "—"}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "#6b7280", marginBottom: "0.25rem" }}>Claims Paid</div>
-                      <div style={{ fontWeight: 600 }}>{selectedERA.claimsPaid || 0}</div>
-                    </div>
-                  </div>
+                <div className="clearinghouse-detail-grid">
+                  <div><span>ERA Number</span><strong>{selectedERA.eraNumber || selectedERA.id}</strong></div>
+                  <div><span>Payer</span><strong>{selectedERA.payer || "Unknown"}</strong></div>
+                  <div><span>Payment</span><strong>{formatCurrency(selectedERA.paymentAmountCents || 0)}</strong></div>
+                  <div><span>Check</span><strong>{selectedERA.checkNumber || "Not listed"}</strong></div>
+                  <div><span>Check Date</span><strong>{selectedERA.checkDate || "Not listed"}</strong></div>
+                  <div><span>Claims Paid</span><strong>{selectedERA.claimsPaid || 0}</strong></div>
                 </div>
-
-                <h4 style={{ fontSize: "0.9375rem", fontWeight: 600, marginBottom: "0.75rem" }}>Claim Details</h4>
-                <div style={{ maxHeight: "400px", overflowY: "auto" }}>
-                  {eraDetails.claims && eraDetails.claims.length > 0 ? (
+                <h4>Claim Details</h4>
+                <div className="clearinghouse-era-claims">
+                  {eraDetails.claims?.length > 0 ? (
                     eraDetails.claims.map((claim: any) => (
-                      <div
-                        key={claim.id}
-                        style={{
-                          padding: "0.75rem",
-                          border: "1px solid #f3f4f6",
-                          borderRadius: "8px",
-                          marginBottom: "0.5rem",
-                          fontSize: "0.875rem",
-                        }}
-                      >
-                        <div style={{ fontWeight: 600, marginBottom: "0.5rem" }}>{claim.claimNumber}</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", color: "#6b7280" }}>
-                          <div>Charge: ${((claim.chargeAmountCents || 0) / 100).toFixed(2)}</div>
-                          <div>Paid: ${((claim.paidAmountCents || 0) / 100).toFixed(2)}</div>
-                          <div>Adjustment: ${((claim.adjustmentAmountCents || 0) / 100).toFixed(2)}</div>
-                          <div>
-                            Status: <span style={{ fontWeight: 600 }}>{claim.status}</span>
-                          </div>
-                        </div>
+                      <div key={claim.id || claim.claimNumber} className="clearinghouse-era-claim">
+                        <strong>{claim.claimNumber}</strong>
+                        <span>Charge {formatCurrency(claim.chargeAmountCents || 0)}</span>
+                        <span>Paid {formatCurrency(claim.paidAmountCents || 0)}</span>
+                        <span>Adjustment {formatCurrency(claim.adjustmentAmountCents || 0)}</span>
                       </div>
                     ))
                   ) : (
-                    <div style={{ color: "#9ca3af", textAlign: "center", padding: "1rem" }}>No claim details available</div>
+                    <p className="muted">No claim details available.</p>
                   )}
                 </div>
-              </div>
+              </aside>
             )}
           </div>
-        </div>
+        </section>
       )}
 
-      {/* EFT Tab */}
       {activeTab === "eft" && (
-        <div>
-          <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem", flexWrap: "wrap" }}>
-            <select
-              value={eftFilters.reconciled}
-              onChange={(e) => setEftFilters({ ...eftFilters, reconciled: e.target.value })}
-              style={{ padding: "0.5rem", borderRadius: "6px", border: "1px solid #e5e7eb" }}
-            >
+        <section className="clearinghouse-panel">
+          <div className="clearinghouse-panel-header">
+            <div>
+              <h2>EFT Deposits</h2>
+              <p>Actual bank deposits that should match posted ERA payments.</p>
+            </div>
+            <button type="button" className="btn-secondary" onClick={() => exportToCSV(efts, "efts")}>Export CSV</button>
+          </div>
+          <div className="clearinghouse-filter-row">
+            <select value={eftFilters.reconciled} onChange={(event) => setEftFilters({ ...eftFilters, reconciled: event.target.value })}>
               <option value="">All</option>
               <option value="true">Reconciled</option>
               <option value="false">Unreconciled</option>
@@ -801,408 +790,137 @@ export function ClearinghousePage() {
               type="text"
               placeholder="Filter by payer..."
               value={eftFilters.payer}
-              onChange={(e) => setEftFilters({ ...eftFilters, payer: e.target.value })}
-              style={{ padding: "0.5rem 1rem", borderRadius: "6px", border: "1px solid #e5e7eb", flex: 1, minWidth: "200px" }}
+              onChange={(event) => setEftFilters({ ...eftFilters, payer: event.target.value })}
             />
-            <button
-              onClick={loadInitialData}
-              style={{
-                padding: "0.5rem 1.5rem",
-                background: "#3b82f6",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: "pointer",
-              }}
-            >
-              Apply Filters
-            </button>
-            <button
-              onClick={() => exportToCSV(efts, "efts")}
-              style={{
-                padding: "0.5rem 1.5rem",
-                background: "white",
-                border: "1px solid #e5e7eb",
-                borderRadius: "6px",
-                cursor: "pointer",
-              }}
-            >
-              Export CSV
-            </button>
+            <button type="button" className="btn-primary" onClick={() => void loadInitialData()}>Apply Filters</button>
           </div>
-
-          <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+          <div className="clearinghouse-table">
+            <table>
+              <thead>
                 <tr>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    TRACE #
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    PAYER
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    AMOUNT
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    DEPOSIT DATE
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    TYPE
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    RECONCILED
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "#6b7280" }}>
-                    VARIANCE
-                  </th>
+                  <th>Trace #</th>
+                  <th>Payer</th>
+                  <th>Amount</th>
+                  <th>Deposit Date</th>
+                  <th>Type</th>
+                  <th>Reconciled</th>
+                  <th>Variance</th>
                 </tr>
               </thead>
               <tbody>
-                {efts.length === 0 && (
+                {efts.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "#9ca3af" }}>
-                      No EFT transactions found
-                    </td>
+                    <td colSpan={7} className="clearinghouse-empty-cell">No EFT deposits found.</td>
                   </tr>
+                ) : (
+                  efts.map((eft) => (
+                    <tr key={eft.id}>
+                      <td className="clearinghouse-claim-id">{eft.eftTraceNumber || eft.id}</td>
+                      <td>{eft.payer || "Unknown payer"}</td>
+                      <td className="clearinghouse-number">{formatCurrency(eft.paymentAmountCents || 0)}</td>
+                      <td>{eft.depositDate || "Not listed"}</td>
+                      <td>{eft.transactionType || "ACH"}</td>
+                      <td><span className={`clearinghouse-pill ${eft.reconciled ? "green" : "yellow"}`}>{eft.reconciled ? "Yes" : "No"}</span></td>
+                      <td className={eft.varianceCents ? "clearinghouse-negative" : "clearinghouse-number"}>{formatCurrency(eft.varianceCents || 0)}</td>
+                    </tr>
+                  ))
                 )}
-                {efts.map((eft) => (
-                  <tr key={eft.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                    <td style={{ padding: "0.75rem", fontWeight: 500 }}>{eft.eftTraceNumber}</td>
-                    <td style={{ padding: "0.75rem" }}>{eft.payer}</td>
-                    <td style={{ padding: "0.75rem" }}>${((eft.paymentAmountCents || 0) / 100).toFixed(2)}</td>
-                    <td style={{ padding: "0.75rem" }}>{eft.depositDate}</td>
-                    <td style={{ padding: "0.75rem" }}>{eft.transactionType || "—"}</td>
-                    <td style={{ padding: "0.75rem" }}>
-                      <span
-                        style={{
-                          padding: "0.25rem 0.75rem",
-                          borderRadius: "12px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          background: eft.reconciled ? "#d1fae5" : "#fee2e2",
-                          color: eft.reconciled ? "#065f46" : "#dc2626",
-                        }}
-                      >
-                        {eft.reconciled ? "Yes" : "No"}
-                      </span>
-                    </td>
-                    <td style={{ padding: "0.75rem" }}>
-                      {eft.varianceCents !== 0 && eft.varianceCents ? (
-                        <span style={{ color: "#dc2626", fontWeight: 600 }}>
-                          ${Math.abs(eft.varianceCents / 100).toFixed(2)}
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                  </tr>
-                ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Reconciliation Tab */}
       {activeTab === "reconcile" && (
-        <div>
-          <div
-            style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", padding: "2rem", marginBottom: "2rem" }}
-          >
-            <h3 style={{ fontSize: "1.125rem", fontWeight: 600, marginBottom: "1.5rem" }}>Reconcile ERA with EFT</h3>
-
-            <div style={{ display: "grid", gap: "1.5rem" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.5rem", color: "#374151" }}>
-                  Select ERA to Reconcile *
-                </label>
-                <select
-                  value={selectedERAForReconcile}
-                  onChange={(e) => setSelectedERAForReconcile(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: "8px",
-                    fontSize: "0.9375rem",
-                  }}
-                >
-                  <option value="">-- Select ERA --</option>
-                  {eras.map((era) => (
-                    <option key={era.id} value={era.id}>
-                      {era.eraNumber} - {era.payer} - ${((era.paymentAmountCents || 0) / 100).toFixed(2)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.5rem", color: "#374151" }}>
-                  Match with EFT (Optional)
-                </label>
-                <select
-                  value={selectedEFT}
-                  onChange={(e) => setSelectedEFT(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: "8px",
-                    fontSize: "0.9375rem",
-                  }}
-                >
-                  <option value="">-- Select EFT (optional) --</option>
-                  {efts
-                    .filter((eft) => !eft.reconciled)
-                    .map((eft) => (
-                      <option key={eft.id} value={eft.id}>
-                        {eft.eftTraceNumber} - {eft.payer} - ${((eft.paymentAmountCents || 0) / 100).toFixed(2)} ({eft.depositDate})
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.5rem", color: "#374151" }}>
-                  Reconciliation Notes
-                </label>
-                <textarea
-                  value={reconcileNotes}
-                  onChange={(e) => setReconcileNotes(e.target.value)}
-                  placeholder="Enter any notes about this reconciliation..."
-                  rows={3}
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: "8px",
-                    fontSize: "0.9375rem",
-                    fontFamily: "inherit",
-                    resize: "vertical",
-                  }}
-                />
-              </div>
-
-              <button
-                onClick={handleReconcile}
-                disabled={!selectedERAForReconcile || loading}
-                style={{
-                  padding: "0.75rem 1.5rem",
-                  background: selectedERAForReconcile ? "#3b82f6" : "#e5e7eb",
-                  color: selectedERAForReconcile ? "white" : "#9ca3af",
-                  border: "none",
-                  borderRadius: "8px",
-                  cursor: selectedERAForReconcile ? "pointer" : "not-allowed",
-                  fontWeight: 600,
-                  fontSize: "0.9375rem",
-                }}
-              >
-                Reconcile Payment
-              </button>
+        <section className="clearinghouse-panel narrow">
+          <div className="clearinghouse-panel-header">
+            <div>
+              <h2>Reconcile ERA with EFT</h2>
+              <p>Match the payer explanation to the money that hit the bank.</p>
             </div>
           </div>
-
-          {/* Variance Alerts */}
-          <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", padding: "1.5rem" }}>
-            <h3 style={{ fontSize: "1.125rem", fontWeight: 600, marginBottom: "1rem" }}>Payment Variance Alerts</h3>
-            <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
-              {efts.filter((eft) => eft.varianceCents !== 0 && eft.varianceCents).length === 0 ? (
-                <div style={{ textAlign: "center", padding: "2rem", color: "#9ca3af" }}>No variances detected</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                  {efts
-                    .filter((eft) => eft.varianceCents !== 0 && eft.varianceCents)
-                    .map((eft) => (
-                      <div
-                        key={eft.id}
-                        style={{
-                          padding: "1rem",
-                          background: "#fef3c7",
-                          borderLeft: "4px solid #f59e0b",
-                          borderRadius: "6px",
-                        }}
-                      >
-                        <div style={{ fontWeight: 600, color: "#92400e" }}>
-                          {eft.eftTraceNumber} - {eft.payer}
-                        </div>
-                        <div style={{ color: "#78350f", marginTop: "0.25rem" }}>
-                          Variance: ${Math.abs(eft.varianceCents / 100).toFixed(2)} ({eft.varianceCents > 0 ? "Overpayment" : "Underpayment"})
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </div>
+          <div className="clearinghouse-form-grid">
+            <label>
+              ERA
+              <select value={selectedERAForReconcile} onChange={(event) => setSelectedERAForReconcile(event.target.value)}>
+                <option value="">-- Select ERA --</option>
+                {eras.map((era) => (
+                  <option key={era.id} value={era.id}>{era.eraNumber || era.id} - {formatCurrency(era.paymentAmountCents || 0)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              EFT
+              <select value={selectedEFT} onChange={(event) => setSelectedEFT(event.target.value)}>
+                <option value="">-- Select EFT (optional) --</option>
+                {efts.map((eft) => (
+                  <option key={eft.id} value={eft.id}>{eft.eftTraceNumber || eft.id} - {formatCurrency(eft.paymentAmountCents || 0)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="clearinghouse-form-wide">
+              Notes
+              <textarea value={reconcileNotes} onChange={(event) => setReconcileNotes(event.target.value)} placeholder="Variance notes, payer comments, or deposit exceptions..." />
+            </label>
           </div>
-        </div>
+          <div className="clearinghouse-panel-actions">
+            <button type="button" className="btn-primary" onClick={handleReconcile} disabled={loading}>Reconcile Payment</button>
+          </div>
+        </section>
       )}
 
-      {/* Reports Tab */}
       {activeTab === "reports" && (
-        <div>
-          <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", padding: "2rem", marginBottom: "2rem" }}>
-            <h3 style={{ fontSize: "1.125rem", fontWeight: 600, marginBottom: "1.5rem" }}>Generate Closing Report</h3>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.5rem", color: "#374151" }}>
-                  Start Date
-                </label>
-                <input
-                  type="date"
-                  value={reportDates.startDate}
-                  onChange={(e) => setReportDates({ ...reportDates, startDate: e.target.value })}
-                  style={{ width: "100%", padding: "0.75rem", border: "1px solid #e5e7eb", borderRadius: "8px" }}
-                />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.5rem", color: "#374151" }}>
-                  End Date
-                </label>
-                <input
-                  type="date"
-                  value={reportDates.endDate}
-                  onChange={(e) => setReportDates({ ...reportDates, endDate: e.target.value })}
-                  style={{ width: "100%", padding: "0.75rem", border: "1px solid #e5e7eb", borderRadius: "8px" }}
-                />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.5rem", color: "#374151" }}>
-                  Report Type
-                </label>
-                <select
-                  value={reportDates.reportType}
-                  onChange={(e) => setReportDates({ ...reportDates, reportType: e.target.value })}
-                  style={{ width: "100%", padding: "0.75rem", border: "1px solid #e5e7eb", borderRadius: "8px" }}
-                >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
+        <section className="clearinghouse-panel">
+          <div className="clearinghouse-panel-header">
+            <div>
+              <h2>Generate Closing Report</h2>
+              <p>Daily or date-range view of charges, payments, adjustments, payer files, and reconciliation variance.</p>
             </div>
-
-            <button
-              onClick={handleGenerateReport}
-              disabled={loading}
-              style={{
-                padding: "0.75rem 1.5rem",
-                background: "#3b82f6",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
-            >
-              Generate Report
-            </button>
+          </div>
+          <div className="clearinghouse-report-controls">
+            <label>
+              Start Date
+              <input type="date" value={reportDates.startDate} onChange={(event) => setReportDates({ ...reportDates, startDate: event.target.value })} />
+            </label>
+            <label>
+              End Date
+              <input type="date" value={reportDates.endDate} onChange={(event) => setReportDates({ ...reportDates, endDate: event.target.value })} />
+            </label>
+            <label>
+              Type
+              <select value={reportDates.reportType} onChange={(event) => setReportDates({ ...reportDates, reportType: event.target.value })}>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            <button type="button" className="btn-primary" onClick={handleGenerateReport} disabled={loading}>Generate Report</button>
           </div>
 
           {reportData && (
-            <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", padding: "2rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-                <h3 style={{ fontSize: "1.125rem", fontWeight: 600 }}>
-                  {reportData.reportType.charAt(0).toUpperCase() + reportData.reportType.slice(1)} Closing Report
-                </h3>
-                <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
-                  {reportData.startDate} to {reportData.endDate}
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem", marginBottom: "2rem" }}>
-                {[
-                  { label: "Total Charges", value: `$${(reportData.totalChargesCents / 100).toFixed(2)}`, color: "#3b82f6" },
-                  { label: "Total Payments", value: `$${(reportData.totalPaymentsCents / 100).toFixed(2)}`, color: "#10b981" },
-                  { label: "Total Adjustments", value: `$${(reportData.totalAdjustmentsCents / 100).toFixed(2)}`, color: "#f59e0b" },
-                  { label: "Outstanding Balance", value: `$${(reportData.outstandingBalanceCents / 100).toFixed(2)}`, color: "#ef4444" },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    style={{
-                      padding: "1.5rem",
-                      background: "#f9fafb",
-                      borderRadius: "12px",
-                      border: `2px solid ${item.color}20`,
-                    }}
-                  >
-                    <div style={{ fontSize: "0.75rem", color: "#6b7280", marginBottom: "0.5rem" }}>{item.label}</div>
-                    <div style={{ fontSize: "1.5rem", fontWeight: 700, color: item.color }}>{item.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
+            <div className="clearinghouse-report">
+              <div className="clearinghouse-panel-header">
                 <div>
-                  <h4 style={{ fontSize: "0.9375rem", fontWeight: 600, marginBottom: "1rem" }}>Claims Activity</h4>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                    {[
-                      { label: "Claims Submitted", value: reportData.claimsSubmitted },
-                      { label: "Claims Paid", value: reportData.claimsPaid },
-                      { label: "Claims Denied", value: reportData.claimsDenied },
-                    ].map((item) => (
-                      <div key={item.label} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.875rem" }}>
-                        <span style={{ color: "#6b7280" }}>{item.label}</span>
-                        <span style={{ fontWeight: 600 }}>{item.value}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <h3>{reportTitle(reportData.reportType)}</h3>
+                  <p>{reportData.startDate} to {reportData.endDate}</p>
                 </div>
-
-                <div>
-                  <h4 style={{ fontSize: "0.9375rem", fontWeight: 600, marginBottom: "1rem" }}>Payment Processing</h4>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                    {[
-                      { label: "ERAs Received", value: reportData.erasReceived },
-                      { label: "EFTs Received", value: reportData.eftsReceived },
-                      {
-                        label: "Reconciliation Variance",
-                        value: `$${(reportData.reconciliationVarianceCents / 100).toFixed(2)}`,
-                        alert: reportData.reconciliationVarianceCents > 0,
-                      },
-                    ].map((item) => (
-                      <div key={item.label} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.875rem" }}>
-                        <span style={{ color: "#6b7280" }}>{item.label}</span>
-                        <span style={{ fontWeight: 600, color: item.alert ? "#dc2626" : "inherit" }}>{item.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <button type="button" className="btn-secondary" onClick={() => window.print()}>Print</button>
               </div>
-
-              <div style={{ marginTop: "2rem", display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
-                <button
-                  onClick={() => exportToCSV([reportData], `closing_report_${reportData.reportType}`)}
-                  style={{
-                    padding: "0.75rem 1.5rem",
-                    background: "white",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                  }}
-                >
-                  Export CSV
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  style={{
-                    padding: "0.75rem 1.5rem",
-                    background: "#3b82f6",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                  }}
-                >
-                  Print PDF
-                </button>
+              <div className="clearinghouse-report-grid">
+                <div><span>Total Charges</span><strong>{formatCurrency(reportData.totalChargesCents || 0)}</strong></div>
+                <div><span>Total Payments</span><strong>{formatCurrency(reportData.totalPaymentsCents || 0)}</strong></div>
+                <div><span>Adjustments</span><strong>{formatCurrency(reportData.totalAdjustmentsCents || 0)}</strong></div>
+                <div><span>Outstanding</span><strong>{formatCurrency(reportData.outstandingBalanceCents || 0)}</strong></div>
+                <div><span>Claims Submitted</span><strong>{reportData.claimsSubmitted || 0}</strong></div>
+                <div><span>Claims Paid</span><strong>{reportData.claimsPaid || 0}</strong></div>
+                <div><span>Claims Denied</span><strong>{reportData.claimsDenied || 0}</strong></div>
+                <div><span>ERAs Received</span><strong>{reportData.erasReceived || 0}</strong></div>
+                <div><span>EFTs Received</span><strong>{reportData.eftsReceived || 0}</strong></div>
+                <div><span>Variance</span><strong>{formatCurrency(reportData.reconciliationVarianceCents || 0)}</strong></div>
               </div>
             </div>
           )}
-        </div>
+        </section>
       )}
     </div>
   );

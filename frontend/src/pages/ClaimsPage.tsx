@@ -105,6 +105,21 @@ interface CachedPaymentRow {
   notes?: string;
 }
 
+interface ReleaseRuleMessage {
+  ruleCode?: string;
+  message?: string;
+}
+
+interface ReleaseIssue {
+  claimId: string;
+  claimNumber: string;
+  patientName: string;
+  message: string;
+  scrubStatus?: string;
+  errors: ReleaseRuleMessage[];
+  warnings: ReleaseRuleMessage[];
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const todayIso = new Date().toISOString().slice(0, 10);
@@ -498,6 +513,38 @@ function getNextAction(claim: ClaimRecord): string {
   }
 }
 
+function getReleaseButtonLabel(claim: ClaimRecord): string {
+  const scrubStatus = String(claim.scrubStatus || '').toLowerCase();
+  const payer = String(claim.payer || '').trim().toLowerCase();
+
+  if (scrubStatus === 'errors' || scrubStatus === 'failed') {
+    return 'Review Issues';
+  }
+  if (!payer || payer === 'unknown payer') {
+    return 'Check Payer';
+  }
+  if (scrubStatus === 'pending') {
+    return 'Check & Release';
+  }
+  return 'Release';
+}
+
+function getReleaseButtonTitle(claim: ClaimRecord): string {
+  const scrubStatus = String(claim.scrubStatus || '').toLowerCase();
+  const payer = String(claim.payer || '').trim().toLowerCase();
+
+  if (scrubStatus === 'errors' || scrubStatus === 'failed') {
+    return 'The scrubber already found issues. Click to see the exact blockers.';
+  }
+  if (!payer || payer === 'unknown payer') {
+    return 'The payer is missing or unknown. Click to verify release blockers.';
+  }
+  if (scrubStatus === 'pending') {
+    return 'Runs the backend readiness check before releasing the claim.';
+  }
+  return 'Release this claim from coding review into the clearinghouse-ready queue.';
+}
+
 function queueLabel(queue: QueueFilter): string {
   switch (queue) {
     case 'ready':
@@ -859,6 +906,8 @@ export function ClaimsPage() {
   const [lastRefreshAt, setLastRefreshAt] = useState<string>('');
   const [eligibilityIntegration, setEligibilityIntegration] = useState<ExternalIntegrationStatus | null>(null);
   const [clearinghouseIntegration, setClearinghouseIntegration] = useState<ExternalIntegrationStatus | null>(null);
+  const [releaseInFlightId, setReleaseInFlightId] = useState<string | null>(null);
+  const [releaseIssue, setReleaseIssue] = useState<ReleaseIssue | null>(null);
 
   const [claimDetailsCache, setClaimDetailsCache] = useState<Record<string, ClaimWithDetails>>({});
   const [metricsSnapshot, setMetricsSnapshot] = useState<MetricsSnapshot | null>(null);
@@ -899,6 +948,28 @@ export function ClaimsPage() {
       } else {
         next.set(key, value);
       }
+      setSearchParams(next);
+    },
+    [searchParams, setSearchParams]
+  );
+
+  const applyClaimDrilldown = useCallback(
+    (queue: QueueFilter, status: ClaimUiStatus | 'all' = 'all') => {
+      const next = new URLSearchParams(searchParams);
+      next.set('tab', 'claims');
+      if (queue === 'all') {
+        next.delete('queue');
+      } else {
+        next.set('queue', queue);
+      }
+      if (status === 'all') {
+        next.delete('status');
+      } else {
+        next.set('status', status);
+      }
+      setActiveTab('claims');
+      setQueueFilter(queue);
+      setStatusFilter(status);
       setSearchParams(next);
     },
     [searchParams, setSearchParams]
@@ -1128,6 +1199,8 @@ export function ClaimsPage() {
     if (!claim) return;
 
     const notes = 'Coding review complete. Released for claim submission.';
+    setReleaseIssue(null);
+    setReleaseInFlightId(claimId);
 
     if (claim.id.startsWith('demo-') || usingDemoData) {
       applyLocalClaimPatch(claimId, {
@@ -1167,6 +1240,7 @@ export function ClaimsPage() {
       });
 
       showSuccess('Claim released for submission');
+      setReleaseInFlightId(null);
       return;
     }
 
@@ -1182,8 +1256,20 @@ export function ClaimsPage() {
         }
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to release claim';
+      const releaseError = err as Error & { details?: { error?: string; scrubStatus?: string; errors?: ReleaseRuleMessage[]; warnings?: ReleaseRuleMessage[] } };
+      const message = releaseError instanceof Error ? releaseError.message : 'Failed to release claim';
+      setReleaseIssue({
+        claimId: claim.id,
+        claimNumber: claim.claimNumber,
+        patientName: claim.patientName,
+        message,
+        scrubStatus: releaseError.details?.scrubStatus || claim.scrubStatus,
+        errors: releaseError.details?.errors || [],
+        warnings: releaseError.details?.warnings || [],
+      });
       showError(message);
+    } finally {
+      setReleaseInFlightId(null);
     }
   };
 
@@ -1304,6 +1390,27 @@ export function ClaimsPage() {
       return true;
     });
   }, [claims, statusFilter, queueFilter, searchTerm]);
+
+  const queueDrilldown = useMemo(() => {
+    const totalBilledCents = filteredClaims.reduce((sum, claim) => sum + claim.totalBilledCents, 0);
+    const outstandingCents = filteredClaims.reduce((sum, claim) => sum + claim.balanceCents, 0);
+    const paidCents = filteredClaims.reduce((sum, claim) => sum + claim.paidAmountCents, 0);
+    const oldestAgeDays = filteredClaims.reduce((max, claim) => Math.max(max, getDaysSince(claim.serviceDate || claim.createdAt)), 0);
+    const topClaims = [...filteredClaims]
+      .sort((a, b) => {
+        if (b.balanceCents !== a.balanceCents) return b.balanceCents - a.balanceCents;
+        return getDaysSince(b.serviceDate || b.createdAt) - getDaysSince(a.serviceDate || a.createdAt);
+      })
+      .slice(0, 5);
+
+    return {
+      totalBilledCents,
+      outstandingCents,
+      paidCents,
+      oldestAgeDays,
+      topClaims,
+    };
+  }, [filteredClaims]);
 
   const queueCounts = useMemo(() => {
     const counters: Record<QueueFilter, number> = {
@@ -1496,38 +1603,38 @@ export function ClaimsPage() {
       </div>
 
       <div className="financial-stats claims-kpis">
-        <div className="stat-card">
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('all')}>
           <div className="stat-value">{metrics.totalClaims}</div>
           <div className="stat-label">Total Claims</div>
-        </div>
-        <div className="stat-card">
+        </button>
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('all')}>
           <div className="stat-value">{metrics.activeCount}</div>
           <div className="stat-label">Active Work</div>
-        </div>
-        <div className="stat-card">
+        </button>
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('filing_risk')}>
           <div className="stat-value">{metrics.atRiskCount}</div>
           <div className="stat-label">At-Risk Claims</div>
-        </div>
-        <div className="stat-card">
+        </button>
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('all')}>
           <div className="stat-value">{formatCurrency(metrics.totalBilledCents)}</div>
           <div className="stat-label">Total Billed</div>
-        </div>
-        <div className="stat-card">
+        </button>
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('all')}>
           <div className="stat-value">{formatCurrency(metrics.totalOutstandingCents)}</div>
           <div className="stat-label">Outstanding A/R</div>
-        </div>
-        <div className="stat-card">
+        </button>
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('pending')}>
           <div className="stat-value">{metrics.pendingCount}</div>
           <div className="stat-label">Awaiting Payer</div>
-        </div>
-        <div className="stat-card">
+        </button>
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('payment')}>
           <div className="stat-value">{metrics.paymentQueueCount}</div>
           <div className="stat-label">Payment Queue</div>
-        </div>
-        <div className="stat-card">
+        </button>
+        <button type="button" className="stat-card stat-card-button" onClick={() => applyClaimDrilldown('all', 'paid')}>
           <div className="stat-value">{metrics.firstPassPaidRate.toFixed(1)}%</div>
           <div className="stat-label">First-Pass Paid Rate</div>
-        </div>
+        </button>
       </div>
 
       <div className="financial-tabs">
@@ -1764,6 +1871,61 @@ export function ClaimsPage() {
               </div>
             </div>
 
+            <div className="claims-drilldown-panel" aria-live="polite">
+              <div className="claims-drilldown-header">
+                <div>
+                  <h2>{queueFilter === 'all' ? 'All Claims Drilldown' : `${queueLabel(queueFilter)} Drilldown`}</h2>
+                  <div className="muted claims-micro-copy">
+                    This is the data behind the selected queue button.
+                  </div>
+                </div>
+                <div className="claims-drilldown-summary">
+                  <span>{filteredClaims.length} claims</span>
+                  <span>{formatCurrency(queueDrilldown.totalBilledCents)} billed</span>
+                  <span>{formatCurrency(queueDrilldown.outstandingCents)} open</span>
+                  <span>{queueDrilldown.oldestAgeDays}d oldest</span>
+                </div>
+              </div>
+              <div className="claims-drilldown-grid">
+                <div className="claims-drilldown-metric">
+                  <span>Paid</span>
+                  <strong>{formatCurrency(queueDrilldown.paidCents)}</strong>
+                </div>
+                <div className="claims-drilldown-metric">
+                  <span>Outstanding</span>
+                  <strong>{formatCurrency(queueDrilldown.outstandingCents)}</strong>
+                </div>
+                <div className="claims-drilldown-metric">
+                  <span>Next Work</span>
+                  <strong>{queueDrilldown.topClaims[0] ? getNextAction(queueDrilldown.topClaims[0]) : 'No claims in queue'}</strong>
+                </div>
+              </div>
+              {queueDrilldown.topClaims.length > 0 && (
+                <table className="claims-compact-table claims-drilldown-table">
+                  <thead>
+                    <tr>
+                      <th>Claim #</th>
+                      <th>Patient</th>
+                      <th>Payer</th>
+                      <th>Balance</th>
+                      <th>Next Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {queueDrilldown.topClaims.map((claim) => (
+                      <tr key={claim.id}>
+                        <td className="strong claims-claim-id">{claim.claimNumber}</td>
+                        <td>{claim.patientName}</td>
+                        <td>{claim.payer}</td>
+                        <td className="claims-num">{formatCurrency(claim.balanceCents)}</td>
+                        <td>{getNextAction(claim)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
             <div className="claims-table">
               <table>
                 <thead>
@@ -1834,10 +1996,12 @@ export function ClaimsPage() {
                               {(claim.status === 'coding_review' || claim.status === 'draft') && (
                                 <button
                                   type="button"
-                                  className="btn-sm btn-primary"
+                                  className={`btn-sm ${String(claim.scrubStatus || '').toLowerCase() === 'errors' || String(claim.scrubStatus || '').toLowerCase() === 'failed' ? 'btn-secondary' : 'btn-primary'}`}
+                                  title={getReleaseButtonTitle(claim)}
+                                  disabled={releaseInFlightId === claim.id}
                                   onClick={() => void handleReleaseClaim(claim.id)}
                                 >
-                                  Release
+                                  {releaseInFlightId === claim.id ? 'Checking...' : getReleaseButtonLabel(claim)}
                                 </button>
                               )}
                               {claim.balanceCents > 0 && (
@@ -1953,6 +2117,71 @@ export function ClaimsPage() {
       )}
 
       <Modal
+        isOpen={releaseIssue !== null}
+        title={releaseIssue ? `Release Blocked: ${releaseIssue.claimNumber}` : 'Release Blocked'}
+        onClose={() => setReleaseIssue(null)}
+        size="md"
+      >
+        {releaseIssue && (
+          <div className="claims-release-issue">
+            <div className="claims-release-alert">
+              <strong>{releaseIssue.message}</strong>
+              <span>{releaseIssue.patientName}</span>
+              {releaseIssue.scrubStatus && <span>Scrub status: {releaseIssue.scrubStatus}</span>}
+            </div>
+            {releaseIssue.errors.length > 0 ? (
+              <div>
+                <h3>Must Fix Before Release</h3>
+                <ul>
+                  {releaseIssue.errors.map((item, index) => (
+                    <li key={`${item.ruleCode || 'error'}-${index}`}>
+                      {item.ruleCode && <strong>{item.ruleCode}: </strong>}
+                      {item.message || 'Claim scrubber error'}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="muted">
+                The backend blocked release. Open the claim detail and verify payer, diagnosis links, procedure codes, and place of service.
+              </p>
+            )}
+            {releaseIssue.warnings.length > 0 && (
+              <div>
+                <h3>Warnings</h3>
+                <ul>
+                  {releaseIssue.warnings.map((item, index) => (
+                    <li key={`${item.ruleCode || 'warning'}-${index}`}>
+                      {item.ruleCode && <strong>{item.ruleCode}: </strong>}
+                      {item.message || 'Claim scrubber warning'}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="claims-release-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  const claim = claims.find((entry) => entry.id === releaseIssue.claimId);
+                  setReleaseIssue(null);
+                  if (claim) {
+                    void loadClaimDetail(claim, true);
+                  }
+                }}
+              >
+                Open Claim Detail
+              </button>
+              <button type="button" className="btn-primary" onClick={() => setReleaseIssue(null)}>
+                Got It
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         isOpen={showClaimDetail}
         title={selectedClaim ? `Claim ${selectedClaim.claim.claimNumber}` : 'Claim Detail'}
         onClose={() => {
@@ -2016,8 +2245,9 @@ export function ClaimsPage() {
                       type="button"
                       className="btn-sm btn-primary"
                       onClick={() => void handleReleaseClaim(selectedClaim.claim.id)}
+                      disabled={releaseInFlightId === selectedClaim.claim.id}
                     >
-                      Release To Ready
+                      {releaseInFlightId === selectedClaim.claim.id ? 'Checking...' : 'Release To Ready'}
                     </button>
                   )}
                   {(['ready', 'submitted', 'accepted', 'rejected'] as ClaimStatus[])

@@ -8,7 +8,7 @@ import { auditLog } from "../services/audit";
 import { billingService } from "../services/billingService";
 
 const submitClaimSchema = z.object({
-  claimId: z.string().uuid(),
+  claimId: z.string().min(1),
   batchId: z.string().optional(),
 });
 
@@ -54,6 +54,24 @@ const reconcileSchema = z.object({
   varianceReason: z.string().optional(),
   notes: z.string().optional(),
 });
+
+const OPTIONAL_CLEARINGHOUSE_SCHEMA_ERRORS = new Set(["42P01", "42703"]);
+
+function isOptionalClearinghouseSchemaError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  return Boolean(code && OPTIONAL_CLEARINGHOUSE_SCHEMA_ERRORS.has(code));
+}
+
+async function optionalClearinghouseQuery(sql: string, params: any[], fallbackRows: any[]) {
+  try {
+    return await pool.query(sql, params);
+  } catch (error) {
+    if (isOptionalClearinghouseSchemaError(error)) {
+      return { rows: fallbackRows, rowCount: fallbackRows.length };
+    }
+    throw error;
+  }
+}
 
 export const clearinghouseRouter = Router();
 
@@ -247,7 +265,7 @@ clearinghouseRouter.get("/era", requireAuth, async (req: AuthedRequest, res) => 
 
   query += ` order by received_at desc limit 100`;
 
-  const result = await pool.query(query, params);
+  const result = await optionalClearinghouseQuery(query, params, []);
   res.json({ eras: result.rows });
 });
 
@@ -491,7 +509,7 @@ clearinghouseRouter.get("/eft", requireAuth, async (req: AuthedRequest, res) => 
 
   query += ` order by deposit_date desc, created_at desc limit 100`;
 
-  const result = await pool.query(query, params);
+  const result = await optionalClearinghouseQuery(query, params, []);
   res.json({ efts: result.rows });
 });
 
@@ -627,17 +645,19 @@ clearinghouseRouter.get("/reports/closing", requireAuth, async (req: AuthedReque
   );
 
   // Get payments received
-  const paymentsResult = await pool.query(
+  const paymentsResult = await optionalClearinghouseQuery(
     `select sum(payment_amount_cents) as total from remittance_advices
      where tenant_id = $1 and received_at between $2 and $3`,
-    [tenantId, startDate, endDate]
+    [tenantId, startDate, endDate],
+    [{ total: 0 }]
   );
 
   // Get adjustments
-  const adjustmentsResult = await pool.query(
+  const adjustmentsResult = await optionalClearinghouseQuery(
     `select sum(total_adjustments_cents) as total from remittance_advices
      where tenant_id = $1 and received_at between $2 and $3`,
-    [tenantId, startDate, endDate]
+    [tenantId, startDate, endDate],
+    [{ total: 0 }]
   );
 
   // Get claims counts
@@ -660,23 +680,26 @@ clearinghouseRouter.get("/reports/closing", requireAuth, async (req: AuthedReque
   );
 
   // Get ERA/EFT counts
-  const erasReceived = await pool.query(
+  const erasReceived = await optionalClearinghouseQuery(
     `select count(*) as count from remittance_advices
      where tenant_id = $1 and received_at between $2 and $3`,
-    [tenantId, startDate, endDate]
+    [tenantId, startDate, endDate],
+    [{ count: 0 }]
   );
 
-  const eftsReceived = await pool.query(
+  const eftsReceived = await optionalClearinghouseQuery(
     `select count(*) as count from eft_transactions
      where tenant_id = $1 and deposit_date between $2 and $3`,
-    [tenantId, startDate, endDate]
+    [tenantId, startDate, endDate],
+    [{ count: 0 }]
   );
 
   // Get reconciliation variance
-  const varianceResult = await pool.query(
+  const varianceResult = await optionalClearinghouseQuery(
     `select sum(abs(variance_cents)) as total from payment_reconciliation
      where tenant_id = $1 and reconciled_at between $2 and $3`,
-    [tenantId, startDate, endDate]
+    [tenantId, startDate, endDate],
+    [{ total: 0 }]
   );
 
   // Get outstanding balance

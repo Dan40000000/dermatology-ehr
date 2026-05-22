@@ -64,7 +64,7 @@ describe('Clearinghouse Routes - Claim Submission', () => {
     it('should reject invalid payload', async () => {
       const res = await request(app)
         .post('/api/clearinghouse/submit-claim')
-        .send({ claimId: 'invalid-uuid' });
+        .send({ claimId: '' });
       expect(res.status).toBe(400);
     });
 
@@ -222,6 +222,14 @@ describe('Clearinghouse Routes - ERA Endpoints', () => {
       queryMock.mockRejectedValueOnce(new Error('Database error'));
       const res = await request(app).get('/api/clearinghouse/era');
       expect(res.status).toBe(500);
+    });
+
+    it('should return an empty ERA list when optional clearinghouse schema is absent', async () => {
+      const schemaError = Object.assign(new Error('column does not exist'), { code: '42703' });
+      queryMock.mockRejectedValueOnce(schemaError);
+      const res = await request(app).get('/api/clearinghouse/era');
+      expect(res.status).toBe(200);
+      expect(res.body.eras).toEqual([]);
     });
   });
 
@@ -410,6 +418,14 @@ describe('Clearinghouse Routes - EFT Endpoints', () => {
       queryMock.mockRejectedValueOnce(new Error('Database error'));
       const res = await request(app).get('/api/clearinghouse/eft');
       expect(res.status).toBe(500);
+    });
+
+    it('should return an empty EFT list when optional clearinghouse schema is absent', async () => {
+      const schemaError = Object.assign(new Error('relation does not exist'), { code: '42P01' });
+      queryMock.mockRejectedValueOnce(schemaError);
+      const res = await request(app).get('/api/clearinghouse/eft');
+      expect(res.status).toBe(200);
+      expect(res.body.efts).toEqual([]);
     });
   });
 

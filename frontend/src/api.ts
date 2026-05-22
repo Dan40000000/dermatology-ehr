@@ -2446,7 +2446,23 @@ export async function releaseClaimFromCodingReview(
   claimId: string,
   data?: { notes?: string }
 ) {
-  return authedPost(tenantId, accessToken, `/api/claims/${claimId}/release`, data || {});
+  const res = await fetch(`${API_BASE}/api/claims/${claimId}/release`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: "include",
+    body: JSON.stringify(data || {}),
+  });
+  if (!res.ok) {
+    const details = await res.json().catch(() => ({}));
+    const error = new Error(details.error || "Failed to release claim") as Error & { details?: any };
+    error.details = details;
+    throw error;
+  }
+  return res.json();
 }
 
 export async function postClaimPayment(tenantId: string, accessToken: string, claimId: string, data: any) {

@@ -778,6 +778,9 @@ export function HomePage() {
       const queryEnd = new Date(Math.max(endOfDay(todayDate).getTime(), scheduleRange.end.getTime()));
       queryEnd.setDate(queryEnd.getDate() + 1);
       const canLoadAppointments = canAccessAnyModule('schedule');
+      const canLoadFrontDeskTiming =
+        canLoadAppointments &&
+        effectiveRoles.some((role) => ['admin', 'front_desk', 'ma', 'provider'].includes(role));
       const canLoadEncounters = canAccessAnyModule('notes');
       const canLoadOrders = canAccessAnyModule('orders');
       const canLoadUnreadMessages = canAccessAnyModule('mail');
@@ -823,7 +826,7 @@ export function HomePage() {
               endDate: toLocalIsoDate(queryEnd),
             }), { appointments: [] })
           : Promise.resolve({ appointments: [] }),
-        canLoadAppointments
+        canLoadFrontDeskTiming
           ? safeLoad('front desk timing', fetchFrontDeskSchedule(session.tenantId, session.accessToken, { date: todayStr }), null)
           : Promise.resolve(null),
         canLoadEncounters

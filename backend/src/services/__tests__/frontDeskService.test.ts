@@ -516,6 +516,7 @@ describe("frontDeskService", () => {
 
     const result = await frontDeskService.getUpcomingPatients("tenant-1", 1);
 
+    expect(queryMock.mock.calls[0][0]).toContain("COALESCE(to_jsonb(p)->'accessibility_profile'");
     expect(result[0].appointmentTypeName).toBe("Consult");
     expect(result[0].copayAmount).toBe(25);
     jest.useRealTimers();

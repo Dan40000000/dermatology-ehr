@@ -21,6 +21,7 @@ const apiMocks = vi.hoisted(() => ({
   deleteTask: vi.fn(),
   fetchTaskComments: vi.fn(),
   addTaskComment: vi.fn(),
+  fetchBiopsyCommandCenter: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -166,6 +167,23 @@ describe('TasksPage', () => {
     apiMocks.deleteTask.mockResolvedValue({ ok: true });
     apiMocks.fetchTaskComments.mockResolvedValue({ comments: [{ id: 'c1', body: 'Note' }] });
     apiMocks.addTaskComment.mockResolvedValue({ ok: true });
+    apiMocks.fetchBiopsyCommandCenter.mockResolvedValue({
+      generated_at: '2026-05-22T00:00:00.000Z',
+      summary: {
+        total_open_loops: 0,
+        overdue_results: 0,
+        pending_review: 0,
+        needs_patient_notification: 0,
+        needs_treatment_scheduling: 0,
+        open_malignancies: 0,
+        open_melanomas: 0,
+        closed_loop_complete: 0,
+        critical_items: 0,
+        avg_turnaround_days: null,
+      },
+      queues: { critical: [] },
+      biopsies: [],
+    });
     toastMocks.showSuccess.mockClear();
     toastMocks.showError.mockClear();
   });

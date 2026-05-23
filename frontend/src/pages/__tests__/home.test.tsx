@@ -624,6 +624,26 @@ describe('HomePage', () => {
     expect(apiMocks.fetchOrders).not.toHaveBeenCalled();
   });
 
+  it('does not request front desk timing data for billing command center users', async () => {
+    authMocks.session = {
+      tenantId: 'tenant-1',
+      accessToken: 'token-1',
+      user: { id: 'billing-1', role: 'billing', roles: ['billing'] },
+    };
+    authMocks.user = { id: 'billing-1', role: 'billing', roles: ['billing'] };
+
+    render(<HomePage />);
+
+    await waitFor(() => expect(apiMocks.fetchAppointments).toHaveBeenCalled());
+
+    expect(apiMocks.fetchFrontDeskSchedule).not.toHaveBeenCalled();
+    expect(apiMocks.fetchCommandCenterSummary).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({ date: expect.any(String) })
+    );
+  });
+
   it('does not request patient schedule or mail dashboard data for workforce-only roles', async () => {
     authMocks.session = {
       tenantId: 'tenant-1',

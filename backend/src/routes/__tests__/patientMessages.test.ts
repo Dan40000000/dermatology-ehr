@@ -88,6 +88,7 @@ describe("Patient message routes", () => {
     const res = await request(app).get("/patient-messages/threads");
 
     expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining('u.full_name as "assignedToName"'));
     expect(res.body.threads).toHaveLength(1);
     expect(res.body.pagination.total).toBe(1);
   });

@@ -17,6 +17,9 @@ const apiMocks = vi.hoisted(() => ({
   updateClaimStatus: vi.fn(),
   postClaimPayment: vi.fn(),
   fetchPatients: vi.fn(),
+  fetchClaimMetrics: vi.fn(),
+  fetchExternalIntegrationStatus: vi.fn(),
+  releaseClaimFromCodingReview: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -55,6 +58,19 @@ function renderClaimsPage() {
       <ClaimsPage />
     </MemoryRouter>,
   );
+}
+
+function getClaimsTableRow(claimNumber: string): HTMLElement {
+  const row = screen
+    .getAllByText(claimNumber)
+    .map((element) => element.closest('tr'))
+    .find((rowElement): rowElement is HTMLElement => Boolean(rowElement?.querySelector('.action-buttons')));
+
+  if (!row) {
+    throw new Error(`Could not find claims table row for ${claimNumber}`);
+  }
+
+  return row;
 }
 
 const buildFixtures = () => {
@@ -135,6 +151,16 @@ describe('ClaimsPage', () => {
     apiMocks.fetchClaimDetail.mockResolvedValue(fixtures.detail);
     apiMocks.updateClaimStatus.mockResolvedValue({ ok: true });
     apiMocks.postClaimPayment.mockResolvedValue({ ok: true });
+    apiMocks.fetchClaimMetrics.mockResolvedValue({ metrics: {} });
+    apiMocks.fetchExternalIntegrationStatus.mockResolvedValue({
+      integration: {
+        type: 'eligibility',
+        provider: 'stedi',
+        connectionStatus: 'connected',
+        isActive: true,
+      },
+    });
+    apiMocks.releaseClaimFromCodingReview.mockResolvedValue({ claim: fixtures.claims[0] });
     toastMocks.showSuccess.mockClear();
     toastMocks.showError.mockClear();
   });
@@ -157,12 +183,11 @@ describe('ClaimsPage', () => {
     );
 
     fireEvent.change(screen.getByPlaceholderText('Search by claim #, patient, or provider...'), { target: { value: 'Ana' } });
-    expect(screen.getByText('CLM-001')).toBeInTheDocument();
-    expect(screen.queryByText('CLM-002')).not.toBeInTheDocument();
+    expect(screen.getAllByText('CLM-001').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('CLM-002')).toHaveLength(0);
 
-    const claimRow = screen.getByText('CLM-001').closest('tr');
-    expect(claimRow).toBeTruthy();
-    fireEvent.click(within(claimRow as HTMLElement).getByRole('button', { name: 'View' }));
+    const claimRow = getClaimsTableRow('CLM-001');
+    fireEvent.click(within(claimRow).getByRole('button', { name: 'View' }));
     await waitFor(() => expect(apiMocks.fetchClaimDetail).toHaveBeenCalledWith('tenant-1', 'token-1', 'claim-1'));
     expect(screen.getByText('Claim Information')).toBeInTheDocument();
 
@@ -170,7 +195,7 @@ describe('ClaimsPage', () => {
     await waitFor(() => expect(apiMocks.updateClaimStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'claim-1', { status: 'accepted', notes: undefined }));
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Claim status updated to accepted');
 
-    fireEvent.click(within(claimRow as HTMLElement).getByRole('button', { name: 'Post Payment' }));
+    fireEvent.click(within(claimRow).getByRole('button', { name: 'Post Payment' }));
 
     const paymentModal = await screen.findByTestId('modal-post-payment');
     const modalScope = within(paymentModal);
@@ -198,12 +223,11 @@ describe('ClaimsPage', () => {
 
     await screen.findByText('Claims Management');
 
-    const claimRow = screen.getByText('CLM-001').closest('tr');
-    expect(claimRow).toBeTruthy();
-    fireEvent.click(within(claimRow as HTMLElement).getByRole('button', { name: 'View' }));
+    const claimRow = getClaimsTableRow('CLM-001');
+    fireEvent.click(within(claimRow).getByRole('button', { name: 'View' }));
     await screen.findByText('Claim Information');
 
-    fireEvent.click(within(claimRow as HTMLElement).getByRole('button', { name: 'Post Payment' }));
+    fireEvent.click(within(claimRow).getByRole('button', { name: 'Post Payment' }));
     const paymentModal = await screen.findByTestId('modal-post-payment');
     const modalScope = within(paymentModal);
     const amountInput = modalScope.getByPlaceholderText('0.00');

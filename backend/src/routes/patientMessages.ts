@@ -110,7 +110,7 @@ router.get("/threads", requireAuth, async (req: AuthedRequest, res) => {
         t.updated_at as "updatedAt",
         p.first_name || ' ' || p.last_name as "patientName",
         p.mrn as "patientMrn",
-        u.name as "assignedToName",
+        u.full_name as "assignedToName",
         (SELECT COUNT(*) FROM patient_messages WHERE thread_id = t.id AND is_internal_note = false) as "messageCount",
         (SELECT message_text FROM patient_messages WHERE thread_id = t.id AND is_internal_note = false ORDER BY sent_at DESC LIMIT 1) as "lastMessagePreview"
       FROM patient_message_threads t

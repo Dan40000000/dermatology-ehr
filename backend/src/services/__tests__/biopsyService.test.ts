@@ -1,6 +1,7 @@
 import { BiopsyService } from "../biopsyService";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
+import { getTableColumns } from "../../db/schema";
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -16,10 +17,32 @@ jest.mock("../../lib/logger", () => ({
   },
 }));
 
+jest.mock("../../db/schema", () => ({
+  getTableColumns: jest.fn(),
+  clearTableColumnsCache: jest.fn(),
+}));
+
 const queryMock = pool.query as jest.Mock;
+const getTableColumnsMock = getTableColumns as jest.Mock;
+
+const biopsyColumns = new Set([
+  "id",
+  "tenant_id",
+  "patient_id",
+  "status",
+  "is_overdue",
+  "malignancy_type",
+  "patient_notified",
+  "turnaround_time_days",
+  "ordered_at",
+  "deleted_at",
+  "ordering_provider_id",
+]);
 
 beforeEach(() => {
   queryMock.mockReset();
+  getTableColumnsMock.mockReset();
+  getTableColumnsMock.mockResolvedValue(biopsyColumns);
   (logger.info as jest.Mock).mockReset();
 });
 

@@ -14,9 +14,10 @@ const router = Router();
 // All routes require authentication
 router.use(requireAuth);
 
-function isMissingRelationError(error: unknown): boolean {
+function isSchemaCompatibilityError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return (error as Error & { code?: string }).code === '42P01';
+  const code = (error as Error & { code?: string }).code;
+  return code === '42P01' || code === '42703';
 }
 
 function providerDisplayName(alias: string): string {
@@ -77,7 +78,7 @@ router.get('/reports', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
-    if (isMissingRelationError(error)) {
+    if (isSchemaCompatibilityError(error)) {
       return res.json([]);
     }
     logger.error('Error fetching dermpath reports', { error: error.message });
@@ -129,7 +130,7 @@ router.get('/reports/:id', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error: any) {
-    if (isMissingRelationError(error)) {
+    if (isSchemaCompatibilityError(error)) {
       return res.status(404).json({ error: 'Report not found' });
     }
     logger.error('Error fetching dermpath report', { error: error.message });
@@ -309,7 +310,7 @@ router.get('/cultures', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
-    if (isMissingRelationError(error)) {
+    if (isSchemaCompatibilityError(error)) {
       return res.json([]);
     }
     logger.error('Error fetching culture results', { error: error.message });
@@ -429,7 +430,7 @@ router.get('/patch-tests', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
-    if (isMissingRelationError(error)) {
+    if (isSchemaCompatibilityError(error)) {
       return res.json([]);
     }
     logger.error('Error fetching patch test results', { error: error.message });

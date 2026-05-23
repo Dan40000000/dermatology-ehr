@@ -423,6 +423,13 @@ describe('DermPath Routes - Patch Tests', () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Failed to fetch patch test results');
     });
+
+    it('should return an empty list when optional patch test schema is unavailable', async () => {
+      queryMock.mockRejectedValueOnce(Object.assign(new Error('column missing'), { code: '42703' }));
+      const res = await request(app).get('/api/dermpath/patch-tests');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
   });
 
   describe('POST /api/dermpath/patch-tests', () => {

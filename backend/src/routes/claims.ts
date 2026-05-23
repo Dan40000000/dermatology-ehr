@@ -48,6 +48,9 @@ const claimUpdateSchema = z.object({
     charge: z.number().positive(),
     description: z.string().optional(),
   })).optional(),
+  payer: z.string().optional(),
+  payerId: z.string().optional(),
+  payerName: z.string().optional(),
   isCosmetic: z.boolean().optional(),
   cosmeticReason: z.string().optional(),
   notes: z.string().optional(),
@@ -231,6 +234,113 @@ const scrubSchema = z.object({
   autoFix: z.boolean().optional(),
 });
 
+function firstNonEmpty(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function parseInsuranceDetails(value: unknown): any | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" ? value : null;
+}
+
+function resolvePayerFromInsuranceRow(row: any, requested?: { payer?: string | null; payerId?: string | null; payerName?: string | null }) {
+  const insuranceDetails = parseInsuranceDetails(row?.insurance_details);
+  const primary = insuranceDetails?.primary || {};
+  const payerId = firstNonEmpty(
+    requested?.payerId,
+    row?.payer_id,
+    row?.insurance_payer_id,
+    primary.payerId,
+    primary.payer_id,
+    primary.id
+  );
+  const payerName = firstNonEmpty(
+    requested?.payerName,
+    requested?.payer,
+    row?.payer_name,
+    primary.planName,
+    primary.plan_name,
+    primary.payerName,
+    primary.payer_name,
+    primary.name,
+    row?.insurance_plan_name,
+    row?.insurance
+  );
+
+  return { payerId, payerName, payer: payerName };
+}
+
+async function resolvePatientPayer(tenantId: string, patientId: string, requested?: { payer?: string | null; payerId?: string | null; payerName?: string | null }) {
+  const insuranceResult = await pool.query(
+    `SELECT
+       p.insurance_payer_id,
+       p.insurance_plan_name,
+       p.insurance,
+       p.insurance_details,
+       iv.payer_name,
+       iv.payer_id
+     FROM patients p
+     LEFT JOIN insurance_verifications iv ON iv.id = p.latest_verification_id
+     WHERE p.id = $1 AND p.tenant_id = $2`,
+    [patientId, tenantId]
+  );
+
+  if (!insuranceResult.rows.length) {
+    return {
+      payerId: firstNonEmpty(requested?.payerId),
+      payerName: firstNonEmpty(requested?.payerName, requested?.payer),
+      payer: firstNonEmpty(requested?.payerName, requested?.payer),
+    };
+  }
+
+  return resolvePayerFromInsuranceRow(insuranceResult.rows[0], requested);
+}
+
+async function hydrateMissingClaimPayer(tenantId: string, claimId: string) {
+  const claimResult = await pool.query(
+    `SELECT id, patient_id, payer, payer_id, payer_name
+     FROM claims
+     WHERE id = $1 AND tenant_id = $2`,
+    [claimId, tenantId]
+  );
+  if (!claimResult.rowCount) return null;
+
+  const claim = claimResult.rows[0];
+  if (firstNonEmpty(claim.payer, claim.payer_name, claim.payer_id)) {
+    return claim;
+  }
+
+  const resolved = await resolvePatientPayer(tenantId, claim.patient_id);
+  if (!resolved.payerName && !resolved.payerId) {
+    return claim;
+  }
+
+  const updated = await pool.query(
+    `UPDATE claims
+     SET payer = COALESCE($1, payer),
+         payer_name = COALESCE($2, payer_name),
+         payer_id = COALESCE($3, payer_id),
+         updated_at = now()
+     WHERE id = $4 AND tenant_id = $5
+     RETURNING id, patient_id, payer, payer_id, payer_name`,
+    [resolved.payer, resolved.payerName, resolved.payerId, claimId, tenantId]
+  );
+
+  return updated.rows[0] || claim;
+}
+
 const batchSubmitSchema = z.object({
   claimIds: z.array(z.string()),
 });
@@ -288,6 +398,8 @@ async function loadClaimForScrubbing(tenantId: string, claimId: string): Promise
        c.payer_name,
        c.payer,
        c.is_cosmetic,
+       p.insurance as patient_insurance,
+       p.insurance_plan_name as patient_insurance_plan_name,
        p.first_name as patient_first_name,
        p.last_name as patient_last_name,
        p.dob as patient_dob,
@@ -329,7 +441,7 @@ async function loadClaimForScrubbing(tenantId: string, claimId: string): Promise
     serviceDate: row.service_date,
     lineItems: mapLineItemsForScrubbing(row.line_items),
     payerId: row.payer_id,
-    payerName: row.payer_name || row.payer,
+    payerName: firstNonEmpty(row.payer_name, row.payer, row.patient_insurance_plan_name, row.patient_insurance) || undefined,
     isCosmetic: row.is_cosmetic,
     patient: {
       firstName: row.patient_first_name,
@@ -417,7 +529,21 @@ claimsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     select
       c.id, c.claim_number as "claimNumber", c.encounter_id as "encounterId",
       c.patient_id as "patientId", c.total_charges as "totalCharges", c.status,
-      c.payer, c.payer_id as "payerId", c.payer_name as "payerName",
+      COALESCE(NULLIF(c.payer, ''), NULLIF(c.payer_name, ''), NULLIF(iv.payer_name, ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'plan_name', ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'payerName', ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'payer_name', ''),
+        NULLIF(p.insurance_plan_name, ''), NULLIF(p.insurance, '')) as payer,
+      COALESCE(NULLIF(c.payer_id, ''), NULLIF(iv.payer_id, ''), NULLIF(p.insurance_payer_id, ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'payerId', ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'payer_id', '')) as "payerId",
+      COALESCE(NULLIF(c.payer_name, ''), NULLIF(c.payer, ''), NULLIF(iv.payer_name, ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'plan_name', ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'payerName', ''),
+        NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'payer_name', ''),
+        NULLIF(p.insurance_plan_name, ''), NULLIF(p.insurance, '')) as "payerName",
       c.submitted_at as "submittedAt", c.service_date as "serviceDate",
       c.scrub_status as "scrubStatus", c.is_cosmetic as "isCosmetic",
       c.coding_review_status as "codingReviewStatus",
@@ -523,23 +649,12 @@ claimsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_des
   let payerName = payload.payer;
 
   if (!payerId || !payerName) {
-    const insuranceResult = await pool.query(
-      `SELECT
-        p.insurance_payer_id,
-        p.insurance_plan_name,
-        iv.payer_name,
-        iv.payer_id
-       FROM patients p
-       LEFT JOIN insurance_verifications iv ON iv.id = p.latest_verification_id
-       WHERE p.id = $1 AND p.tenant_id = $2`,
-      [payload.patientId, tenantId]
-    );
-
-    if (insuranceResult.rows.length > 0) {
-      const insurance = insuranceResult.rows[0];
-      payerId = payerId || insurance.payer_id || insurance.insurance_payer_id || null;
-      payerName = payerName || insurance.payer_name || insurance.insurance_plan_name || null;
-    }
+    const resolvedPayer = await resolvePatientPayer(tenantId, payload.patientId, {
+      payer: payload.payer,
+      payerId: payload.payerId,
+    });
+    payerId = payerId || resolvedPayer.payerId || undefined;
+    payerName = payerName || resolvedPayer.payerName || undefined;
   }
 
   await pool.query(
@@ -636,6 +751,22 @@ claimsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_d
     paramCount++;
     updates.push(`total_charges = $${paramCount}`);
     params.push(totalCharges);
+  }
+
+  if (payload.payer !== undefined || payload.payerName !== undefined) {
+    const payerName = firstNonEmpty(payload.payerName, payload.payer);
+    paramCount++;
+    updates.push(`payer = $${paramCount}`);
+    params.push(payerName);
+    paramCount++;
+    updates.push(`payer_name = $${paramCount}`);
+    params.push(payerName);
+  }
+
+  if (payload.payerId !== undefined) {
+    paramCount++;
+    updates.push(`payer_id = $${paramCount}`);
+    params.push(firstNonEmpty(payload.payerId));
   }
 
   if (payload.isCosmetic !== undefined) {
@@ -753,13 +884,17 @@ claimsRouter.post("/:id/release", requireAuth, requireRoles(["admin", "billing"]
     return res.status(404).json({ error: "Claim not found" });
   }
 
-  const claim = existing.rows[0];
+  let claim = existing.rows[0];
   if (["submitted", "accepted", "paid", "denied", "appealed"].includes(String(claim.status))) {
     return res.status(400).json({ error: `Claim cannot be released from status ${claim.status}` });
   }
 
   if (claim.scrub_status === "errors") {
     return res.status(400).json({ error: "Claim has unresolved scrubber errors" });
+  }
+
+  if (!claim.payer && !claim.payer_id && !claim.payer_name) {
+    claim = await hydrateMissingClaimPayer(tenantId, claimId) || claim;
   }
 
   if (!claim.payer && !claim.payer_id && !claim.payer_name) {

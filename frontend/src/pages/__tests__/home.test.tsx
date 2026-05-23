@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
@@ -155,6 +155,8 @@ const buildFixtures = () => {
 
 describe('HomePage', () => {
   beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
     localStorage.clear();
 
     authMocks.session = {
@@ -217,6 +219,7 @@ describe('HomePage', () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
     vi.clearAllMocks();
   });
@@ -262,7 +265,10 @@ describe('HomePage', () => {
     const inRoomsTile = within(flowPanel).getByText('In Rooms').closest('.command-flow-tile') as HTMLElement;
     expect(within(inRoomsTile).getByText('0')).toBeInTheDocument();
 
-    const pendingLabRow = screen.getByText('Pending Lab/Path Orders').closest('.command-work-row') as HTMLElement;
+    const pendingLabRow = screen
+      .getAllByText('Open Lab/Path Orders')
+      .map((node) => node.closest('.command-work-row'))
+      .find(Boolean) as HTMLElement;
     expect(within(pendingLabRow).getByText('2')).toBeInTheDocument();
 
     const unreadMessageCard = screen
@@ -275,7 +281,7 @@ describe('HomePage', () => {
 
     const notesPanel = screen.getByText('Notes Needing Attention').closest('.command-work-row') as HTMLElement;
     expect(within(notesPanel).getByText(/My notes: 1/i)).toBeInTheDocument();
-    expect(screen.getByText(/Unsigned notes today: 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Open order queue across all dates/i)).toBeInTheDocument();
 
     const locationSelect = screen.getByLabelText('Location');
     fireEvent.change(locationSelect, { target: { value: 'loc-2' } });
@@ -654,7 +660,6 @@ describe('HomePage', () => {
     expect(screen.getByText('Patient access')).toBeInTheDocument();
     expect(screen.getByText('Front Desk Command')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Revenue cycle/i }));
-    expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/claims\?startDate=\d{4}-\d{2}-\d{2}&endDate=\d{4}-\d{2}-\d{2}$/));
+    expect(screen.queryByRole('button', { name: /Revenue cycle/i })).not.toBeInTheDocument();
   });
 });

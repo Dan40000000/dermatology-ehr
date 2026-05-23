@@ -199,6 +199,36 @@ describe("Claims routes", () => {
     expect(auditMock).toHaveBeenCalled();
   });
 
+  it("POST /claims falls back to legacy patient insurance for manual line-item claims", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{
+          insurance_payer_id: null,
+          insurance_plan_name: null,
+          insurance: "Blue Cross Blue Shield of Colorado",
+          insurance_details: null,
+          payer_name: null,
+          payer_id: null,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/claims").send({
+      patientId: "patient-1",
+      lineItems: [{ cpt: "99213", dx: ["L70.0"], units: 1, charge: 100, description: "Office visit" }],
+    });
+
+    expect(res.status).toBe(201);
+    const insertClaimCall = queryMock.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("insert into claims"),
+    );
+    expect(insertClaimCall?.[1]).toEqual(expect.arrayContaining(["Blue Cross Blue Shield of Colorado"]));
+  });
+
   it("PUT /claims/:id/status rejects invalid payload", async () => {
     const res = await request(app).put("/claims/claim-1/status").send({ status: "bad" });
     expect(res.status).toBe(400);
@@ -247,6 +277,44 @@ describe("Claims routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ready");
     expect(auditMock).toHaveBeenCalledWith("tenant-1", "user-1", "claim_coding_review_released", "claim", "claim-1");
+  });
+
+  it("POST /claims/:id/release hydrates missing payer from patient insurance before release", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: "claim-1", status: "coding_review", scrub_status: "clean", payer: null, payer_id: null, payer_name: null }],
+      })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: "claim-1", patient_id: "patient-1", payer: null, payer_id: null, payer_name: null }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          insurance_payer_id: null,
+          insurance_plan_name: null,
+          insurance: "United Healthcare",
+          insurance_details: null,
+          payer_name: null,
+          payer_id: null,
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: "claim-1", patient_id: "patient-1", payer: "United Healthcare", payer_id: null, payer_name: "United Healthcare" }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [readyClaimScrubRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    scrubMock.mockResolvedValueOnce(cleanScrubResult);
+
+    const res = await request(app).post("/claims/claim-1/release").send({ notes: "reviewed" });
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SET payer = COALESCE"),
+      expect.arrayContaining(["United Healthcare"]),
+    );
   });
 
   it("POST /claims/:id/payments returns 404 when claim missing", async () => {

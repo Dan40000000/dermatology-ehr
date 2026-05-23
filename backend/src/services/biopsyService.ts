@@ -101,6 +101,39 @@ function emptySafetyCommandCenter(now = new Date()) {
   };
 }
 
+function emptyBiopsyStats() {
+  return {
+    ordered_count: '0',
+    collected_count: '0',
+    sent_count: '0',
+    pending_review_count: '0',
+    overdue_count: '0',
+    malignancy_count: '0',
+    melanoma_count: '0',
+    needs_patient_notification: '0',
+    avg_turnaround_days: null,
+    total_biopsies_all_time: '0',
+    biopsies_last_30_days: '0',
+  };
+}
+
+function emptyQualityMetrics() {
+  return {
+    total_biopsies: '0',
+    avg_turnaround_days: null,
+    max_turnaround_days: null,
+    min_turnaround_days: null,
+    within_7_days: '0',
+    over_7_days: '0',
+    total_overdue: '0',
+    total_malignancies: '0',
+    total_melanoma: '0',
+    patients_notified: '0',
+    completed_biopsies: '0',
+    within_7_days_percentage: null,
+  };
+}
+
 function timestampExpr(columns: Set<string>, column: string): string {
   return columns.has(column) ? `b.${column}` : 'NULL::timestamptz';
 }
@@ -118,16 +151,26 @@ function numberExpr(columns: Set<string>, column: string): string {
 }
 
 function providerNameExpr(alias: string, columns: Set<string>): string {
+  const parts: string[] = [];
   if (columns.has('full_name')) {
-    return `${alias}.full_name`;
+    parts.push(`NULLIF(to_jsonb(${alias})->>'full_name', '')`);
   }
-  if (columns.has('first_name') && columns.has('last_name')) {
-    return `NULLIF(CONCAT_WS(' ', ${alias}.first_name, ${alias}.last_name), '')`;
+  if (columns.has('first_name') || columns.has('last_name')) {
+    parts.push(`NULLIF(TRIM(CONCAT_WS(' ', to_jsonb(${alias})->>'first_name', to_jsonb(${alias})->>'last_name')), '')`);
   }
   if (columns.has('name')) {
-    return `${alias}.name`;
+    parts.push(`NULLIF(to_jsonb(${alias})->>'name', '')`);
   }
-  return 'NULL::text';
+  return parts.length > 0 ? `COALESCE(${parts.join(', ')})` : 'NULL::text';
+}
+
+function providerDisplayName(alias: string): string {
+  return `COALESCE(
+    NULLIF(to_jsonb(${alias})->>'full_name', ''),
+    NULLIF(TRIM(CONCAT_WS(' ', to_jsonb(${alias})->>'first_name', to_jsonb(${alias})->>'last_name')), ''),
+    NULLIF(to_jsonb(${alias})->>'name', ''),
+    'Unknown Provider'
+  )`;
 }
 
 export class BiopsyService {
@@ -197,7 +240,7 @@ export class BiopsyService {
         b.*,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name,
+        ${providerDisplayName('pr')} as ordering_provider_name,
         pr.email as ordering_provider_email,
         EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_overdue
       FROM biopsies b
@@ -225,7 +268,7 @@ export class BiopsyService {
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         p.dob as date_of_birth,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name,
+        ${providerDisplayName('pr')} as ordering_provider_name,
         EXTRACT(DAY FROM (NOW() - b.resulted_at))::INTEGER as days_since_result
       FROM biopsies b
       JOIN patients p ON b.patient_id = p.id
@@ -252,30 +295,44 @@ export class BiopsyService {
    * Get biopsy statistics for dashboard
    */
   static async getBiopsyStats(tenantId: string, providerId?: string) {
+    const biopsyColumns = await getTableColumns('biopsies');
+    if (!biopsyColumns.has('id') || !biopsyColumns.has('tenant_id')) {
+      return emptyBiopsyStats();
+    }
+
     const params: any[] = [tenantId];
     let providerFilter = '';
+    const hasOrderingProvider = biopsyColumns.has('ordering_provider_id');
 
-    if (providerId) {
+    if (providerId && hasOrderingProvider) {
       providerFilter = 'AND b.ordering_provider_id = $2';
       params.push(providerId);
     }
 
+    const statusExpr = biopsyColumns.has('status') ? 'b.status' : `'ordered'::text`;
+    const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
+    const malignancyExpr = textExpr(biopsyColumns, 'malignancy_type');
+    const patientNotifiedExpr = booleanExpr(biopsyColumns, 'patient_notified', false);
+    const turnaroundExpr = numberExpr(biopsyColumns, 'turnaround_time_days');
+    const orderedAtExpr = biopsyColumns.has('ordered_at') ? 'b.ordered_at' : timestampExpr(biopsyColumns, 'created_at');
+    const deletedFilter = biopsyColumns.has('deleted_at') ? 'AND b.deleted_at IS NULL' : '';
+
     const query = `
       SELECT
-        COUNT(*) FILTER (WHERE b.status = 'ordered') as ordered_count,
-        COUNT(*) FILTER (WHERE b.status = 'collected') as collected_count,
-        COUNT(*) FILTER (WHERE b.status = 'sent') as sent_count,
-        COUNT(*) FILTER (WHERE b.status = 'resulted') as pending_review_count,
-        COUNT(*) FILTER (WHERE b.is_overdue = true AND b.status NOT IN ('resulted', 'reviewed', 'closed')) as overdue_count,
-        COUNT(*) FILTER (WHERE b.malignancy_type IS NOT NULL) as malignancy_count,
-        COUNT(*) FILTER (WHERE b.malignancy_type = 'melanoma') as melanoma_count,
-        COUNT(*) FILTER (WHERE b.status = 'reviewed' AND b.patient_notified = false) as needs_patient_notification,
-        AVG(b.turnaround_time_days) FILTER (WHERE b.turnaround_time_days IS NOT NULL) as avg_turnaround_days,
+        COUNT(*) FILTER (WHERE ${statusExpr} = 'ordered') as ordered_count,
+        COUNT(*) FILTER (WHERE ${statusExpr} = 'collected') as collected_count,
+        COUNT(*) FILTER (WHERE ${statusExpr} = 'sent') as sent_count,
+        COUNT(*) FILTER (WHERE ${statusExpr} = 'resulted') as pending_review_count,
+        COUNT(*) FILTER (WHERE ${isOverdueExpr} = true AND ${statusExpr} NOT IN ('resulted', 'reviewed', 'closed')) as overdue_count,
+        COUNT(*) FILTER (WHERE ${malignancyExpr} IS NOT NULL) as malignancy_count,
+        COUNT(*) FILTER (WHERE ${malignancyExpr} = 'melanoma') as melanoma_count,
+        COUNT(*) FILTER (WHERE ${statusExpr} = 'reviewed' AND ${patientNotifiedExpr} = false) as needs_patient_notification,
+        AVG(${turnaroundExpr}) FILTER (WHERE ${turnaroundExpr} IS NOT NULL) as avg_turnaround_days,
         COUNT(*) as total_biopsies_all_time,
-        COUNT(*) FILTER (WHERE b.ordered_at > NOW() - INTERVAL '30 days') as biopsies_last_30_days
+        COUNT(*) FILTER (WHERE ${orderedAtExpr} > NOW() - INTERVAL '30 days') as biopsies_last_30_days
       FROM biopsies b
       WHERE b.tenant_id = $1
-        AND b.deleted_at IS NULL
+        ${deletedFilter}
         ${providerFilter}
     `;
 
@@ -640,7 +697,7 @@ export class BiopsyService {
         p.first_name || ' ' || p.last_name as patient_name,
         p.email as patient_email,
         p.phone as patient_phone,
-        pr.first_name || ' ' || pr.last_name as provider_name,
+        ${providerDisplayName('pr')} as provider_name,
         pr.email as provider_email
       FROM biopsies b
       JOIN patients p ON b.patient_id = p.id
@@ -778,35 +835,48 @@ export class BiopsyService {
    * Get quality metrics for reporting
    */
   static async getQualityMetrics(tenantId: string, startDate?: Date, endDate?: Date) {
+    const biopsyColumns = await getTableColumns('biopsies');
+    if (!biopsyColumns.has('id') || !biopsyColumns.has('tenant_id')) {
+      return emptyQualityMetrics();
+    }
+
     const params: any[] = [tenantId];
     let dateFilter = '';
+    const orderedAtExpr = biopsyColumns.has('ordered_at') ? 'b.ordered_at' : timestampExpr(biopsyColumns, 'created_at');
 
     if (startDate && endDate) {
-      dateFilter = 'AND b.ordered_at BETWEEN $2 AND $3';
+      dateFilter = `AND ${orderedAtExpr} BETWEEN $2 AND $3`;
       params.push(startDate, endDate);
     }
+
+    const turnaroundExpr = numberExpr(biopsyColumns, 'turnaround_time_days');
+    const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
+    const malignancyExpr = textExpr(biopsyColumns, 'malignancy_type');
+    const patientNotifiedExpr = booleanExpr(biopsyColumns, 'patient_notified', false);
+    const statusExpr = biopsyColumns.has('status') ? 'b.status' : `'ordered'::text`;
+    const deletedFilter = biopsyColumns.has('deleted_at') ? 'AND b.deleted_at IS NULL' : '';
 
     const query = `
       SELECT
         COUNT(*) as total_biopsies,
-        AVG(b.turnaround_time_days) as avg_turnaround_days,
-        MAX(b.turnaround_time_days) as max_turnaround_days,
-        MIN(b.turnaround_time_days) as min_turnaround_days,
-        COUNT(*) FILTER (WHERE b.turnaround_time_days <= 7) as within_7_days,
-        COUNT(*) FILTER (WHERE b.turnaround_time_days > 7) as over_7_days,
-        COUNT(*) FILTER (WHERE b.is_overdue = true) as total_overdue,
-        COUNT(*) FILTER (WHERE b.malignancy_type IS NOT NULL) as total_malignancies,
-        COUNT(*) FILTER (WHERE b.malignancy_type = 'melanoma') as total_melanoma,
-        COUNT(*) FILTER (WHERE b.patient_notified = true) as patients_notified,
-        COUNT(*) FILTER (WHERE b.status = 'closed') as completed_biopsies,
+        AVG(${turnaroundExpr}) as avg_turnaround_days,
+        MAX(${turnaroundExpr}) as max_turnaround_days,
+        MIN(${turnaroundExpr}) as min_turnaround_days,
+        COUNT(*) FILTER (WHERE ${turnaroundExpr} <= 7) as within_7_days,
+        COUNT(*) FILTER (WHERE ${turnaroundExpr} > 7) as over_7_days,
+        COUNT(*) FILTER (WHERE ${isOverdueExpr} = true) as total_overdue,
+        COUNT(*) FILTER (WHERE ${malignancyExpr} IS NOT NULL) as total_malignancies,
+        COUNT(*) FILTER (WHERE ${malignancyExpr} = 'melanoma') as total_melanoma,
+        COUNT(*) FILTER (WHERE ${patientNotifiedExpr} = true) as patients_notified,
+        COUNT(*) FILTER (WHERE ${statusExpr} = 'closed') as completed_biopsies,
         ROUND(
-          (COUNT(*) FILTER (WHERE b.turnaround_time_days <= 7)::NUMERIC /
-           NULLIF(COUNT(*) FILTER (WHERE b.turnaround_time_days IS NOT NULL), 0)) * 100,
+          (COUNT(*) FILTER (WHERE ${turnaroundExpr} <= 7)::NUMERIC /
+           NULLIF(COUNT(*) FILTER (WHERE ${turnaroundExpr} IS NOT NULL), 0)) * 100,
           2
         ) as within_7_days_percentage
       FROM biopsies b
       WHERE b.tenant_id = $1
-        AND b.deleted_at IS NULL
+        ${deletedFilter}
         ${dateFilter}
     `;
 
@@ -863,8 +933,8 @@ export class BiopsyService {
         b.follow_up_action,
         b.patient_notified,
         b.turnaround_time_days,
-        ordering_pr.first_name || ' ' || ordering_pr.last_name as ordering_provider,
-        reviewing_pr.first_name || ' ' || reviewing_pr.last_name as reviewing_provider,
+        ${providerDisplayName('ordering_pr')} as ordering_provider,
+        ${providerDisplayName('reviewing_pr')} as reviewing_provider,
         b.path_lab,
         b.path_lab_case_number
       FROM biopsies b

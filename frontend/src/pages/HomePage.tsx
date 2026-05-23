@@ -1613,14 +1613,24 @@ export function HomePage() {
       tone: 'emerald',
     },
     {
-      label: 'Clinical work',
-      value: stats.notesWrittenToday + stats.pendingLabOrders,
-      detail: `${stats.notesWrittenToday} notes written ${dayScopeLower}, ${stats.pendingLabOrders} lab/path orders`,
+      label: `Notes ${dayScopeLower}`,
+      value: stats.notesWrittenToday,
+      detail: `${stats.unsignedNotesToday} unsigned, ${stats.teamNotesNeedingWork} open team encounters`,
       route: '/notes',
-      access: ['notes', 'labs'],
+      access: 'notes',
       commandSection: 'metric_clinical_work',
       icon: Stethoscope,
       tone: 'violet',
+    },
+    {
+      label: 'Open lab/path orders',
+      value: stats.pendingLabOrders,
+      detail: `${totalPathologyOpenLoops} biopsy safety loops, ${criticalPathologyCount} critical/high`,
+      route: '/labs?tab=all-open',
+      access: 'labs',
+      commandSection: 'metric_clinical_work',
+      icon: ClipboardCheck,
+      tone: stats.pendingLabOrders > 0 ? 'amber' : 'slate',
     },
     {
       label: 'Patient access',
@@ -1698,7 +1708,7 @@ export function HomePage() {
     {
       label: 'Provider desk',
       value: stats.myNotesNeedingWork + stats.pendingLabOrders,
-      detail: `${stats.myNotesNeedingWork} my notes, ${stats.pendingLabOrders} lab/path orders`,
+      detail: `${stats.myNotesNeedingWork} my notes, ${stats.pendingLabOrders} open lab/path orders`,
       route: '/notes',
       access: ['notes', 'labs'],
       commandSection: 'priority_provider_desk' as CommandCenterSectionKey,
@@ -2151,7 +2161,7 @@ export function HomePage() {
               <ClipboardCheck size={17} aria-hidden="true" />
               <span>
                 <strong>Open Lab/Path Orders</strong>
-                <small>Unsigned notes {dayScopeLower}: {stats.unsignedNotesToday}</small>
+                <small>Open order queue across all dates</small>
               </span>
               <b>{loading ? '-' : stats.pendingLabOrders}</b>
             </button>

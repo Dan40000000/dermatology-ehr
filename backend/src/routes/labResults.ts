@@ -24,6 +24,15 @@ function isMissingRelationError(error: unknown): boolean {
   return (error as Error & { code?: string }).code === '42P01';
 }
 
+function providerDisplayName(alias: string): string {
+  return `COALESCE(
+    NULLIF(to_jsonb(${alias})->>'full_name', ''),
+    NULLIF(TRIM(CONCAT_WS(' ', to_jsonb(${alias})->>'first_name', to_jsonb(${alias})->>'last_name')), ''),
+    NULLIF(to_jsonb(${alias})->>'name', ''),
+    'Unknown Provider'
+  )`;
+}
+
 function parseVisibleAt(value: unknown): Date | null {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -49,7 +58,7 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
         p.mrn,
         lo.order_date,
         lo.ordering_provider_id,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name
+        ${providerDisplayName('pr')} as ordering_provider_name
       FROM lab_results lr
       JOIN patients p ON lr.patient_id = p.id
       JOIN lab_orders lo ON lr.lab_order_id = lo.id
@@ -98,6 +107,9 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.json([]);
+    }
     logger.error('Error fetching lab results', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch lab results' });
   }
@@ -160,9 +172,7 @@ router.get('/observations/pending', async (req: AuthedRequest, res: Response) =>
     res.json({ observations: result.rows });
   } catch (error: any) {
     if (isMissingRelationError(error)) {
-      return res.status(503).json({
-        error: 'Patient observation release controls are not installed. Run latest migrations.',
-      });
+      return res.json({ observations: [], unavailable: true, warning: 'Patient observation release controls are not installed.' });
     }
     logger.error('Error fetching pending patient observations', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch pending observations' });
@@ -614,7 +624,7 @@ router.get('/critical', async (req: AuthedRequest, res: Response) => {
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         lo.order_date,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name
+        ${providerDisplayName('pr')} as ordering_provider_name
       FROM lab_critical_notifications lcn
       JOIN patients p ON lcn.patient_id = p.id
       JOIN lab_orders lo ON lcn.lab_order_id = lo.id
@@ -627,6 +637,9 @@ router.get('/critical', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.json([]);
+    }
     logger.error('Error fetching critical notifications', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch critical notifications' });
   }

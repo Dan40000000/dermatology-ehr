@@ -14,6 +14,20 @@ const router = Router();
 // All routes require authentication
 router.use(requireAuth);
 
+function isMissingRelationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (error as Error & { code?: string }).code === '42P01';
+}
+
+function providerDisplayName(alias: string): string {
+  return `COALESCE(
+    NULLIF(to_jsonb(${alias})->>'full_name', ''),
+    NULLIF(TRIM(CONCAT_WS(' ', to_jsonb(${alias})->>'first_name', to_jsonb(${alias})->>'last_name')), ''),
+    NULLIF(to_jsonb(${alias})->>'name', ''),
+    'Unknown Provider'
+  )`;
+}
+
 /**
  * GET /api/dermpath/reports
  * Get dermatopathology reports
@@ -28,7 +42,7 @@ router.get('/reports', async (req: AuthedRequest, res: Response) => {
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         lo.ordering_provider_id,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name
+        ${providerDisplayName('pr')} as ordering_provider_name
       FROM dermpath_reports dr
       JOIN patients p ON dr.patient_id = p.id
       JOIN lab_orders lo ON dr.lab_order_id = lo.id
@@ -63,6 +77,9 @@ router.get('/reports', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.json([]);
+    }
     logger.error('Error fetching dermpath reports', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch reports' });
   }
@@ -83,7 +100,7 @@ router.get('/reports/:id', async (req: AuthedRequest, res: Response) => {
         p.mrn,
         p.dob as date_of_birth,
         lo.ordering_provider_id,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name,
+        ${providerDisplayName('pr')} as ordering_provider_name,
         (
           SELECT json_agg(
             json_build_object(
@@ -112,6 +129,9 @@ router.get('/reports/:id', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
     logger.error('Error fetching dermpath report', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch report' });
   }
@@ -260,7 +280,7 @@ router.get('/cultures', async (req: AuthedRequest, res: Response) => {
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         lo.ordering_provider_id,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name
+        ${providerDisplayName('pr')} as ordering_provider_name
       FROM lab_culture_results lcr
       JOIN patients p ON lcr.patient_id = p.id
       JOIN lab_orders lo ON lcr.lab_order_id = lo.id
@@ -289,6 +309,9 @@ router.get('/cultures', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.json([]);
+    }
     logger.error('Error fetching culture results', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch culture results' });
   }
@@ -368,7 +391,7 @@ router.get('/patch-tests', async (req: AuthedRequest, res: Response) => {
         ptr.*,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
-        pr.first_name || ' ' || pr.last_name as ordering_provider_name,
+        ${providerDisplayName('pr')} as ordering_provider_name,
         (
           SELECT json_agg(
             json_build_object(
@@ -406,6 +429,9 @@ router.get('/patch-tests', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.json([]);
+    }
     logger.error('Error fetching patch test results', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch patch test results' });
   }

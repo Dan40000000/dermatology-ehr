@@ -34,6 +34,27 @@ export interface ClaimLineItem {
 
 const DIAGNOSIS_POINTER_LABELS = 'ABCDEFGHIJKL'.split('');
 
+function firstNonEmpty(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function parseInsuranceDetails(value: unknown): any | null {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === 'object' ? value : null;
+}
+
 function normalizeIcdCodes(value: unknown): string[] {
   if (Array.isArray(value)) {
     return Array.from(
@@ -212,7 +233,8 @@ export class BillingService {
         `SELECT e.id, e.patient_id, e.provider_id,
                 p.insurance_details,
                 p.insurance_plan_name,
-                p.insurance_payer_id
+                p.insurance_payer_id,
+                p.insurance as insurance_fallback
          FROM encounters e
          JOIN patients p ON p.id = e.patient_id
          WHERE e.id = $1 AND e.tenant_id = $2`,
@@ -224,19 +246,29 @@ export class BillingService {
       }
 
       const encounter = encounterResult.rows[0];
-      const insuranceDetails = encounter.insurance_details;
+      const insuranceDetails = parseInsuranceDetails(encounter.insurance_details);
 
       // Get primary insurance info
       let payer: string | undefined;
       let payerId: string | undefined;
 
       if (insuranceDetails && insuranceDetails.primary) {
-        payer = insuranceDetails.primary.planName;
-        payerId = insuranceDetails.primary.payerId;
+        payer = firstNonEmpty(
+          insuranceDetails.primary.planName,
+          insuranceDetails.primary.plan_name,
+          insuranceDetails.primary.payerName,
+          insuranceDetails.primary.payer_name,
+          insuranceDetails.primary.name
+        );
+        payerId = firstNonEmpty(
+          insuranceDetails.primary.payerId,
+          insuranceDetails.primary.payer_id,
+          insuranceDetails.primary.id
+        );
       }
 
-      payer = payer || encounter.insurance_plan_name || undefined;
-      payerId = payerId || encounter.insurance_payer_id || undefined;
+      payer = firstNonEmpty(payer, encounter.insurance_plan_name, encounter.insurance_fallback);
+      payerId = firstNonEmpty(payerId, encounter.insurance_payer_id);
 
       // Check if claim already exists for this encounter
       const existingClaimResult = await client.query(

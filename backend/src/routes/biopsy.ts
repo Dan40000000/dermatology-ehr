@@ -22,6 +22,21 @@ const router = Router();
 // All routes require authentication
 router.use(requireAuth);
 
+function providerDisplayName(alias: string): string {
+  return `COALESCE(
+    NULLIF(to_jsonb(${alias})->>'full_name', ''),
+    NULLIF(TRIM(CONCAT_WS(' ', to_jsonb(${alias})->>'first_name', to_jsonb(${alias})->>'last_name')), ''),
+    NULLIF(to_jsonb(${alias})->>'name', ''),
+    'Unknown Provider'
+  )`;
+}
+
+function isSchemaCompatibilityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as Error & { code?: string }).code;
+  return code === '42P01' || code === '42703';
+}
+
 // Validation schemas
 const createBiopsySchema = z.object({
   patient_id: z.string().uuid(),
@@ -253,8 +268,8 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         p.dob as date_of_birth,
-        ordering_pr.first_name || ' ' || ordering_pr.last_name as ordering_provider_name,
-        reviewing_pr.first_name || ' ' || reviewing_pr.last_name as reviewing_provider_name,
+        ${providerDisplayName('ordering_pr')} as ordering_provider_name,
+        ${providerDisplayName('reviewing_pr')} as reviewing_provider_name,
         EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_since_sent,
         (SELECT COUNT(*) FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.status = 'active') as active_alert_count
       FROM biopsies b
@@ -326,6 +341,28 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
       offset: parseInt(offset as string)
     });
   } catch (error: any) {
+    if (isSchemaCompatibilityError(error)) {
+      const commandCenter = await BiopsyService.getSafetyCommandCenter(req.user!.tenantId, req.query.ordering_provider_id as string | undefined);
+      const offsetValue = parseInt((req.query.offset as string) || '0');
+      const limitValue = parseInt((req.query.limit as string) || '100');
+      let biopsies = commandCenter.biopsies;
+      if (req.query.status) {
+        biopsies = biopsies.filter((biopsy: any) => String(biopsy.status || '') === String(req.query.status));
+      }
+      if (req.query.patient_id) {
+        biopsies = biopsies.filter((biopsy: any) => String(biopsy.patient_id || '') === String(req.query.patient_id));
+      }
+      if (req.query.malignancy_type) {
+        biopsies = biopsies.filter((biopsy: any) => String(biopsy.malignancy_type || '') === String(req.query.malignancy_type));
+      }
+      return res.json({
+        biopsies: biopsies.slice(offsetValue, offsetValue + limitValue),
+        total: biopsies.length,
+        limit: limitValue,
+        offset: offsetValue,
+        fallback: true,
+      });
+    }
     logger.error('Error fetching biopsies', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch biopsies' });
   }
@@ -344,6 +381,10 @@ router.get('/pending', async (req: AuthedRequest, res: Response) => {
 
     res.json({ biopsies });
   } catch (error: any) {
+    if (isSchemaCompatibilityError(error)) {
+      const commandCenter = await BiopsyService.getSafetyCommandCenter(req.user!.tenantId, req.query.provider_id as string | undefined);
+      return res.json({ biopsies: commandCenter.queues.pendingReview, fallback: true });
+    }
     logger.error('Error fetching pending biopsies', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch pending biopsies' });
   }
@@ -360,6 +401,13 @@ router.get('/overdue', async (req: AuthedRequest, res: Response) => {
 
     res.json({ biopsies });
   } catch (error: any) {
+    if (isSchemaCompatibilityError(error)) {
+      const commandCenter = await BiopsyService.getSafetyCommandCenter(req.user!.tenantId);
+      const biopsies = commandCenter.queues.pendingResults.filter((biopsy: any) =>
+        Array.isArray(biopsy.safety_flags) && biopsy.safety_flags.some((flag: any) => flag.type === 'result_overdue')
+      );
+      return res.json({ biopsies, fallback: true });
+    }
     logger.error('Error fetching overdue biopsies', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch overdue biopsies' });
   }
@@ -439,9 +487,9 @@ router.get('/:id', async (req: AuthedRequest, res: Response) => {
         p.dob as date_of_birth,
         p.phone as patient_phone,
         p.email as patient_email,
-        ordering_pr.first_name || ' ' || ordering_pr.last_name as ordering_provider_name,
-        reviewing_pr.first_name || ' ' || reviewing_pr.last_name as reviewing_provider_name,
-        collecting_pr.first_name || ' ' || collecting_pr.last_name as collecting_provider_name,
+        ${providerDisplayName('ordering_pr')} as ordering_provider_name,
+        ${providerDisplayName('reviewing_pr')} as reviewing_provider_name,
+        ${providerDisplayName('collecting_pr')} as collecting_provider_name,
         EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_since_sent,
         (
           SELECT json_agg(
@@ -502,6 +550,14 @@ router.get('/:id', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error: any) {
+    if (isSchemaCompatibilityError(error)) {
+      const commandCenter = await BiopsyService.getSafetyCommandCenter(req.user!.tenantId);
+      const biopsy = commandCenter.biopsies.find((item: any) => String(item.id) === String(req.params.id));
+      if (!biopsy) {
+        return res.status(404).json({ error: 'Biopsy not found' });
+      }
+      return res.json({ ...biopsy, fallback: true });
+    }
     logger.error('Error fetching biopsy', { error: error.message, biopsyId: req.params.id });
     res.status(500).json({ error: 'Failed to fetch biopsy' });
   }

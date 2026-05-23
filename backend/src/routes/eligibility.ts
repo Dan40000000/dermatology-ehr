@@ -37,6 +37,7 @@ const batchHistorySchema = z.object({
 });
 
 export const eligibilityRouter = Router();
+const ELIGIBILITY_HISTORY_READ_ROLES = ['admin', 'provider', 'ma', 'front_desk', 'billing'];
 
 /**
  * @swagger
@@ -352,7 +353,7 @@ eligibilityRouter.post(
 eligibilityRouter.get(
   '/history/:patientId',
   requireAuth,
-  requireRoles(['admin', 'provider', 'front_desk', 'billing']),
+  requireRoles(ELIGIBILITY_HISTORY_READ_ROLES),
   async (req: AuthedRequest, res) => {
     try {
       const { patientId } = req.params;
@@ -418,7 +419,7 @@ eligibilityRouter.get(
 eligibilityRouter.post(
   '/history/batch',
   requireAuth,
-  requireRoles(['admin', 'provider', 'front_desk', 'billing']),
+  requireRoles(ELIGIBILITY_HISTORY_READ_ROLES),
   async (req: AuthedRequest, res) => {
     try {
       const validatedData = batchHistorySchema.parse(req.body);

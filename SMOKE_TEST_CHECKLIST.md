@@ -5,6 +5,8 @@
 **Duration:** 30-45 minutes
 **Frequency:** After every deployment, after critical bug fixes, after major updates
 
+For full client/pilot signoff, also run `CLIENT_READINESS_QA.md`. That checklist covers the day-to-day office flow, diagnosis confirmation, billing-code confirmation, texting consent/delivery, claims, clearinghouse, revenue, collections, and role-by-role access.
+
 ---
 
 ## Pre-Test Setup
@@ -227,6 +229,10 @@
 - [ ] Navigate to Text Messages page
 - [ ] **Expected:** Page loads
 - [ ] **Pass Criteria:** No errors (don't send actual SMS in smoke test)
+- [ ] Confirm SMS settings show active provider configuration or a clear disabled/test-mode state
+- [ ] Confirm patient SMS consent state is visible before sending
+- [ ] Confirm staff cannot text a patient who is opted out or still pending consent
+- [ ] Confirm live texting is not used unless A2P campaign status is verified
 
 **Status:** ✅ Pass / ❌ Fail / ⚠️ Warning
 **Notes:**

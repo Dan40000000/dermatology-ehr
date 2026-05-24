@@ -9,6 +9,7 @@ const sentryMock = {
 
 const redactPHIMock = jest.fn((value: any) => ({ redacted: value }));
 const redactErrorMock = jest.fn((error: Error) => new Error(`redacted:${error.message}`));
+const redactValueMock = jest.fn((value: any) => `redacted:${value}`);
 const isPHIFieldMock = jest.fn((key: string) => key.toLowerCase().includes('ssn'));
 
 jest.mock('@sentry/node', () => sentryMock);
@@ -18,6 +19,7 @@ jest.mock('@sentry/profiling-node', () => ({
 jest.mock('../../utils/phiRedaction', () => ({
   redactPHI: redactPHIMock,
   redactError: redactErrorMock,
+  redactValue: redactValueMock,
   isPHIField: isPHIFieldMock,
 }));
 
@@ -158,10 +160,9 @@ describe('sentry helpers', () => {
     setUser({ id: 'user-1', email: 'user@example.com', role: 'admin' });
     clearUser();
 
-    expect(sentryMock.captureMessage).toHaveBeenCalledWith('hello', 'warning');
+    expect(sentryMock.captureMessage).toHaveBeenCalledWith('redacted:hello', 'warning');
     expect(sentryMock.setUser).toHaveBeenCalledWith({
       id: 'user-1',
-      email: 'user@example.com',
       role: 'admin',
     });
     expect(sentryMock.setUser).toHaveBeenCalledWith(null);

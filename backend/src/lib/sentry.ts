@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import config from '../config';
-import { redactPHI, redactError, isPHIField } from '../utils/phiRedaction';
+import { redactPHI, redactError, isPHIField, redactValue } from '../utils/phiRedaction';
 
 /**
  * Initialize Sentry for error tracking and performance monitoring
@@ -118,6 +118,18 @@ export function initSentry(): void {
         event.extra = redactPHI(event.extra);
       }
 
+      if (event.user) {
+        event.user = {
+          ...(event.user.id ? { id: event.user.id } : {}),
+          ...(event.user.ip_address ? { ip_address: event.user.ip_address } : {}),
+          ...(event.user.role ? { role: event.user.role as any } : {}),
+        };
+      }
+
+      if (event.message) {
+        event.message = String(redactValue(event.message));
+      }
+
       return event;
     },
 
@@ -153,7 +165,7 @@ export function captureException(error: Error, context?: Record<string, any>): v
  * Capture a message with Sentry
  */
 export function captureMessage(message: string, level: Sentry.SeverityLevel = 'info'): void {
-  Sentry.captureMessage(message, level);
+  Sentry.captureMessage(String(redactValue(message)), level);
 }
 
 /**
@@ -162,7 +174,6 @@ export function captureMessage(message: string, level: Sentry.SeverityLevel = 'i
 export function setUser(user: { id: string; email?: string; role?: string }): void {
   Sentry.setUser({
     id: user.id,
-    ...(user.email ? { email: user.email } : {}),
     ...(user.role ? { role: user.role } : {}),
   });
 }

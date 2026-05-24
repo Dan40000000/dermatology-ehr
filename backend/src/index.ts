@@ -12,12 +12,15 @@ import { sanitizeInputs } from "./middleware/sanitization";
 import { requestIdMiddleware } from "./middleware/requestId";
 import { initializeWebSocket } from "./websocket";
 import { registerRoutes } from "./routes/registerRoutes";
+import { initSentry } from "./lib/sentry";
+import { phiAccessAuditMiddleware } from "./middleware/phiAccessAudit";
 import path from "path";
 import fs from "fs";
 import { waitlistAutoFillService } from "./services/waitlistAutoFillService";
 import { initializeJobScheduler, stopJobScheduler } from "./services/jobRunner";
 
 const app = express();
+initSentry();
 
 // Trust proxy for Railway/cloud deployments (required for rate limiting behind reverse proxy)
 app.set('trust proxy', 1);
@@ -117,6 +120,8 @@ app.use((req, _res, next) => {
   });
   next();
 });
+
+app.use(phiAccessAuditMiddleware);
 
 const exposeApiDocs = !config.isProductionLike || config.debug.apiDocs;
 if (exposeApiDocs) {

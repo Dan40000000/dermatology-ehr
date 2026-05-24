@@ -7,12 +7,14 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { TwilioService, createTwilioService } from './twilioService';
 import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
+import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
 import crypto from 'crypto';
 
 export interface AppointmentToRemind {
   appointmentId: string;
   patientId: string;
   patientName: string;
+  patientFirstName?: string;
   patientPhone: string;
   providerName: string;
   appointmentDate: Date;
@@ -25,7 +27,7 @@ export type ReminderChannel = 'sms' | 'voice';
 
 const DEFAULT_CLINIC_NUMBER = '+15555550100';
 const DEFAULT_SMS_TEMPLATE =
-  'Hi {patientName}, this is a reminder for your appointment with {providerName} on {appointmentDate} at {appointmentTime}. Reply C to confirm, R to reschedule, or X to cancel.';
+  'Hi {firstName}, this is a reminder for your appointment on {appointmentDate} at {appointmentTime}. Reply C to confirm, R to reschedule, or X to cancel.';
 
 interface ReminderTenantSettings {
   tenant_id: string;
@@ -213,6 +215,7 @@ async function getAppointmentsNeedingReminders(
     `SELECT
       a.id as "appointmentId",
       a.patient_id as "patientId",
+      p.first_name as "patientFirstName",
       p.first_name || ' ' || p.last_name as "patientName",
       p.phone as "patientPhone",
       pr.full_name as "providerName",
@@ -299,6 +302,7 @@ async function sendAppointmentReminder(
     );
 
     const reminderBody = applyReminderTemplate(tenant.reminder_template, {
+      firstName: appointment.patientFirstName || appointment.patientName.split(/\s+/)[0] || 'there',
       patientName: appointment.patientName,
       providerName: appointment.providerName,
       appointmentDate: formattedDate,
@@ -322,6 +326,7 @@ async function sendAppointmentReminder(
         tenant.twilio_phone_number,
         {
           patientPhone,
+          firstName: appointment.patientFirstName || appointment.patientName.split(/\s+/)[0] || 'there',
           patientName: appointment.patientName,
           providerName: appointment.providerName,
           appointmentDate: formattedDate,
@@ -420,7 +425,7 @@ async function sendAppointmentVoiceReminder(
       year: 'numeric',
     });
 
-    const voiceMessage = `Hello ${appointment.patientName}. This is a reminder from your dermatology clinic. You have an appointment with ${appointment.providerName} on ${formattedDate} at ${appointment.appointmentTime}. If you need to reschedule, please call ${appointment.clinicPhone}.`;
+    const voiceMessage = `Hello ${appointment.patientFirstName || appointment.patientName.split(/\s+/)[0] || 'there'}. This is a reminder from your dermatology clinic. You have an appointment on ${formattedDate} at ${appointment.appointmentTime}. If you need to reschedule, please call ${appointment.clinicPhone}.`;
 
     const callResult = tenant.is_test_mode
       ? {
@@ -523,11 +528,13 @@ function applyReminderTemplate(
   template: string | null,
   vars: Record<string, string>
 ): string {
-  let result = template || DEFAULT_SMS_TEMPLATE;
+  let result = normalizeSmsTemplateForMinimumNecessary(template || DEFAULT_SMS_TEMPLATE);
+  assertSmsContentSafe(result);
   for (const [key, value] of Object.entries(vars)) {
     const token = new RegExp(`\\{${key}\\}`, 'g');
     result = result.replace(token, value || '');
   }
+  assertSmsContentSafe(result);
   return result;
 }
 
@@ -569,6 +576,7 @@ export async function sendImmediateReminder(
       `SELECT
         a.id as "appointmentId",
         a.patient_id as "patientId",
+        p.first_name as "patientFirstName",
         p.first_name || ' ' || p.last_name as "patientName",
         p.phone as "patientPhone",
         pr.full_name as "providerName",

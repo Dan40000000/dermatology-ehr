@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
+import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 
 /**
  * AI Image Analysis Service for Dermatology
@@ -143,9 +144,12 @@ export class AIImageAnalysisService {
    * Perform actual AI analysis (mock or real depending on API keys)
    */
   private async performAIAnalysis(imageUrl: string): Promise<AIAnalysisResult> {
-    // If OpenAI API key is available, use it
-    if (this.openaiApiKey) {
+    // Only send patient images to OpenAI when a HIPAA/BAA-covered mode is explicitly enabled.
+    if (this.openaiApiKey && isHipaaClinicalAiEnabled()) {
       return await this.analyzeWithOpenAI(imageUrl);
+    }
+    if (this.openaiApiKey) {
+      logger.warn("OpenAI image analysis skipped because HIPAA/BAA mode is not enabled");
     }
 
     // Otherwise, return mock analysis for development

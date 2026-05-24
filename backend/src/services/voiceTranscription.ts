@@ -4,6 +4,7 @@ import FormData from "form-data";
 import fs from "fs";
 import path from "path";
 import { logger } from "../lib/logger";
+import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 
 /**
  * Voice Transcription Service
@@ -49,6 +50,14 @@ function logVoiceTranscriptionError(message: string, error: unknown): void {
   });
 }
 
+function isTrueEnv(value: string | undefined): boolean {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function canUseOpenAIForRawAudio(): boolean {
+  return isHipaaClinicalAiEnabled() || isTrueEnv(process.env.OPENAI_RAW_AUDIO_ALLOWED);
+}
+
 export class VoiceTranscriptionService {
   private openaiApiKey: string | undefined;
 
@@ -64,7 +73,10 @@ export class VoiceTranscriptionService {
       const transcriptionId = crypto.randomUUID();
 
       // Check if API key is available
-      if (!this.openaiApiKey) {
+      if (!this.openaiApiKey || !canUseOpenAIForRawAudio()) {
+        if (this.openaiApiKey) {
+          logger.warn("OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled");
+        }
         return await this.createMockTranscription(request, transcriptionId);
       }
 

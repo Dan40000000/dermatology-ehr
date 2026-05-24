@@ -6,6 +6,7 @@
 import twilio, { Twilio } from 'twilio';
 import { logger } from '../lib/logger';
 import { formatPhoneE164, validateAndFormatPhone } from '../utils/phone';
+import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
 
 export interface SendSMSParams {
   to: string;
@@ -29,6 +30,7 @@ export interface SendSMSResult {
 
 export interface AppointmentReminderParams {
   patientPhone: string;
+  firstName?: string;
   patientName: string;
   providerName: string;
   appointmentDate: string;
@@ -75,6 +77,8 @@ export class TwilioService {
    */
   async sendSMS(params: SendSMSParams): Promise<SendSMSResult> {
     try {
+      assertSmsContentSafe(params.body);
+
       // Validate and format phone numbers
       const toPhone = validateAndFormatPhone(params.to);
       const fromPhone = this.messagingServiceSid ? undefined : validateAndFormatPhone(params.from);
@@ -147,13 +151,18 @@ export class TwilioService {
     statusCallback?: string
   ): Promise<SendSMSResult> {
     // Replace template variables
-    const body = this.replaceTemplateVars(params.template, {
+    const safeTemplate = normalizeSmsTemplateForMinimumNecessary(params.template);
+    assertSmsContentSafe(safeTemplate);
+
+    const body = this.replaceTemplateVars(safeTemplate, {
+      firstName: params.firstName || params.patientName.split(/\s+/)[0] || 'there',
       patientName: params.patientName,
       providerName: params.providerName,
       appointmentDate: params.appointmentDate,
       appointmentTime: params.appointmentTime,
       clinicPhone: params.clinicPhone,
     });
+    assertSmsContentSafe(body);
 
     return this.sendSMS({
       to: params.patientPhone,
@@ -214,7 +223,7 @@ export class TwilioService {
 
   /**
    * Replace template variables in message text
-   * Variables: {patientName}, {providerName}, {appointmentDate}, {appointmentTime}, {clinicPhone}
+   * Variables: {firstName}, {appointmentDate}, {appointmentTime}, {clinicPhone}
    */
   private replaceTemplateVars(template: string, vars: Record<string, string>): string {
     let result = template;

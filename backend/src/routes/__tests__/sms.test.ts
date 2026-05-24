@@ -338,6 +338,17 @@ describe('SMS routes', () => {
     expect(createTwilioServiceMock).not.toHaveBeenCalled();
   });
 
+  it('POST /sms/send blocks PHI-heavy message bodies before sending', async () => {
+    const res = await request(app).post('/sms/send').send({
+      patientId: '00000000-0000-4000-8000-000000000001',
+      messageBody: 'Your biopsy diagnosis is ready. MRN A12345.',
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('SMS_PHI_BLOCKED');
+    expect(createTwilioServiceMock).not.toHaveBeenCalled();
+  });
+
   it('GET /sms/messages returns paginated results', async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: 'm1' }] })
@@ -1387,6 +1398,16 @@ describe('SMS routes', () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  it('POST /sms/templates blocks unsafe patient identifiers', async () => {
+    const res = await request(app).post('/sms/templates').send({
+      name: 'Bad reminder',
+      messageBody: 'Hi {patientName}, your prescription is ready.',
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('SMS_PHI_BLOCKED');
   });
 
   it('POST /sms/templates returns 500 on error', async () => {

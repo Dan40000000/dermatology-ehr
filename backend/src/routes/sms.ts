@@ -28,6 +28,7 @@ import { userHasRole } from '../lib/roles';
 import * as crypto from 'crypto';
 import { getSMSPracticeBranding, buildSMSHelpText, buildSMSOptInConfirmationText, buildSMSOptOutConfirmationText } from '../services/smsConsentText';
 import { getSMSConsentState, revokeSMSConsent, upsertSMSOptOut } from '../services/smsConsentState';
+import { assertSmsContentSafe, SmsPrivacyBlockError } from '../utils/smsPrivacyGuard';
 
 const router = Router();
 const textMessagesModuleAccess = requireModuleAccess('text_messages');
@@ -63,6 +64,19 @@ function buildMockSmsResult(body: string) {
     status: 'sent',
     numSegments: calculateSmsSegments(body),
   };
+}
+
+function handleSmsPrivacyError(res: Response, error: unknown): boolean {
+  if (!(error instanceof SmsPrivacyBlockError)) {
+    return false;
+  }
+
+  res.status(422).json({
+    error: error.message,
+    code: error.code,
+    blockedTypes: error.blockedTypes,
+  });
+  return true;
 }
 
 function shouldUseMockSms(settings: { is_test_mode?: boolean | null }): boolean {
@@ -316,6 +330,15 @@ router.put('/settings', requireAuth, async (req: AuthedRequest, res: Response) =
 
     const data = parsed.data;
 
+    [
+      data.reminderTemplate,
+      data.confirmationTemplate,
+      data.cancellationTemplate,
+      data.rescheduleTemplate,
+    ]
+      .filter((value): value is string => typeof value === 'string')
+      .forEach((template) => assertSmsContentSafe(template));
+
     // Validate phone number if provided
     if (data.twilioPhoneNumber) {
       const formatted = formatPhoneE164(data.twilioPhoneNumber);
@@ -364,6 +387,7 @@ router.put('/settings', requireAuth, async (req: AuthedRequest, res: Response) =
 
     res.json({ success: true });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error updating SMS settings', { error: error.message });
     res.status(500).json({ error: 'Failed to update SMS settings' });
   }
@@ -424,6 +448,7 @@ router.post('/send', requireAuth, async (req: AuthedRequest, res: Response) => {
     }
 
     const { patientId, messageBody, messageType } = parsed.data;
+    assertSmsContentSafe(messageBody);
 
     // Get patient phone number
     const patientResult = await pool.query(
@@ -502,6 +527,7 @@ router.post('/send', requireAuth, async (req: AuthedRequest, res: Response) => {
       status: result.status,
     });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error sending SMS', { error: error.message });
     res.status(500).json({ error: 'Failed to send SMS' });
   }
@@ -867,6 +893,7 @@ router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedReq
     }
 
     const { message } = parsed.data;
+    assertSmsContentSafe(message);
 
     // Get patient phone
     const patientResult = await pool.query(
@@ -976,6 +1003,7 @@ router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedReq
       status: result.status,
     });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error sending conversation message', { error: error.message });
     res.status(500).json({ error: 'Failed to send message' });
   }
@@ -1169,6 +1197,10 @@ router.put('/auto-responses/:id', requireAuth, async (req: AuthedRequest, res: R
       });
     }
 
+    if (parsed.data.responseText !== undefined) {
+      assertSmsContentSafe(parsed.data.responseText);
+    }
+
     const updates: string[] = [];
     const params: any[] = [];
     let paramIndex = 1;
@@ -1201,6 +1233,7 @@ router.put('/auto-responses/:id', requireAuth, async (req: AuthedRequest, res: R
 
     res.json({ success: true });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error updating auto-response', { error: error.message });
     res.status(500).json({ error: 'Failed to update auto-response' });
   }
@@ -1538,6 +1571,7 @@ router.post('/templates', requireAuth, async (req: AuthedRequest, res: Response)
     }
 
     const { name, description, messageBody, category } = parsed.data;
+    assertSmsContentSafe(messageBody);
 
     const templateId = crypto.randomUUID();
     await pool.query(
@@ -1551,6 +1585,7 @@ router.post('/templates', requireAuth, async (req: AuthedRequest, res: Response)
 
     res.json({ success: true, templateId });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error creating template', { error: error.message });
     res.status(500).json({ error: 'Failed to create template' });
   }
@@ -1598,6 +1633,10 @@ router.patch('/templates/:id', requireAuth, async (req: AuthedRequest, res: Resp
     let paramIndex = 1;
 
     const data = parsed.data;
+    if (data.messageBody !== undefined) {
+      assertSmsContentSafe(data.messageBody);
+    }
+
     if (data.name !== undefined) {
       updates.push(`name = $${paramIndex}`);
       params.push(data.name);
@@ -1640,6 +1679,7 @@ router.patch('/templates/:id', requireAuth, async (req: AuthedRequest, res: Resp
 
     res.json({ success: true });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error updating template', { error: error.message });
     res.status(500).json({ error: 'Failed to update template' });
   }
@@ -1709,6 +1749,7 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
     }
 
     const { patientIds, messageBody, templateId, scheduleTime } = parsed.data;
+    assertSmsContentSafe(messageBody);
     const optedOutPatientIds = await getOptedOutSMSRecipientIds(tenantId, patientIds);
 
     if (scheduleTime && optedOutPatientIds.size > 0) {
@@ -1849,6 +1890,7 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
 
     res.json({ success: true, results });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error sending bulk SMS', { error: error.message });
     res.status(500).json({ error: 'Failed to send bulk messages' });
   }
@@ -1938,6 +1980,7 @@ router.post('/scheduled', requireAuth, async (req: AuthedRequest, res: Response)
     }
 
     const data = parsed.data;
+    assertSmsContentSafe(data.messageBody);
 
     if (!data.patientId && (!data.patientIds || data.patientIds.length === 0)) {
       return res.status(400).json({ error: 'Must provide patientId or patientIds' });
@@ -1985,6 +2028,7 @@ router.post('/scheduled', requireAuth, async (req: AuthedRequest, res: Response)
 
     res.json({ success: true, scheduledId });
   } catch (error: any) {
+    if (handleSmsPrivacyError(res, error)) return;
     logger.error('Error creating scheduled message', { error: error.message });
     res.status(500).json({ error: 'Failed to create scheduled message' });
   }

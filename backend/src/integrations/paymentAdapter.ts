@@ -11,6 +11,7 @@ import Stripe from 'stripe';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { BaseAdapter, AdapterOptions, saveIntegrationConfig } from './baseAdapter';
+import { scanAiPhi } from '../utils/aiPhiGuard';
 
 // ============================================================================
 // Types
@@ -235,6 +236,7 @@ export class PaymentAdapter extends BaseAdapter {
     metadata?: Record<string, string>
   ): Promise<PaymentIntent> {
     const startTime = Date.now();
+    const safeMetadata = this.normalizeMetadata(metadata);
 
     logger.info('Creating payment intent', {
       amountCents,
@@ -248,10 +250,10 @@ export class PaymentAdapter extends BaseAdapter {
       const customerId = await this.getOrCreateCustomer(patientId);
 
       if (this.useMock) {
-        intent = await this.mockCreatePaymentIntent(amountCents, customerId, metadata);
+        intent = await this.mockCreatePaymentIntent(amountCents, customerId, safeMetadata);
       } else {
         intent = await this.withRetry(() =>
-          this.realCreatePaymentIntent(amountCents, customerId, metadata)
+          this.realCreatePaymentIntent(amountCents, customerId, safeMetadata)
         );
       }
 
@@ -298,10 +300,11 @@ export class PaymentAdapter extends BaseAdapter {
     });
 
     try {
+      const safeInput = { ...input, metadata: this.normalizeMetadata(input.metadata) };
       const useMockCheckout = this.useMock || !this.hasStripeCredentials();
       const session = useMockCheckout
-        ? await this.mockCreateCheckoutSession(input, amountCents)
-        : await this.withRetry(() => this.realCreateCheckoutSession(input));
+        ? await this.mockCreateCheckoutSession(safeInput, amountCents)
+        : await this.withRetry(() => this.realCreateCheckoutSession(safeInput));
 
       await this.logIntegration({
         direction: 'outbound',
@@ -1669,10 +1672,28 @@ export class PaymentAdapter extends BaseAdapter {
     if (!metadata) {
       return undefined;
     }
-    const entries = Object.entries(metadata)
-      .filter(([key, value]) => key && value !== undefined && value !== null)
-      .map(([key, value]) => [String(key), String(value)]);
+    const entries: Array<[string, string]> = Object.entries(metadata)
+      .filter((entry): entry is [string, string] => {
+        const [key, value] = entry;
+        return Boolean(key) && value !== undefined && value !== null;
+      })
+      .map(([key, value]): [string, string] => [String(key), String(value)])
+      .filter(([key, value]) => {
+        if (this.isUnsafePaymentMetadataKey(key)) {
+          logger.warn('Dropped unsafe payment metadata key before sending to Stripe', { key });
+          return false;
+        }
+        if (scanAiPhi(`${key}: ${value}`).some((entity) => entity.risk === 'block')) {
+          logger.warn('Dropped payment metadata value that looked patient-identifying before sending to Stripe', { key });
+          return false;
+        }
+        return true;
+      });
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }
+
+  private isUnsafePaymentMetadataKey(key: string): boolean {
+    return /(?:patient|name|dob|birth|mrn|chart|ssn|email|phone|address|diagnosis|icd|cpt|procedure|medication|prescription|insurance|member|subscriber|policy|group)/i.test(key);
   }
 
   private mapPaymentIntentStatus(status: Stripe.PaymentIntent.Status): PaymentIntent['status'] {

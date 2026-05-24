@@ -44,6 +44,7 @@ describe('AIImageAnalysisService', () => {
     loggerMock.error.mockReset();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.HIPAA_AI_ENABLED;
   });
 
   describe('analyzeSkinLesion', () => {
@@ -94,6 +95,7 @@ describe('AIImageAnalysisService', () => {
 
     it('should use OpenAI when API key is available', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       service = new AIImageAnalysisService();
 
       const mockOpenAIResponse = {
@@ -140,6 +142,7 @@ describe('AIImageAnalysisService', () => {
 
     it('should fall back to mock on OpenAI error', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       service = new AIImageAnalysisService();
 
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('API Error'));
@@ -152,6 +155,7 @@ describe('AIImageAnalysisService', () => {
 
     it('should handle invalid OpenAI response', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       service = new AIImageAnalysisService();
 
       const mockOpenAIResponse = {
@@ -169,6 +173,7 @@ describe('AIImageAnalysisService', () => {
 
     it('should handle OpenAI non-ok response', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       service = new AIImageAnalysisService();
 
       const mockOpenAIResponse = {
@@ -438,6 +443,7 @@ describe('AIImageAnalysisService', () => {
   describe('OpenAI Integration', () => {
     beforeEach(() => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       service = new AIImageAnalysisService();
     });
 

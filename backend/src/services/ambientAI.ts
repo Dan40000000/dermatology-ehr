@@ -178,6 +178,14 @@ const getAnthropicNoteModel = () =>
   process.env.ANTHROPIC_NOTE_MODEL || 'claude-3-5-sonnet-20241022';
 type NoteGenerationProvider = 'anthropic' | 'openai';
 
+function isTrueEnv(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+function canUseOpenAIForRawAudio(): boolean {
+  return isHipaaClinicalAiEnabled() || isTrueEnv(process.env.OPENAI_RAW_AUDIO_ALLOWED);
+}
+
 function getNoteGenerationProviderOrder(): NoteGenerationProvider[] {
   const configured = (process.env.AMBIENT_NOTE_PROVIDER_PRIORITY || '').trim();
   if (!configured) {
@@ -383,7 +391,7 @@ export async function transcribeAudio(
 
   // Use real OpenAI transcription if API key available
   const openAIKey = getOpenAIKey();
-  if (openAIKey) {
+  if (openAIKey && canUseOpenAIForRawAudio()) {
     try {
       const model = getOpenAITranscribeModel();
       return await transcribeWithOpenAI(audioFilePath, durationSeconds, openAIKey, model);
@@ -394,6 +402,8 @@ export async function transcribeAudio(
       });
       // Fall through to mock implementation
     }
+  } else if (openAIKey) {
+    logger.warn('OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled');
   }
 
   // Fall back to mock implementation
@@ -623,6 +633,10 @@ export async function transcribeLiveAudioChunk(
 
   const openAIKey = getOpenAIKey();
   if (!openAIKey) {
+    return mockLiveTranscription(chunkIndex);
+  }
+  if (!canUseOpenAIForRawAudio()) {
+    logger.warn('OpenAI live raw-audio transcription skipped because HIPAA/BAA mode is not enabled');
     return mockLiveTranscription(chunkIndex);
   }
 

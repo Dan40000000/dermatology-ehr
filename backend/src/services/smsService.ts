@@ -8,6 +8,7 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { createTwilioService, TwilioService } from './twilioService';
 import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
+import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary, SmsPrivacyBlockError } from '../utils/smsPrivacyGuard';
 import crypto from 'crypto';
 
 // ============================================================================
@@ -152,6 +153,8 @@ export class SMSService {
     const { patientId, message, templateId, userId, messageType = 'conversation' } = options;
 
     try {
+      assertSmsContentSafe(message);
+
       // Get patient phone number
       const patientResult = await pool.query(
         `SELECT id, phone, first_name, last_name FROM patients
@@ -245,6 +248,9 @@ export class SMSService {
       };
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (error instanceof SmsPrivacyBlockError) {
+        return { success: false, error: errorMessage };
+      }
       logger.error('Failed to send SMS', {
         error: errorMessage,
         patientId,
@@ -429,18 +435,20 @@ export class SMSService {
 
       let messageBody: string;
       if (templateResult.rows.length > 0) {
-        messageBody = templateResult.rows[0].message_body
+        const safeTemplate = normalizeSmsTemplateForMinimumNecessary(templateResult.rows[0].message_body);
+        assertSmsContentSafe(safeTemplate);
+        messageBody = safeTemplate
           .replace(/{firstName}/g, appt.patient_first_name)
-          .replace(/{lastName}/g, appt.patient_last_name)
-          .replace(/{patientName}/g, `${appt.patient_first_name} ${appt.patient_last_name}`)
+          .replace(/{lastName}/g, appt.patient_first_name)
+          .replace(/{patientName}/g, appt.patient_first_name)
           .replace(/{providerName}/g, appt.provider_name || 'your provider')
           .replace(/{appointmentDate}/g, dateStr)
           .replace(/{appointmentTime}/g, timeStr)
           .replace(/{clinicPhone}/g, formatPhoneDisplay(clinicPhone) || clinicPhone);
       } else {
         messageBody = reminderType === '24h'
-          ? `Hi ${appt.patient_first_name}, reminder: Your appointment is tomorrow at ${timeStr} with ${appt.provider_name || 'your provider'}. Reply C to confirm.`
-          : `Hi ${appt.patient_first_name}, your appointment is in 2 hours at ${timeStr}. We look forward to seeing you!`;
+          ? `Hi ${appt.patient_first_name || 'there'}, reminder: Your appointment is tomorrow at ${timeStr}. Reply C to confirm.`
+          : `Hi ${appt.patient_first_name || 'there'}, your appointment is in 2 hours at ${timeStr}. We look forward to seeing you!`;
       }
 
       // Send the reminder

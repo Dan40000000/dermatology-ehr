@@ -52,8 +52,28 @@ export function additionalSecurityHeaders(req: Request, res: Response, next: Nex
   // Enable XSS filter in browser
   res.setHeader('X-XSS-Protection', '1; mode=block');
 
-  // Disable client-side caching for sensitive data
-  if (req.path.includes('/api/patients') || req.path.includes('/api/encounters')) {
+  // Disable client-side caching for sensitive clinical, billing, and patient communication data.
+  const noStorePrefixes = [
+    '/api/patients',
+    '/api/encounters',
+    '/api/notes',
+    '/api/documents',
+    '/api/photos',
+    '/api/prescriptions',
+    '/api/medications',
+    '/api/lab-orders',
+    '/api/lab-results',
+    '/api/ambient',
+    '/api/voice',
+    '/api/sms',
+    '/api/patient-portal',
+    '/api/patient-portal-data',
+    '/api/claims',
+    '/api/billing',
+    '/api/rcm',
+    '/api/eligibility',
+  ];
+  if (noStorePrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');

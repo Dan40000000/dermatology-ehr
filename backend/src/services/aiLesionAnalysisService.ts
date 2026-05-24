@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
+import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 
 /**
  * AI Lesion Analysis Service
@@ -628,14 +629,20 @@ class AILesionAnalysisService {
     aiSummary: string;
     rawResponse: object;
   }> {
-    // If Anthropic API key is available, use Claude Vision
-    if (this.anthropicApiKey) {
+    // Only send patient images to external vision models when a HIPAA/BAA-covered mode is explicitly enabled.
+    if (this.anthropicApiKey && isHipaaClinicalAiEnabled()) {
       return await this.analyzeWithClaude(imageUrl, analysisType);
     }
+    if (this.anthropicApiKey) {
+      logger.warn("Anthropic lesion image analysis skipped because HIPAA/BAA mode is not enabled");
+    }
 
-    // If OpenAI API key is available, use GPT-4 Vision
-    if (this.openaiApiKey) {
+    // Only send patient images to OpenAI when a HIPAA/BAA-covered mode is explicitly enabled.
+    if (this.openaiApiKey && isHipaaClinicalAiEnabled()) {
       return await this.analyzeWithOpenAI(imageUrl, analysisType);
+    }
+    if (this.openaiApiKey) {
+      logger.warn("OpenAI lesion image analysis skipped because HIPAA/BAA mode is not enabled");
     }
 
     // Otherwise, return mock analysis

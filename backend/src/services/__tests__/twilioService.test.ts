@@ -171,7 +171,7 @@ describe('TwilioService', () => {
         appointmentDate: 'Jan 10',
         appointmentTime: '9:00 AM',
         clinicPhone: '5551234',
-        template: 'Hi {patientName}, see {providerName} on {appointmentDate} at {appointmentTime}. Call {clinicPhone}.',
+        template: 'Hi {firstName}, your appointment is on {appointmentDate} at {appointmentTime}. Call {clinicPhone}.',
       },
       'https://callback.test',
     );
@@ -179,7 +179,7 @@ describe('TwilioService', () => {
     expect(sendSpy).toHaveBeenCalledWith({
       to: '5550001',
       from: '5550002',
-      body: 'Hi Pat, see Dr. Smith on Jan 10 at 9:00 AM. Call 5551234.',
+      body: 'Hi Pat, your appointment is on Jan 10 at 9:00 AM. Call 5551234.',
       statusCallback: 'https://callback.test',
     });
   });

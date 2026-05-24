@@ -16,6 +16,7 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { createTwilioService } from './twilioService';
 import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
+import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
 import crypto from 'crypto';
 
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
@@ -33,41 +34,41 @@ function calculateSmsSegments(body: string): number {
 export const SMS_TEMPLATES = {
   // Appointment Templates
   APPOINTMENT_CONFIRMATION:
-    `Hi {patientName}! Your appointment at {clinicName} is confirmed for {appointmentDate} at {appointmentTime} with {providerName}. Reply C to confirm or call {clinicPhone} to reschedule. Reply STOP to opt out.`,
+    `Hi {firstName}! Your appointment is confirmed for {appointmentDate} at {appointmentTime}. Reply C to confirm or call {clinicPhone} to reschedule. Reply STOP to opt out.`,
 
   APPOINTMENT_REMINDER_24H:
-    `Reminder: {patientName}, you have an appointment tomorrow ({appointmentDate}) at {appointmentTime} with {providerName}. Please arrive 15 min early. Reply C to confirm, R to reschedule. Call {clinicPhone} with questions.`,
+    `Reminder: Hi {firstName}, you have an appointment tomorrow ({appointmentDate}) at {appointmentTime}. Please arrive 15 min early. Reply C to confirm, R to reschedule. Call {clinicPhone} with questions.`,
 
   APPOINTMENT_REMINDER_2H:
-    `{patientName}, your appointment is in 2 hours at {appointmentTime} with {providerName}. We look forward to seeing you! Call {clinicPhone} if running late.`,
+    `Hi {firstName}, your appointment is in 2 hours at {appointmentTime}. We look forward to seeing you! Call {clinicPhone} if running late.`,
 
   // Follow-up Templates
   FOLLOWUP_REMINDER:
-    `Hi {patientName}! It's time to schedule your follow-up appointment at {clinicName}. Please call {clinicPhone} or visit our patient portal to book. Reply STOP to opt out.`,
+    `Hi {firstName}! It's time to schedule your follow-up appointment. Please call {clinicPhone} or visit our patient portal to book. Reply STOP to opt out.`,
 
   RECALL_REMINDER:
-    `{patientName}, you're due for your {recallType} at {clinicName}. Please call {clinicPhone} to schedule your appointment. Your skin health matters!`,
+    `Hi {firstName}, you're due to schedule an appointment. Please call {clinicPhone} or visit the portal. Reply STOP to opt out.`,
 
   // Clinical Templates
   LAB_RESULTS_READY:
-    `{patientName}, your lab results are now available. Please log into the patient portal or call {clinicPhone} to discuss with your provider.`,
+    `Hi {firstName}, a secure update is available in your patient portal. Please log in or call {clinicPhone}. Reply STOP to opt out.`,
 
   PRESCRIPTION_SENT:
-    `{patientName}, your prescription has been sent to {pharmacyName}. It should be ready for pickup within 1-2 hours. Questions? Call {clinicPhone}.`,
+    `Hi {firstName}, a secure update is available in your patient portal. Please log in or call {clinicPhone}. Reply STOP to opt out.`,
 
   // Prior Auth Templates
   PRIOR_AUTH_APPROVED:
-    `Good news, {patientName}! Your prior authorization for {itemName} has been approved. Please call {clinicPhone} to schedule if needed.`,
+    `Hi {firstName}, a secure account update is available in your patient portal. Please log in or call {clinicPhone}. Reply STOP to opt out.`,
 
   PRIOR_AUTH_DENIED:
-    `{patientName}, unfortunately your prior authorization for {itemName} was not approved. Please call {clinicPhone} to discuss alternatives with your provider.`,
+    `Hi {firstName}, a secure account update is available in your patient portal. Please log in or call {clinicPhone}. Reply STOP to opt out.`,
 
   // Billing Templates
   BALANCE_DUE:
-    `{patientName}, you have a balance of {balanceAmount} due at {clinicName}. Pay online at {portalUrl} or call {clinicPhone}. Reply STOP to opt out of texts.`,
+    `Hi {firstName}, you have a balance due. Pay online at {portalUrl} or call {clinicPhone}. Reply STOP to opt out of texts.`,
 
   APPOINTMENT_CANCELLED:
-    `{patientName}, your appointment on {appointmentDate} at {appointmentTime} has been cancelled. Please call {clinicPhone} to reschedule.`,
+    `Hi {firstName}, your appointment on {appointmentDate} at {appointmentTime} has been cancelled. Please call {clinicPhone} to reschedule.`,
 
   // ============================================
   // PATIENT ENGAGEMENT TEMPLATES
@@ -75,39 +76,39 @@ export const SMS_TEMPLATES = {
 
   // Birthday/Anniversary Messages
   BIRTHDAY_MESSAGE:
-    `Happy Birthday, {patientName}! The team at {clinicName} wishes you a wonderful day! As our gift, enjoy {offer} on your next visit. Call {clinicPhone} to schedule. Reply STOP to opt out.`,
+    `Happy Birthday, {firstName}! We hope you have a wonderful day. Call {clinicPhone} with questions. Reply STOP to opt out.`,
 
   ANNIVERSARY_MESSAGE:
-    `Happy {years} year anniversary with {clinicName}, {patientName}! Thank you for trusting us with your skin health. Enjoy {offer} as our thank you gift!`,
+    `Hi {firstName}, thank you for being with us. A secure update is available in your portal. Reply STOP to opt out.`,
 
   // Survey/Review Requests
   SURVEY_REQUEST:
-    `Hi {patientName}! We hope your recent visit to {clinicName} went well. We'd love your feedback! Please take a quick survey: {surveyLink}. Your opinion helps us improve!`,
+    `Hi {firstName}! We'd love your feedback. Please take a quick survey: {surveyLink}. Reply STOP to opt out.`,
 
   REVIEW_REQUEST:
-    `{patientName}, thank you for choosing {clinicName}! If you had a great experience, we'd appreciate a review on Google: {reviewLink}. It helps others find quality care!`,
+    `Hi {firstName}, thank you for choosing us. If you had a great experience, we'd appreciate a review: {reviewLink}. Reply STOP to opt out.`,
 
   // Adherence Reminders
   ADHERENCE_REMINDER:
-    `Hi {patientName}! This is a friendly reminder from {clinicName} to {reminderAction}. Consistency is key to great results! Questions? Call {clinicPhone}.`,
+    `Hi {firstName}, this is a friendly reminder from your care team. Please check your portal or call {clinicPhone}. Reply STOP to opt out.`,
 
   PRODUCT_REORDER:
-    `{patientName}, it's time to reorder your {productName} from {clinicName}! Running low on skincare essentials? Call {clinicPhone} or visit our online store.`,
+    `Hi {firstName}, products are available in our online store. Call {clinicPhone} with questions. Reply STOP to opt out.`,
 
   // Loyalty Program
   LOYALTY_MILESTONE:
-    `Congratulations, {patientName}! You've reached {tierName} status in the {clinicName} Loyalty Program! Enjoy {benefits}. Thank you for your loyalty!`,
+    `Congratulations, {firstName}! A loyalty update is available in your portal. Thank you for your loyalty. Reply STOP to opt out.`,
 
   LOYALTY_POINTS_EARNED:
-    `{patientName}, you earned {points} loyalty points at {clinicName}! Current balance: {balance} pts. {tierMessage}`,
+    `Hi {firstName}, a loyalty update is available in your portal. Reply STOP to opt out.`,
 
   // Seasonal Alerts
   SEASONAL_ALERT:
-    `{patientName}, {seasonalMessage} Schedule your {appointmentType} at {clinicName}: {clinicPhone}. Your skin health matters!`,
+    `Hi {firstName}, schedule an appointment by calling {clinicPhone} or visiting the portal. Reply STOP to opt out.`,
 
   // Educational Content
   EDUCATIONAL_CONTENT:
-    `{patientName}, we have helpful information about {topic} from {clinicName}. Learn more: {contentLink}. Questions? Call {clinicPhone}.`,
+    `Hi {firstName}, helpful information is available here: {contentLink}. Questions? Call {clinicPhone}. Reply STOP to opt out.`,
 };
 
 // ============================================
@@ -285,12 +286,16 @@ export class SMSWorkflowService {
       // 5. Build message with template variables
       const allVariables = {
         ...variables,
+        firstName: patient.first_name || 'there',
         patientName: patient.first_name,
         clinicName: config.clinicName || 'Our Clinic',
         clinicPhone: config.clinicPhone || '',
         portalUrl: config.portalUrl || '',
       };
-      const messageBody = this.replaceTemplateVars(template, allVariables);
+      const safeTemplate = normalizeSmsTemplateForMinimumNecessary(template);
+      assertSmsContentSafe(safeTemplate);
+      const messageBody = this.replaceTemplateVars(safeTemplate, allVariables);
+      assertSmsContentSafe(messageBody);
 
       // 6. Send via Twilio (or test-mode mock)
       const fromNumber = config.twilioPhoneNumber || DEFAULT_TEST_SMS_FROM;

@@ -335,7 +335,6 @@ patientPortalDataRouter.post("/store/checkout-session", async (req: PatientPorta
       cancelUrl,
       metadata: {
         tenantId,
-        patientId,
         saleId: sale.id,
         source: "patient_portal_store",
       },
@@ -410,11 +409,12 @@ patientPortalDataRouter.post("/store/checkout-session/:sessionId/sync", async (r
     if (metadata.tenantId && metadata.tenantId !== tenantId) {
       return res.status(404).json({ error: "Checkout session not found" });
     }
-    if (metadata.patientId && metadata.patientId !== patientId) {
-      return res.status(404).json({ error: "Checkout session not found" });
-    }
     if (!metadata.saleId) {
       return res.status(400).json({ error: "Checkout session is missing order metadata" });
+    }
+    const [existingOrder] = await productSalesService.getStoreOrders(tenantId, { saleId: metadata.saleId, limit: 1 });
+    if (!existingOrder || existingOrder.patientId !== patientId) {
+      return res.status(404).json({ error: "Checkout session not found" });
     }
 
     const order = checkout.paymentStatus === "paid"

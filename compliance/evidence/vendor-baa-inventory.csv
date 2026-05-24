@@ -1,6 +1,9 @@
 vendor,service,handles_phi,baa_required,baa_status,last_reviewed,owner,artifact_link,notes
-AWS (Infrastructure),Compute/Storage/DB/KMS,yes,yes,REVIEW_NEEDED,2026-02-16,Platform Team,,Confirm signed BAA in AWS Artifact and export acceptance proof.
-Twilio,SMS Messaging,yes,yes,REVIEW_NEEDED,2026-02-16,Integrations Team,,Use HIPAA-eligible product tier and execute BAA.
-OpenAI,AI scribe/note generation,yes,yes,REVIEW_NEEDED,2026-02-16,AI Platform Team,,Confirm enterprise agreement + BAA terms before production PHI processing.
-Sentry,Error monitoring,potentially,yes,REVIEW_NEEDED,2026-02-16,Platform Team,,Ensure PHI redaction policy and BAA/contractual controls.
-Email Provider,Transactional email,yes,yes,REVIEW_NEEDED,2026-02-16,Platform Team,,Verify provider contract and PHI-safe configuration.
+AWS (Infrastructure),Compute/Storage/DB/KMS,yes,yes,OWNER_REPORTED_ACTIVE,2026-05-24,Platform Team,,Owner reports AWS HIPAA/BAA path is active; attach AWS Artifact acceptance proof before production onboarding.
+AWS HealthScribe/Transcribe Medical,Ambient voice transcription,yes,yes,OWNER_REPORTED_ACTIVE,2026-05-24,AI Platform Team,,Owner reports Amazon HIPAA-compliant voice AI path; production should prefer aws_healthscribe and avoid non-BAA raw-audio fallbacks.
+Twilio,SMS Messaging,yes,yes,REVIEW_NEEDED,2026-05-24,Integrations Team,,Use HIPAA-eligible product tier and execute BAA; SMS content guard limits outbound messages to minimum necessary content.
+Stedi,Clearinghouse eligibility/claims,yes,yes,REVIEW_NEEDED,2026-05-24,Integrations Team,,Confirm BAA/trading partner terms and payer enrollment before live claim PHI.
+OpenAI,De-identified assistant/note generation,potentially,yes,REVIEW_NEEDED,2026-05-24,AI Platform Team,,Default Option B blocks typed identifiers and de-identifies outbound text; raw audio/image calls require HIPAA/BAA mode.
+Sentry,Error monitoring,potentially,yes,REVIEW_NEEDED,2026-05-24,Platform Team,,PHI redaction is enabled in code; confirm BAA/contractual controls before sending production errors.
+Stripe,Patient/store payments,limited,review,REVIEW_NEEDED,2026-05-24,Payments Team,,Do not send diagnoses, patient IDs, MRNs, insurance IDs, or clinical details in metadata; payment metadata is scrubbed in code.
+Email Provider,Transactional email,yes,yes,REVIEW_NEEDED,2026-05-24,Platform Team,,Verify provider contract and PHI-safe configuration.

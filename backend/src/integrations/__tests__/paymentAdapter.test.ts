@@ -66,4 +66,19 @@ describe('PaymentAdapter Stripe Connect routing', () => {
 
     expect((adapter as any).getDestinationChargeParams()).toEqual({});
   });
+
+  it('drops PHI-like metadata before sending values to Stripe', () => {
+    const adapter = createAdapter({});
+
+    expect((adapter as any).normalizeMetadata({
+      saleId: 'sale-123',
+      source: 'patient_portal_store',
+      patientId: 'patient-123',
+      diagnosis: 'melanoma',
+      note: 'Patient name: James Ward',
+    })).toEqual({
+      saleId: 'sale-123',
+      source: 'patient_portal_store',
+    });
+  });
 });

@@ -32,6 +32,7 @@ describe('AmbientAI Service', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_TRANSCRIBE_MODEL;
     delete process.env.OPENAI_NOTE_MODEL;
+    delete process.env.HIPAA_AI_ENABLED;
     delete process.env.ANTHROPIC_NOTE_MODEL;
     delete process.env.AMBIENT_NOTE_PROVIDER_PRIORITY;
     process.env.AMBIENT_AI_MOCK_DELAY_MS = '0';
@@ -67,6 +68,7 @@ describe('AmbientAI Service', () => {
     it('should use OpenAI transcription when API key available', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
       process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
+      process.env.HIPAA_AI_ENABLED = 'true';
 
       const mockAudioBuffer = Buffer.from('fake audio data');
       (fs.readFile as jest.Mock).mockResolvedValueOnce(mockAudioBuffer);
@@ -108,9 +110,23 @@ describe('AmbientAI Service', () => {
       );
     });
 
+    it('does not send raw audio to OpenAI unless HIPAA mode is enabled', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled'
+      );
+    });
+
     it('should fallback to mock when OpenAI transcription fails', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
       process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
+      process.env.HIPAA_AI_ENABLED = 'true';
 
       (fs.readFile as jest.Mock).mockResolvedValueOnce(Buffer.from('fake audio'));
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('API Error'));
@@ -127,6 +143,7 @@ describe('AmbientAI Service', () => {
     it('should handle OpenAI non-ok response', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
       process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
+      process.env.HIPAA_AI_ENABLED = 'true';
 
       (fs.readFile as jest.Mock).mockResolvedValueOnce(Buffer.from('fake audio'));
 

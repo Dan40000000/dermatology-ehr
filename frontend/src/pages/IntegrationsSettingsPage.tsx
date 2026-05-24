@@ -83,6 +83,31 @@ interface ExternalIntegrationStats {
   errorsByType: Record<string, number>;
 }
 
+interface StripeConnectStatus {
+  mode: "mock" | "test" | "live" | "unknown";
+  platformConfigured: boolean;
+  publishableKey?: string;
+  connectedAccountId?: string;
+  accountType?: string;
+  onboardingStatus: "not_started" | "pending" | "complete" | "restricted" | "mock";
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  destinationChargesEnabled: boolean;
+  detailsSubmitted: boolean;
+  requirementsDue: string[];
+  disabledReason?: string | null;
+  lastSyncedAt?: string | null;
+  subscription: {
+    status: "not_started" | "checkout_started" | "active" | "trialing" | "past_due" | "canceled" | "unpaid" | "mock";
+    customerId?: string;
+    subscriptionId?: string;
+    priceId?: string;
+    currentPeriodEnd?: string | null;
+    cancelAtPeriodEnd?: boolean;
+    checkoutSessionId?: string;
+  };
+}
+
 type IntegrationsTab = "notifications" | "external" | "logs";
 
 const notificationTypeLabels: Record<string, string> = {
@@ -655,6 +680,7 @@ export default function IntegrationsSettingsPage() {
     useState<Record<ExternalIntegrationType, ExternalIntegrationForm>>(buildDefaultExternalForms());
   const [externalLogs, setExternalLogs] = useState<ExternalIntegrationLog[]>([]);
   const [externalStats, setExternalStats] = useState<ExternalIntegrationStats | null>(null);
+  const [stripeConnectStatus, setStripeConnectStatus] = useState<StripeConnectStatus | null>(null);
 
   // UI state
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -668,6 +694,10 @@ export default function IntegrationsSettingsPage() {
   const [stripePublishableKey, setStripePublishableKey] = useState("");
   const [configuringStripe, setConfiguringStripe] = useState(false);
   const [enablingMockPayments, setEnablingMockPayments] = useState(false);
+  const [startingStripeConnect, setStartingStripeConnect] = useState(false);
+  const [refreshingStripeConnect, setRefreshingStripeConnect] = useState(false);
+  const [startingStripeSubscription, setStartingStripeSubscription] = useState(false);
+  const [refreshingStripeSubscription, setRefreshingStripeSubscription] = useState(false);
 
   const fetchIntegrations = async () => {
     const response = await axios.get(`${API_URL}/api/integrations`, { headers });
@@ -725,10 +755,23 @@ export default function IntegrationsSettingsPage() {
     setExternalStats(response.data.stats || null);
   };
 
+  const fetchStripeConnectStatus = async () => {
+    const response = await axios.get(
+      `${API_URL}/api/external-integrations/payments/stripe/connect/status`,
+      { headers }
+    );
+    setStripeConnectStatus(response.data.status || null);
+  };
+
   const refreshExternalData = async () => {
     setRefreshingExternal(true);
     try {
-      await Promise.all([fetchExternalIntegrations(), fetchExternalLogs(), fetchExternalStats()]);
+      await Promise.all([
+        fetchExternalIntegrations(),
+        fetchExternalLogs(),
+        fetchExternalStats(),
+        fetchStripeConnectStatus(),
+      ]);
     } finally {
       setRefreshingExternal(false);
     }
@@ -745,6 +788,7 @@ export default function IntegrationsSettingsPage() {
           fetchExternalIntegrations(),
           fetchExternalLogs(),
           fetchExternalStats(),
+          fetchStripeConnectStatus(),
         ]);
       } catch (err: any) {
         setError(parseError(err, "Failed to load integrations"));
@@ -994,6 +1038,88 @@ export default function IntegrationsSettingsPage() {
       setError(parseError(err, "Failed to enable mock payments"));
     } finally {
       setEnablingMockPayments(false);
+    }
+  };
+
+  const startStripeConnectOnboarding = async () => {
+    setError(null);
+    setStartingStripeConnect(true);
+    try {
+      const returnUrl = `${window.location.origin}${window.location.pathname}?tab=external&stripe_connect=return`;
+      const refreshUrl = `${window.location.origin}${window.location.pathname}?tab=external&stripe_connect=refresh`;
+      const response = await axios.post(
+        `${API_URL}/api/external-integrations/payments/stripe/connect/onboarding-link`,
+        { returnUrl, refreshUrl },
+        { headers }
+      );
+      const url = response.data?.url;
+      if (!url) {
+        throw new Error("Stripe did not return an onboarding link");
+      }
+      window.location.assign(url);
+    } catch (err: any) {
+      setError(parseError(err, "Failed to start Stripe onboarding"));
+      setStartingStripeConnect(false);
+    }
+  };
+
+  const refreshStripeConnect = async () => {
+    setError(null);
+    setRefreshingStripeConnect(true);
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/external-integrations/payments/stripe/connect/refresh`,
+        {},
+        { headers }
+      );
+      setStripeConnectStatus(response.data.status || null);
+      setSuccess("Stripe payout account status refreshed");
+      await refreshExternalData();
+    } catch (err: any) {
+      setError(parseError(err, "Failed to refresh Stripe payout account"));
+    } finally {
+      setRefreshingStripeConnect(false);
+    }
+  };
+
+  const startStripeSubscriptionCheckout = async () => {
+    setError(null);
+    setStartingStripeSubscription(true);
+    try {
+      const returnUrl = `${window.location.origin}${window.location.pathname}?tab=external&stripe_subscription=success`;
+      const cancelUrl = `${window.location.origin}${window.location.pathname}?tab=external&stripe_subscription=cancelled`;
+      const response = await axios.post(
+        `${API_URL}/api/external-integrations/payments/stripe/subscription/checkout`,
+        { returnUrl, cancelUrl },
+        { headers }
+      );
+      const url = response.data?.url;
+      if (!url) {
+        throw new Error("Stripe did not return a checkout link");
+      }
+      window.location.assign(url);
+    } catch (err: any) {
+      setError(parseError(err, "Failed to start subscription checkout"));
+      setStartingStripeSubscription(false);
+    }
+  };
+
+  const refreshStripeSubscription = async () => {
+    setError(null);
+    setRefreshingStripeSubscription(true);
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/external-integrations/payments/stripe/subscription/refresh`,
+        {},
+        { headers }
+      );
+      setStripeConnectStatus(response.data.status || null);
+      setSuccess("Stripe subscription status refreshed");
+      await refreshExternalData();
+    } catch (err: any) {
+      setError(parseError(err, "Failed to refresh Stripe subscription"));
+    } finally {
+      setRefreshingStripeSubscription(false);
     }
   };
 
@@ -1333,41 +1459,196 @@ export default function IntegrationsSettingsPage() {
 
                   {integration.type === "payment" ? (
                     <div className="space-y-4">
-                      <div className="bg-blue-50 border border-blue-200 text-blue-900 px-4 py-3 rounded-lg text-sm">
-                        Connect Stripe in test mode to avoid any live charges. If you do not have keys yet, use
-                        mock mode for internal testing.
+                      <div className="bg-blue-50 border border-blue-200 text-blue-900 px-4 py-3 rounded-lg text-sm space-y-1">
+                        <p className="font-medium">Stripe is split into three separate jobs.</p>
+                        <p>Practice payout banking is handled inside Stripe-hosted onboarding. The app stores only account IDs and readiness flags.</p>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Stripe Secret Key
-                          </label>
-                          <input
-                            type="password"
-                            value={stripeSecretKey}
-                            onChange={(e) => setStripeSecretKey(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
-                            placeholder="sk_test_..."
-                            autoComplete="off"
-                          />
+
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900">Practice Payout Account</p>
+                              <p className="text-xs text-gray-500">Bank/KYC handled by Stripe</p>
+                            </div>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              stripeConnectStatus?.onboardingStatus === "complete"
+                                ? "bg-green-100 text-green-700"
+                                : stripeConnectStatus?.onboardingStatus === "mock"
+                                ? "bg-gray-100 text-gray-700"
+                                : "bg-amber-100 text-amber-700"
+                            }`}>
+                              {stripeConnectStatus?.onboardingStatus || "not_started"}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <p className="text-gray-500">Charges</p>
+                              <p className={stripeConnectStatus?.chargesEnabled ? "text-green-700 font-medium" : "text-gray-700"}>
+                                {stripeConnectStatus?.chargesEnabled ? "Enabled" : "Not ready"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-gray-500">Payouts</p>
+                              <p className={stripeConnectStatus?.payoutsEnabled ? "text-green-700 font-medium" : "text-gray-700"}>
+                                {stripeConnectStatus?.payoutsEnabled ? "Enabled" : "Not ready"}
+                              </p>
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-500 break-all">
+                            {stripeConnectStatus?.connectedAccountId || "No connected account yet"}
+                          </p>
+                          {stripeConnectStatus?.requirementsDue?.length ? (
+                            <p className="text-xs text-amber-700">
+                              Needs: {stripeConnectStatus.requirementsDue.slice(0, 3).join(", ")}
+                              {stripeConnectStatus.requirementsDue.length > 3 ? "..." : ""}
+                            </p>
+                          ) : null}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => {
+                                void startStripeConnectOnboarding();
+                              }}
+                              disabled={startingStripeConnect}
+                              className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm"
+                            >
+                              {startingStripeConnect ? "Opening..." : "Connect Stripe"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                void refreshStripeConnect();
+                              }}
+                              disabled={refreshingStripeConnect}
+                              className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 text-sm"
+                            >
+                              {refreshingStripeConnect ? "Refreshing..." : "Refresh"}
+                            </button>
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Stripe Publishable Key
-                          </label>
-                          <input
-                            type="text"
-                            value={stripePublishableKey}
-                            onChange={(e) => setStripePublishableKey(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
-                            placeholder="pk_test_..."
-                            autoComplete="off"
-                          />
+
+                        <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900">Office Subscription</p>
+                              <p className="text-xs text-gray-500">The practice pays us</p>
+                            </div>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              stripeConnectStatus?.subscription.status === "active" || stripeConnectStatus?.subscription.status === "trialing"
+                                ? "bg-green-100 text-green-700"
+                                : stripeConnectStatus?.subscription.status === "past_due" || stripeConnectStatus?.subscription.status === "unpaid"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-gray-100 text-gray-700"
+                            }`}>
+                              {stripeConnectStatus?.subscription.status || "not_started"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 break-all">
+                            {stripeConnectStatus?.subscription.subscriptionId || stripeConnectStatus?.subscription.checkoutSessionId || "No subscription checkout yet"}
+                          </p>
+                          {stripeConnectStatus?.subscription.currentPeriodEnd && (
+                            <p className="text-xs text-gray-600">
+                              Renews {new Date(stripeConnectStatus.subscription.currentPeriodEnd).toLocaleDateString()}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => {
+                                void startStripeSubscriptionCheckout();
+                              }}
+                              disabled={startingStripeSubscription}
+                              className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm"
+                            >
+                              {startingStripeSubscription ? "Opening..." : "Start Subscription"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                void refreshStripeSubscription();
+                              }}
+                              disabled={refreshingStripeSubscription}
+                              className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 text-sm"
+                            >
+                              {refreshingStripeSubscription ? "Refreshing..." : "Refresh"}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">Patient & Store Payments</p>
+                            <p className="text-xs text-gray-500">Checkout, receipts, refunds, revenue posting</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <p className="text-gray-500">Mode</p>
+                              <p className="font-medium text-gray-900">{stripeConnectStatus?.mode || "unknown"}</p>
+                            </div>
+                            <div>
+                              <p className="text-gray-500">Platform Key</p>
+                              <p className={stripeConnectStatus?.platformConfigured ? "text-green-700 font-medium" : "text-amber-700 font-medium"}>
+                                {stripeConnectStatus?.platformConfigured ? "Configured" : "Needed"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-gray-500">Destination</p>
+                              <p className={stripeConnectStatus?.destinationChargesEnabled ? "text-green-700 font-medium" : "text-amber-700 font-medium"}>
+                                {stripeConnectStatus?.destinationChargesEnabled
+                                  ? "Practice account"
+                                  : stripeConnectStatus?.mode === "mock"
+                                  ? "Mock ledger"
+                                  : "Platform only"}
+                              </p>
+                            </div>
+                          </div>
+                          {stripeConnectStatus?.disabledReason && (
+                            <p className="text-xs text-amber-700">{stripeConnectStatus.disabledReason}</p>
+                          )}
+                          <p className="text-xs text-gray-500">
+                            Store orders continue posting through the existing Stripe webhook and revenue ledger.
+                            {stripeConnectStatus?.destinationChargesEnabled
+                              ? " Live charges route to the connected practice account."
+                              : " Finish payout onboarding before live charges route to the practice bank account."}
+                          </p>
                         </div>
                       </div>
-                      <p className="text-xs text-gray-500">
-                        Stripe account logins are managed in Stripe. In this app, you only store test API keys.
-                      </p>
+
+                      <details className="border border-gray-200 rounded-lg p-4">
+                        <summary className="cursor-pointer text-sm font-medium text-gray-800">
+                          Platform key setup
+                        </summary>
+                        <div className="mt-4 space-y-4">
+                          <p className="text-xs text-gray-500">
+                            These are platform Stripe keys for this software environment. Provider banking still happens in Stripe Connect onboarding.
+                          </p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Stripe Secret Key
+                              </label>
+                              <input
+                                type="password"
+                                value={stripeSecretKey}
+                                onChange={(e) => setStripeSecretKey(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+                                placeholder="sk_test_..."
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Stripe Publishable Key
+                              </label>
+                              <input
+                                type="text"
+                                value={stripePublishableKey}
+                                onChange={(e) => setStripePublishableKey(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+                                placeholder="pk_test_..."
+                                autoComplete="off"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </details>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1436,7 +1717,7 @@ export default function IntegrationsSettingsPage() {
                           }
                           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                         >
-                          {configuringStripe ? "Connecting..." : "Connect Stripe (Test Mode)"}
+                          {configuringStripe ? "Saving..." : "Save Platform Keys"}
                         </button>
                         <button
                           onClick={() => {

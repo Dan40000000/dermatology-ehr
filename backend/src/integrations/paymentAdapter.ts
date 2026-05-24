@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import Stripe from 'stripe';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
-import { BaseAdapter, AdapterOptions } from './baseAdapter';
+import { BaseAdapter, AdapterOptions, saveIntegrationConfig } from './baseAdapter';
 
 // ============================================================================
 // Types
@@ -114,6 +114,46 @@ export interface CheckoutSessionResult {
   mode: 'stripe' | 'mock';
   metadata?: Record<string, string>;
   createdAt: string;
+}
+
+export interface StripeConnectStatus {
+  mode: 'mock' | 'test' | 'live' | 'unknown';
+  platformConfigured: boolean;
+  publishableKey?: string;
+  connectedAccountId?: string;
+  accountType?: string;
+  onboardingStatus: 'not_started' | 'pending' | 'complete' | 'restricted' | 'mock';
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  destinationChargesEnabled: boolean;
+  detailsSubmitted: boolean;
+  requirementsDue: string[];
+  disabledReason?: string | null;
+  lastSyncedAt?: string | null;
+  subscription: {
+    status: 'not_started' | 'checkout_started' | 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid' | 'mock';
+    customerId?: string;
+    subscriptionId?: string;
+    priceId?: string;
+    currentPeriodEnd?: string | null;
+    cancelAtPeriodEnd?: boolean;
+    checkoutSessionId?: string;
+  };
+}
+
+export interface StripeAccountOnboardingLink {
+  mode: 'mock' | 'test' | 'live';
+  accountId: string;
+  url: string;
+  expiresAt?: string;
+}
+
+export interface StripeSubscriptionCheckout {
+  mode: 'mock' | 'test' | 'live';
+  sessionId: string;
+  url: string;
+  customerId?: string;
+  subscriptionId?: string;
 }
 
 export interface Patient {
@@ -631,6 +671,250 @@ export class PaymentAdapter extends BaseAdapter {
     }
   }
 
+  async getStripeConnectStatus(): Promise<StripeConnectStatus> {
+    await this.ensureConfigLoaded();
+    const stripeConnect = this.getStripeConnectConfig();
+    const subscription = this.getStripeSubscriptionConfig();
+    const platformConfigured = this.hasStripeCredentials();
+    const baseStatus = this.buildStripeConnectStatus({ platformConfigured, stripeConnect, subscription });
+
+    if (
+      this.useMock ||
+      !platformConfigured ||
+      !stripeConnect.accountId ||
+      String(stripeConnect.accountId).startsWith('acct_mock_')
+    ) {
+      return baseStatus;
+    }
+
+    try {
+      const account = await this.getStripeClient().accounts.retrieve(stripeConnect.accountId);
+      await this.persistStripeAccountStatus(account);
+      return this.buildStripeConnectStatus({
+        platformConfigured,
+        stripeConnect: this.mapStripeAccountToConnectConfig(account),
+        subscription,
+      });
+    } catch (error: any) {
+      logger.warn('Failed to refresh Stripe connected account status', {
+        tenantId: this.tenantId,
+        accountId: stripeConnect.accountId,
+        error: error.message,
+      });
+      return {
+        ...baseStatus,
+        disabledReason: error.message || baseStatus.disabledReason,
+      };
+    }
+  }
+
+  async createStripeConnectOnboardingLink(input: {
+    returnUrl: string;
+    refreshUrl: string;
+    userEmail?: string;
+  }): Promise<StripeAccountOnboardingLink> {
+    await this.ensureConfigLoaded();
+
+    if (this.useMock) {
+      const accountId = this.getStripeConnectConfig().accountId || `acct_mock_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
+      await this.updatePaymentConfig({
+        stripeConnect: {
+          accountId,
+          accountType: 'express',
+          onboardingStatus: 'mock',
+          chargesEnabled: false,
+          payoutsEnabled: false,
+          detailsSubmitted: false,
+          requirementsDue: ['platform_live_key_required'],
+          disabledReason: 'Mock Stripe Connect account. Configure Stripe platform keys for real onboarding.',
+          lastSyncedAt: new Date().toISOString(),
+        },
+      });
+
+      const separator = input.returnUrl.includes('?') ? '&' : '?';
+      return {
+        mode: 'mock',
+        accountId,
+        url: `${input.returnUrl}${separator}stripe_connect=mock&account=${encodeURIComponent(accountId)}`,
+      };
+    }
+
+    if (!this.hasStripeCredentials()) {
+      throw new Error('Stripe platform secret key is not configured');
+    }
+
+    const stripe = this.getStripeClient();
+    let accountId = this.getStripeConnectConfig().accountId;
+
+    if (!accountId) {
+      const tenant = await this.getTenantProfile();
+      const account = await stripe.accounts.create({
+        type: 'express',
+        country: 'US',
+        email: input.userEmail || undefined,
+        business_type: 'company',
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
+        business_profile: {
+          name: tenant.practiceName || tenant.name || undefined,
+          support_phone: tenant.practicePhone || undefined,
+        },
+        metadata: {
+          tenantId: this.tenantId,
+        },
+      });
+      accountId = account.id;
+      await this.persistStripeAccountStatus(account);
+    }
+
+    const link = await stripe.accountLinks.create({
+      account: accountId,
+      refresh_url: input.refreshUrl,
+      return_url: input.returnUrl,
+      type: 'account_onboarding',
+    });
+
+    return {
+      mode: this.resolveStripeMode(),
+      accountId,
+      url: link.url,
+      expiresAt: link.expires_at ? new Date(link.expires_at * 1000).toISOString() : undefined,
+    };
+  }
+
+  async refreshStripeConnectStatus(): Promise<StripeConnectStatus> {
+    await this.ensureConfigLoaded();
+    const accountId = this.getStripeConnectConfig().accountId;
+    if (!accountId || this.useMock || accountId.startsWith('acct_mock_')) {
+      return this.getStripeConnectStatus();
+    }
+    if (!this.hasStripeCredentials()) {
+      throw new Error('Stripe platform secret key is not configured');
+    }
+
+    const account = await this.getStripeClient().accounts.retrieve(accountId);
+    await this.persistStripeAccountStatus(account);
+    return this.getStripeConnectStatus();
+  }
+
+  async createPracticeSubscriptionCheckout(input: {
+    returnUrl: string;
+    cancelUrl: string;
+    userEmail?: string;
+    priceId?: string;
+  }): Promise<StripeSubscriptionCheckout> {
+    await this.ensureConfigLoaded();
+    const subscriptionConfig = this.getStripeSubscriptionConfig();
+    const priceId =
+      input.priceId ||
+      process.env.STRIPE_PLATFORM_SUBSCRIPTION_PRICE_ID ||
+      process.env.STRIPE_SUBSCRIPTION_PRICE_ID ||
+      subscriptionConfig.priceId;
+
+    if (this.useMock) {
+      const sessionId = `cs_sub_mock_${crypto.randomUUID().replace(/-/g, '')}`;
+      await this.updatePaymentConfig({
+        subscription: {
+          ...subscriptionConfig,
+          status: 'mock',
+          checkoutSessionId: sessionId,
+          priceId: priceId || 'price_mock_derm_subscription',
+        },
+      });
+      const separator = input.returnUrl.includes('?') ? '&' : '?';
+      return {
+        mode: 'mock',
+        sessionId,
+        url: `${input.returnUrl}${separator}stripe_subscription=mock&session_id=${encodeURIComponent(sessionId)}`,
+      };
+    }
+
+    if (!this.hasStripeCredentials()) {
+      throw new Error('Stripe platform secret key is not configured');
+    }
+    if (!priceId) {
+      throw new Error('Stripe subscription price is not configured');
+    }
+
+    const stripe = this.getStripeClient();
+    const tenant = await this.getTenantProfile();
+    let customerId = subscriptionConfig.customerId;
+
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: input.userEmail || undefined,
+        name: tenant.practiceName || tenant.name || undefined,
+        metadata: {
+          tenantId: this.tenantId,
+          customerType: 'practice_subscription',
+        },
+      });
+      customerId = customer.id;
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      success_url: input.returnUrl,
+      cancel_url: input.cancelUrl,
+      allow_promotion_codes: true,
+      metadata: {
+        tenantId: this.tenantId,
+        kind: 'practice_subscription',
+      },
+      subscription_data: {
+        metadata: {
+          tenantId: this.tenantId,
+          kind: 'practice_subscription',
+        },
+      },
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+    });
+
+    await this.updatePaymentConfig({
+      subscription: {
+        ...subscriptionConfig,
+        status: 'checkout_started',
+        customerId,
+        checkoutSessionId: session.id,
+        subscriptionId: typeof session.subscription === 'string' ? session.subscription : undefined,
+        priceId,
+      },
+    });
+
+    return {
+      mode: this.resolveStripeMode(),
+      sessionId: session.id,
+      url: session.url || input.returnUrl,
+      customerId,
+      subscriptionId: typeof session.subscription === 'string' ? session.subscription : undefined,
+    };
+  }
+
+  async refreshPracticeSubscriptionStatus(): Promise<StripeConnectStatus> {
+    await this.ensureConfigLoaded();
+    const subscription = this.getStripeSubscriptionConfig();
+    if (!subscription.subscriptionId || this.useMock) {
+      return this.getStripeConnectStatus();
+    }
+    if (!this.hasStripeCredentials()) {
+      throw new Error('Stripe platform secret key is not configured');
+    }
+
+    const stripeSubscription = await this.getStripeClient().subscriptions.retrieve(subscription.subscriptionId);
+    await this.updatePaymentConfig({
+      subscription: this.mapStripeSubscriptionToConfig(stripeSubscription),
+    });
+    return this.getStripeConnectStatus();
+  }
+
   // ============================================================================
   // Mock Implementations
   // ============================================================================
@@ -810,6 +1094,7 @@ export class PaymentAdapter extends BaseAdapter {
     metadata?: Record<string, string>
   ): Promise<PaymentIntent> {
     const stripe = this.getStripeClient();
+    const destinationChargeParams = this.getDestinationChargeParams();
     const intent = await stripe.paymentIntents.create({
       amount: amountCents,
       currency: 'usd',
@@ -818,6 +1103,7 @@ export class PaymentAdapter extends BaseAdapter {
       automatic_payment_methods: {
         enabled: true,
       },
+      ...destinationChargeParams,
     });
 
     return {
@@ -1038,6 +1324,7 @@ export class PaymentAdapter extends BaseAdapter {
     const stripe = this.getStripeClient();
     const customerId = await this.getOrCreateCustomer(input.patientId);
     const metadata = this.normalizeMetadata(input.metadata);
+    const destinationChargeParams = this.getDestinationChargeParams();
     const session = await stripe.checkout.sessions.create(
       {
         mode: 'payment',
@@ -1048,6 +1335,7 @@ export class PaymentAdapter extends BaseAdapter {
         metadata,
         payment_intent_data: {
           metadata,
+          ...destinationChargeParams,
         },
         line_items: input.lineItems.map((item) => ({
           quantity: Math.max(1, item.quantity),
@@ -1152,6 +1440,229 @@ export class PaymentAdapter extends BaseAdapter {
       throw new Error('Stripe API key not configured');
     }
     return new Stripe(secretKey);
+  }
+
+  private async ensureConfigLoaded(): Promise<void> {
+    if (!this.config) {
+      await this.loadConfig();
+    }
+  }
+
+  private resolveStripeMode(): 'mock' | 'test' | 'live' {
+    if (this.useMock) {
+      return 'mock';
+    }
+
+    const configMode = String(this.config?.config?.mode || '').trim().toLowerCase();
+    if (configMode === 'live') return 'live';
+    if (configMode === 'test') return 'test';
+
+    const secretKey = this.getStripeSecretKey();
+    if (secretKey.startsWith('sk_live_')) return 'live';
+    if (secretKey.startsWith('sk_test_')) return 'test';
+    return 'mock';
+  }
+
+  private getStripePublishableKey(): string | undefined {
+    const credentials = this.getCredentials();
+    const candidates = [
+      credentials.stripePublishableKey,
+      credentials.publishableKey,
+      credentials.publishable_key,
+      this.config?.config?.publishableKey,
+      process.env.STRIPE_PUBLISHABLE_KEY,
+    ];
+    const resolved = candidates.find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0);
+    return typeof resolved === 'string' ? resolved.trim() : undefined;
+  }
+
+  private getStripeConnectConfig(): Record<string, any> {
+    const value = this.config?.config?.stripeConnect;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  }
+
+  private getStripeSubscriptionConfig(): Record<string, any> {
+    const value = this.config?.config?.subscription;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  }
+
+  private async updatePaymentConfig(patch: {
+    stripeConnect?: Record<string, any>;
+    subscription?: Record<string, any>;
+  }): Promise<void> {
+    await this.ensureConfigLoaded();
+    const current = this.config?.config || {};
+    const nextConfig = {
+      ...current,
+      environment: current.environment || (this.useMock ? 'mock' : 'stripe'),
+      mode: current.mode || this.resolveStripeMode(),
+      syncFrequencyMinutes: this.config?.syncFrequencyMinutes || current.syncFrequencyMinutes || 60,
+      ...(patch.stripeConnect
+        ? {
+            stripeConnect: {
+              ...(current.stripeConnect || {}),
+              ...patch.stripeConnect,
+            },
+          }
+        : {}),
+      ...(patch.subscription
+        ? {
+            subscription: {
+              ...(current.subscription || {}),
+              ...patch.subscription,
+            },
+          }
+        : {}),
+    };
+
+    await saveIntegrationConfig(
+      this.tenantId,
+      'payment',
+      this.config?.provider || 'stripe',
+      nextConfig
+    );
+    await this.loadConfig();
+  }
+
+  private async getTenantProfile(): Promise<{
+    name?: string;
+    practiceName?: string;
+    practicePhone?: string;
+  }> {
+    const result = await pool.query(
+      `SELECT name, practice_name, practice_phone
+       FROM tenants
+       WHERE id = $1
+       LIMIT 1`,
+      [this.tenantId]
+    );
+    const row = result.rows[0] || {};
+    return {
+      name: row.name,
+      practiceName: row.practice_name,
+      practicePhone: row.practice_phone,
+    };
+  }
+
+  private buildStripeConnectStatus(input: {
+    platformConfigured: boolean;
+    stripeConnect: Record<string, any>;
+    subscription: Record<string, any>;
+  }): StripeConnectStatus {
+    const accountId = input.stripeConnect.accountId;
+    const chargesEnabled = Boolean(input.stripeConnect.chargesEnabled);
+    const payoutsEnabled = Boolean(input.stripeConnect.payoutsEnabled);
+    const detailsSubmitted = Boolean(input.stripeConnect.detailsSubmitted);
+    const requirementsDue = Array.isArray(input.stripeConnect.requirementsDue)
+      ? input.stripeConnect.requirementsDue
+      : [];
+
+    let onboardingStatus: StripeConnectStatus['onboardingStatus'] = 'not_started';
+    if (String(accountId || '').startsWith('acct_mock_') || input.stripeConnect.onboardingStatus === 'mock') {
+      onboardingStatus = 'mock';
+    } else if (accountId && chargesEnabled && payoutsEnabled && detailsSubmitted && requirementsDue.length === 0) {
+      onboardingStatus = 'complete';
+    } else if (accountId && (chargesEnabled || payoutsEnabled || detailsSubmitted)) {
+      onboardingStatus = 'pending';
+    } else if (accountId) {
+      onboardingStatus = 'restricted';
+    }
+
+    return {
+      mode: this.resolveStripeMode() || 'unknown',
+      platformConfigured: input.platformConfigured,
+      publishableKey: this.getStripePublishableKey(),
+      connectedAccountId: accountId || undefined,
+      accountType: input.stripeConnect.accountType || undefined,
+      onboardingStatus,
+      chargesEnabled,
+      payoutsEnabled,
+      destinationChargesEnabled: onboardingStatus === 'complete',
+      detailsSubmitted,
+      requirementsDue,
+      disabledReason: input.stripeConnect.disabledReason || (!input.platformConfigured ? 'Stripe platform key is not configured' : null),
+      lastSyncedAt: input.stripeConnect.lastSyncedAt || null,
+      subscription: {
+        status: input.subscription.status || 'not_started',
+        customerId: input.subscription.customerId,
+        subscriptionId: input.subscription.subscriptionId,
+        priceId: input.subscription.priceId,
+        currentPeriodEnd: input.subscription.currentPeriodEnd || null,
+        cancelAtPeriodEnd: Boolean(input.subscription.cancelAtPeriodEnd),
+        checkoutSessionId: input.subscription.checkoutSessionId,
+      },
+    };
+  }
+
+  private mapStripeAccountToConnectConfig(account: Stripe.Account): Record<string, any> {
+    const requirements = account.requirements as any;
+    return {
+      accountId: account.id,
+      accountType: account.type || 'express',
+      chargesEnabled: Boolean(account.charges_enabled),
+      payoutsEnabled: Boolean(account.payouts_enabled),
+      detailsSubmitted: Boolean(account.details_submitted),
+      requirementsDue: [
+        ...(requirements?.currently_due || []),
+        ...(requirements?.past_due || []),
+      ],
+      disabledReason: requirements?.disabled_reason || null,
+      lastSyncedAt: new Date().toISOString(),
+    };
+  }
+
+  private async persistStripeAccountStatus(account: Stripe.Account): Promise<void> {
+    await this.updatePaymentConfig({
+      stripeConnect: this.mapStripeAccountToConnectConfig(account),
+    });
+  }
+
+  private getDestinationChargeParams():
+    | Pick<Stripe.PaymentIntentCreateParams, 'on_behalf_of' | 'transfer_data'>
+    | Record<string, never> {
+    if (this.useMock) {
+      return {};
+    }
+
+    const stripeConnect = this.getStripeConnectConfig();
+    const accountId = typeof stripeConnect.accountId === 'string' ? stripeConnect.accountId.trim() : '';
+    if (!accountId || accountId.startsWith('acct_mock_')) {
+      return {};
+    }
+
+    const requirementsDue = Array.isArray(stripeConnect.requirementsDue)
+      ? stripeConnect.requirementsDue
+      : [];
+    const accountReady =
+      Boolean(stripeConnect.chargesEnabled) &&
+      Boolean(stripeConnect.payoutsEnabled) &&
+      Boolean(stripeConnect.detailsSubmitted) &&
+      requirementsDue.length === 0;
+
+    if (!accountReady) {
+      return {};
+    }
+
+    return {
+      on_behalf_of: accountId,
+      transfer_data: {
+        destination: accountId,
+      },
+    };
+  }
+
+  private mapStripeSubscriptionToConfig(subscription: Stripe.Subscription): Record<string, any> {
+    const firstItem = subscription.items?.data?.[0] as any;
+    return {
+      status: subscription.status,
+      customerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id,
+      subscriptionId: subscription.id,
+      priceId: typeof firstItem?.price === 'string' ? firstItem.price : firstItem?.price?.id,
+      currentPeriodEnd: firstItem?.current_period_end
+        ? new Date(firstItem.current_period_end * 1000).toISOString()
+        : null,
+      cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+    };
   }
 
   private normalizeMetadata(metadata?: Record<string, string>): Record<string, string> | undefined {

@@ -532,11 +532,45 @@ export class IntegrationService {
 
       const adapter = createPaymentAdapter(this.tenantId, paymentUseMock);
       if (config) {
-        adapter.loadConfig();
+        await adapter.loadConfig();
       }
       this.adapters.set('payment', adapter);
     }
     return this.adapters.get('payment') as PaymentAdapter;
+  }
+
+  async getStripeConnectStatus() {
+    const adapter = await this.getPaymentAdapter();
+    return adapter.getStripeConnectStatus();
+  }
+
+  async createStripeConnectOnboardingLink(input: {
+    returnUrl: string;
+    refreshUrl: string;
+    userEmail?: string;
+  }) {
+    const adapter = await this.getPaymentAdapter();
+    return adapter.createStripeConnectOnboardingLink(input);
+  }
+
+  async refreshStripeConnectStatus() {
+    const adapter = await this.getPaymentAdapter();
+    return adapter.refreshStripeConnectStatus();
+  }
+
+  async createPracticeSubscriptionCheckout(input: {
+    returnUrl: string;
+    cancelUrl: string;
+    userEmail?: string;
+    priceId?: string;
+  }) {
+    const adapter = await this.getPaymentAdapter();
+    return adapter.createPracticeSubscriptionCheckout(input);
+  }
+
+  async refreshPracticeSubscriptionStatus() {
+    const adapter = await this.getPaymentAdapter();
+    return adapter.refreshPracticeSubscriptionStatus();
   }
 
   async getFaxAdapter(): Promise<FaxAdapter> {

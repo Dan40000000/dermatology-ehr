@@ -2,6 +2,8 @@ import { Router } from "express";
 import Stripe from "stripe";
 import { logger } from "../lib/logger";
 import * as productSalesService from "../services/productSalesService";
+import { pool } from "../db/pool";
+import { saveIntegrationConfig } from "../integrations/baseAdapter";
 
 export const stripeWebhooksRouter = Router();
 
@@ -44,6 +46,139 @@ async function markStoreOrderPaidFromMetadata(input: {
   });
 }
 
+function mapStripeSubscriptionToConfig(subscription: Stripe.Subscription): Record<string, any> {
+  const firstItem = subscription.items?.data?.[0] as any;
+  return {
+    status: subscription.status,
+    customerId: typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id,
+    subscriptionId: subscription.id,
+    priceId: typeof firstItem?.price === "string" ? firstItem.price : firstItem?.price?.id,
+    currentPeriodEnd: firstItem?.current_period_end
+      ? new Date(firstItem.current_period_end * 1000).toISOString()
+      : null,
+    cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+    lastEventAt: new Date().toISOString(),
+  };
+}
+
+function mapStripeAccountToConnectConfig(account: Stripe.Account): Record<string, any> {
+  const requirements = account.requirements as any;
+  return {
+    accountId: account.id,
+    accountType: account.type || "express",
+    chargesEnabled: Boolean(account.charges_enabled),
+    payoutsEnabled: Boolean(account.payouts_enabled),
+    detailsSubmitted: Boolean(account.details_submitted),
+    requirementsDue: [
+      ...(requirements?.currently_due || []),
+      ...(requirements?.past_due || []),
+    ],
+    disabledReason: requirements?.disabled_reason || null,
+    lastSyncedAt: new Date().toISOString(),
+  };
+}
+
+async function patchPaymentIntegrationConfig(
+  tenantId: string,
+  patch: {
+    stripeConnect?: Record<string, any>;
+    subscription?: Record<string, any>;
+  }
+): Promise<void> {
+  const existing = await pool.query(
+    `SELECT provider, config, sync_frequency_minutes
+     FROM integration_configs
+     WHERE tenant_id = $1
+       AND integration_type = 'payment'
+       AND is_active = true
+     LIMIT 1`,
+    [tenantId]
+  );
+  const row = existing.rows[0] || {};
+  const current = row.config || {};
+  const nextConfig = {
+    ...current,
+    environment: current.environment || "stripe",
+    mode: current.mode || "test",
+    syncFrequencyMinutes: row.sync_frequency_minutes || current.syncFrequencyMinutes || 60,
+    ...(patch.stripeConnect
+      ? {
+          stripeConnect: {
+            ...(current.stripeConnect || {}),
+            ...patch.stripeConnect,
+          },
+        }
+      : {}),
+    ...(patch.subscription
+      ? {
+          subscription: {
+            ...(current.subscription || {}),
+            ...patch.subscription,
+          },
+        }
+      : {}),
+  };
+
+  await saveIntegrationConfig(
+    tenantId,
+    "payment",
+    row.provider || "stripe",
+    nextConfig
+  );
+}
+
+async function patchPaymentIntegrationByAccountId(account: Stripe.Account): Promise<void> {
+  const result = await pool.query(
+    `SELECT tenant_id
+     FROM integration_configs
+     WHERE integration_type = 'payment'
+       AND provider = 'stripe'
+       AND is_active = true
+       AND config->'stripeConnect'->>'accountId' = $1
+     LIMIT 1`,
+    [account.id]
+  );
+
+  const tenantId = result.rows[0]?.tenant_id || account.metadata?.tenantId;
+  if (!tenantId) {
+    logger.warn("Stripe account.updated event could not be mapped to a tenant", { accountId: account.id });
+    return;
+  }
+
+  await patchPaymentIntegrationConfig(tenantId, {
+    stripeConnect: mapStripeAccountToConnectConfig(account),
+  });
+}
+
+async function patchSubscriptionFromCheckoutSession(session: Stripe.Checkout.Session): Promise<void> {
+  const tenantId = session.metadata?.tenantId;
+  if (!tenantId || session.mode !== "subscription") {
+    return;
+  }
+
+  await patchPaymentIntegrationConfig(tenantId, {
+    subscription: {
+      status: "checkout_started",
+      customerId: typeof session.customer === "string" ? session.customer : session.customer?.id,
+      subscriptionId: typeof session.subscription === "string" ? session.subscription : session.subscription?.id,
+      checkoutSessionId: session.id,
+      lastEventAt: new Date().toISOString(),
+    },
+  });
+}
+
+async function patchSubscriptionFromStripe(subscription: Stripe.Subscription): Promise<void> {
+  const tenantId = subscription.metadata?.tenantId;
+  if (!tenantId) {
+    logger.warn("Stripe subscription event missing tenant metadata", { subscriptionId: subscription.id });
+    return;
+  }
+
+  await patchPaymentIntegrationConfig(tenantId, {
+    subscription: mapStripeSubscriptionToConfig(subscription),
+  });
+}
+
 stripeWebhooksRouter.post("/webhook", async (req, res) => {
   let event: Stripe.Event;
   try {
@@ -68,6 +203,9 @@ stripeWebhooksRouter.post("/webhook", async (req, res) => {
           paymentStatus: session.payment_status,
         });
       }
+      if (session.mode === "subscription") {
+        await patchSubscriptionFromCheckoutSession(session);
+      }
     }
 
     if (event.type === "payment_intent.succeeded") {
@@ -78,6 +216,18 @@ stripeWebhooksRouter.post("/webhook", async (req, res) => {
         paymentIntentId: intent.id,
         paymentStatus: "paid",
       });
+    }
+
+    if (event.type === "account.updated") {
+      await patchPaymentIntegrationByAccountId(event.data.object as Stripe.Account);
+    }
+
+    if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      await patchSubscriptionFromStripe(event.data.object as Stripe.Subscription);
     }
 
     return res.json({ received: true });

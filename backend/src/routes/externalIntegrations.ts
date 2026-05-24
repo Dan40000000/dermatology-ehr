@@ -136,6 +136,17 @@ const configureStripeSchema = z.object({
   syncFrequencyMinutes: z.number().int().min(5).max(1440).optional(),
 });
 
+const stripeConnectOnboardingSchema = z.object({
+  returnUrl: z.string().url(),
+  refreshUrl: z.string().url().optional(),
+});
+
+const stripeSubscriptionCheckoutSchema = z.object({
+  returnUrl: z.string().url(),
+  cancelUrl: z.string().url(),
+  priceId: z.string().min(1).optional(),
+});
+
 const sendFaxSchema = z.object({
   toNumber: z.string().min(10),
   document: z.object({
@@ -1037,6 +1048,96 @@ router.post('/payments/stripe/use-mock', requireAuth, requireRoles(['admin']), a
   } catch (error: any) {
     logger.error('Failed to enable mock payment integration', { error: error.message });
     return res.status(500).json({ error: 'Failed to enable mock payment integration' });
+  }
+});
+
+router.get('/payments/stripe/connect/status', requireAuth, requireRoles(['admin', 'manager']), async (req: AuthedRequest, res) => {
+  try {
+    const service = getIntegrationService(req.user!.tenantId);
+    const status = await service.getStripeConnectStatus();
+    return res.json({ status });
+  } catch (error: any) {
+    logger.error('Failed to get Stripe Connect status', { error: error.message });
+    return res.status(500).json({ error: 'Failed to get Stripe Connect status' });
+  }
+});
+
+router.post('/payments/stripe/connect/onboarding-link', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+  try {
+    const data = stripeConnectOnboardingSchema.parse(req.body);
+    const service = getIntegrationService(req.user!.tenantId);
+    const link = await service.createStripeConnectOnboardingLink({
+      returnUrl: data.returnUrl,
+      refreshUrl: data.refreshUrl || data.returnUrl,
+      userEmail: req.user!.email,
+    });
+
+    await auditLog(
+      req.user!.tenantId,
+      req.user!.id,
+      'stripe.connect_onboarding_started',
+      'integration',
+      'payment:stripe-connect'
+    );
+
+    return res.json(link);
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.issues });
+    }
+    logger.error('Failed to create Stripe Connect onboarding link', { error: error.message });
+    return res.status(500).json({ error: error.message || 'Failed to create Stripe Connect onboarding link' });
+  }
+});
+
+router.post('/payments/stripe/connect/refresh', requireAuth, requireRoles(['admin', 'manager']), async (req: AuthedRequest, res) => {
+  try {
+    const service = getIntegrationService(req.user!.tenantId);
+    const status = await service.refreshStripeConnectStatus();
+    return res.json({ status });
+  } catch (error: any) {
+    logger.error('Failed to refresh Stripe Connect status', { error: error.message });
+    return res.status(500).json({ error: error.message || 'Failed to refresh Stripe Connect status' });
+  }
+});
+
+router.post('/payments/stripe/subscription/checkout', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+  try {
+    const data = stripeSubscriptionCheckoutSchema.parse(req.body);
+    const service = getIntegrationService(req.user!.tenantId);
+    const session = await service.createPracticeSubscriptionCheckout({
+      returnUrl: data.returnUrl,
+      cancelUrl: data.cancelUrl,
+      priceId: data.priceId,
+      userEmail: req.user!.email,
+    });
+
+    await auditLog(
+      req.user!.tenantId,
+      req.user!.id,
+      'stripe.subscription_checkout_started',
+      'integration',
+      'payment:stripe-subscription'
+    );
+
+    return res.json(session);
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.issues });
+    }
+    logger.error('Failed to create Stripe subscription checkout', { error: error.message });
+    return res.status(500).json({ error: error.message || 'Failed to create Stripe subscription checkout' });
+  }
+});
+
+router.post('/payments/stripe/subscription/refresh', requireAuth, requireRoles(['admin', 'manager']), async (req: AuthedRequest, res) => {
+  try {
+    const service = getIntegrationService(req.user!.tenantId);
+    const status = await service.refreshPracticeSubscriptionStatus();
+    return res.json({ status });
+  } catch (error: any) {
+    logger.error('Failed to refresh Stripe subscription status', { error: error.message });
+    return res.status(500).json({ error: error.message || 'Failed to refresh Stripe subscription status' });
   }
 });
 

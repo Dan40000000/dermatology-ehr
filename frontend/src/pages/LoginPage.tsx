@@ -11,7 +11,10 @@ export function LoginPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const locationState = location.state;
-  const from = (locationState as { from?: { pathname: string } })?.from?.pathname || '/home';
+  const fromLocation = (locationState as { from?: { pathname?: string; search?: string; hash?: string } })?.from;
+  const from = fromLocation?.pathname
+    ? `${fromLocation.pathname}${fromLocation.search || ''}${fromLocation.hash || ''}`
+    : '/home';
   const forceFreshLogin = new URLSearchParams(location.search).get('fresh') === '1';
 
   const [tenantId, setTenantId] = useState('tenant-demo');

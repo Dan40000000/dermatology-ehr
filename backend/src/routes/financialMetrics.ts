@@ -42,6 +42,28 @@ type RevenueCategoryDetailRow = {
   category_override?: RevenueCategoryKey | null;
 };
 
+type RevenueDetailQueryRow = RevenueCategoryDetailRow & {
+  source_type: string;
+  source_id: string;
+  source_label: string | null;
+  patient_name: string | null;
+  provider_name: string | null;
+  bill_number: string | null;
+  status: string | null;
+  paid_amount_cents: string | number | null;
+  balance_cents: string | number | null;
+};
+
+const REVENUE_CATEGORY_KEYS: RevenueCategoryKey[] = [
+  "office_visit",
+  "procedure",
+  "cosmetic",
+  "late_fee",
+  "no_show_fee",
+  "product_sale",
+  "other",
+];
+
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -102,6 +124,15 @@ function parseIsoDateOrNull(value: unknown): string | null {
   return value;
 }
 
+function parseRevenueCategoryOrNull(value: unknown): RevenueCategoryKey | null {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+
+  const normalized = value.trim() as RevenueCategoryKey;
+  return REVENUE_CATEGORY_KEYS.includes(normalized) ? normalized : null;
+}
+
 function addDays(isoDate: string, days: number): string {
   const parsed = new Date(`${isoDate}T00:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);
@@ -155,6 +186,24 @@ function summarizeRevenueCategories(
   return Object.values(accumulator)
     .filter((entry) => entry.revenueCents > 0)
     .sort((left, right) => right.revenueCents - left.revenueCents);
+}
+
+function parseCents(value: string | number | null | undefined): number {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? Math.round(parsed) : 0;
+}
+
+function classifyRevenueDetailRow(row: RevenueCategoryDetailRow): RevenueCategoryKey {
+  return (
+    row.category_override ||
+    classifyRevenueCategory({
+      appointmentTypeName: row.appointment_type_name,
+      notes: row.notes,
+      cptCodes: row.cpt_codes,
+      lineDescriptions: row.line_descriptions,
+      encounterBacked: Boolean(row.encounter_id),
+    })
+  );
 }
 
 // Get financial dashboard metrics
@@ -807,6 +856,252 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
   } catch (error: any) {
     logFinancialMetricsError("Error fetching collections trend", error);
     res.status(500).json({ error: "Failed to fetch collections trend" });
+  }
+});
+
+// Get line-level revenue detail for the revenue page drill-downs.
+financialMetricsRouter.get("/revenue-details", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const parsedStartDate = parseIsoDateOrNull(req.query.startDate);
+  const parsedEndDate = parseIsoDateOrNull(req.query.endDate);
+  const requestedCategory = req.query.category;
+  const categoryFilter = parseRevenueCategoryOrNull(requestedCategory);
+
+  if (!parsedStartDate || !parsedEndDate) {
+    return res.status(400).json({ error: "startDate and endDate are required as valid ISO dates (YYYY-MM-DD)" });
+  }
+
+  if (parsedStartDate > parsedEndDate) {
+    return res.status(400).json({ error: "startDate must be on or before endDate" });
+  }
+
+  if (requestedCategory && !categoryFilter) {
+    return res.status(400).json({ error: "category must be a known revenue category" });
+  }
+
+  const start = new Date(`${parsedStartDate}T00:00:00Z`);
+  const end = new Date(`${parsedEndDate}T00:00:00Z`);
+  const daySpan = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+
+  if (daySpan > 730) {
+    return res.status(400).json({ error: "Date range too large. Maximum is 730 days." });
+  }
+
+  try {
+    await ensureStoreSchemaAndCatalog(tenantId);
+
+    const detailResult = await pool.query(
+      `with charge_totals as (
+         select
+           e.appointment_id,
+           max(e.id)::text as encounter_id,
+           coalesce(sum(
+             case
+               when c.status is null or c.status <> 'void' then coalesce(c.amount_cents, 0)
+               else 0
+             end
+           ), 0)::bigint as total_charges_cents,
+           string_agg(distinct coalesce(c.cpt_code, ''), ',') as cpt_codes,
+           string_agg(distinct coalesce(c.description, ''), ' | ') as line_descriptions
+         from encounters e
+         left join charges c
+           on c.encounter_id = e.id
+          and c.tenant_id = e.tenant_id
+         where e.tenant_id = $1
+         group by e.appointment_id
+       ),
+       appointment_bill_totals as (
+         select
+           e.appointment_id,
+           string_agg(distinct b.bill_number, ', ') as bill_number,
+           max(b.status) as status,
+           coalesce(sum(b.paid_amount_cents), 0)::bigint as paid_amount_cents,
+           coalesce(sum(b.balance_cents), 0)::bigint as balance_cents,
+           string_agg(distinct coalesce(b.notes, ''), ' | ') as notes
+         from bills b
+         join encounters e
+           on e.id = b.encounter_id
+          and e.tenant_id = b.tenant_id
+         where b.tenant_id = $1
+         group by e.appointment_id
+       ),
+       appointment_revenue as (
+         select
+           coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date::text as day,
+           'appointment'::text as source_type,
+           a.id::text as source_id,
+           at.name::text as source_label,
+           concat_ws(' ', p.first_name, p.last_name) as patient_name,
+           pr.full_name::text as provider_name,
+           abt.bill_number,
+           coalesce(abt.status, 'unbilled') as status,
+           coalesce(ct.total_charges_cents, 0)::bigint as total_charges_cents,
+           coalesce(abt.paid_amount_cents, 0)::bigint as paid_amount_cents,
+           coalesce(abt.balance_cents, 0)::bigint as balance_cents,
+           abt.notes,
+           at.name::text as appointment_type_name,
+           ct.cpt_codes,
+           ct.line_descriptions,
+           ct.encounter_id,
+           null::text as category_override
+         from appointments a
+         join appointment_types at
+           on at.id = a.appointment_type_id
+         left join patients p
+           on p.id = a.patient_id
+          and p.tenant_id = a.tenant_id
+         left join providers pr
+           on pr.id = a.provider_id
+          and pr.tenant_id = a.tenant_id
+         left join charge_totals ct
+           on ct.appointment_id = a.id
+         left join appointment_bill_totals abt
+           on abt.appointment_id = a.id
+         where a.tenant_id = $1
+           and a.status = 'completed'
+           and coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date >= $2::date
+           and coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date <= $3::date
+           and coalesce(ct.total_charges_cents, 0) > 0
+       ),
+       standalone_bill_revenue as (
+         select
+           b.bill_date::date::text as day,
+           'bill'::text as source_type,
+           b.id::text as source_id,
+           coalesce(b.bill_number, b.id)::text as source_label,
+           concat_ws(' ', p.first_name, p.last_name) as patient_name,
+           null::text as provider_name,
+           b.bill_number,
+           b.status,
+           coalesce(b.total_charges_cents, 0)::bigint as total_charges_cents,
+           coalesce(b.paid_amount_cents, 0)::bigint as paid_amount_cents,
+           coalesce(b.balance_cents, 0)::bigint as balance_cents,
+           b.notes,
+           max(at.name)::text as appointment_type_name,
+           string_agg(distinct coalesce(bli.cpt_code, ''), ',') as cpt_codes,
+           string_agg(distinct coalesce(bli.description, ''), ' | ') as line_descriptions,
+           b.encounter_id::text as encounter_id,
+           null::text as category_override
+         from bills b
+         left join patients p
+           on p.id = b.patient_id
+          and p.tenant_id = b.tenant_id
+         left join bill_line_items bli
+           on bli.bill_id = b.id
+          and bli.tenant_id = b.tenant_id
+         left join encounters e
+           on e.id = b.encounter_id
+          and e.tenant_id = b.tenant_id
+         left join appointments a
+           on a.id = e.appointment_id
+          and a.tenant_id = b.tenant_id
+         left join appointment_types at
+           on at.id = a.appointment_type_id
+         where b.tenant_id = $1
+           and b.encounter_id is null
+           and b.bill_date >= $2::date
+           and b.bill_date <= $3::date
+           and coalesce(b.total_charges_cents, 0) > 0
+         group by b.id, b.bill_date, b.bill_number, b.status, b.total_charges_cents, b.paid_amount_cents, b.balance_cents, b.notes, b.encounter_id, p.first_name, p.last_name
+       ),
+       store_revenue as (
+         select
+           ps.sale_date::date::text as day,
+           'store_order'::text as source_type,
+           ps.id::text as source_id,
+           'Patient portal store order'::text as source_label,
+           concat_ws(' ', p.first_name, p.last_name) as patient_name,
+           null::text as provider_name,
+           null::text as bill_number,
+           ps.status,
+           (coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0))::bigint as total_charges_cents,
+           (coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0))::bigint as paid_amount_cents,
+           0::bigint as balance_cents,
+           ''::text as notes,
+           null::text as appointment_type_name,
+           'STORE'::text as cpt_codes,
+           string_agg(distinct coalesce(psi.product_name, 'Store product'), ' | ') as line_descriptions,
+           null::text as encounter_id,
+           'product_sale'::text as category_override
+         from product_sales ps
+         left join patients p
+           on p.id::text = ps.patient_id::text
+          and p.tenant_id = ps.tenant_id
+         left join store_order_fulfillments sof
+           on sof.sale_id::text = ps.id::text
+          and sof.tenant_id = ps.tenant_id
+         left join product_sale_items psi
+           on psi.sale_id::text = ps.id::text
+         where ps.tenant_id = $1
+           and ps.status = 'completed'
+           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+           and ps.sale_date::date >= $2::date
+           and ps.sale_date::date <= $3::date
+           and (coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0)) > 0
+         group by ps.id, ps.sale_date, ps.total, ps.status, sof.shipping_fee, p.first_name, p.last_name
+       )
+       select *
+       from appointment_revenue
+       union all
+       select *
+       from standalone_bill_revenue
+       union all
+       select *
+       from store_revenue
+       order by day desc, total_charges_cents desc`,
+      [tenantId, parsedStartDate, parsedEndDate],
+    );
+
+    const allRows = (Array.isArray(detailResult.rows) ? (detailResult.rows as RevenueDetailQueryRow[]) : [])
+      .map((row) => {
+        const categoryKey = classifyRevenueDetailRow(row);
+        return {
+          sourceType: row.source_type,
+          sourceId: row.source_id,
+          sourceLabel: row.source_label || row.source_id,
+          revenueDate: row.day,
+          categoryKey,
+          categoryLabel: revenueCategoryLabel(categoryKey),
+          patientName: row.patient_name || "Unknown patient",
+          providerName: row.provider_name || null,
+          billNumber: row.bill_number || null,
+          status: row.status || null,
+          totalChargesCents: parseCents(row.total_charges_cents),
+          paidAmountCents: parseCents(row.paid_amount_cents),
+          balanceCents: parseCents(row.balance_cents),
+          notes: row.notes || null,
+          appointmentTypeName: row.appointment_type_name || null,
+          cptCodes: row.cpt_codes || null,
+          lineDescriptions: row.line_descriptions || null,
+          encounterId: row.encounter_id || null,
+        };
+      });
+
+    const categoryAccumulator = createRevenueCategoryAccumulator();
+    allRows.forEach((row) => {
+      addRevenueCategory(categoryAccumulator, row.categoryKey, row.totalChargesCents);
+    });
+
+    const rows = categoryFilter ? allRows.filter((row) => row.categoryKey === categoryFilter) : allRows;
+
+    res.json({
+      rows,
+      summary: {
+        itemCount: rows.length,
+        totalRevenueCents: rows.reduce((sum, row) => sum + row.totalChargesCents, 0),
+        paidAmountCents: rows.reduce((sum, row) => sum + row.paidAmountCents, 0),
+        balanceCents: rows.reduce((sum, row) => sum + row.balanceCents, 0),
+        categories: summarizeRevenueCategories(categoryAccumulator),
+      },
+      period: {
+        startDate: parsedStartDate,
+        endDate: parsedEndDate,
+        category: categoryFilter,
+      },
+    });
+  } catch (error) {
+    logFinancialMetricsError("Error fetching revenue details", error);
+    res.status(500).json({ error: "Failed to fetch revenue details" });
   }
 });
 

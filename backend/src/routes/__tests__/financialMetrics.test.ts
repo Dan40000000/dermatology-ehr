@@ -250,6 +250,89 @@ describe("Financial metrics routes", () => {
     expect(res.body.error).toContain("startDate");
   });
 
+  it("GET /financial-metrics/revenue-details returns category detail rows", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          day: "2026-02-02",
+          source_type: "appointment",
+          source_id: "appt-1",
+          source_label: "Biopsy",
+          patient_name: "Jane Doe",
+          provider_name: "Dr Smith",
+          bill_number: "B-100",
+          status: "partial",
+          total_charges_cents: "30000",
+          paid_amount_cents: "12000",
+          balance_cents: "18000",
+          notes: null,
+          appointment_type_name: "Biopsy",
+          cpt_codes: "11102",
+          line_descriptions: "Tangential biopsy",
+          encounter_id: "enc-1",
+          category_override: null,
+        },
+        {
+          day: "2026-02-02",
+          source_type: "store_order",
+          source_id: "sale-1",
+          source_label: "Patient portal store order",
+          patient_name: "Jane Doe",
+          provider_name: null,
+          bill_number: null,
+          status: "completed",
+          total_charges_cents: "5000",
+          paid_amount_cents: "5000",
+          balance_cents: "0",
+          notes: "Retail",
+          appointment_type_name: null,
+          cpt_codes: "STORE",
+          line_descriptions: "Cleanser",
+          encounter_id: null,
+          category_override: "product_sale",
+        },
+      ],
+    });
+
+    const res = await request(app).get(
+      "/financial-metrics/revenue-details?startDate=2026-02-01&endDate=2026-02-02&category=procedure",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.rows).toHaveLength(1);
+    expect(res.body.rows[0]).toMatchObject({
+      sourceType: "appointment",
+      categoryKey: "procedure",
+      categoryLabel: "Procedures",
+      totalChargesCents: 30000,
+      paidAmountCents: 12000,
+      balanceCents: 18000,
+    });
+    expect(res.body.summary).toMatchObject({
+      itemCount: 1,
+      totalRevenueCents: 30000,
+      paidAmountCents: 12000,
+      balanceCents: 18000,
+    });
+    expect(res.body.summary.categories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "procedure", revenueCents: 30000 }),
+        expect.objectContaining({ key: "product_sale", revenueCents: 5000 }),
+      ]),
+    );
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("appointment_revenue"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("store_revenue"));
+  });
+
+  it("GET /financial-metrics/revenue-details rejects unknown categories", async () => {
+    const res = await request(app).get(
+      "/financial-metrics/revenue-details?startDate=2026-02-01&endDate=2026-02-02&category=not_real",
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("category");
+  });
+
   it("GET /financial-metrics/payments-summary rejects missing params", async () => {
     const res = await request(app).get("/financial-metrics/payments-summary");
 

@@ -42,7 +42,7 @@ const providerUserWithRoles = {
   roles: ['provider'] as string[],
 };
 
-const SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const SESSION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 describe('AuthContext', () => {
   beforeEach(() => {

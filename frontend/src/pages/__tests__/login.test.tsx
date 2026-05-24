@@ -238,6 +238,32 @@ describe('LoginPage', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/patients', { replace: true });
   });
 
+  it('should preserve query params when continuing to the previous location', () => {
+    authMocks.isAuthenticated = true;
+    authMocks.user = { fullName: 'Dr. Existing User', email: 'provider@demo.practice' };
+
+    locationMock.mockReturnValue({
+      state: {
+        from: {
+          pathname: '/financials',
+          search: '?tab=revenue&revenueCategory=procedure',
+          hash: '#detail',
+        },
+      },
+      search: '',
+    });
+
+    render(
+      <BrowserRouter>
+        <LoginPage />
+      </BrowserRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Continue to app/i }));
+
+    expect(mockNavigate).toHaveBeenCalledWith('/financials?tab=revenue&revenueCategory=procedure#detail', { replace: true });
+  });
+
   it('should allow signing out from the active session warning', () => {
     authMocks.isAuthenticated = true;
     authMocks.user = { fullName: 'Dr. Existing User', email: 'provider@demo.practice' };

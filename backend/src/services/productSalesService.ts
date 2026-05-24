@@ -353,13 +353,35 @@ const EXPANDED_STORE_CATALOG: StoreCatalogSeedProduct[] = [
 ];
 
 const storeReadyTenants = new Set<string>();
+const storeReadyTenantPromises = new Map<string, Promise<void>>();
 
 export async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
   if (storeReadyTenants.has(tenantId)) return;
 
+  const existingPromise = storeReadyTenantPromises.get(tenantId);
+  if (existingPromise) {
+    await existingPromise;
+    return;
+  }
+
+  const setupPromise = ensureStoreSchemaAndCatalogInternal(tenantId).then(() => {
+    storeReadyTenants.add(tenantId);
+  });
+
+  storeReadyTenantPromises.set(tenantId, setupPromise);
+
+  try {
+    await setupPromise;
+  } finally {
+    storeReadyTenantPromises.delete(tenantId);
+  }
+}
+
+async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(48151623, 42042)');
     await client.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
     await client.query(`
       CREATE TABLE IF NOT EXISTS products (
@@ -632,7 +654,6 @@ export async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<voi
     }
 
     await client.query('COMMIT');
-    storeReadyTenants.add(tenantId);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

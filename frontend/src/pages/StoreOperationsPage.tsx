@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   Bell,
   Boxes,
+  CalendarDays,
   CreditCard,
   DollarSign,
   Loader2,
@@ -42,6 +44,27 @@ import type {
 } from '../types';
 
 type StoreTab = 'orders' | 'products' | 'shipping' | 'payments' | 'notifications';
+type StoreOrderRange = 'today' | 'week' | 'month' | 'all';
+
+interface StoreOrderRangeOption {
+  value: StoreOrderRange;
+  label: string;
+  metricLabel: string;
+}
+
+interface StoreOrderRangeBounds {
+  startDate?: string;
+  endDate?: string;
+  label: string;
+  metricLabel: string;
+}
+
+interface StaleProductAlert {
+  product: Product;
+  daysSinceSale: number;
+  lastSoldAt?: string;
+  severity: 'warning' | 'critical';
+}
 
 interface ProductForm {
   sku: string;
@@ -96,6 +119,13 @@ const CATEGORY_OPTIONS: Array<{ value: ProductCategory | 'all'; label: string }>
   { value: 'prescription', label: 'Prescription' },
 ];
 
+const ORDER_RANGE_OPTIONS: StoreOrderRangeOption[] = [
+  { value: 'today', label: 'Today', metricLabel: 'Today' },
+  { value: 'week', label: 'This Week', metricLabel: 'Week' },
+  { value: 'month', label: 'This Month', metricLabel: 'Month' },
+  { value: 'all', label: 'All Time', metricLabel: 'All-Time' },
+];
+
 const FULFILLMENT_LABELS: Record<StoreFulfillmentStatus, string> = {
   awaiting_payment: 'Awaiting Payment',
   paid: 'Paid',
@@ -112,6 +142,13 @@ function normalizeTab(value: string | null): StoreTab {
     return value;
   }
   return 'orders';
+}
+
+function normalizeOrderRange(value: string | null): StoreOrderRange {
+  if (value === 'week' || value === 'month' || value === 'all') {
+    return value;
+  }
+  return 'today';
 }
 
 const NOTIFICATION_LABELS: Record<StoreNotificationStatus, string> = {
@@ -147,6 +184,78 @@ function formatDate(value?: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function formatDateOnly(value?: string): string {
+  if (!value) return 'All recorded sale dates';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'All recorded sale dates';
+  return date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function toLocalDateTimeInput(date: Date, endOfDay = false): string {
+  const pad = (value: number, length = 2) => String(value).padStart(length, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  if (endOfDay) {
+    return `${year}-${month}-${day}T23:59:59.999`;
+  }
+  return `${year}-${month}-${day}T00:00:00.000`;
+}
+
+function startOfLocalWeek(date: Date): Date {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = start.getDay();
+  const offset = day === 0 ? 6 : day - 1;
+  start.setDate(start.getDate() - offset);
+  return start;
+}
+
+function getOrderRangeBounds(range: StoreOrderRange, now = new Date()): StoreOrderRangeBounds {
+  const option = ORDER_RANGE_OPTIONS.find((entry) => entry.value === range) || ORDER_RANGE_OPTIONS[0];
+  if (range === 'all') {
+    return { label: option.label, metricLabel: option.metricLabel };
+  }
+
+  let start: Date;
+  let end: Date;
+  if (range === 'week') {
+    start = startOfLocalWeek(now);
+    end = new Date(start);
+    end.setDate(start.getDate() + 6);
+  } else if (range === 'month') {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    end = new Date(start);
+  }
+
+  return {
+    startDate: toLocalDateTimeInput(start),
+    endDate: toLocalDateTimeInput(end, true),
+    label: option.label,
+    metricLabel: option.metricLabel,
+  };
+}
+
+function orderRangeSummary(bounds: StoreOrderRangeBounds): string {
+  if (!bounds.startDate || !bounds.endDate) {
+    return 'All recorded sale dates';
+  }
+  return `${formatDateOnly(bounds.startDate)} - ${formatDateOnly(bounds.endDate)}`;
+}
+
+function daysSince(value?: string, now = Date.now()): number | null {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, Math.floor((now - timestamp) / (24 * 60 * 60 * 1000)));
 }
 
 function patientName(order: StoreOrder): string {
@@ -205,10 +314,12 @@ export function StoreOperationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<StoreTab>(() => normalizeTab(searchParams.get('tab')));
+  const [orderRange, setOrderRange] = useState<StoreOrderRange>(() => normalizeOrderRange(searchParams.get('range')));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<StoreOrder[]>([]);
+  const [orderHistory, setOrderHistory] = useState<StoreOrder[]>([]);
   const [inventoryStatus, setInventoryStatus] = useState<InventoryStatus | null>(null);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [salesReport, setSalesReport] = useState<SalesReport | null>(null);
@@ -225,26 +336,40 @@ export function StoreOperationsPage() {
     if (!session) {
       setProducts([]);
       setOrders([]);
+      setOrderHistory([]);
       setLoading(false);
       return;
     }
 
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
-    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+    const rangeBounds = getOrderRangeBounds(orderRange);
+    const orderFilters = {
+      limit: 250,
+      ...(rangeBounds.startDate ? { startDate: rangeBounds.startDate } : {}),
+      ...(rangeBounds.endDate ? { endDate: rangeBounds.endDate } : {}),
+    };
+    const reportFilters = {
+      ...(rangeBounds.startDate ? { startDate: rangeBounds.startDate } : {}),
+      ...(rangeBounds.endDate ? { endDate: rangeBounds.endDate } : {}),
+    };
 
     try {
       setLoading(true);
-      const [productRes, orderRes, inventoryRes, lowStockRes, reportRes] = await Promise.all([
+      const [productRes, orderRes, orderHistoryRes, inventoryRes, lowStockRes, reportRes] = await Promise.all([
         fetchProducts(session.tenantId, session.accessToken),
-        fetchProductSales(session.tenantId, session.accessToken, { limit: 100 }),
+        fetchProductSales(session.tenantId, session.accessToken, orderFilters),
+        fetchProductSales(session.tenantId, session.accessToken, { limit: 500 }),
         fetchInventoryStatus(session.tenantId, session.accessToken),
         fetchLowStockProducts(session.tenantId, session.accessToken),
-        fetchSalesReport(session.tenantId, session.accessToken, { startDate: start, endDate: end }),
+        fetchSalesReport(session.tenantId, session.accessToken, reportFilters),
       ]);
 
+      const scopedOrders = orderRes.orders || [];
+      const historyOrders = orderHistoryRes.orders || scopedOrders;
+      const draftOrders = [...scopedOrders, ...historyOrders];
+
       setProducts(productRes.products || []);
-      setOrders(orderRes.orders || []);
+      setOrders(scopedOrders);
+      setOrderHistory(historyOrders);
       setInventoryStatus(inventoryRes.status || null);
       setLowStockProducts(lowStockRes.products || []);
       setSalesReport(reportRes.report || null);
@@ -252,7 +377,7 @@ export function StoreOperationsPage() {
         Object.fromEntries((productRes.products || []).map((product) => [product.id, buildProductDraft(product)]))
       );
       setOrderDrafts(
-        Object.fromEntries((orderRes.orders || []).map((order) => [order.id, buildOrderDraft(order)]))
+        Object.fromEntries(draftOrders.map((order) => [order.id, buildOrderDraft(order)]))
       );
     } catch (error) {
       console.error('Failed to load store operations:', error);
@@ -260,7 +385,7 @@ export function StoreOperationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, showError]);
+  }, [orderRange, session, showError]);
 
   useEffect(() => {
     loadStore();
@@ -268,6 +393,7 @@ export function StoreOperationsPage() {
 
   useEffect(() => {
     setActiveTab(normalizeTab(searchParams.get('tab')));
+    setOrderRange(normalizeOrderRange(searchParams.get('range')));
   }, [searchParams]);
 
   const selectTab = (tab: StoreTab) => {
@@ -277,6 +403,17 @@ export function StoreOperationsPage() {
       next.delete('tab');
     } else {
       next.set('tab', tab);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
+  const selectOrderRange = (range: StoreOrderRange) => {
+    setOrderRange(range);
+    const next = new URLSearchParams(searchParams);
+    if (range === 'today') {
+      next.delete('range');
+    } else {
+      next.set('range', range);
     }
     setSearchParams(next, { replace: true });
   };
@@ -305,9 +442,10 @@ export function StoreOperationsPage() {
     ].filter(Boolean).some((value) => String(value).toLowerCase().includes(q)));
   }, [orders, searchTerm]);
 
+  const orderRangeBounds = useMemo(() => getOrderRangeBounds(orderRange), [orderRange]);
   const ordersToShip = useMemo(
-    () => orders.filter((order) => !['shipped', 'delivered', 'cancelled'].includes(order.fulfillmentStatus)),
-    [orders]
+    () => orderHistory.filter((order) => !['shipped', 'delivered', 'cancelled'].includes(order.fulfillmentStatus)),
+    [orderHistory]
   );
 
   const orderRevenue = useMemo(() => orders.reduce((sum, order) => sum + order.total, 0), [orders]);
@@ -316,8 +454,8 @@ export function StoreOperationsPage() {
     [orders]
   );
   const queuedNotifications = useMemo(
-    () => orders.filter((order) => order.notificationStatus === 'queued').length,
-    [orders]
+    () => orderHistory.filter((order) => order.notificationStatus === 'queued').length,
+    [orderHistory]
   );
   const inventoryValue = inventoryStatus?.totalValue || products.reduce((sum, product) => sum + product.cost * product.inventoryCount, 0);
 
@@ -335,6 +473,46 @@ export function StoreOperationsPage() {
     }, 0), 0),
     [orders, productCostById]
   );
+  const lastSaleByProductId = useMemo(() => {
+    const lastSale = new Map<string, string>();
+    for (const order of orderHistory) {
+      if (order.status === 'cancelled' || order.status === 'refunded') continue;
+      const saleTimestamp = new Date(order.saleDate).getTime();
+      if (!Number.isFinite(saleTimestamp)) continue;
+      for (const item of order.items || []) {
+        const current = lastSale.get(item.productId);
+        if (!current || saleTimestamp > new Date(current).getTime()) {
+          lastSale.set(item.productId, order.saleDate);
+        }
+      }
+    }
+    return lastSale;
+  }, [orderHistory]);
+  const staleProductAlerts = useMemo<StaleProductAlert[]>(() => {
+    const now = Date.now();
+    return products
+      .filter((product) => product.isActive && product.inventoryCount > 0)
+      .map((product) => {
+        const lastSoldAt = lastSaleByProductId.get(product.id);
+        const comparisonDate = lastSoldAt || product.createdAt || product.updatedAt;
+        const daysSinceSale = daysSince(comparisonDate, now);
+        if (daysSinceSale === null || daysSinceSale < 30) {
+          return null;
+        }
+        return {
+          product,
+          daysSinceSale,
+          lastSoldAt,
+          severity: daysSinceSale >= 60 ? 'critical' : 'warning',
+        } satisfies StaleProductAlert;
+      })
+      .filter((alert): alert is StaleProductAlert => Boolean(alert))
+      .sort((a, b) => {
+        if (a.severity !== b.severity) return a.severity === 'critical' ? -1 : 1;
+        return b.daysSinceSale - a.daysSinceSale;
+      });
+  }, [lastSaleByProductId, products]);
+  const stale60Count = staleProductAlerts.filter((alert) => alert.severity === 'critical').length;
 
   const updateOrderDraft = (orderId: string, patch: Partial<OrderDraft>) => {
     setOrderDrafts((current) => ({
@@ -412,7 +590,7 @@ export function StoreOperationsPage() {
         isActive: draft.isActive,
         imageUrl: draft.imageUrl.trim() || null,
       });
-      setProducts((current) => current.map((item) => item.id === product.id ? response.product : item));
+      setProducts((current) => current.map((item) => item.id === product.id ? { ...item, ...response.product } : item));
       setProductDrafts((current) => ({ ...current, [product.id]: buildProductDraft(response.product) }));
       showSuccess('Product details updated');
     } catch (error) {
@@ -470,6 +648,7 @@ export function StoreOperationsPage() {
         stripePaymentStatus: draft.stripePaymentStatus.trim() || 'paid',
       });
       setOrders((current) => current.map((item) => item.id === order.id ? response.order : item));
+      setOrderHistory((current) => current.map((item) => item.id === order.id ? response.order : item));
       setOrderDrafts((current) => ({ ...current, [order.id]: buildOrderDraft(response.order) }));
       showSuccess('Store order updated');
     } catch (error) {
@@ -505,10 +684,31 @@ export function StoreOperationsPage() {
         </button>
       </header>
 
+      <section className="store-ops-range-bar" aria-label="Store order date range">
+        <div>
+          <span>Order View</span>
+          <strong>{orderRangeBounds.label}</strong>
+          <p>{orderRangeSummary(orderRangeBounds)}</p>
+        </div>
+        <div className="store-ops-range-buttons">
+          {ORDER_RANGE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={orderRange === option.value ? 'active' : ''}
+              onClick={() => selectOrderRange(option.value)}
+            >
+              <CalendarDays size={15} />
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="store-ops-metrics" aria-label="Store metrics">
         <article>
           <DollarSign size={21} />
-          <span>Month Revenue</span>
+          <span>{orderRangeBounds.metricLabel} Revenue</span>
           <strong>{formatCurrency(salesReport?.totalRevenue || orderRevenue)}</strong>
         </article>
         <article>
@@ -537,6 +737,23 @@ export function StoreOperationsPage() {
           <strong>{queuedNotifications}</strong>
         </article>
       </section>
+
+      {staleProductAlerts.length > 0 && (
+        <section className="store-ops-stale-alerts" aria-label="Slow-moving product alerts">
+          {staleProductAlerts.slice(0, 4).map((alert) => (
+            <article key={alert.product.id} className={`store-ops-stale-card ${alert.severity}`}>
+              <AlertTriangle size={18} />
+              <ProductThumb product={alert.product} compact />
+              <div>
+                <strong>{alert.severity === 'critical' ? 'No sales in 60+ days' : 'No sales in 30+ days'}</strong>
+                <span>{alert.product.name}</span>
+                <p>{alert.lastSoldAt ? `Last sold ${formatDate(alert.lastSoldAt)}` : `No recorded sale since added ${formatDate(alert.product.createdAt)}`}</p>
+              </div>
+              <b>{alert.daysSinceSale}d</b>
+            </article>
+          ))}
+        </section>
+      )}
 
       <nav className="store-ops-tabs" aria-label="Store operations sections">
         {([
@@ -570,7 +787,7 @@ export function StoreOperationsPage() {
                 <div className="store-ops-panel-header">
                   <div>
                     <h2>Order Queue</h2>
-                    <p>{orders.length} recent store orders</p>
+                    <p>{filteredOrders.length} of {orders.length} {orderRangeBounds.label.toLowerCase()} store orders</p>
                   </div>
                   <div className="store-ops-search">
                     <Search size={16} />
@@ -692,7 +909,15 @@ export function StoreOperationsPage() {
                   </div>
                   <div>
                     <dt>Risk</dt>
-                    <dd>{lowStockProducts.length > 0 ? `${lowStockProducts.length} reorder item${lowStockProducts.length === 1 ? '' : 's'}` : 'Inventory is healthy'}</dd>
+                    <dd>
+                      {stale60Count > 0
+                        ? `${stale60Count} item${stale60Count === 1 ? '' : 's'} stalled 60+ days`
+                        : staleProductAlerts.length > 0
+                          ? `${staleProductAlerts.length} slow mover${staleProductAlerts.length === 1 ? '' : 's'}`
+                          : lowStockProducts.length > 0
+                            ? `${lowStockProducts.length} reorder item${lowStockProducts.length === 1 ? '' : 's'}`
+                            : 'Inventory is healthy'}
+                    </dd>
                   </div>
                 </dl>
               </aside>
@@ -925,7 +1150,7 @@ export function StoreOperationsPage() {
                       <article key={order.id}>
                         <div>
                           <strong>{patientName(order)}</strong>
-                          <span>{order.shippingMethod} · {order.items?.map((item) => `${item.quantity}x ${item.productName}`).join(' · ') || 'No items'}</span>
+                          <span>{formatDate(order.saleDate)} · {order.shippingMethod} · {order.items?.map((item) => `${item.quantity}x ${item.productName}`).join(' · ') || 'No items'}</span>
                         </div>
                         <select
                           aria-label={`Shipping method for ${patientName(order)}`}
@@ -995,7 +1220,7 @@ export function StoreOperationsPage() {
                       <article key={order.id}>
                         <div>
                           <strong>{patientName(order)}</strong>
-                          <span>{formatCurrency(order.total)} · {order.paymentReference || 'No reference'}</span>
+                          <span>{formatDate(order.saleDate)} · {formatCurrency(order.total)} · {order.paymentReference || 'No reference'}</span>
                         </div>
                         <label>
                           Stripe status
@@ -1045,7 +1270,7 @@ export function StoreOperationsPage() {
                       <article key={order.id}>
                         <div>
                           <strong>{patientName(order)}</strong>
-                          <span>{draft.notificationEmail || 'No email'} · {NOTIFICATION_LABELS[draft.notificationStatus]}</span>
+                          <span>{formatDate(order.saleDate)} · {draft.notificationEmail || 'No email'} · {NOTIFICATION_LABELS[draft.notificationStatus]}</span>
                         </div>
                         <select
                           aria-label={`Notification status for ${patientName(order)}`}

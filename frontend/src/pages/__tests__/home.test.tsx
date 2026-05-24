@@ -532,6 +532,9 @@ describe('HomePage', () => {
     fireEvent.click(within(riskPanel).getByRole('button', { name: /Waiting 30\+ min/i }));
     expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/office-flow\?date=\d{4}-\d{2}-\d{2}&status=checked_in$/));
 
+    fireEvent.click(within(riskPanel).getByRole('button', { name: /Claim exceptions/i }));
+    expect(navigateMock).toHaveBeenLastCalledWith('/claims?queue=exceptions');
+
     fireEvent.click(within(revenuePanel).getByRole('button', { name: /Collected so far/i }));
     expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/financials\?tab=payments&startDate=\d{4}-\d{2}-\d{2}&endDate=\d{4}-\d{2}-\d{2}$/));
 

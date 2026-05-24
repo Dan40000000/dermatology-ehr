@@ -81,7 +81,7 @@ export const AuthContext = createContext<AuthContextValue | null>(null);
 const STORAGE_KEY = 'derm_session';
 const TENANT_HEADER = 'x-tenant-id';
 const API_BASE = API_BASE_URL || '';
-const DEFAULT_IDLE_TIMEOUT_MINUTES = 15;
+const DEFAULT_IDLE_TIMEOUT_MINUTES = 5;
 const idleTimeoutMinutes = Number(import.meta.env.VITE_SESSION_IDLE_TIMEOUT_MINUTES);
 const SESSION_IDLE_TIMEOUT_MS =
   (Number.isFinite(idleTimeoutMinutes) && idleTimeoutMinutes > 0

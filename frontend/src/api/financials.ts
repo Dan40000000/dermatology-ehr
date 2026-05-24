@@ -262,6 +262,29 @@ export async function fetchCollectionsTrend(
   return res.json();
 }
 
+export async function fetchRevenueDetails(
+  options: FetchOptions,
+  filters: {
+    startDate: string;
+    endDate: string;
+    category?: string;
+  }
+) {
+  const params = new URLSearchParams();
+  params.append('startDate', filters.startDate);
+  params.append('endDate', filters.endDate);
+  if (filters.category) params.append('category', filters.category);
+
+  const res = await fetch(`${API_BASE}/api/financial-metrics/revenue-details?${params}`, {
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch revenue details");
+  return res.json();
+}
+
 export async function fetchPaymentsSummary(
   options: FetchOptions,
   filters: {

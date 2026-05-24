@@ -77,6 +77,23 @@ const demoProduct: Product = {
   updatedAt: '2026-05-01T12:00:00Z',
 };
 
+const staleProduct: Product = {
+  id: '33333333-3333-4333-8333-333333333333',
+  tenantId: 'tenant-demo',
+  sku: 'SLOW-SERUM',
+  name: 'Slow Moving Serum',
+  description: 'Older inventory without recent sales',
+  category: 'cosmetic',
+  brand: 'ClearDerm',
+  price: 5200,
+  cost: 2100,
+  inventoryCount: 8,
+  reorderPoint: 3,
+  isActive: true,
+  createdAt: '2025-01-01T12:00:00Z',
+  updatedAt: '2025-01-01T12:00:00Z',
+};
+
 const demoOrder: StoreOrder = {
   id: '22222222-2222-4222-8222-222222222222',
   tenantId: 'tenant-demo',
@@ -184,6 +201,21 @@ describe('Store flows', () => {
         })
       )
     );
+  });
+
+  it('shows order dates on payments and highlights products without sales', async () => {
+    apiMocks.fetchProducts.mockResolvedValue({ products: [demoProduct, staleProduct] });
+
+    render(
+      <MemoryRouter initialEntries={['/store-ops?tab=payments']}>
+        <StoreOperationsPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Stripe Payment Queue')).toBeInTheDocument();
+    expect(screen.getByText(/May 17.*\$83\.89.*pi_demo/)).toBeInTheDocument();
+    expect(screen.getByText('No sales in 60+ days')).toBeInTheDocument();
+    expect(screen.getByText('Slow Moving Serum')).toBeInTheDocument();
   });
 
   it('lets a portal patient add a product and place a shipped store order', async () => {

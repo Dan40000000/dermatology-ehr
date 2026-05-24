@@ -18,7 +18,7 @@ import type { Claim, ClaimWithDetails, ClaimStatus, Patient } from '../types';
 
 type ActiveTab = 'claims' | 'payments';
 type ClaimUiStatus = ClaimStatus | 'denied' | 'appealed' | 'partially_paid';
-type QueueFilter = 'all' | 'coding_review' | 'ready' | 'pending' | 'denials' | 'payment' | 'appeals' | 'filing_risk';
+type QueueFilter = 'all' | 'coding_review' | 'ready' | 'pending' | 'denials' | 'payment' | 'appeals' | 'filing_risk' | 'exceptions';
 
 const CLAIM_TABS: ActiveTab[] = ['claims', 'payments'];
 const CLAIM_STATUS_FILTERS: Array<ClaimUiStatus | 'all'> = [
@@ -34,7 +34,7 @@ const CLAIM_STATUS_FILTERS: Array<ClaimUiStatus | 'all'> = [
   'appealed',
   'partially_paid',
 ];
-const CLAIM_QUEUE_FILTERS: QueueFilter[] = ['all', 'coding_review', 'ready', 'pending', 'denials', 'payment', 'appeals', 'filing_risk'];
+const CLAIM_QUEUE_FILTERS: QueueFilter[] = ['all', 'coding_review', 'ready', 'pending', 'denials', 'payment', 'appeals', 'filing_risk', 'exceptions'];
 
 interface ClaimRecord {
   id: string;
@@ -488,6 +488,10 @@ function isAtRiskClaim(claim: ClaimRecord): boolean {
   return hasDenialFriction(claim) || (claim.balanceCents > 0 && getDaysSince(claim.serviceDate || claim.createdAt) > 300);
 }
 
+function isClaimException(claim: ClaimRecord): boolean {
+  return hasDenialFriction(claim);
+}
+
 function isPaymentQueueClaim(claim: ClaimRecord): boolean {
   return claim.balanceCents > 0 && ['accepted', 'submitted', 'partially_paid'].includes(claim.status);
 }
@@ -508,6 +512,8 @@ function getNextAction(claim: ClaimRecord): string {
       return 'Track appeal deadline';
     case 'filing_risk':
       return 'Submit before filing limit';
+    case 'exceptions':
+      return 'Review claim exception';
     default:
       return claim.status === 'paid' ? 'Closed' : 'Review claim';
   }
@@ -561,6 +567,8 @@ function queueLabel(queue: QueueFilter): string {
       return 'Appeals';
     case 'filing_risk':
       return 'Filing Risk';
+    case 'exceptions':
+      return 'Exceptions';
     default:
       return 'All';
   }
@@ -1362,7 +1370,11 @@ export function ClaimsPage() {
 
       if (queueFilter !== 'all') {
         const currentQueue = claimQueue(claim);
-        if (queueFilter === 'filing_risk') {
+        if (queueFilter === 'exceptions') {
+          if (!isClaimException(claim)) {
+            return false;
+          }
+        } else if (queueFilter === 'filing_risk') {
           if (!(claim.balanceCents > 0 && getDaysSince(claim.serviceDate || claim.createdAt) > 300)) {
             return false;
           }
@@ -1422,12 +1434,16 @@ export function ClaimsPage() {
       payment: 0,
       appeals: 0,
       filing_risk: 0,
+      exceptions: 0,
     };
 
     for (const claim of claims) {
       const queue = claimQueue(claim);
       if (queue in counters) {
         counters[queue] += 1;
+      }
+      if (isClaimException(claim)) {
+        counters.exceptions += 1;
       }
       if (claim.balanceCents > 0 && getDaysSince(claim.serviceDate || claim.createdAt) > 300) {
         counters.filing_risk += 1;
@@ -1675,6 +1691,7 @@ export function ClaimsPage() {
                     ['payment', 'Payment Queue'],
                     ['appeals', 'Appeals'],
                     ['filing_risk', 'Timely Filing Risk'],
+                    ['exceptions', 'Exceptions'],
                   ] as Array<[QueueFilter, string]>).map(([key, label]) => (
                     <button
                       key={key}

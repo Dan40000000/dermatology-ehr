@@ -29,6 +29,7 @@ import {
   fetchFinancialMetrics,
   fetchFinancialWorkQueue,
   fetchPaymentsSummary,
+  fetchRevenueDetails,
   postBillAction,
   resolveFinancialWorkQueueItem,
 } from '../api/financials';
@@ -69,6 +70,33 @@ interface RevenueCategorySummary {
   label: string;
   revenueCents: number;
   itemCount: number;
+}
+
+interface RevenueDetailRow {
+  sourceType: string;
+  sourceId: string;
+  sourceLabel?: string;
+  revenueDate: string;
+  categoryKey: string;
+  categoryLabel: string;
+  patientName?: string;
+  providerName?: string | null;
+  billNumber?: string | null;
+  status?: string | null;
+  totalChargesCents: number;
+  paidAmountCents: number;
+  balanceCents: number;
+  appointmentTypeName?: string | null;
+  cptCodes?: string | null;
+  lineDescriptions?: string | null;
+}
+
+interface RevenueDetailsSummary {
+  itemCount: number;
+  totalRevenueCents: number;
+  paidAmountCents: number;
+  balanceCents: number;
+  categories?: RevenueCategorySummary[];
 }
 
 interface DashboardSnapshotMetrics {
@@ -749,6 +777,11 @@ export function FinancialsHub() {
   const [dashboardBillsSummary, setDashboardBillsSummary] = useState<any>(null);
   const [dashboardWeekSummary, setDashboardWeekSummary] = useState<SnapshotTrendSummary | null>(null);
   const [dashboardDrilldownMetric, setDashboardDrilldownMetric] = useState<string | null>(null);
+  const [revenueDrilldownCategory, setRevenueDrilldownCategory] = useState<string | null>(searchParams.get('revenueCategory') || null);
+  const [revenueDetailsLoading, setRevenueDetailsLoading] = useState(false);
+  const [revenueDetailsError, setRevenueDetailsError] = useState('');
+  const [revenueDetailsRows, setRevenueDetailsRows] = useState<RevenueDetailRow[]>([]);
+  const [revenueDetailsSummary, setRevenueDetailsSummary] = useState<RevenueDetailsSummary | null>(null);
 
   // Get active tab from URL, default to 'dashboard' if not specified
   const tabFromUrl = searchParams.get('tab') as TabType | null;
@@ -934,6 +967,13 @@ export function FinancialsHub() {
     setSnapshotPeriod(parsedPeriod);
     setSnapshotStartDate(parsedRange.startDate);
     setSnapshotEndDate(parsedRange.endDate);
+  }, [activeTab, searchParams]);
+
+  useEffect(() => {
+    if (activeTab !== 'revenue') {
+      return;
+    }
+    setRevenueDrilldownCategory(searchParams.get('revenueCategory') || null);
   }, [activeTab, searchParams]);
 
   const loadSnapshotBreakdown = useCallback(async (startDate: string, endDate: string) => {
@@ -1122,6 +1162,43 @@ export function FinancialsHub() {
     loadDashboardBreakdown(dashboardStartDate, dashboardEndDate);
   }, [activeTab, dashboardStartDate, dashboardEndDate, loadDashboardBreakdown]);
 
+  const loadRevenueDetails = useCallback(async (categoryKey: string | null, startDate: string, endDate: string) => {
+    if (!session) {
+      return;
+    }
+
+    setRevenueDetailsLoading(true);
+    setRevenueDetailsError('');
+    try {
+      const response = await fetchRevenueDetails(
+        {
+          tenantId: session.tenantId,
+          accessToken: session.accessToken,
+        },
+        {
+          startDate,
+          endDate,
+          category: categoryKey && categoryKey !== 'all' ? categoryKey : undefined,
+        },
+      );
+      setRevenueDetailsRows(Array.isArray(response?.rows) ? response.rows : []);
+      setRevenueDetailsSummary((response?.summary || null) as RevenueDetailsSummary | null);
+    } catch (error: any) {
+      const message = error?.message || 'Unable to load revenue details';
+      setRevenueDetailsError(message);
+      showError(message);
+    } finally {
+      setRevenueDetailsLoading(false);
+    }
+  }, [session, showError]);
+
+  useEffect(() => {
+    if (activeTab !== 'revenue' || !revenueDrilldownCategory || !dashboardStartDate || !dashboardEndDate) {
+      return;
+    }
+    loadRevenueDetails(revenueDrilldownCategory, dashboardStartDate, dashboardEndDate);
+  }, [activeTab, dashboardEndDate, dashboardStartDate, loadRevenueDetails, revenueDrilldownCategory]);
+
   // Handler to change tabs and update URL
   const handleTabChange = (tab: TabType) => {
     if (tab === 'snapshots') {
@@ -1197,6 +1274,29 @@ export function FinancialsHub() {
       });
     }
     loadDashboardBreakdown(dashboardStartDate, dashboardEndDate);
+  };
+
+  const openRevenueDrilldown = (categoryKey: string | null) => {
+    const nextCategory = categoryKey || 'all';
+    setRevenueDrilldownCategory(nextCategory);
+    setSearchParams({
+      tab: 'revenue',
+      startDate: dashboardStartDate,
+      endDate: dashboardEndDate,
+      revenueCategory: nextCategory,
+    });
+  };
+
+  const closeRevenueDrilldown = () => {
+    setRevenueDrilldownCategory(null);
+    setRevenueDetailsRows([]);
+    setRevenueDetailsSummary(null);
+    setRevenueDetailsError('');
+    setSearchParams({
+      tab: 'revenue',
+      startDate: dashboardStartDate,
+      endDate: dashboardEndDate,
+    });
   };
 
   const applySnapshotDateRange = () => {
@@ -1463,6 +1563,19 @@ export function FinancialsHub() {
   const payerRevenueExpectedCents = dashboardRangeClaims.reduce((sum, claim) => sum + getClaimExpectedPayerCents(claim), 0);
   const payerRevenuePaidCents = dashboardRangeClaims.reduce((sum, claim) => sum + getClaimPaidCents(claim), 0);
   const payerRevenueGapCents = Math.max(0, payerRevenueExpectedCents - payerRevenuePaidCents);
+  const payerVarianceRows = dashboardRangeClaims
+    .map((claim) => {
+      const expectedPayerCents = getClaimExpectedPayerCents(claim);
+      const paidCents = getClaimPaidCents(claim);
+      return {
+        claim,
+        expectedPayerCents,
+        paidCents,
+        varianceCents: Math.max(0, expectedPayerCents - paidCents),
+      };
+    })
+    .filter((row) => row.expectedPayerCents > 0 || row.paidCents > 0)
+    .sort((left, right) => right.varianceCents - left.varianceCents);
   const bestRevenueDay = dashboardTrendData.reduce((best: any | null, point: any) =>
     !best || Number(point.revenueEarnedCents || 0) > Number(best.revenueEarnedCents || 0) ? point : best,
   null);
@@ -1824,6 +1937,139 @@ export function FinancialsHub() {
     );
   };
 
+  const renderRevenueDetailsDrilldown = () => {
+    if (!revenueDrilldownCategory) return null;
+
+    const selectedCategory = revenueDrilldownCategory === 'all'
+      ? null
+      : revenueCategories.find((category) => category.key === revenueDrilldownCategory) ||
+        (revenueDetailsSummary?.categories || []).find((category) => category.key === revenueDrilldownCategory);
+    const title = selectedCategory ? `${selectedCategory.label} Detail` : 'All Revenue Detail';
+    const visibleRows = revenueDetailsRows.slice(0, 50);
+
+    return (
+      <section style={{
+        border: '1px solid #bfdbfe',
+        borderRadius: '12px',
+        background: '#ffffff',
+        overflow: 'hidden',
+        boxShadow: '0 8px 22px rgba(15, 23, 42, 0.08)',
+      }}>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          alignItems: 'flex-start',
+          padding: '0.95rem 1rem',
+          borderBottom: '1px solid #dbeafe',
+          background: '#eff6ff',
+        }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1e3a8a', fontSize: '1rem', fontWeight: 900 }}>{title}</h3>
+            <p style={{ margin: '0.25rem 0 0', color: '#1d4ed8', fontSize: '0.84rem' }}>
+              Underlying revenue rows for {dashboardRangeLabel}. This is the audit trail behind the category total.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={closeRevenueDrilldown}
+            style={{
+              border: '1px solid #bfdbfe',
+              background: '#ffffff',
+              color: '#1d4ed8',
+              borderRadius: '8px',
+              padding: '0.5rem 0.75rem',
+              fontWeight: 800,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
+
+        <div style={{ padding: '1rem', display: 'grid', gap: '1rem' }}>
+          {revenueDetailsError && (
+            <div style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', borderRadius: '10px', padding: '0.75rem', fontWeight: 800 }}>
+              {revenueDetailsError}
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem' }}>
+            {[
+              { label: 'Items', value: `${revenueDetailsSummary?.itemCount || 0}`, tone: '#1d4ed8' },
+              { label: 'Revenue', value: formatCurrency(revenueDetailsSummary?.totalRevenueCents || 0), tone: '#065f46' },
+              { label: 'Collected', value: formatCurrency(revenueDetailsSummary?.paidAmountCents || 0), tone: '#047857' },
+              { label: 'Open Balance', value: formatCurrency(revenueDetailsSummary?.balanceCents || 0), tone: (revenueDetailsSummary?.balanceCents || 0) > 0 ? '#991b1b' : '#047857' },
+            ].map((item) => (
+              <div key={item.label} style={{ border: '1px solid #e5e7eb', borderRadius: '10px', background: '#f8fafc', padding: '0.8rem' }}>
+                <div style={{ color: '#6b7280', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 900 }}>{item.label}</div>
+                <div style={{ color: item.tone, fontSize: '1.2rem', fontWeight: 950, marginTop: '0.25rem' }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '980px', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ padding: '0.65rem', textAlign: 'left' }}>Date</th>
+                  <th style={{ padding: '0.65rem', textAlign: 'left' }}>Source</th>
+                  <th style={{ padding: '0.65rem', textAlign: 'left' }}>Patient</th>
+                  <th style={{ padding: '0.65rem', textAlign: 'left' }}>Codes / Detail</th>
+                  <th style={{ padding: '0.65rem', textAlign: 'right' }}>Revenue</th>
+                  <th style={{ padding: '0.65rem', textAlign: 'right' }}>Collected</th>
+                  <th style={{ padding: '0.65rem', textAlign: 'right' }}>Balance</th>
+                  <th style={{ padding: '0.65rem', textAlign: 'left' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {revenueDetailsLoading ? (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '1rem', textAlign: 'center', color: '#1d4ed8', fontWeight: 800 }}>Loading revenue detail...</td>
+                  </tr>
+                ) : visibleRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>No matching revenue rows for this range.</td>
+                  </tr>
+                ) : (
+                  visibleRows.map((row) => (
+                    <tr key={`${row.sourceType}-${row.sourceId}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.65rem', fontWeight: 800 }}>{formatIsoDateForUi(row.revenueDate)}</td>
+                      <td style={{ padding: '0.65rem' }}>
+                        <div style={{ fontWeight: 900, color: '#111827' }}>{row.sourceLabel || row.sourceType}</div>
+                        <div style={{ color: '#6b7280', fontSize: '0.76rem', textTransform: 'capitalize' }}>{row.sourceType.replace(/_/g, ' ')}</div>
+                      </td>
+                      <td style={{ padding: '0.65rem' }}>
+                        <div style={{ fontWeight: 800, color: '#111827' }}>{row.patientName || 'Unknown patient'}</div>
+                        {row.providerName ? <div style={{ color: '#6b7280', fontSize: '0.76rem' }}>{row.providerName}</div> : null}
+                      </td>
+                      <td style={{ padding: '0.65rem', color: '#374151' }}>
+                        <div style={{ fontWeight: 800 }}>{row.cptCodes || row.categoryLabel}</div>
+                        <div style={{ color: '#6b7280', fontSize: '0.76rem', maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {row.lineDescriptions || row.appointmentTypeName || row.categoryLabel}
+                        </div>
+                      </td>
+                      <td style={{ padding: '0.65rem', textAlign: 'right', fontWeight: 950, color: '#065f46' }}>{formatCurrency(row.totalChargesCents)}</td>
+                      <td style={{ padding: '0.65rem', textAlign: 'right', fontWeight: 800, color: '#047857' }}>{formatCurrency(row.paidAmountCents)}</td>
+                      <td style={{ padding: '0.65rem', textAlign: 'right', fontWeight: 900, color: row.balanceCents > 0 ? '#991b1b' : '#047857' }}>{formatCurrency(row.balanceCents)}</td>
+                      <td style={{ padding: '0.65rem', textTransform: 'capitalize', color: '#374151' }}>{String(row.status || '--').replace(/_/g, ' ')}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {revenueDetailsRows.length > visibleRows.length ? (
+            <div style={{ color: '#64748b', fontSize: '0.8rem', fontWeight: 700 }}>
+              Showing first {visibleRows.length} of {revenueDetailsRows.length} rows.
+            </div>
+          ) : null}
+        </div>
+      </section>
+    );
+  };
+
   const renderRevenuePage = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       {dashboardError && (
@@ -1914,17 +2160,33 @@ export function FinancialsHub() {
 
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.85rem' }}>
         {[
-          { label: 'Revenue Earned', value: formatCurrency(dashboardSummary.totalRevenueEarnedCents), detail: `${dashboardSummary.totalBillCount} revenue item${dashboardSummary.totalBillCount === 1 ? '' : 's'}`, tone: '#065f46' },
+          { label: 'Revenue Earned', value: formatCurrency(dashboardSummary.totalRevenueEarnedCents), detail: `${dashboardSummary.totalBillCount} revenue item${dashboardSummary.totalBillCount === 1 ? '' : 's'} · click for detail`, tone: '#065f46', drilldownCategory: 'all' },
           { label: 'Clinical Collections', value: formatCurrency(rangeClinicalCollectionsCents), detail: `${formatPercent(dashboardSummary.collectionRate)} total collection rate`, tone: '#047857' },
-          { label: 'Store Revenue', value: formatCurrency(rangeStoreRevenueCents), detail: 'Patient portal product sales and shipping', tone: '#0f766e' },
+          { label: 'Store Revenue', value: formatCurrency(rangeStoreRevenueCents), detail: 'Patient portal product sales and shipping', tone: '#0f766e', drilldownCategory: 'product_sale' },
           { label: 'Cash In', value: formatCurrency(rangeTotalCashInCents), detail: `${dashboardSummary.totalPaymentCount} posted payment${dashboardSummary.totalPaymentCount === 1 ? '' : 's'}`, tone: '#1d4ed8' },
           { label: 'Revenue Gap', value: formatCurrency(revenueCollectionGapCents), detail: 'Earned revenue not yet collected', tone: revenueCollectionGapCents > 0 ? '#92400e' : '#047857' },
         ].map((card) => (
-          <div key={card.label} style={{ border: '1px solid #e5e7eb', borderRadius: '12px', background: '#ffffff', padding: '1rem', boxShadow: '0 1px 6px rgba(15,23,42,0.06)' }}>
+          <button
+            key={card.label}
+            type="button"
+            disabled={!card.drilldownCategory}
+            onClick={card.drilldownCategory ? () => openRevenueDrilldown(card.drilldownCategory) : undefined}
+            style={{
+              border: '1px solid #e5e7eb',
+              borderRadius: '12px',
+              background: '#ffffff',
+              padding: '1rem',
+              boxShadow: '0 1px 6px rgba(15,23,42,0.06)',
+              textAlign: 'left',
+              cursor: card.drilldownCategory ? 'pointer' : 'default',
+              font: 'inherit',
+              opacity: 1,
+            }}
+          >
             <div style={{ color: '#6b7280', fontSize: '0.72rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{card.label}</div>
             <div style={{ color: card.tone, fontSize: '1.5rem', fontWeight: 950, marginTop: '0.35rem' }}>{card.value}</div>
             <div style={{ color: '#64748b', fontSize: '0.82rem', marginTop: '0.25rem' }}>{card.detail}</div>
-          </div>
+          </button>
         ))}
       </section>
 
@@ -1939,19 +2201,35 @@ export function FinancialsHub() {
               <div style={{ color: '#6b7280', fontStyle: 'italic' }}>No categorized revenue posted in this range.</div>
             ) : revenueCategories.map((category) => {
               const percent = revenueCategoryTotalCents > 0 ? (Number(category.revenueCents || 0) / revenueCategoryTotalCents) * 100 : 0;
+              const isSelected = revenueDrilldownCategory === category.key;
               return (
-                <div key={category.key} style={{ display: 'grid', gap: '0.35rem' }}>
+                <button
+                  key={category.key}
+                  type="button"
+                  onClick={() => openRevenueDrilldown(category.key)}
+                  style={{
+                    display: 'grid',
+                    gap: '0.35rem',
+                    border: isSelected ? '1px solid #10b981' : '1px solid transparent',
+                    borderRadius: '10px',
+                    background: isSelected ? '#ecfdf5' : 'transparent',
+                    padding: '0.5rem',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    font: 'inherit',
+                  }}
+                >
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 900, color: '#111827' }}>{category.label}</div>
-                      <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{category.itemCount} item{category.itemCount === 1 ? '' : 's'} · {formatPercent(percent)} of categorized revenue</div>
+                      <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{category.itemCount} item{category.itemCount === 1 ? '' : 's'} · {formatPercent(percent)} of categorized revenue · open detail</div>
                     </div>
                     <div style={{ fontWeight: 950, color: '#065f46', textAlign: 'right' }}>{formatCurrency(category.revenueCents)}</div>
                   </div>
                   <div style={{ height: '9px', borderRadius: '999px', background: '#f1f5f9', overflow: 'hidden' }}>
                     <div style={{ width: `${Math.min(100, percent)}%`, height: '100%', background: '#10b981', borderRadius: '999px' }} />
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -1993,6 +2271,53 @@ export function FinancialsHub() {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {renderRevenueDetailsDrilldown()}
+
+      <section style={{ border: '1px solid #e5e7eb', borderRadius: '12px', background: '#ffffff', overflow: 'hidden' }}>
+        <div style={{ padding: '0.95rem 1rem', borderBottom: '1px solid #f3f4f6' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', color: '#111827', fontWeight: 900 }}>Insurance Payment Variance</h3>
+          <p style={{ margin: '0.2rem 0 0', color: '#6b7280', fontSize: '0.82rem' }}>
+            Expected payer amount versus actual payer payment for claims tied to this revenue window.
+          </p>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: '860px', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+            <thead>
+              <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                <th style={{ padding: '0.65rem', textAlign: 'left' }}>Claim</th>
+                <th style={{ padding: '0.65rem', textAlign: 'left' }}>Payer</th>
+                <th style={{ padding: '0.65rem', textAlign: 'left' }}>Service Date</th>
+                <th style={{ padding: '0.65rem', textAlign: 'right' }}>Charges</th>
+                <th style={{ padding: '0.65rem', textAlign: 'right' }}>Expected</th>
+                <th style={{ padding: '0.65rem', textAlign: 'right' }}>Paid</th>
+                <th style={{ padding: '0.65rem', textAlign: 'right' }}>Variance</th>
+                <th style={{ padding: '0.65rem', textAlign: 'left' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payerVarianceRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>
+                    No payer expected-versus-paid rows in this range.
+                  </td>
+                </tr>
+              ) : payerVarianceRows.slice(0, 8).map(({ claim, expectedPayerCents, paidCents, varianceCents }) => (
+                <tr key={claim.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                  <td style={{ padding: '0.65rem', fontWeight: 900 }}>{claim.claimNumber || claim.id}</td>
+                  <td style={{ padding: '0.65rem' }}>{getClaimPayer(claim)}</td>
+                  <td style={{ padding: '0.65rem' }}>{formatIsoDateForUi(getClaimDateIso(claim))}</td>
+                  <td style={{ padding: '0.65rem', textAlign: 'right' }}>{formatCurrency(getClaimChargeCents(claim))}</td>
+                  <td style={{ padding: '0.65rem', textAlign: 'right', fontWeight: 800 }}>{formatCurrency(expectedPayerCents)}</td>
+                  <td style={{ padding: '0.65rem', textAlign: 'right', color: '#047857', fontWeight: 800 }}>{formatCurrency(paidCents)}</td>
+                  <td style={{ padding: '0.65rem', textAlign: 'right', color: varianceCents > 0 ? '#991b1b' : '#047857', fontWeight: 950 }}>{formatCurrency(varianceCents)}</td>
+                  <td style={{ padding: '0.65rem', textTransform: 'capitalize' }}>{normalizeClaimStatus(claim.status).replace(/_/g, ' ') || 'unknown'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 

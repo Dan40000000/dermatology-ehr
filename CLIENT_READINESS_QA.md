@@ -4,6 +4,11 @@ Purpose: prove the system can survive a normal dermatology office day before a c
 
 Run this after meaningful changes to scheduling, notes, diagnoses, billing, claims, texting, payments, analytics, or role permissions.
 
+Latest execution evidence:
+
+- `CLIENT_READINESS_QA_RUN_2026-05-23.md`
+- `PILOT_PACKET.md`
+
 ## 1. Core Office-Day Flow
 
 - [ ] Log in as front desk.

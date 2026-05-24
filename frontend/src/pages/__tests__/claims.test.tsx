@@ -52,9 +52,9 @@ vi.mock('../../components/ui', () => ({
 
 import { ClaimsPage } from '../ClaimsPage';
 
-function renderClaimsPage() {
+function renderClaimsPage(initialEntry = '/claims') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <ClaimsPage />
     </MemoryRouter>,
   );
@@ -236,5 +236,36 @@ describe('ClaimsPage', () => {
 
     expect(toastMocks.showError).toHaveBeenCalledWith('Invalid payment amount');
     expect(apiMocks.postClaimPayment).not.toHaveBeenCalled();
+  });
+
+  it('opens the exceptions queue without forcing a same-day denied-only fetch', async () => {
+    const fixtures = buildFixtures();
+    apiMocks.fetchClaims.mockResolvedValueOnce({
+      claims: [
+        ...fixtures.claims,
+        {
+          id: 'claim-3',
+          tenantId: 'tenant-1',
+          patientId: 'patient-3',
+          claimNumber: 'CLM-003',
+          totalCents: 32000,
+          status: 'rejected',
+          payer: 'Cigna',
+          providerName: 'Dr Demo',
+          createdAt: '2024-03-01',
+          updatedAt: '2024-03-02',
+          scrubStatus: 'failed',
+        },
+      ],
+    });
+
+    renderClaimsPage('/claims?queue=exceptions');
+
+    await screen.findByText('Claims Management');
+
+    expect(apiMocks.fetchClaims).toHaveBeenCalledWith('tenant-1', 'token-1', {});
+    expect(await screen.findByText('Exceptions Drilldown')).toBeInTheDocument();
+    expect(screen.getAllByText('CLM-003').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('CLM-001')).toHaveLength(0);
   });
 });

@@ -26,6 +26,7 @@ import { AgentConfiguration, agentConfigService } from '../services/agentConfigS
 import { askClinicalCopilot, type ClinicalCopilotContext, type ClinicalCopilotResult } from '../services/clinicalCopilot';
 import { createFinancialWorkQueueItem } from '../services/financialWorkQueueService';
 import { immutableEncounterErrorMessage, isImmutableEncounterStatus } from '../lib/clinicalWorkflow';
+import { AiPhiBlockError, assertClinicalAiPromptIsSafeForExternalAi } from '../utils/aiPhiGuard';
 
 const router = Router();
 
@@ -2199,6 +2200,7 @@ router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_R
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
     const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
+    assertClinicalAiPromptIsSafeForExternalAi({ prompt, history });
 
     const context = await resolveClinicalCopilotContext(tenantId, {
       patientId,
@@ -2235,6 +2237,13 @@ router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_R
       },
     });
   } catch (error: any) {
+    if (error instanceof AiPhiBlockError) {
+      return res.status(422).json({
+        error: error.message,
+        code: error.code,
+        blockedTypes: error.blockedTypes,
+      });
+    }
     logAmbientError('Clinical copilot error', error);
     res.status(500).json({ error: 'Failed to get clinical copilot response' });
   }
@@ -2254,6 +2263,7 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
     const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
+    assertClinicalAiPromptIsSafeForExternalAi({ prompt, history });
 
     const context = await resolveClinicalCopilotContext(tenantId, {
       patientId,
@@ -2306,6 +2316,13 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
       },
     });
   } catch (error: any) {
+    if (error instanceof AiPhiBlockError) {
+      return res.status(422).json({
+        error: error.message,
+        code: error.code,
+        blockedTypes: error.blockedTypes,
+      });
+    }
     logAmbientError('Clinical copilot visit summary save error', error);
     res.status(500).json({ error: 'Failed to save clinical copilot visit summary' });
   }

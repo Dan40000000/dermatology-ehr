@@ -1,4 +1,10 @@
 import { logger } from '../lib/logger';
+import {
+  AiPhiBlockError,
+  assertClinicalAiPromptIsSafeForExternalAi,
+  deidentifyTextForExternalAi,
+  isHipaaClinicalAiEnabled,
+} from '../utils/aiPhiGuard';
 import { redactValue } from '../utils/phiRedaction';
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
@@ -94,6 +100,14 @@ function clampText(value: unknown, max = 3000): string | undefined {
   return normalized.length > max ? `${normalized.slice(0, max)}…` : normalized;
 }
 
+function sanitizeExternalAiText(value: unknown, max = 3000): string | undefined {
+  const redacted = redactValue(value);
+  const deidentified = typeof redacted === 'string'
+    ? deidentifyTextForExternalAi(redacted).text
+    : redacted;
+  return clampText(deidentified, max);
+}
+
 function dedupeStrings(values: Array<string | undefined | null>): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -120,21 +134,21 @@ function sanitizeContext(context: ClinicalCopilotContext): ClinicalCopilotContex
     specialtyFocus: clampText(context.specialtyFocus, 80),
     encounter: context.encounter
       ? {
-          chiefComplaint: clampText(redactValue(context.encounter.chiefComplaint), 800),
-          hpi: clampText(redactValue(context.encounter.hpi), 2200),
-          ros: clampText(redactValue(context.encounter.ros), 1400),
-          exam: clampText(redactValue(context.encounter.exam), 1800),
-          assessmentPlan: clampText(redactValue(context.encounter.assessmentPlan), 2200),
+          chiefComplaint: sanitizeExternalAiText(context.encounter.chiefComplaint, 800),
+          hpi: sanitizeExternalAiText(context.encounter.hpi, 2200),
+          ros: sanitizeExternalAiText(context.encounter.ros, 1400),
+          exam: sanitizeExternalAiText(context.encounter.exam, 1800),
+          assessmentPlan: sanitizeExternalAiText(context.encounter.assessmentPlan, 2200),
         }
       : undefined,
     note: context.note
       ? {
-          chiefComplaint: clampText(redactValue(context.note.chiefComplaint), 800),
-          hpi: clampText(redactValue(context.note.hpi), 2200),
-          ros: clampText(redactValue(context.note.ros), 1400),
-          physicalExam: clampText(redactValue(context.note.physicalExam), 1800),
-          assessment: clampText(redactValue(context.note.assessment), 1800),
-          plan: clampText(redactValue(context.note.plan), 2200),
+          chiefComplaint: sanitizeExternalAiText(context.note.chiefComplaint, 800),
+          hpi: sanitizeExternalAiText(context.note.hpi, 2200),
+          ros: sanitizeExternalAiText(context.note.ros, 1400),
+          physicalExam: sanitizeExternalAiText(context.note.physicalExam, 1800),
+          assessment: sanitizeExternalAiText(context.note.assessment, 1800),
+          plan: sanitizeExternalAiText(context.note.plan, 2200),
           suggestedIcd10Codes: Array.isArray(context.note.suggestedIcd10Codes)
             ? context.note.suggestedIcd10Codes.slice(0, 6)
             : [],
@@ -143,7 +157,7 @@ function sanitizeContext(context: ClinicalCopilotContext): ClinicalCopilotContex
             : [],
           followUpTasks: Array.isArray(context.note.followUpTasks)
             ? context.note.followUpTasks.slice(0, 6).map((task) => ({
-                task: clampText(redactValue(task.task), 240) || 'Follow-up task',
+                task: sanitizeExternalAiText(task.task, 240) || 'Follow-up task',
                 priority: clampText(task.priority, 40),
                 dueDate: clampText(task.dueDate, 40),
                 confidence: task.confidence,
@@ -151,29 +165,29 @@ function sanitizeContext(context: ClinicalCopilotContext): ClinicalCopilotContex
             : [],
           recommendedTests: Array.isArray(context.note.recommendedTests)
             ? context.note.recommendedTests.slice(0, 6).map((test) => ({
-                testName: clampText(redactValue(test.testName), 200) || 'Recommended test',
-                rationale: clampText(redactValue(test.rationale), 240),
+                testName: sanitizeExternalAiText(test.testName, 200) || 'Recommended test',
+                rationale: sanitizeExternalAiText(test.rationale, 240),
                 urgency: test.urgency,
                 cptCode: clampText(test.cptCode, 32),
               }))
             : [],
           patientSummary: context.note.patientSummary
             ? {
-                whatWeDiscussed: clampText(redactValue(context.note.patientSummary.whatWeDiscussed), 600),
+                whatWeDiscussed: sanitizeExternalAiText(context.note.patientSummary.whatWeDiscussed, 600),
                 yourConcerns: Array.isArray(context.note.patientSummary.yourConcerns)
                   ? context.note.patientSummary.yourConcerns
-                      .map((item) => clampText(redactValue(item), 180))
+                      .map((item) => sanitizeExternalAiText(item, 180))
                       .filter((item): item is string => Boolean(item))
                       .slice(0, 8)
                   : [],
-                diagnosis: clampText(redactValue(context.note.patientSummary.diagnosis), 300),
-                treatmentPlan: clampText(redactValue(context.note.patientSummary.treatmentPlan), 500),
-                followUp: clampText(redactValue(context.note.patientSummary.followUp), 220),
+                diagnosis: sanitizeExternalAiText(context.note.patientSummary.diagnosis, 300),
+                treatmentPlan: sanitizeExternalAiText(context.note.patientSummary.treatmentPlan, 500),
+                followUp: sanitizeExternalAiText(context.note.patientSummary.followUp, 220),
               }
             : undefined,
         }
       : undefined,
-    transcriptExcerpt: clampText(redactValue(context.transcriptExcerpt), 5000),
+    transcriptExcerpt: sanitizeExternalAiText(context.transcriptExcerpt, 5000),
   };
 }
 
@@ -192,6 +206,24 @@ function normalizeHistory(history?: ClinicalCopilotMessage[]): ClinicalCopilotMe
     .map((item) => ({ role: item.role, content: item.content.trim() }))
     .filter((item) => item.content.length > 0)
     .slice(-8);
+}
+
+function sanitizeOutboundQuestion(question: string): string {
+  if (isHipaaClinicalAiEnabled()) {
+    return question.trim();
+  }
+  return deidentifyTextForExternalAi(question).text.trim();
+}
+
+function sanitizeOutboundHistory(history?: ClinicalCopilotMessage[]): ClinicalCopilotMessage[] {
+  const normalized = normalizeHistory(history);
+  if (isHipaaClinicalAiEnabled()) {
+    return normalized;
+  }
+  return normalized.map((message) => ({
+    ...message,
+    content: deidentifyTextForExternalAi(message.content).text,
+  }));
 }
 
 function buildSystemPrompt(): string {
@@ -225,7 +257,7 @@ function buildUserPrompt(question: string, context: ClinicalCopilotContext): str
     'CHART CONTEXT:',
     buildContextBlock(context),
     '',
-    `CLINICIAN QUESTION: ${question.trim()}`,
+    `CLINICIAN QUESTION: ${sanitizeOutboundQuestion(question)}`,
   ].join('\n');
 }
 
@@ -284,7 +316,7 @@ async function askOpenAI(input: AskClinicalCopilotInput): Promise<ClinicalCopilo
   }
 
   const model = getOpenAIModel();
-  const history = normalizeHistory(input.history).map((message) => ({
+  const history = sanitizeOutboundHistory(input.history).map((message) => ({
     role: message.role,
     content: message.content,
   }));
@@ -333,7 +365,7 @@ async function askAnthropic(input: AskClinicalCopilotInput): Promise<ClinicalCop
   }
 
   const model = getAnthropicModel();
-  const history = normalizeHistory(input.history).map((message) => ({
+  const history = sanitizeOutboundHistory(input.history).map((message) => ({
     role: message.role,
     content: message.content,
   }));
@@ -519,6 +551,12 @@ function buildMockResult(question: string, context: ClinicalCopilotContext): Cli
 
 export async function askClinicalCopilot(input: AskClinicalCopilotInput): Promise<ClinicalCopilotResult> {
   try {
+    if (getOpenAIKey() || getAnthropicKey()) {
+      assertClinicalAiPromptIsSafeForExternalAi({
+        prompt: input.question,
+        history: input.history,
+      });
+    }
     if (getOpenAIKey()) {
       return await askOpenAI(input);
     }
@@ -526,6 +564,9 @@ export async function askClinicalCopilot(input: AskClinicalCopilotInput): Promis
       return await askAnthropic(input);
     }
   } catch (error) {
+    if (error instanceof AiPhiBlockError) {
+      throw error;
+    }
     logger.warn('Clinical copilot provider failed, falling back to mock', {
       error: toSafeErrorMessage(error),
     });

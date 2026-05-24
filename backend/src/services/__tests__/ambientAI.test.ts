@@ -744,9 +744,9 @@ describe('AmbientAI Service', () => {
       );
       const prompt = String(requestBody?.messages?.[1]?.content || '');
 
-      expect(prompt).toContain('Emily Rodriguez');
+      expect(prompt).not.toContain('Emily Rodriguez');
       expect(prompt).toContain('36');
-      expect(prompt).toContain('Dr. David Skin, MD, FAAD');
+      expect(prompt).not.toContain('Dr. David Skin, MD, FAAD');
       expect(prompt).toContain('Rash Follow-up');
       expect(prompt).toContain('Medical Dermatology');
       expect(prompt).toContain('Known allergies: Penicillin');

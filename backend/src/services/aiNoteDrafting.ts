@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
+import { deidentifyTextForExternalAi } from "../utils/aiPhiGuard";
 import { redactValue } from "../utils/phiRedaction";
 
 /**
@@ -78,6 +79,7 @@ function sanitizePromptTextForModel(value: unknown, patientContext?: any): strin
   }
 
   let sanitized = String(redactValue(raw));
+  sanitized = deidentifyTextForExternalAi(sanitized).text;
   sanitized = sanitized.replace(
     /\b(patient|pt|name)\s*:\s*[^\n]+/gi,
     (_fullMatch: string, label: string) => `${label}: [PATIENT]`

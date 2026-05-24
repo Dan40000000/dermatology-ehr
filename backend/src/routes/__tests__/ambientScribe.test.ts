@@ -902,6 +902,17 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       );
     });
 
+    it('should block direct patient identifiers before calling the assistant', async () => {
+      const res = await request(app)
+        .post('/api/ambient/copilot/respond')
+        .send({ prompt: 'Patient name: James Ward has acne. What code should I use?' });
+
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe('AI_PHI_BLOCKED');
+      expect(res.body.blockedTypes).toContain('explicit_name');
+      expect(askClinicalCopilotMock).not.toHaveBeenCalled();
+    });
+
     it('should tolerate null optional appointment context identifiers', async () => {
       const res = await request(app)
         .post('/api/ambient/copilot/respond')

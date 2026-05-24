@@ -284,6 +284,21 @@ export function ClinicalCopilotPanel({
             </button>
           )}
         </div>
+        <div
+          style={{
+            marginTop: 10,
+            padding: '0.65rem 0.8rem',
+            borderRadius: 12,
+            background: '#fffbeb',
+            border: '1px solid #fde68a',
+            color: '#92400e',
+            fontSize: '0.8rem',
+            lineHeight: 1.45,
+            fontWeight: 700,
+          }}
+        >
+          Privacy guard active: do not type names, DOBs, phone numbers, addresses, insurance IDs, MRNs, or distinctive identifying features. If blocked, remove the identifier and submit again.
+        </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
           {canSaveVisitSummary && (

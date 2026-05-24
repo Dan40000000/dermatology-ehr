@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import FormData from 'form-data';
 import { logger } from '../lib/logger';
+import { deidentifyTextForExternalAi, isHipaaClinicalAiEnabled } from '../utils/aiPhiGuard';
 import { redactValue } from '../utils/phiRedaction';
 import { AgentConfiguration } from './agentConfigService';
 import { getIntegrationConfig } from '../integrations/baseAdapter';
@@ -1350,11 +1351,35 @@ function sanitizeTextForOutboundModel(text: string): { text: string; entities: P
   }
 
   const entities = detectPHI(normalized);
-  if (entities.length === 0) {
-    return { text: normalized, entities };
+  const maskedText = entities.length > 0 ? maskPHI(normalized, entities) : normalized;
+  const deidentified = deidentifyTextForExternalAi(maskedText);
+  const additionalEntities = deidentified.entities.map((entity) => ({
+    type: entity.type,
+    text: entity.hash,
+    start: entity.start,
+    end: entity.end,
+    masked_value: entity.replacement,
+  }));
+
+  return {
+    text: deidentified.text,
+    entities: [...entities, ...additionalEntities],
+  };
+}
+
+function sanitizePatientContextForOutboundModel(patientContext?: PatientContext): PatientContext | undefined {
+  if (!patientContext || isHipaaClinicalAiEnabled()) {
+    return patientContext;
   }
 
-  return { text: maskPHI(normalized, entities), entities };
+  const sanitize = (value?: string) => value ? deidentifyTextForExternalAi(String(redactValue(value))).text : undefined;
+  return {
+    ...patientContext,
+    patientName: undefined,
+    providerName: undefined,
+    chiefComplaint: sanitize(patientContext.chiefComplaint),
+    relevantHistory: sanitize(patientContext.relevantHistory),
+  };
 }
 
 function sanitizeOutboundPayload(
@@ -1405,6 +1430,7 @@ export async function generateClinicalNote(
   const anthropicKey = getAnthropicKey();
   const openAIKey = getOpenAIKey();
   const sanitizedPayload = sanitizeOutboundPayload(transcriptText, segments);
+  const safePatientContext = sanitizePatientContextForOutboundModel(patientContext);
 
   if (anthropicKey || openAIKey) {
     if (sanitizedPayload.maskedEntityCount > 0) {
@@ -1426,7 +1452,7 @@ export async function generateClinicalNote(
             sanitizedPayload.transcriptText,
             sanitizedPayload.segments,
             agentConfig,
-            patientContext,
+            safePatientContext,
             anthropicKey
           );
         } catch (error) {
@@ -1446,7 +1472,7 @@ export async function generateClinicalNote(
             sanitizedPayload.transcriptText,
             sanitizedPayload.segments,
             agentConfig,
-            patientContext,
+            safePatientContext,
             openAIKey
           );
         } catch (error) {

@@ -152,6 +152,7 @@ import { professionalFeedbackRouter } from "./professionalFeedback";
 import { publicBillPayRouter } from "./publicBillPay";
 import { stripeWebhooksRouter } from "./stripeWebhooks";
 import { accessSettingsRouter } from "./accessSettings";
+import { codingReviewRouter } from "./codingReview";
 
 export function registerRoutes(app: Express) {
   const requireClaimsAccess = [requireAuth, requireModuleAccess("claims")];
@@ -164,6 +165,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/stripe", stripeWebhooksRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/access-settings", accessSettingsRouter);
+  app.use("/api/coding-review", codingReviewRouter);
   app.use("/api/professional-feedback", professionalFeedbackRouter);
   app.use("/api/public-bill-pay", portalLimiter, publicBillPayRouter);
   app.use("/api/downtime-packets", downtimePacketsRouter);

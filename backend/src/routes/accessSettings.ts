@@ -5,6 +5,7 @@ import {
   getTenantAccessSettings,
   saveTenantAccessSettings,
 } from "../services/accessSettings";
+import { auditLog } from "../services/audit";
 
 export const accessSettingsRouter = Router();
 
@@ -30,6 +31,7 @@ accessSettingsRouter.put("/", requireRoles(["admin"]), async (req: AuthedRequest
     moduleAccess: req.body?.moduleAccess,
     commandCenterAccess: req.body?.commandCenterAccess,
   });
+  await auditLog(tenantId, req.user!.id, "access_settings_update", "tenant_access_settings", tenantId);
 
   return res.json(settings);
 });

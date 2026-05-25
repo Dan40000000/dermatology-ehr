@@ -21,6 +21,7 @@ export type ModuleKey =
   | "patients"
   | "notes"
   | "ambient_scribe"
+  | "coding_review"
   | "orders"
   | "rx"
   | "epa"
@@ -74,6 +75,7 @@ export const moduleAccess: Record<ModuleKey, Role[]> = {
   patients: PATIENT_ACCESS_ROLES,
   notes: CLINICAL_ROLES,
   ambient_scribe: CLINICAL_ROLES,
+  coding_review: ["admin", "provider", "ma", "nurse", "billing", "manager", "compliance_officer"],
   orders: CLINICAL_ROLES,
   rx: CLINICAL_ROLES,
   epa: CLINICAL_ROLES,

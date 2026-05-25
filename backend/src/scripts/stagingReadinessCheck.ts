@@ -130,6 +130,7 @@ const EVIDENCE_FILE_RULES: EvidenceFileRule[] = [
   { relativePath: 'compliance/evidence/hipaa-risk-analysis-latest.md', maxAgeDays: 365 },
   { relativePath: 'compliance/evidence/access-review-log.md', maxAgeDays: 90 },
   { relativePath: 'compliance/evidence/incident-response-tabletop.md', maxAgeDays: 180 },
+  { relativePath: 'compliance/evidence/operating-checklist.md', maxAgeDays: 90 },
 ];
 
 function extractMostRecentIsoDate(contents: string): Date | null {

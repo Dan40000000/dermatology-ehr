@@ -2428,6 +2428,80 @@ export async function fetchCptCode(tenantId: string, accessToken: string, code: 
   return authedGet(tenantId, accessToken, `/api/cpt-codes/${encodeURIComponent(code)}`);
 }
 
+export type PostVisitCodingIssue =
+  | "missing_diagnosis"
+  | "missing_primary_diagnosis"
+  | "missing_charge"
+  | "missing_cpt_code"
+  | "diagnosis_link_needed"
+  | "note_unsigned"
+  | "superbill_open"
+  | "claim_not_created"
+  | "claim_coding_review";
+
+export interface PostVisitCodingReviewItem {
+  encounterId: string;
+  appointmentId?: string | null;
+  patientId: string;
+  patientName: string;
+  providerId: string;
+  providerName: string;
+  serviceAt: string;
+  appointmentStatus?: string | null;
+  encounterStatus: string;
+  chiefComplaint?: string | null;
+  diagnosisCount: number;
+  primaryDiagnosisCount: number;
+  diagnosisCodes: string[];
+  chargeCount: number;
+  missingCptCount: number;
+  unlinkedChargeCount: number;
+  totalChargeCents: number;
+  cptCodes: string[];
+  superbillId?: string | null;
+  superbillStatus?: string | null;
+  claimId?: string | null;
+  claimStatus?: string | null;
+  issues: PostVisitCodingIssue[];
+  recommendedOwner: "provider" | "clinical_coding" | "billing";
+  severity: "high" | "medium" | "low";
+  reviewRoute: string;
+  claimRoute?: string | null;
+}
+
+export interface PostVisitCodingReviewResponse {
+  startDate: string;
+  endDate: string;
+  includeCleared: boolean;
+  items: PostVisitCodingReviewItem[];
+  summary: {
+    total: number;
+    cleared: number;
+    issueCounts: Partial<Record<PostVisitCodingIssue, number>>;
+  };
+}
+
+export async function fetchPostVisitCodingReview(
+  tenantId: string,
+  accessToken: string,
+  params?: {
+    startDate?: string;
+    endDate?: string;
+    providerId?: string;
+    includeCleared?: boolean;
+    limit?: number;
+  },
+): Promise<PostVisitCodingReviewResponse> {
+  const queryParams = new URLSearchParams();
+  if (params?.startDate) queryParams.set("startDate", params.startDate);
+  if (params?.endDate) queryParams.set("endDate", params.endDate);
+  if (params?.providerId) queryParams.set("providerId", params.providerId);
+  if (params?.includeCleared) queryParams.set("includeCleared", "true");
+  if (params?.limit) queryParams.set("limit", String(params.limit));
+  const query = queryParams.toString();
+  return authedGet(tenantId, accessToken, `/api/coding-review/post-visit${query ? `?${query}` : ""}`);
+}
+
 // ICD-10 Codes - Full library access
 export async function fetchIcd10Codes(tenantId: string, accessToken: string, params?: { search?: string; category?: string; common_only?: boolean }) {
   const queryParams = new URLSearchParams();
@@ -9967,6 +10041,9 @@ import type {
   StoreNotificationStatus,
   StoreOrder,
   StoreShippingMethod,
+  StorePromotion,
+  StorePromotionData,
+  StorePromotionQuote,
   ProductRecommendation,
   SalesReport,
   InventoryStatus,
@@ -10177,6 +10254,91 @@ export async function updateStoreOrderFulfillment(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to update store order');
+  }
+  return res.json();
+}
+
+export async function fetchStorePromotions(
+  tenantId: string,
+  accessToken: string
+): Promise<{ promotions: StorePromotion[] }> {
+  const res = await fetch(`${API_BASE}/api/products/promotions`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch store promotions');
+  }
+  return res.json();
+}
+
+export async function createStorePromotion(
+  tenantId: string,
+  accessToken: string,
+  data: StorePromotionData
+): Promise<{ promotion: StorePromotion }> {
+  const res = await fetch(`${API_BASE}/api/products/promotions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create store promotion');
+  }
+  return res.json();
+}
+
+export async function updateStorePromotion(
+  tenantId: string,
+  accessToken: string,
+  promotionId: string,
+  data: Partial<StorePromotionData>
+): Promise<{ promotion: StorePromotion }> {
+  const res = await fetch(`${API_BASE}/api/products/promotions/${promotionId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update store promotion');
+  }
+  return res.json();
+}
+
+export async function quoteStorePromotions(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    items: Array<{ productId: string; quantity: number }>;
+    shippingMethod?: StoreShippingMethod;
+    promotionCode?: string | null;
+  }
+): Promise<{ quote: StorePromotionQuote }> {
+  const res = await fetch(`${API_BASE}/api/products/promotions/quote`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to quote store promotion');
   }
   return res.json();
 }

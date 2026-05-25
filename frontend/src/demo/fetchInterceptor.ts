@@ -1583,6 +1583,91 @@ function getDemoProviders() {
   return [...seen.values()].sort((a, b) => String(a.fullName).localeCompare(String(b.fullName)));
 }
 
+function buildDemoPostVisitCodingReview(params: URLSearchParams) {
+  const startDate = params.get('startDate') || new Date().toISOString().split('T')[0];
+  const endDate = params.get('endDate') || startDate;
+  const providerId = params.get('providerId');
+  const includeCleared = params.get('includeCleared') === 'true';
+  const issueCounts: Record<string, number> = {};
+  const completedAppointments = getAllAppointments()
+    .filter((appointment) => {
+      const serviceDate = String(appointment.scheduledStart || appointment.createdAt || '').slice(0, 10);
+      if (serviceDate < startDate || serviceDate > endDate) return false;
+      if (providerId && String(appointment.providerId || '') !== providerId) return false;
+      return ['completed', 'checkout', 'checked_out', 'with_provider'].includes(String(appointment.status || '').toLowerCase());
+    })
+    .slice(0, 24);
+
+  const items = completedAppointments.map((appointment, index) => {
+    const patient = getPatientById(String(appointment.patientId || ''));
+    const patientName = patient
+      ? [patient.firstName, patient.lastName].filter(Boolean).join(' ') || patient.name || 'Demo patient'
+      : appointment.patientName || 'Demo patient';
+    const cleared = index % 5 === 4;
+    const issues = cleared
+      ? []
+      : ([
+          index % 3 === 0 ? 'missing_diagnosis' : null,
+          index % 3 === 1 ? 'missing_charge' : null,
+          index % 2 === 0 ? 'diagnosis_link_needed' : null,
+          index % 4 === 0 ? 'claim_not_created' : 'claim_coding_review',
+          'note_unsigned',
+        ].filter(Boolean) as string[]);
+    for (const issue of issues) issueCounts[issue] = (issueCounts[issue] || 0) + 1;
+    const cptCodes = issues.includes('missing_charge') ? [] : [index % 2 === 0 ? '99213' : '99214'];
+    const diagnosisCodes = issues.includes('missing_diagnosis') ? [] : [index % 2 === 0 ? 'L70.0' : 'L20.9'];
+    const claimId = issues.includes('claim_not_created') ? null : `demo-claim-${index + 1}`;
+    const recommendedOwner = issues.some((issue) => ['missing_diagnosis', 'note_unsigned'].includes(issue))
+      ? 'provider'
+      : issues.some((issue) => ['missing_charge', 'diagnosis_link_needed'].includes(issue))
+        ? 'clinical_coding'
+        : 'billing';
+
+    return {
+      encounterId: `demo-enc-${appointment.id}`,
+      appointmentId: appointment.id,
+      patientId: appointment.patientId,
+      patientName,
+      providerId: appointment.providerId,
+      providerName: appointment.providerName || 'Demo provider',
+      serviceAt: appointment.scheduledStart || appointment.createdAt || new Date().toISOString(),
+      appointmentStatus: appointment.status,
+      encounterStatus: cleared ? 'signed' : 'draft',
+      chiefComplaint: appointment.appointmentTypeName || appointment.reason || 'Dermatology follow-up',
+      diagnosisCount: diagnosisCodes.length,
+      primaryDiagnosisCount: diagnosisCodes.length > 0 ? 1 : 0,
+      diagnosisCodes,
+      chargeCount: cptCodes.length,
+      missingCptCount: 0,
+      unlinkedChargeCount: issues.includes('diagnosis_link_needed') ? 1 : 0,
+      totalChargeCents: cptCodes.length ? (index % 2 === 0 ? 18500 : 24500) : 0,
+      cptCodes,
+      superbillId: cleared ? `demo-sb-${index + 1}` : index % 2 === 0 ? `demo-sb-${index + 1}` : null,
+      superbillStatus: cleared ? 'submitted' : 'draft',
+      claimId,
+      claimStatus: claimId ? (issues.includes('claim_coding_review') ? 'coding_review' : 'submitted') : null,
+      issues,
+      recommendedOwner,
+      severity: issues.some((issue) => ['missing_diagnosis', 'missing_charge'].includes(issue)) ? 'high' : 'medium',
+      reviewRoute: `/patients/${appointment.patientId}/encounter/demo-enc-${appointment.id}`,
+      claimRoute: claimId ? `/claims/${claimId}` : null,
+    };
+  });
+
+  const visibleItems = includeCleared ? items : items.filter((item) => item.issues.length > 0);
+  return {
+    startDate,
+    endDate,
+    includeCleared,
+    items: visibleItems,
+    summary: {
+      total: visibleItems.length,
+      cleared: visibleItems.filter((item) => item.issues.length === 0).length,
+      issueCounts,
+    },
+  };
+}
+
 function filterDemoRecalls(
   recalls: DemoItem[],
   filters: { startDate?: string; endDate?: string; campaignId?: string; status?: string },
@@ -3480,6 +3565,10 @@ function handleProviderRoute(
   if (path === '/api/batches') return mockResponse(queryDemoBatches());
 
   if (path === '/api/claims/metrics') return mockResponse(getDemoClaimMetrics());
+
+  if (path === '/api/coding-review/post-visit' && method.toUpperCase() === 'GET') {
+    return mockResponse(buildDemoPostVisitCodingReview(params));
+  }
 
   if (path === '/api/claims' && method.toUpperCase() === 'GET') {
     return mockResponse(queryDemoClaims(params));

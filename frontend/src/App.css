@@ -13354,6 +13354,8 @@ kbd {
 .store-ops-order-controls button,
 .store-ops-product-table button,
 .store-ops-form button,
+.store-ops-deal-list button,
+.store-ops-template-list button,
 .store-ops-shipping-list button,
 .store-ops-payment-grid button,
 .store-ops-notice-list button {
@@ -13383,6 +13385,8 @@ kbd {
 .store-ops-order-controls button:disabled,
 .store-ops-product-table button:disabled,
 .store-ops-form button:disabled,
+.store-ops-deal-list button:disabled,
+.store-ops-template-list button:disabled,
 .store-ops-shipping-list button:disabled,
 .store-ops-payment-grid button:disabled,
 .store-ops-notice-list button:disabled {
@@ -13446,7 +13450,7 @@ kbd {
 
 .store-ops-metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
   gap: 0.75rem;
 }
 
@@ -13647,6 +13651,7 @@ kbd {
 
 .store-ops-order-list,
 .store-ops-product-table,
+.store-ops-deal-list,
 .store-ops-shipping-list,
 .store-ops-payment-grid,
 .store-ops-notice-list,
@@ -13657,6 +13662,7 @@ kbd {
 
 .store-ops-order,
 .store-ops-product-table article,
+.store-ops-deal-list article,
 .store-ops-shipping-list article,
 .store-ops-payment-grid article,
 .store-ops-notice-list article {
@@ -13690,6 +13696,7 @@ kbd {
 }
 
 .store-ops-order-main,
+.store-ops-deal-list article,
 .store-ops-shipping-list article,
 .store-ops-payment-grid article,
 .store-ops-notice-list article {
@@ -13792,6 +13799,11 @@ kbd {
   padding: 0.25rem 0.55rem;
 }
 
+.store-ops-order-deal {
+  color: #0f766e !important;
+  font-weight: 900;
+}
+
 .store-ops-template-list span,
 .store-ops-low-stock span {
   border-radius: 999px;
@@ -13800,6 +13812,68 @@ kbd {
   font-size: 0.78rem;
   font-weight: 700;
   padding: 0.28rem 0.6rem;
+}
+
+.store-ops-deal-summary {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 0.25rem 0.45rem;
+  min-width: 12rem;
+  border: 1px solid #d1fae5;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #115e59;
+  padding: 0.65rem;
+}
+
+.store-ops-deal-summary svg {
+  color: #0f766e;
+}
+
+.store-ops-deal-summary span {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.store-ops-deal-list article {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.store-ops-deal-list article.paused {
+  opacity: 0.62;
+}
+
+.store-ops-deal-list h3 {
+  margin: 0.2rem 0 0;
+  color: #111827;
+}
+
+.store-ops-deal-list p {
+  margin: 0.2rem 0 0;
+  color: #64748b;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.store-ops-deal-kind {
+  width: fit-content;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #075985 !important;
+  font-size: 0.72rem !important;
+  font-weight: 900;
+  padding: 0.24rem 0.55rem;
+  text-transform: uppercase;
+}
+
+.store-ops-deal-meta {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 9rem;
+  text-align: right;
 }
 
 .store-ops-order-controls {
@@ -13812,6 +13886,7 @@ kbd {
 .store-ops-order-controls label,
 .store-ops-product-table label,
 .store-ops-form label,
+.store-ops-deal-form label,
 .store-ops-payment-grid label,
 .store-ops-image-field > span {
   display: grid;
@@ -13878,6 +13953,7 @@ kbd {
 }
 
 .store-ops-product-table strong,
+.store-ops-deal-list strong,
 .store-ops-shipping-list strong,
 .store-ops-payment-grid strong,
 .store-ops-notice-list strong {
@@ -13887,6 +13963,7 @@ kbd {
 }
 
 .store-ops-product-table span,
+.store-ops-deal-list span,
 .store-ops-shipping-list span,
 .store-ops-payment-grid span,
 .store-ops-notice-list span {
@@ -13988,6 +14065,8 @@ kbd {
 }
 
 .store-ops-form button,
+.store-ops-deal-list button,
+.store-ops-template-list button,
 .store-ops-shipping-list button,
 .store-ops-payment-grid button,
 .store-ops-notice-list button {
@@ -14140,6 +14219,45 @@ kbd {
   gap: 0.75rem;
 }
 
+.portal-store-deals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.65rem;
+}
+
+.portal-store-deals button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.25rem 0.55rem;
+  min-width: 0;
+  border: 1px solid #d1fae5;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #115e59;
+  padding: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.portal-store-deals button svg {
+  grid-row: span 2;
+  color: #0f766e;
+}
+
+.portal-store-deals span {
+  color: #0f766e;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.portal-store-deals strong {
+  color: #111827;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
 .portal-store-featured button {
   display: grid;
   gap: 0.25rem;
@@ -14252,7 +14370,8 @@ kbd {
 }
 
 .portal-store-toolbar select,
-.portal-store-address input {
+.portal-store-address input,
+.portal-store-promo-code input {
   min-height: 2.35rem;
   border: 1px solid #d1d5db;
   border-radius: 6px;
@@ -14505,6 +14624,60 @@ kbd {
   font-size: 0.78rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.portal-store-promo-code {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.85rem;
+  color: #374151;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.portal-store-promo-code > div {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0 0.65rem;
+}
+
+.portal-store-promo-code input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  outline: 0;
+}
+
+.portal-store-applied-deals {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.65rem;
+}
+
+.portal-store-applied-deals span {
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 0.35rem 0.6rem;
+}
+
+.portal-store-quote-error {
+  margin-top: 0.65rem;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 0.82rem;
+  font-weight: 800;
+  padding: 0.6rem;
 }
 
 .portal-store-address > div {

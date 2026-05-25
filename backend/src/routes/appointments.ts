@@ -38,6 +38,10 @@ const waiveLateFeeSchema = z.object({
   reason: z.string().trim().min(3).max(500).optional(),
 });
 
+const assessCancellationFeeSchema = z.object({
+  reason: z.string().trim().min(3).max(500).optional(),
+});
+
 const APPOINTMENT_WINDOW_START_MINUTES = 7 * 60;
 const APPOINTMENT_WINDOW_END_MINUTES = 18 * 60;
 const APPOINTMENT_WINDOW_TIME_ZONE = getPracticeTimeZone();
@@ -125,15 +129,18 @@ async function createLateFeeBillIfNeeded(
     referenceScheduledStart: string | Date;
     trigger: LateFeeTrigger;
     assessedBy: string;
+    bypassWindow?: boolean;
+    reason?: string;
   },
 ): Promise<string | null> {
-  if (!isWithinLateFeeWindow(params.referenceScheduledStart)) {
+  if (!params.bypassWindow && !isWithinLateFeeWindow(params.referenceScheduledStart)) {
     return null;
   }
 
   const signature = buildLateFeeSignature(params.appointmentId, params.trigger, params.referenceScheduledStart);
   const description = buildLateFeeDescription(params.trigger);
-  const notes = `${signature}\n${description}`;
+  const reasonLine = params.reason?.trim() ? `\nreason=${params.reason.trim()}` : "";
+  const notes = `${signature}\n${description}${reasonLine}`;
   const serviceDate = getDateOnly(params.referenceScheduledStart);
 
   const existingResult = await queryable.query(
@@ -1248,6 +1255,90 @@ appointmentsRouter.post("/:id/status", requireAuth, requireRoles(["admin", "fron
 
   res.json({ ok: true, lateFeeBillId, noShowFeeBillId });
 });
+
+appointmentsRouter.post(
+  "/:id/cancellation-fee/assess",
+  requireAuth,
+  requireRoles(["admin", "front_desk", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = assessCancellationFeeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const apptId = String(req.params.id);
+    const client = await pool.connect();
+    let billId: string | null = null;
+    let feeType: "late_fee" | "no_show_fee" | null = null;
+
+    try {
+      await client.query("begin");
+      const appointmentResult = await client.query(
+        `select patient_id, scheduled_start, status
+         from appointments
+         where id = $1 and tenant_id = $2
+         for update`,
+        [apptId, tenantId],
+      );
+
+      if (!appointmentResult.rowCount) {
+        await client.query("rollback");
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+
+      const appointment = appointmentResult.rows[0];
+      const status = String(appointment.status || "");
+      if (status !== "cancelled" && status !== "no_show") {
+        await client.query("rollback");
+        return res.status(400).json({ error: "Cancellation fees can only be assessed on cancelled or no-show appointments" });
+      }
+
+      if (status === "no_show") {
+        feeType = "no_show_fee";
+        billId = await createNoShowFeeBillIfNeeded(client, {
+          tenantId,
+          appointmentId: apptId,
+          patientId: appointment.patient_id as string,
+          referenceScheduledStart: appointment.scheduled_start as string,
+          assessedBy: req.user!.id,
+          reason: parsed.data.reason,
+        });
+      } else {
+        feeType = "late_fee";
+        billId = await createLateFeeBillIfNeeded(client, {
+          tenantId,
+          appointmentId: apptId,
+          patientId: appointment.patient_id as string,
+          referenceScheduledStart: appointment.scheduled_start as string,
+          trigger: "cancel",
+          assessedBy: req.user!.id,
+          bypassWindow: true,
+          reason: parsed.data.reason,
+        });
+      }
+
+      if (!billId) {
+        await client.query("rollback");
+        return res.status(400).json({ error: "Fee could not be assessed for this appointment timing" });
+      }
+
+      await client.query("commit");
+    } catch (error: any) {
+      await client.query("rollback").catch(() => undefined);
+      logger.error("Failed to assess cancellation fee", {
+        error: error.message,
+        appointmentId: apptId,
+      });
+      return res.status(500).json({ error: "Failed to assess cancellation fee" });
+    } finally {
+      client.release();
+    }
+
+    await auditLog(tenantId, req.user!.id, "cancellation_fee_assess", "appointment", apptId);
+    return res.json({ ok: true, appointmentId: apptId, billId, feeType });
+  },
+);
 
 appointmentsRouter.post(
   "/late-fees/:billId/waive",

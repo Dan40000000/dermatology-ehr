@@ -1490,6 +1490,7 @@ export type DiscountType = 'percentage' | 'fixed' | 'loyalty';
 export type StoreFulfillmentStatus = 'awaiting_payment' | 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
 export type StoreNotificationStatus = 'queued' | 'sent' | 'failed' | 'muted';
 export type StoreShippingMethod = 'standard' | 'priority' | 'pickup';
+export type StorePromotionType = 'percentage' | 'fixed' | 'free_shipping';
 
 export interface Product {
   id: string;
@@ -1544,6 +1545,8 @@ export interface Sale {
   paymentMethod: PaymentMethod;
   paymentReference?: string;
   status: SaleStatus;
+  promotionCode?: string;
+  promotionSummary?: StorePromotionQuote | Record<string, unknown>;
   items?: SaleItemDetail[];
   patientFirstName?: string;
   patientLastName?: string;
@@ -1563,6 +1566,7 @@ export interface StoreOrder extends Sale {
   fulfillmentStatus: StoreFulfillmentStatus;
   shippingMethod: StoreShippingMethod;
   shippingFee?: number;
+  shippingDiscount?: number;
   carrier?: string;
   trackingNumber?: string;
   shippingAddress?: StoreShippingAddress | Record<string, unknown>;
@@ -1573,6 +1577,60 @@ export interface StoreOrder extends Sale {
   stripePaymentStatus: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface StorePromotion {
+  id: string;
+  tenantId: string;
+  name: string;
+  code?: string;
+  promotionType: StorePromotionType;
+  value: number;
+  minimumSubtotal: number;
+  startsAt?: string;
+  endsAt?: string;
+  isActive: boolean;
+  isAutomatic: boolean;
+  appliesTo: 'order';
+  maxRedemptions?: number;
+  redemptionCount: number;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StorePromotionApplication {
+  id: string;
+  name: string;
+  code?: string;
+  promotionType: StorePromotionType;
+  discountCents: number;
+  minimumSubtotal: number;
+  source: 'automatic' | 'code';
+}
+
+export interface StorePromotionQuote {
+  subtotal: number;
+  itemDiscount: number;
+  shippingDiscount: number;
+  shippingFee: number;
+  tax: number;
+  total: number;
+  promotionCode?: string;
+  appliedPromotions: StorePromotionApplication[];
+}
+
+export interface StorePromotionData {
+  name: string;
+  code?: string | null;
+  promotionType: StorePromotionType;
+  value: number;
+  minimumSubtotal?: number;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isActive?: boolean;
+  isAutomatic?: boolean;
+  maxRedemptions?: number | null;
 }
 
 export interface ProductRecommendation {

@@ -13286,6 +13286,145 @@ Consider age-appropriate treatments and include family counseling points.',
       ON tenant_access_settings USING GIN (command_center_access);
     `,
   },
+  {
+    name: "189_workflow_payment_runtime_compat",
+    sql: `
+    ALTER TABLE claim_payments
+      ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id) ON DELETE SET NULL;
+
+    CREATE TABLE IF NOT EXISTS appointment_metrics (
+      id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      appointment_id text NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+      checkin_time timestamptz,
+      roomed_time timestamptz,
+      provider_start_time timestamptz,
+      provider_end_time timestamptz,
+      checkout_time timestamptz,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      UNIQUE(appointment_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_appointment_metrics_tenant_checkin
+      ON appointment_metrics(tenant_id, checkin_time);
+
+    CREATE TABLE IF NOT EXISTS follow_up_queue (
+      id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id text REFERENCES patients(id) ON DELETE CASCADE,
+      source_appointment_id text REFERENCES appointments(id) ON DELETE SET NULL,
+      follow_up_type text NOT NULL,
+      target_date date NOT NULL,
+      scheduled_appointment_id text REFERENCES appointments(id) ON DELETE SET NULL,
+      status text NOT NULL DEFAULT 'pending',
+      contact_attempts integer NOT NULL DEFAULT 0,
+      last_contacted_at timestamptz,
+      notes text,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_follow_up_queue_pending
+      ON follow_up_queue(tenant_id, status, target_date);
+    `,
+  },
+  {
+    name: "190_store_promotions_deals",
+    sql: `
+    ALTER TABLE product_sales
+      ADD COLUMN IF NOT EXISTS promotion_code text,
+      ADD COLUMN IF NOT EXISTS promotion_summary jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+    CREATE TABLE IF NOT EXISTS store_order_fulfillments (
+      id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      sale_id text NOT NULL UNIQUE,
+      patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      channel text NOT NULL DEFAULT 'patient_portal',
+      fulfillment_status text NOT NULL DEFAULT 'paid',
+      shipping_method text NOT NULL DEFAULT 'standard',
+      shipping_fee integer NOT NULL DEFAULT 0,
+      carrier text,
+      tracking_number text,
+      shipping_address jsonb NOT NULL DEFAULT '{}'::jsonb,
+      notification_email text,
+      notification_status text NOT NULL DEFAULT 'queued',
+      last_notification_at timestamptz,
+      stripe_checkout_session_id text,
+      stripe_payment_intent_id text,
+      stripe_payment_status text NOT NULL DEFAULT 'paid',
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now()
+    );
+
+    ALTER TABLE store_order_fulfillments
+      ADD COLUMN IF NOT EXISTS shipping_discount integer NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS store_promotions (
+      id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name text NOT NULL,
+      code text,
+      promotion_type text NOT NULL,
+      value integer NOT NULL DEFAULT 0,
+      minimum_subtotal integer NOT NULL DEFAULT 0,
+      starts_at timestamptz,
+      ends_at timestamptz,
+      is_active boolean NOT NULL DEFAULT true,
+      is_automatic boolean NOT NULL DEFAULT false,
+      applies_to text NOT NULL DEFAULT 'order',
+      max_redemptions integer,
+      redemption_count integer NOT NULL DEFAULT 0,
+      created_by text,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_store_promotions_tenant_active
+      ON store_promotions(tenant_id, is_active);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_store_promotions_tenant_code_unique
+      ON store_promotions(tenant_id, lower(code))
+      WHERE code IS NOT NULL AND code <> '';
+
+    INSERT INTO store_promotions (
+      tenant_id, name, code, promotion_type, value, minimum_subtotal,
+      is_active, is_automatic, applies_to, created_at, updated_at
+    )
+    SELECT id, 'Free standard shipping over $80', NULL, 'free_shipping', 0, 8000,
+           true, true, 'order', now(), now()
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1 FROM store_promotions sp
+      WHERE sp.tenant_id = t.id AND sp.name = 'Free standard shipping over $80'
+    );
+
+    INSERT INTO store_promotions (
+      tenant_id, name, code, promotion_type, value, minimum_subtotal,
+      is_active, is_automatic, applies_to, created_at, updated_at
+    )
+    SELECT id, 'Welcome 10% Off', 'WELCOME10', 'percentage', 10, 0,
+           true, false, 'order', now(), now()
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1 FROM store_promotions sp
+      WHERE sp.tenant_id = t.id AND lower(sp.code) = 'welcome10'
+    );
+
+    INSERT INTO store_promotions (
+      tenant_id, name, code, promotion_type, value, minimum_subtotal,
+      is_active, is_automatic, applies_to, created_at, updated_at
+    )
+    SELECT id, 'Event Day 50% Off', NULL, 'percentage', 50, 0,
+           false, true, 'order', now(), now()
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1 FROM store_promotions sp
+      WHERE sp.tenant_id = t.id AND sp.name = 'Event Day 50% Off'
+    );
+    `,
+  },
 
 ];
 

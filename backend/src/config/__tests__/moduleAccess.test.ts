@@ -5,6 +5,7 @@ describe('module access', () => {
     expect(canAccessModule('admin', 'home')).toBe(true);
     expect(canAccessModule('provider', 'notes')).toBe(true);
     expect(canAccessModule('ma', 'ambient_scribe')).toBe(true);
+    expect(canAccessModule('billing', 'coding_review')).toBe(true);
     expect(canAccessModule('front_desk', 'tasks')).toBe(true);
   });
 
@@ -14,6 +15,7 @@ describe('module access', () => {
     expect(canAccessModule('front_desk', 'claims')).toBe(true);
     expect(canAccessModule('compliance_officer', 'financials')).toBe(true);
     expect(canAccessModule('billing', 'analytics')).toBe(false);
+    expect(canAccessModule('front_desk', 'coding_review')).toBe(false);
     expect(canAccessModule(undefined, 'home')).toBe(false);
   });
 

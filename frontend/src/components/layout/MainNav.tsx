@@ -103,6 +103,19 @@ const navItems: NavItem[] = [
     ]
   },
   {
+    label: 'Coding Review',
+    path: '/coding-review',
+    module: 'coding_review',
+    dropdown: [
+      { label: 'Post-Visit Queue', path: '/coding-review' },
+      { label: 'Missing Diagnosis', path: '/coding-review?issue=missing_diagnosis' },
+      { label: 'Missing CPT', path: '/coding-review?issue=missing_charge' },
+      { label: 'Needs Dx Link', path: '/coding-review?issue=diagnosis_link_needed' },
+      { label: 'Unsigned Notes', path: '/coding-review?issue=note_unsigned' },
+      { label: 'Include Cleared', path: '/coding-review?includeCleared=true' },
+    ]
+  },
+  {
     label: 'AI Assistant',
     path: '/ai-assistant',
     module: 'ai_assistant',
@@ -291,6 +304,7 @@ const navItems: NavItem[] = [
     dropdown: [
       { label: 'Order Queue', path: '/store-ops', section: 'Store' },
       { label: 'Products', path: '/store-ops?tab=products', section: 'Store' },
+      { label: 'Deals', path: '/store-ops?tab=deals', section: 'Store' },
       { label: 'Shipping', path: '/store-ops?tab=shipping', section: 'Store' },
       { label: 'Payments', path: '/store-ops?tab=payments', section: 'Store' },
       { label: 'Notifications', path: '/store-ops?tab=notifications', section: 'Store' },
@@ -332,6 +346,7 @@ const navItems: NavItem[] = [
       { label: 'Pending', path: '/claims?status=pending', section: 'Claims', module: 'claims' },
       { label: 'Submitted', path: '/claims?status=submitted', section: 'Claims', module: 'claims' },
       { label: 'Denied', path: '/claims?status=denied', section: 'Claims', module: 'claims' },
+      { label: 'Coding Review', path: '/coding-review', section: 'Claims', module: 'coding_review' },
       { label: 'Dashboard', path: '/clearinghouse', section: 'Clearinghouse', module: 'clearinghouse' },
       { label: 'Submissions', path: '/clearinghouse?tab=submissions', section: 'Clearinghouse', module: 'clearinghouse' },
       { label: 'ERA', path: '/clearinghouse?tab=era', section: 'Clearinghouse', module: 'clearinghouse' },

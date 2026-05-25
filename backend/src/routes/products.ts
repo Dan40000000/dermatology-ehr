@@ -71,6 +71,7 @@ const createSaleSchema = z.object({
 const storeFulfillmentStatusSchema = z.enum(['awaiting_payment', 'paid', 'packing', 'label_created', 'shipped', 'delivered', 'exception', 'cancelled']);
 const storeNotificationStatusSchema = z.enum(['queued', 'sent', 'failed', 'muted']);
 const storeShippingMethodSchema = z.enum(['standard', 'priority', 'pickup']);
+const storePromotionTypeSchema = z.enum(['percentage', 'fixed', 'free_shipping']);
 
 const updateStoreFulfillmentSchema = z.object({
   fulfillmentStatus: storeFulfillmentStatusSchema.optional(),
@@ -94,6 +95,27 @@ const adjustInventorySchema = z.object({
 const applyDiscountSchema = z.object({
   discountType: discountTypeSchema,
   amount: z.number().min(0),
+});
+
+const storePromotionSchema = z.object({
+  name: z.string().min(1).max(160),
+  code: z.string().max(80).nullable().optional(),
+  promotionType: storePromotionTypeSchema,
+  value: z.number().int().min(0),
+  minimumSubtotal: z.number().int().min(0).optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional(),
+  isActive: z.boolean().optional(),
+  isAutomatic: z.boolean().optional(),
+  maxRedemptions: z.number().int().min(1).nullable().optional(),
+});
+
+const storePromotionUpdateSchema = storePromotionSchema.partial();
+
+const storePromotionQuoteSchema = z.object({
+  items: z.array(saleItemSchema.pick({ productId: true, quantity: true })).min(1).max(50),
+  shippingMethod: storeShippingMethodSchema.optional(),
+  promotionCode: z.string().max(80).nullable().optional(),
 });
 
 export const productsRouter = Router();
@@ -444,6 +466,71 @@ productsRouter.post("/sales/:id/discount", requireAuth, requireRoles(["admin", "
     res.json({ sale });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Failed to apply discount' });
+  }
+});
+
+productsRouter.get("/promotions", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const promotions = await productSalesService.getStorePromotions(tenantId);
+    res.json({ promotions });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch store promotions' });
+  }
+});
+
+productsRouter.post("/promotions", requireAuth, requireRoles(["admin", "provider", "manager"]), async (req: AuthedRequest, res) => {
+  try {
+    const parsed = storePromotionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const promotion = await productSalesService.createStorePromotion(tenantId, parsed.data, req.user!.id);
+    res.status(201).json({ promotion });
+  } catch (error: any) {
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'A promotion with this code already exists' });
+    }
+    res.status(400).json({ error: error.message || 'Failed to create store promotion' });
+  }
+});
+
+productsRouter.put("/promotions/:id", requireAuth, requireRoles(["admin", "provider", "manager"]), async (req: AuthedRequest, res) => {
+  try {
+    const parsed = storePromotionUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const promotion = await productSalesService.updateStorePromotion(tenantId, req.params.id as string, parsed.data);
+    if (!promotion) {
+      return res.status(404).json({ error: 'Promotion not found' });
+    }
+
+    res.json({ promotion });
+  } catch (error: any) {
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'A promotion with this code already exists' });
+    }
+    res.status(400).json({ error: error.message || 'Failed to update store promotion' });
+  }
+});
+
+productsRouter.post("/promotions/quote", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const parsed = storePromotionQuoteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const quote = await productSalesService.calculateStorePromotionQuote(tenantId, parsed.data);
+    res.json({ quote });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to quote store order' });
   }
 });
 

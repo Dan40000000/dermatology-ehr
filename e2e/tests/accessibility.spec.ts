@@ -62,6 +62,14 @@ test.describe('Accessibility', () => {
     await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
+  test('post-visit coding review should be accessible', async ({ page }) => {
+    await login(page);
+    await page.goto('/coding-review');
+    await expect(page.getByRole('heading', { name: /post-visit coding review/i })).toBeVisible();
+
+    await expectNoA11yViolations(page, { disableKnownInternalRules: true });
+  });
+
   test('patient access needs workflow should be accessible', async ({ page }) => {
     await login(page);
     await page.goto('/patients/demo-patient-2?tab=accessibility');

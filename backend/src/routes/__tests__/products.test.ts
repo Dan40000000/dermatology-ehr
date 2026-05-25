@@ -98,4 +98,89 @@ describe("Products routes", () => {
     orderSpy.mockRestore();
     productSpy.mockRestore();
   });
+
+  it("POST /products/promotions/quote returns a server-side store deal quote", async () => {
+    const quote = {
+      subtotal: 9000,
+      itemDiscount: 900,
+      shippingDiscount: 595,
+      shippingFee: 0,
+      tax: 668,
+      total: 8768,
+      promotionCode: "WELCOME10",
+      appliedPromotions: [
+        {
+          id: "promo-1",
+          name: "Welcome 10% Off",
+          code: "WELCOME10",
+          promotionType: "percentage",
+          discountCents: 900,
+          minimumSubtotal: 0,
+          source: "code",
+        },
+      ],
+    };
+    const quoteSpy = jest.spyOn(productSalesService, "calculateStorePromotionQuote").mockResolvedValueOnce(quote as any);
+
+    const res = await request(app)
+      .post("/products/promotions/quote")
+      .send({
+        items: [{ productId: "10000000-0000-4000-8000-000000000001", quantity: 2 }],
+        shippingMethod: "standard",
+        promotionCode: "WELCOME10",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.quote).toEqual(quote);
+    expect(quoteSpy).toHaveBeenCalledWith("tenant-1", {
+      items: [{ productId: "10000000-0000-4000-8000-000000000001", quantity: 2 }],
+      shippingMethod: "standard",
+      promotionCode: "WELCOME10",
+    });
+
+    quoteSpy.mockRestore();
+  });
+
+  it("POST /products/promotions creates a provider-managed deal", async () => {
+    const promotion = {
+      id: "promo-2",
+      tenantId: "tenant-1",
+      name: "Sale Day 50% Off",
+      promotionType: "percentage",
+      value: 50,
+      minimumSubtotal: 0,
+      isActive: true,
+      isAutomatic: true,
+      redemptionCount: 0,
+    };
+    const createSpy = jest.spyOn(productSalesService, "createStorePromotion").mockResolvedValueOnce(promotion as any);
+
+    const res = await request(app)
+      .post("/products/promotions")
+      .send({
+        name: "Sale Day 50% Off",
+        promotionType: "percentage",
+        value: 50,
+        minimumSubtotal: 0,
+        isActive: true,
+        isAutomatic: true,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.promotion).toEqual(promotion);
+    expect(createSpy).toHaveBeenCalledWith(
+      "tenant-1",
+      {
+        name: "Sale Day 50% Off",
+        promotionType: "percentage",
+        value: 50,
+        minimumSubtotal: 0,
+        isActive: true,
+        isAutomatic: true,
+      },
+      "user-1"
+    );
+
+    createSpy.mockRestore();
+  });
 });

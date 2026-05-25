@@ -8,6 +8,7 @@ This folder is the working evidence binder for staging/production HIPAA readines
 - `evidence/hipaa-risk-analysis-latest.md`: Most recent HIPAA risk analysis snapshot.
 - `evidence/access-review-log.md`: Access recertification records and approvals.
 - `evidence/incident-response-tabletop.md`: Incident tabletop drills and outcomes.
+- `evidence/operating-checklist.md`: Daily/weekly/monthly HIPAA operating controls and go-live gates.
 
 ## Usage
 

@@ -433,6 +433,30 @@ describe("Appointments routes", () => {
     expect(updateCall).toBeFalsy();
   });
 
+  it("POST /appointments/:id/cancellation-fee/assess creates late fee for already-cancelled appointment", async () => {
+    const pastStart = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ patient_id: "patient-1", scheduled_start: pastStart, status: "cancelled" }],
+        rowCount: 1,
+      }) // select appointment
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // existing late fee lookup
+      .mockResolvedValueOnce({ rows: [] }) // insert bill
+      .mockResolvedValueOnce({ rows: [] }) // insert bill line item
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app)
+      .post("/appointments/appt-1/cancellation-fee/assess")
+      .send({ reason: "Backfilled after billing review." });
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.feeType).toBe("late_fee");
+    expect(res.body.billId).toBeTruthy();
+    expect(auditLogMock).toHaveBeenCalledWith("tenant-1", "user-1", "cancellation_fee_assess", "appointment", "appt-1");
+  });
+
   it("POST /appointments/late-fees/:billId/waive waives late fee bill", async () => {
     queryMock
       .mockResolvedValueOnce({

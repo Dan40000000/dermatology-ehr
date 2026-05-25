@@ -34,6 +34,7 @@ export type ModuleKey =
   | 'notes'
   | 'ai_assistant'
   | 'ambient_scribe'
+  | 'coding_review'
   | 'orders'
   | 'rx'
   | 'epa'
@@ -122,6 +123,7 @@ export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
   notes: CLINICAL_ROLES,
   ai_assistant: ['admin', 'provider'],
   ambient_scribe: CLINICAL_ROLES,
+  coding_review: ['admin', 'provider', 'ma', 'nurse', 'billing', 'manager', 'compliance_officer'],
   orders: CLINICAL_ROLES,
   rx: CLINICAL_ROLES,
   epa: CLINICAL_ROLES,
@@ -170,6 +172,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   notes: 'Notes',
   ai_assistant: 'AI Assistant',
   ambient_scribe: 'Ambient Scribe',
+  coding_review: 'Post-Visit Coding Review',
   orders: 'Orders',
   rx: 'Rx',
   epa: 'ePA',
@@ -312,6 +315,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/financials', module: 'financials' },
   { path: '/claims', module: 'claims' },
   { path: '/clearinghouse', module: 'clearinghouse' },
+  { path: '/coding-review', module: 'coding_review' },
   { path: '/quotes', module: 'quotes' },
   { path: '/store-ops', module: 'store' },
   { path: '/inventory', module: 'inventory' },

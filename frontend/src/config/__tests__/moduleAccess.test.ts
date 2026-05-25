@@ -15,6 +15,14 @@ describe('moduleAccess', () => {
     expect(canAccessModule('provider', 'analytics')).toBe(false);
   });
 
+  it('allows post-visit coding review for clinical and billing roles', () => {
+    expect(getModuleForPath('/coding-review')).toBe('coding_review');
+    expect(canAccessModule('provider', 'coding_review')).toBe(true);
+    expect(canAccessModule('ma', 'coding_review')).toBe(true);
+    expect(canAccessModule('billing', 'coding_review')).toBe(true);
+    expect(canAccessModule('front_desk', 'coding_review')).toBe(false);
+  });
+
   it('hides analytics from billing while keeping financial dashboards', () => {
     expect(canAccessModule('billing', 'analytics')).toBe(false);
     expect(canAccessModule('billing', 'financials')).toBe(true);

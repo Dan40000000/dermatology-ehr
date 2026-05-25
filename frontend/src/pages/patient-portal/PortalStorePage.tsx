@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckCircle, CreditCard, Minus, Package, Plus, Search, ShoppingCart, Truck } from 'lucide-react';
+import { CheckCircle, CreditCard, Minus, Package, Plus, Search, ShoppingCart, Ticket, Truck } from 'lucide-react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { patientPortalFetch, usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import { getProductImageUrl } from '../../utils/productImages';
-import type { Product, StoreShippingAddress } from '../../types';
+import type { Product, StorePromotion, StorePromotionQuote, StoreShippingAddress } from '../../types';
 
 interface CartLine {
   product: Product;
@@ -58,15 +58,20 @@ export function PortalStorePage() {
   const { patient } = usePatientPortalAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
+  const [promotions, setPromotions] = useState<StorePromotion[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [loading, setLoading] = useState(true);
+  const [quoting, setQuoting] = useState(false);
   const [placingOrder, setPlacingOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quote, setQuote] = useState<StorePromotionQuote | null>(null);
   const [confirmation, setConfirmation] = useState<StoreOrderConfirmation | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<Product['category'] | 'all'>('all');
   const [concernFilter, setConcernFilter] = useState<(typeof CONCERN_FILTERS)[number]['value']>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [shippingMethod, setShippingMethod] = useState<'standard' | 'priority' | 'pickup'>('standard');
+  const [promotionCode, setPromotionCode] = useState('');
   const [shippingAddress, setShippingAddress] = useState<StoreShippingAddress>({
     name: `${patient?.firstName || ''} ${patient?.lastName || ''}`.trim(),
     street: '',
@@ -93,6 +98,7 @@ export function PortalStorePage() {
         const data = await patientPortalFetch('/api/patient-portal-data/store/products');
         if (!cancelled) {
           setProducts((data.products || []).filter((product: Product) => product.category !== 'prescription'));
+          setPromotions(data.promotions || []);
         }
       } catch (err) {
         if (!cancelled) {
@@ -143,6 +149,7 @@ export function PortalStorePage() {
           const refreshed = await patientPortalFetch('/api/patient-portal-data/store/products');
           if (!cancelled) {
             setProducts((refreshed.products || []).filter((product: Product) => product.category !== 'prescription'));
+            setPromotions(refreshed.promotions || []);
           }
         }
       } catch (err) {
@@ -196,9 +203,57 @@ export function PortalStorePage() {
     () => cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0),
     [cart]
   );
-  const tax = Math.round(subtotal * TAX_RATE);
-  const shippingFee = cart.length > 0 ? (shippingMethod === 'priority' ? 995 : shippingMethod === 'standard' ? 595 : 0) : 0;
-  const total = subtotal + tax + shippingFee;
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      setQuote(null);
+      setQuoteError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadQuote = async () => {
+      try {
+        setQuoting(true);
+        setQuoteError(null);
+        const codeForQuote = promotionCode.trim().length >= 3 ? promotionCode.trim() : undefined;
+        const response = await patientPortalFetch('/api/patient-portal-data/store/quote', {
+          method: 'POST',
+          body: JSON.stringify({
+            items: cart.map((line) => ({
+              productId: line.product.id,
+              quantity: line.quantity,
+            })),
+            shippingMethod,
+            promotionCode: codeForQuote,
+          }),
+        });
+        if (!cancelled) {
+          setQuote(response.quote || null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setQuote(null);
+          setQuoteError(err instanceof Error ? err.message : 'Could not apply discount');
+        }
+      } finally {
+        if (!cancelled) setQuoting(false);
+      }
+    };
+
+    void loadQuote();
+    return () => {
+      cancelled = true;
+    };
+  }, [cart, promotionCode, shippingMethod]);
+
+  const fallbackTax = Math.round(subtotal * TAX_RATE);
+  const fallbackShippingFee = cart.length > 0 ? (shippingMethod === 'priority' ? 995 : shippingMethod === 'standard' ? 595 : 0) : 0;
+  const tax = quote?.tax ?? fallbackTax;
+  const discount = quote?.itemDiscount ?? 0;
+  const shippingDiscount = quote?.shippingDiscount ?? 0;
+  const shippingFee = quote?.shippingFee ?? fallbackShippingFee;
+  const total = quote?.total ?? Math.max(0, subtotal - discount) + tax + shippingFee;
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
   const addToCart = (product: Product) => {
@@ -256,6 +311,7 @@ export function PortalStorePage() {
           })),
           shippingAddress,
           shippingMethod,
+          promotionCode: promotionCode.trim() || undefined,
           notificationEmail: patient?.email,
         }),
       });
@@ -273,8 +329,11 @@ export function PortalStorePage() {
         trackingNumber: order.trackingNumber,
       });
       setCart([]);
+      setPromotionCode('');
+      setQuote(null);
       const refreshed = await patientPortalFetch('/api/patient-portal-data/store/products');
       setProducts((refreshed.products || []).filter((product: Product) => product.category !== 'prescription'));
+      setPromotions(refreshed.promotions || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to place order');
     } finally {
@@ -294,6 +353,7 @@ export function PortalStorePage() {
               <span>{products.length || 50} curated products</span>
               <span>{categoryCounts.sunscreen || 0} sunscreens</span>
               <span>{categoryCounts.post_procedure || 0} recovery items</span>
+              {promotions.length > 0 && <span>{promotions.length} active deal{promotions.length === 1 ? '' : 's'}</span>}
             </div>
           </div>
           <div className="portal-store-cart-pill">
@@ -317,6 +377,24 @@ export function PortalStorePage() {
           <div className="portal-store-error" role="alert">
             {error}
           </div>
+        )}
+
+        {!loading && promotions.length > 0 && (
+          <section className="portal-store-deals" aria-label="Store deals">
+            {promotions.slice(0, 3).map((promotion) => (
+              <button
+                key={promotion.id}
+                type="button"
+                onClick={() => {
+                  if (promotion.code) setPromotionCode(promotion.code);
+                }}
+              >
+                <Ticket size={16} />
+                <span>{promotion.code || 'Automatic deal'}</span>
+                <strong>{promotion.name}</strong>
+              </button>
+            ))}
+          </section>
         )}
 
         {!loading && featuredProducts.length > 0 && (
@@ -526,19 +604,45 @@ export function PortalStorePage() {
                   <span>Secure payment token is attached to the order.</span>
                 </div>
               </div>
+              <label className="portal-store-promo-code">
+                Discount code
+                <div>
+                  <Ticket size={16} />
+                  <input
+                    value={promotionCode}
+                    onChange={(event) => setPromotionCode(event.target.value.toUpperCase())}
+                    placeholder="WELCOME10"
+                    autoComplete="off"
+                  />
+                </div>
+              </label>
+              {quote?.appliedPromotions?.length ? (
+                <div className="portal-store-applied-deals">
+                  {quote.appliedPromotions.map((promotion) => (
+                    <span key={promotion.id}>{promotion.name}: -{formatCurrency(promotion.discountCents)}</span>
+                  ))}
+                </div>
+              ) : null}
+              {quoteError && promotionCode.trim().length >= 3 && (
+                <div className="portal-store-quote-error" role="alert">{quoteError}</div>
+              )}
               <div className="portal-store-summary">
                 <div><span>Subtotal</span><strong>{formatCurrency(subtotal)}</strong></div>
+                {discount > 0 && <div><span>Discount</span><strong>-{formatCurrency(discount)}</strong></div>}
                 <div><span>Tax</span><strong>{formatCurrency(tax)}</strong></div>
-                <div><span>Delivery</span><strong>{formatCurrency(shippingFee)}</strong></div>
+                <div>
+                  <span>Delivery {shippingDiscount > 0 ? `(${formatCurrency(shippingDiscount)} saved)` : ''}</span>
+                  <strong>{formatCurrency(shippingFee)}</strong>
+                </div>
                 <div className="total"><span>Total</span><strong>{formatCurrency(total)}</strong></div>
               </div>
               <button
                 type="button"
                 className="portal-store-place-order"
                 onClick={placeOrder}
-                disabled={cart.length === 0 || placingOrder}
+                disabled={cart.length === 0 || placingOrder || Boolean(quoteError && promotionCode.trim().length >= 3)}
               >
-                {placingOrder ? 'Placing Order...' : `Place Order ${formatCurrency(total)}`}
+                {placingOrder ? 'Placing Order...' : quoting ? 'Updating total...' : `Place Order ${formatCurrency(total)}`}
               </button>
             </div>
           </aside>

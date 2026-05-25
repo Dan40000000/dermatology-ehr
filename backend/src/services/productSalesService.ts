@@ -10,6 +10,7 @@ export type DiscountType = 'percentage' | 'fixed' | 'loyalty';
 export type StoreFulfillmentStatus = 'awaiting_payment' | 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
 export type StoreNotificationStatus = 'queued' | 'sent' | 'failed' | 'muted';
 export type StoreShippingMethod = 'standard' | 'priority' | 'pickup';
+export type StorePromotionType = 'percentage' | 'fixed' | 'free_shipping';
 
 export interface Product {
   id: string;
@@ -56,6 +57,8 @@ export interface Sale {
   paymentMethod: PaymentMethod;
   paymentReference?: string;
   status: SaleStatus;
+  promotionCode?: string;
+  promotionSummary?: StorePromotionQuote | Record<string, unknown>;
   items?: SaleItemDetail[];
   patientFirstName?: string;
   patientLastName?: string;
@@ -131,6 +134,7 @@ export interface StoreOrder extends Sale {
   fulfillmentStatus: StoreFulfillmentStatus;
   shippingMethod: StoreShippingMethod;
   shippingFee?: number;
+  shippingDiscount?: number;
   carrier?: string;
   trackingNumber?: string;
   shippingAddress?: StoreShippingAddress | Record<string, unknown>;
@@ -149,6 +153,7 @@ export interface StoreFulfillmentInput {
   fulfillmentStatus?: StoreFulfillmentStatus;
   shippingMethod?: StoreShippingMethod;
   shippingFee?: number;
+  shippingDiscount?: number;
   carrier?: string | null;
   trackingNumber?: string | null;
   shippingAddress?: StoreShippingAddress | Record<string, unknown>;
@@ -159,8 +164,105 @@ export interface StoreFulfillmentInput {
   stripePaymentStatus?: string;
 }
 
+export interface StorePromotion {
+  id: string;
+  tenantId: string;
+  name: string;
+  code?: string;
+  promotionType: StorePromotionType;
+  value: number;
+  minimumSubtotal: number;
+  startsAt?: string;
+  endsAt?: string;
+  isActive: boolean;
+  isAutomatic: boolean;
+  appliesTo: 'order';
+  maxRedemptions?: number;
+  redemptionCount: number;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StorePromotionInput {
+  name: string;
+  code?: string | null;
+  promotionType: StorePromotionType;
+  value: number;
+  minimumSubtotal?: number;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isActive?: boolean;
+  isAutomatic?: boolean;
+  maxRedemptions?: number | null;
+}
+
+export interface StorePromotionApplication {
+  id: string;
+  name: string;
+  code?: string;
+  promotionType: StorePromotionType;
+  discountCents: number;
+  minimumSubtotal: number;
+  source: 'automatic' | 'code';
+}
+
+export interface StorePromotionQuote {
+  subtotal: number;
+  itemDiscount: number;
+  shippingDiscount: number;
+  shippingFee: number;
+  tax: number;
+  total: number;
+  promotionCode?: string;
+  appliedPromotions: StorePromotionApplication[];
+}
+
+interface StorePromotionQuoteRequest {
+  items: SaleItem[];
+  shippingMethod?: StoreShippingMethod;
+  promotionCode?: string | null;
+}
+
+interface SalePromotionContext {
+  code?: string;
+  summary?: StorePromotionQuote | Record<string, unknown>;
+}
+
 // Tax rate (configurable per tenant in production)
 const DEFAULT_TAX_RATE = 0.0825; // 8.25%
+
+export function getStoreShippingFee(method: StoreShippingMethod = 'standard'): number {
+  if (method === 'priority') return 995;
+  if (method === 'pickup') return 0;
+  return 595;
+}
+
+function normalizePromotionCode(value?: string | null): string | undefined {
+  const normalized = String(value || '').trim().toUpperCase();
+  return normalized || undefined;
+}
+
+function toNullableDate(value?: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === 'object') return value as Record<string, unknown>;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
 
 interface StoreCatalogSeedProduct {
   id: string;
@@ -436,6 +538,8 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
         ADD COLUMN IF NOT EXISTS tax INTEGER DEFAULT 0,
         ADD COLUMN IF NOT EXISTS discount INTEGER DEFAULT 0,
         ADD COLUMN IF NOT EXISTS total INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS promotion_code TEXT,
+        ADD COLUMN IF NOT EXISTS promotion_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
     `);
     await client.query(`
@@ -548,6 +652,31 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
       )
     `);
     await client.query(`
+      ALTER TABLE store_order_fulfillments
+        ADD COLUMN IF NOT EXISTS shipping_discount INTEGER NOT NULL DEFAULT 0
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS store_promotions (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        code TEXT,
+        promotion_type TEXT NOT NULL,
+        value INTEGER NOT NULL DEFAULT 0,
+        minimum_subtotal INTEGER NOT NULL DEFAULT 0,
+        starts_at TIMESTAMPTZ,
+        ends_at TIMESTAMPTZ,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        is_automatic BOOLEAN NOT NULL DEFAULT false,
+        applies_to TEXT NOT NULL DEFAULT 'order',
+        max_redemptions INTEGER,
+        redemption_count INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
       CREATE INDEX IF NOT EXISTS idx_products_category ON products(tenant_id, category);
       CREATE INDEX IF NOT EXISTS idx_products_active ON products(tenant_id) WHERE is_active = true;
@@ -557,6 +686,10 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
       CREATE INDEX IF NOT EXISTS idx_product_sale_items_sale ON product_sale_items(sale_id);
       CREATE INDEX IF NOT EXISTS idx_store_fulfillments_tenant ON store_order_fulfillments(tenant_id);
       CREATE INDEX IF NOT EXISTS idx_store_fulfillments_sale ON store_order_fulfillments(sale_id);
+      CREATE INDEX IF NOT EXISTS idx_store_promotions_tenant_active ON store_promotions(tenant_id, is_active);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_store_promotions_tenant_code_unique
+        ON store_promotions(tenant_id, lower(code))
+        WHERE code IS NOT NULL AND code <> '';
     `);
     await client.query(`
       ALTER TABLE store_order_fulfillments
@@ -618,9 +751,9 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
     for (const product of EXPANDED_STORE_CATALOG) {
       await client.query(
         `INSERT INTO products (
-          id, tenant_id, sku, name, description, category, brand, price, cost,
+          tenant_id, sku, name, description, category, brand, price, cost,
           inventory_count, reorder_point, is_active, image_url, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12, NOW(), NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, NOW(), NOW())
         ON CONFLICT (tenant_id, sku) DO UPDATE SET
           name = EXCLUDED.name,
           description = EXCLUDED.description,
@@ -637,7 +770,6 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
           is_active = true,
           updated_at = NOW()`,
         [
-          product.id,
           tenantId,
           product.sku,
           product.name,
@@ -653,6 +785,48 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
       );
     }
 
+    await client.query(
+      `INSERT INTO store_promotions (
+         tenant_id, name, code, promotion_type, value, minimum_subtotal,
+         is_active, is_automatic, applies_to, created_at, updated_at
+       )
+       SELECT $1, 'Free standard shipping over $80', NULL, 'free_shipping', 0, 8000,
+              true, true, 'order', NOW(), NOW()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM store_promotions
+         WHERE tenant_id = $1 AND name = 'Free standard shipping over $80'
+       )`,
+      [tenantId]
+    );
+
+    await client.query(
+      `INSERT INTO store_promotions (
+         tenant_id, name, code, promotion_type, value, minimum_subtotal,
+         is_active, is_automatic, applies_to, created_at, updated_at
+       )
+       SELECT $1, 'Welcome 10% Off', 'WELCOME10', 'percentage', 10, 0,
+              true, false, 'order', NOW(), NOW()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM store_promotions
+         WHERE tenant_id = $1 AND lower(code) = 'welcome10'
+       )`,
+      [tenantId]
+    );
+
+    await client.query(
+      `INSERT INTO store_promotions (
+         tenant_id, name, code, promotion_type, value, minimum_subtotal,
+         is_active, is_automatic, applies_to, created_at, updated_at
+       )
+       SELECT $1, 'Event Day 50% Off', NULL, 'percentage', 50, 0,
+              false, true, 'order', NOW(), NOW()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM store_promotions
+         WHERE tenant_id = $1 AND name = 'Event Day 50% Off'
+       )`,
+      [tenantId]
+    );
+
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -660,6 +834,347 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
   } finally {
     client.release();
   }
+}
+
+function normalizePromotionRow(row: any): StorePromotion {
+  return {
+    id: row.id,
+    tenantId: row.tenantId || row.tenant_id,
+    name: row.name,
+    code: row.code || undefined,
+    promotionType: row.promotionType || row.promotion_type,
+    value: Number(row.value) || 0,
+    minimumSubtotal: Number(row.minimumSubtotal ?? row.minimum_subtotal) || 0,
+    startsAt: toIsoString(row.startsAt ?? row.starts_at),
+    endsAt: toIsoString(row.endsAt ?? row.ends_at),
+    isActive: Boolean(row.isActive ?? row.is_active),
+    isAutomatic: Boolean(row.isAutomatic ?? row.is_automatic),
+    appliesTo: 'order',
+    maxRedemptions: row.maxRedemptions ?? row.max_redemptions ?? undefined,
+    redemptionCount: Number(row.redemptionCount ?? row.redemption_count) || 0,
+    createdBy: row.createdBy || row.created_by || undefined,
+    createdAt: toIsoString(row.createdAt ?? row.created_at),
+    updatedAt: toIsoString(row.updatedAt ?? row.updated_at),
+  };
+}
+
+function activePromotionClause(prefix = ''): string {
+  const p = prefix ? `${prefix}.` : '';
+  return `
+    ${p}is_active = true
+    AND (${p}starts_at IS NULL OR ${p}starts_at <= NOW())
+    AND (${p}ends_at IS NULL OR ${p}ends_at >= NOW())
+    AND (${p}max_redemptions IS NULL OR ${p}redemption_count < ${p}max_redemptions)
+  `;
+}
+
+function calculateOrderPromotionDiscount(promotion: StorePromotion, subtotal: number): number {
+  if (subtotal < promotion.minimumSubtotal) return 0;
+  if (promotion.promotionType === 'percentage') {
+    return Math.min(subtotal, Math.round(subtotal * (Math.min(Math.max(promotion.value, 0), 100) / 100)));
+  }
+  if (promotion.promotionType === 'fixed') {
+    return Math.min(subtotal, Math.max(0, promotion.value));
+  }
+  return 0;
+}
+
+function buildPromotionApplication(
+  promotion: StorePromotion,
+  discountCents: number
+): StorePromotionApplication {
+  return {
+    id: promotion.id,
+    name: promotion.name,
+    code: promotion.code,
+    promotionType: promotion.promotionType,
+    discountCents,
+    minimumSubtotal: promotion.minimumSubtotal,
+    source: promotion.isAutomatic ? 'automatic' : 'code',
+  };
+}
+
+export async function getStorePromotions(tenantId: string): Promise<StorePromotion[]> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
+  const result = await pool.query(
+    `SELECT
+       id, tenant_id as "tenantId", name, code, promotion_type as "promotionType",
+       value, minimum_subtotal as "minimumSubtotal", starts_at as "startsAt",
+       ends_at as "endsAt", is_active as "isActive", is_automatic as "isAutomatic",
+       applies_to as "appliesTo", max_redemptions as "maxRedemptions",
+       redemption_count as "redemptionCount", created_by as "createdBy",
+       created_at as "createdAt", updated_at as "updatedAt"
+     FROM store_promotions
+     WHERE tenant_id = $1
+     ORDER BY is_active DESC, is_automatic DESC, name ASC`,
+    [tenantId]
+  );
+
+  return result.rows.map(normalizePromotionRow);
+}
+
+export async function getStorefrontPromotions(tenantId: string): Promise<StorePromotion[]> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
+  const result = await pool.query(
+    `SELECT
+       id, tenant_id as "tenantId", name, code, promotion_type as "promotionType",
+       value, minimum_subtotal as "minimumSubtotal", starts_at as "startsAt",
+       ends_at as "endsAt", is_active as "isActive", is_automatic as "isAutomatic",
+       applies_to as "appliesTo", max_redemptions as "maxRedemptions",
+       redemption_count as "redemptionCount", created_by as "createdBy",
+       created_at as "createdAt", updated_at as "updatedAt"
+     FROM store_promotions
+     WHERE tenant_id = $1
+       AND (${activePromotionClause('store_promotions')})
+       AND (is_automatic = true OR code IS NOT NULL)
+     ORDER BY is_automatic DESC, minimum_subtotal ASC, name ASC`,
+    [tenantId]
+  );
+
+  return result.rows.map(normalizePromotionRow);
+}
+
+export async function createStorePromotion(
+  tenantId: string,
+  input: StorePromotionInput,
+  createdBy?: string
+): Promise<StorePromotion> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
+  const code = normalizePromotionCode(input.code);
+  if (!input.name.trim()) {
+    throw new Error('Promotion name is required');
+  }
+  if (!input.isAutomatic && !code) {
+    throw new Error('Discount codes need a code or must be marked automatic');
+  }
+  if ((input.promotionType === 'percentage' || input.promotionType === 'fixed') && input.value <= 0) {
+    throw new Error('Discount value must be greater than zero');
+  }
+
+  const result = await pool.query(
+    `INSERT INTO store_promotions (
+       tenant_id, name, code, promotion_type, value, minimum_subtotal,
+       starts_at, ends_at, is_active, is_automatic, applies_to,
+       max_redemptions, created_by, created_at, updated_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz, $9, $10, 'order',
+       $11, $12, NOW(), NOW()
+     )
+     RETURNING
+       id, tenant_id as "tenantId", name, code, promotion_type as "promotionType",
+       value, minimum_subtotal as "minimumSubtotal", starts_at as "startsAt",
+       ends_at as "endsAt", is_active as "isActive", is_automatic as "isAutomatic",
+       applies_to as "appliesTo", max_redemptions as "maxRedemptions",
+       redemption_count as "redemptionCount", created_by as "createdBy",
+       created_at as "createdAt", updated_at as "updatedAt"`,
+    [
+      tenantId,
+      input.name.trim(),
+      code || null,
+      input.promotionType,
+      Math.max(0, Math.round(input.value)),
+      Math.max(0, Math.round(input.minimumSubtotal || 0)),
+      toNullableDate(input.startsAt),
+      toNullableDate(input.endsAt),
+      input.isActive ?? true,
+      input.isAutomatic ?? false,
+      input.maxRedemptions ?? null,
+      createdBy || null,
+    ]
+  );
+
+  return normalizePromotionRow(result.rows[0]);
+}
+
+export async function updateStorePromotion(
+  tenantId: string,
+  promotionId: string,
+  input: Partial<StorePromotionInput>
+): Promise<StorePromotion | null> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
+  const updates: string[] = [];
+  const values: any[] = [];
+  let paramIndex = 1;
+
+  const addUpdate = (column: string, value: unknown, cast = '') => {
+    updates.push(`${column} = $${paramIndex}${cast}`);
+    values.push(value);
+    paramIndex++;
+  };
+
+  if (input.name !== undefined) {
+    if (!input.name.trim()) throw new Error('Promotion name is required');
+    addUpdate('name', input.name.trim());
+  }
+  if (input.code !== undefined) addUpdate('code', normalizePromotionCode(input.code) || null);
+  if (input.promotionType !== undefined) addUpdate('promotion_type', input.promotionType);
+  if (input.value !== undefined) addUpdate('value', Math.max(0, Math.round(input.value)));
+  if (input.minimumSubtotal !== undefined) addUpdate('minimum_subtotal', Math.max(0, Math.round(input.minimumSubtotal || 0)));
+  if (input.startsAt !== undefined) addUpdate('starts_at', toNullableDate(input.startsAt), '::timestamptz');
+  if (input.endsAt !== undefined) addUpdate('ends_at', toNullableDate(input.endsAt), '::timestamptz');
+  if (input.isActive !== undefined) addUpdate('is_active', input.isActive);
+  if (input.isAutomatic !== undefined) addUpdate('is_automatic', input.isAutomatic);
+  if (input.maxRedemptions !== undefined) addUpdate('max_redemptions', input.maxRedemptions ?? null);
+
+  if (updates.length === 0) {
+    const promotions = await getStorePromotions(tenantId);
+    return promotions.find((promotion) => promotion.id === promotionId) || null;
+  }
+
+  updates.push('updated_at = NOW()');
+  values.push(promotionId, tenantId);
+
+  const result = await pool.query(
+    `UPDATE store_promotions
+     SET ${updates.join(', ')}
+     WHERE id::text = $${paramIndex} AND tenant_id = $${paramIndex + 1}
+     RETURNING
+       id, tenant_id as "tenantId", name, code, promotion_type as "promotionType",
+       value, minimum_subtotal as "minimumSubtotal", starts_at as "startsAt",
+       ends_at as "endsAt", is_active as "isActive", is_automatic as "isAutomatic",
+       applies_to as "appliesTo", max_redemptions as "maxRedemptions",
+       redemption_count as "redemptionCount", created_by as "createdBy",
+       created_at as "createdAt", updated_at as "updatedAt"`,
+    values
+  );
+
+  return result.rows[0] ? normalizePromotionRow(result.rows[0]) : null;
+}
+
+export async function calculateStorePromotionQuote(
+  tenantId: string,
+  request: StorePromotionQuoteRequest
+): Promise<StorePromotionQuote> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
+  const shippingMethod = request.shippingMethod || 'standard';
+  const baseShippingFee = getStoreShippingFee(shippingMethod);
+  const normalizedCode = normalizePromotionCode(request.promotionCode);
+  const normalizedItems = (request.items || []).filter((item) => item.productId && item.quantity > 0);
+
+  if (normalizedItems.length === 0) {
+    throw new Error('At least one store item is required');
+  }
+
+  const quantityByProductId = new Map<string, number>();
+  for (const item of normalizedItems) {
+    quantityByProductId.set(item.productId, (quantityByProductId.get(item.productId) || 0) + item.quantity);
+  }
+
+  const productResult = await pool.query(
+    `SELECT id, sku, name, price, inventory_count, is_active, category
+     FROM products
+     WHERE tenant_id = $1 AND id::text = ANY($2::text[])`,
+    [tenantId, Array.from(quantityByProductId.keys())]
+  );
+  const productsById = new Map(productResult.rows.map((product) => [product.id, product]));
+
+  let subtotal = 0;
+  for (const item of normalizedItems) {
+    const product = productsById.get(item.productId);
+    if (!product) throw new Error('One or more products are no longer available');
+    if (!product.is_active) throw new Error(`${product.name} is no longer active`);
+    if (product.category === 'prescription') {
+      throw new Error('Prescription products cannot be purchased through the store');
+    }
+    const requestedQuantity = quantityByProductId.get(item.productId) || item.quantity;
+    if (Number(product.inventory_count) < requestedQuantity) {
+      throw new Error(`Insufficient inventory for ${product.name}: only ${product.inventory_count} available`);
+    }
+    subtotal += ((item.unitPrice ?? Number(product.price)) || 0) * item.quantity - (item.discountAmount || 0);
+  }
+  subtotal = Math.max(0, subtotal);
+
+  const automaticResult = await pool.query(
+    `SELECT
+       id, tenant_id as "tenantId", name, code, promotion_type as "promotionType",
+       value, minimum_subtotal as "minimumSubtotal", starts_at as "startsAt",
+       ends_at as "endsAt", is_active as "isActive", is_automatic as "isAutomatic",
+       applies_to as "appliesTo", max_redemptions as "maxRedemptions",
+       redemption_count as "redemptionCount", created_by as "createdBy",
+       created_at as "createdAt", updated_at as "updatedAt"
+     FROM store_promotions
+     WHERE tenant_id = $1
+       AND is_automatic = true
+       AND (${activePromotionClause('store_promotions')})`,
+    [tenantId]
+  );
+
+  const candidates = automaticResult.rows.map(normalizePromotionRow);
+  let codePromotion: StorePromotion | null = null;
+  if (normalizedCode) {
+    const codeResult = await pool.query(
+      `SELECT
+         id, tenant_id as "tenantId", name, code, promotion_type as "promotionType",
+         value, minimum_subtotal as "minimumSubtotal", starts_at as "startsAt",
+         ends_at as "endsAt", is_active as "isActive", is_automatic as "isAutomatic",
+         applies_to as "appliesTo", max_redemptions as "maxRedemptions",
+         redemption_count as "redemptionCount", created_by as "createdBy",
+         created_at as "createdAt", updated_at as "updatedAt"
+       FROM store_promotions
+       WHERE tenant_id = $1
+         AND lower(code) = lower($2)
+       LIMIT 1`,
+      [tenantId, normalizedCode]
+    );
+
+    if (!codeResult.rowCount) {
+      throw new Error('Discount code not found or inactive');
+    }
+
+    const possibleCodePromotion = normalizePromotionRow(codeResult.rows[0]);
+    const now = Date.now();
+    const startsAt = possibleCodePromotion.startsAt ? new Date(possibleCodePromotion.startsAt).getTime() : null;
+    const endsAt = possibleCodePromotion.endsAt ? new Date(possibleCodePromotion.endsAt).getTime() : null;
+    const isDateValid = (!startsAt || startsAt <= now) && (!endsAt || endsAt >= now);
+    const hasRedemptions = possibleCodePromotion.maxRedemptions === undefined || possibleCodePromotion.redemptionCount < possibleCodePromotion.maxRedemptions;
+    if (!possibleCodePromotion.isActive || !isDateValid || !hasRedemptions) {
+      throw new Error('Discount code not found or inactive');
+    }
+    if (subtotal < possibleCodePromotion.minimumSubtotal) {
+      throw new Error(`Discount code requires at least $${(possibleCodePromotion.minimumSubtotal / 100).toFixed(2)} in products`);
+    }
+    codePromotion = possibleCodePromotion;
+    candidates.push(possibleCodePromotion);
+  }
+
+  const eligiblePromotions = candidates.filter((promotion) => subtotal >= promotion.minimumSubtotal);
+  const orderDiscountCandidates = eligiblePromotions
+    .filter((promotion) => promotion.promotionType !== 'free_shipping')
+    .map((promotion) => ({
+      promotion,
+      discount: calculateOrderPromotionDiscount(promotion, subtotal),
+    }))
+    .filter((entry) => entry.discount > 0)
+    .sort((a, b) => b.discount - a.discount);
+
+  const bestOrderDiscount = orderDiscountCandidates[0] || null;
+  const freeShippingPromotion = eligiblePromotions.find((promotion) => promotion.promotionType === 'free_shipping' && baseShippingFee > 0);
+
+  const itemDiscount = bestOrderDiscount ? bestOrderDiscount.discount : 0;
+  const shippingDiscount = freeShippingPromotion ? baseShippingFee : 0;
+  const shippingFee = Math.max(0, baseShippingFee - shippingDiscount);
+  const taxableAmount = Math.max(0, subtotal - itemDiscount);
+  const tax = Math.round(taxableAmount * DEFAULT_TAX_RATE);
+  const appliedPromotions = [
+    ...(bestOrderDiscount ? [buildPromotionApplication(bestOrderDiscount.promotion, itemDiscount)] : []),
+    ...(freeShippingPromotion ? [buildPromotionApplication(freeShippingPromotion, shippingDiscount)] : []),
+  ];
+
+  return {
+    subtotal,
+    itemDiscount,
+    shippingDiscount,
+    shippingFee,
+    tax,
+    total: taxableAmount + tax + shippingFee,
+    promotionCode: codePromotion?.code,
+    appliedPromotions,
+  };
 }
 
 /**
@@ -673,7 +1188,8 @@ export async function createSale(
   soldBy: string,
   encounterId?: string,
   discountAmount?: number,
-  status: SaleStatus = 'completed'
+  status: SaleStatus = 'completed',
+  promotion?: SalePromotionContext
 ): Promise<Sale> {
   await ensureStoreSchemaAndCatalog(tenantId);
   const client = await pool.connect();
@@ -730,18 +1246,20 @@ export async function createSale(
     }
 
     // Calculate totals
-    const saleDiscount = discountAmount ?? 0;
-    const taxableAmount = subtotal - saleDiscount;
+    const saleDiscount = Math.min(Math.max(0, discountAmount ?? 0), subtotal);
+    const taxableAmount = Math.max(0, subtotal - saleDiscount);
     const tax = Math.round(taxableAmount * DEFAULT_TAX_RATE);
     const total = taxableAmount + tax;
+    const promotionCode = normalizePromotionCode(promotion?.code) || normalizePromotionCode((promotion?.summary as StorePromotionQuote | undefined)?.promotionCode);
+    const promotionSummary = promotion?.summary || {};
 
     // Create sale record
     await client.query(
       `INSERT INTO product_sales (
         id, tenant_id, patient_id, encounter_id, sold_by,
         sale_date, subtotal, tax, discount, total,
-        payment_method, payment_reference, status
-      ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9, $10, $11, $12)`,
+        payment_method, payment_reference, status, promotion_code, promotion_summary
+      ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)`,
       [
         saleId,
         tenantId,
@@ -755,6 +1273,8 @@ export async function createSale(
         paymentInfo.method,
         paymentInfo.reference || null,
         status,
+        promotionCode || null,
+        JSON.stringify(promotionSummary),
       ]
     );
 
@@ -779,6 +1299,21 @@ export async function createSale(
       );
     }
 
+    const appliedPromotionIds = Array.from(new Set(
+      ((promotion?.summary as StorePromotionQuote | undefined)?.appliedPromotions || [])
+        .map((entry) => entry.id)
+        .filter(Boolean)
+    ));
+    if (appliedPromotionIds.length > 0) {
+      await client.query(
+        `UPDATE store_promotions
+         SET redemption_count = redemption_count + 1,
+             updated_at = NOW()
+         WHERE tenant_id = $1 AND id::text = ANY($2::text[])`,
+        [tenantId, appliedPromotionIds]
+      );
+    }
+
     await client.query('COMMIT');
 
     return {
@@ -795,6 +1330,8 @@ export async function createSale(
       paymentMethod: paymentInfo.method,
       paymentReference: paymentInfo.reference,
       status,
+      promotionCode,
+      promotionSummary,
       items: saleItems,
     };
   } catch (error) {
@@ -1420,6 +1957,7 @@ export async function getPatientSales(
       ps.sale_date as "saleDate", ps.subtotal, ps.tax, ps.discount,
       ps.total, ps.payment_method as "paymentMethod",
       ps.payment_reference as "paymentReference", ps.status,
+      ps.promotion_code as "promotionCode", ps.promotion_summary as "promotionSummary",
       p.first_name as "patientFirstName", p.last_name as "patientLastName"
     FROM product_sales ps
     LEFT JOIN patients p ON ps.patient_id = p.id
@@ -1447,6 +1985,7 @@ export async function getSale(
       ps.sale_date as "saleDate", ps.subtotal, ps.tax, ps.discount,
       ps.total, ps.payment_method as "paymentMethod",
       ps.payment_reference as "paymentReference", ps.status,
+      ps.promotion_code as "promotionCode", ps.promotion_summary as "promotionSummary",
       p.first_name as "patientFirstName", p.last_name as "patientLastName"
     FROM product_sales ps
     LEFT JOIN patients p ON ps.patient_id = p.id
@@ -1503,12 +2042,15 @@ function normalizeStoreOrderRow(row: any): StoreOrder {
     paymentMethod: row.paymentMethod,
     paymentReference: row.paymentReference || undefined,
     status: row.status,
+    promotionCode: row.promotionCode || undefined,
+    promotionSummary: parseJsonObject(row.promotionSummary),
     patientFirstName: row.patientFirstName || undefined,
     patientLastName: row.patientLastName || undefined,
     channel: row.channel || 'staff',
     fulfillmentStatus: row.fulfillmentStatus || 'paid',
     shippingMethod: row.shippingMethod || 'standard',
     shippingFee: Number(row.shippingFee) || 0,
+    shippingDiscount: Number(row.shippingDiscount) || 0,
     carrier: row.carrier || undefined,
     trackingNumber: row.trackingNumber || undefined,
     shippingAddress: row.shippingAddress || {},
@@ -1606,7 +2148,8 @@ async function getStoreOrdersWithoutFulfillment(
        ps.encounter_id as "encounterId", ps.sold_by as "soldBy",
        ps.sale_date as "saleDate", ps.subtotal, ps.tax, ps.discount,
        ps.total, 0 as "shippingFee", ps.payment_method as "paymentMethod",
-       ps.payment_reference as "paymentReference", ps.status,
+       0 as "shippingDiscount", ps.payment_reference as "paymentReference", ps.status,
+       ps.promotion_code as "promotionCode", ps.promotion_summary as "promotionSummary",
        p.first_name as "patientFirstName", p.last_name as "patientLastName",
        'staff' as channel, 'paid' as "fulfillmentStatus",
        'standard' as "shippingMethod", NULL as carrier,
@@ -1691,8 +2234,10 @@ export async function getStoreOrders(
          ps.sale_date as "saleDate", ps.subtotal, ps.tax, ps.discount,
          (ps.total + COALESCE(sof.shipping_fee, 0)) as total,
          COALESCE(sof.shipping_fee, 0) as "shippingFee",
+         COALESCE(sof.shipping_discount, 0) as "shippingDiscount",
          ps.payment_method as "paymentMethod",
          ps.payment_reference as "paymentReference", ps.status,
+         ps.promotion_code as "promotionCode", ps.promotion_summary as "promotionSummary",
          p.first_name as "patientFirstName", p.last_name as "patientLastName",
          COALESCE(sof.channel, 'staff') as channel,
          COALESCE(sof.fulfillment_status, 'paid') as "fulfillmentStatus",
@@ -1737,19 +2282,20 @@ export async function createStoreFulfillment(
     await pool.query(
       `INSERT INTO store_order_fulfillments (
        id, tenant_id, sale_id, patient_id, channel, fulfillment_status,
-         shipping_method, shipping_fee, carrier, tracking_number, shipping_address,
+         shipping_method, shipping_fee, shipping_discount, carrier, tracking_number, shipping_address,
          notification_email, notification_status, last_notification_at,
          stripe_checkout_session_id, stripe_payment_intent_id, stripe_payment_status
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13,
-         CASE WHEN $13 IN ('sent', 'failed') THEN NOW() ELSE NULL END,
-         $14, $15, $16
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14,
+         CASE WHEN $14 IN ('sent', 'failed') THEN NOW() ELSE NULL END,
+         $15, $16, $17
        )
        ON CONFLICT (sale_id) DO UPDATE SET
          channel = EXCLUDED.channel,
          fulfillment_status = EXCLUDED.fulfillment_status,
          shipping_method = EXCLUDED.shipping_method,
          shipping_fee = EXCLUDED.shipping_fee,
+         shipping_discount = EXCLUDED.shipping_discount,
          carrier = EXCLUDED.carrier,
          tracking_number = EXCLUDED.tracking_number,
          shipping_address = EXCLUDED.shipping_address,
@@ -1772,6 +2318,7 @@ export async function createStoreFulfillment(
         data.fulfillmentStatus || 'paid',
         data.shippingMethod || 'standard',
         Math.max(0, data.shippingFee || 0),
+        Math.max(0, data.shippingDiscount || 0),
         data.carrier || null,
         data.trackingNumber || null,
         JSON.stringify(data.shippingAddress || {}),
@@ -1818,6 +2365,7 @@ export async function updateStoreFulfillment(
     if (data.fulfillmentStatus !== undefined) addUpdate('fulfillment_status', data.fulfillmentStatus);
     if (data.shippingMethod !== undefined) addUpdate('shipping_method', data.shippingMethod);
     if (data.shippingFee !== undefined) addUpdate('shipping_fee', Math.max(0, data.shippingFee));
+    if (data.shippingDiscount !== undefined) addUpdate('shipping_discount', Math.max(0, data.shippingDiscount));
     if (data.carrier !== undefined) addUpdate('carrier', data.carrier);
     if (data.trackingNumber !== undefined) addUpdate('tracking_number', data.trackingNumber);
     if (data.shippingAddress !== undefined) addUpdate('shipping_address', JSON.stringify(data.shippingAddress), '::jsonb');

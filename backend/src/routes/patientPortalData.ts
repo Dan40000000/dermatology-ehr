@@ -80,11 +80,21 @@ const portalStoreOrderSchema = z.object({
   notificationEmail: z.string().email().optional(),
   paymentReference: z.string().max(255).optional(),
   stripePaymentIntentId: z.string().max(255).optional(),
+  promotionCode: z.string().max(80).optional(),
 });
 
 const portalStoreCheckoutSchema = portalStoreOrderSchema.omit({
   paymentReference: true,
   stripePaymentIntentId: true,
+});
+
+const portalStoreQuoteSchema = z.object({
+  items: z.array(z.object({
+    productId: z.string().uuid(),
+    quantity: z.number().int().min(1).max(25),
+  })).min(1).max(20),
+  shippingMethod: z.enum(["standard", "priority", "pickup"]).optional(),
+  promotionCode: z.string().max(80).optional(),
 });
 
 async function markPortalItemsRead(
@@ -191,11 +201,34 @@ patientPortalDataRouter.get("/store/products", async (req: PatientPortalRequest,
     const tenantId = req.patient!.tenantId;
     const products = await productSalesService.getProducts(tenantId, { isActive: true });
     const storeProducts = products.filter((product) => product.category !== "prescription");
+    const promotions = await productSalesService.getStorefrontPromotions(tenantId);
 
-    return res.json({ products: storeProducts });
+    return res.json({ products: storeProducts, promotions });
   } catch (error) {
     logPatientPortalDataError("Portal store products error", error);
     return res.status(500).json({ error: "Failed to load store products" });
+  }
+});
+
+/**
+ * POST /api/patient-portal-data/store/quote
+ * Quote patient portal store cart totals and available discounts.
+ */
+patientPortalDataRouter.post("/store/quote", async (req: PatientPortalRequest, res) => {
+  try {
+    const parsed = portalStoreQuoteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.patient!.tenantId;
+    const quote = await productSalesService.calculateStorePromotionQuote(tenantId, parsed.data);
+    return res.json({ quote });
+  } catch (error) {
+    logPatientPortalDataError("Portal store quote error", error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Failed to quote store order",
+    });
   }
 });
 
@@ -212,26 +245,17 @@ patientPortalDataRouter.post("/store/orders", async (req: PatientPortalRequest, 
 
     const tenantId = req.patient!.tenantId;
     const patientId = req.patient!.patientId;
-    const requestedProductIds = new Set(parsed.data.items.map((item) => item.productId));
-    const activeProducts = await productSalesService.getProducts(tenantId, { isActive: true });
-    const productsById = new Map(activeProducts.map((product) => [product.id, product]));
-
-    for (const productId of requestedProductIds) {
-      const product = productsById.get(productId);
-      if (!product) {
-        return res.status(404).json({ error: "One or more products are no longer available" });
-      }
-      if (product.category === "prescription") {
-        return res.status(400).json({ error: "Prescription products cannot be purchased through the store" });
-      }
-    }
+    const shippingMethod = parsed.data.shippingMethod || "standard";
+    const quote = await productSalesService.calculateStorePromotionQuote(tenantId, {
+      items: parsed.data.items,
+      shippingMethod,
+      promotionCode: parsed.data.promotionCode,
+    });
 
     const paymentReference =
       parsed.data.paymentReference ||
       parsed.data.stripePaymentIntentId ||
       `stripe_checkout_pending_${Date.now()}`;
-    const shippingMethod = parsed.data.shippingMethod || "standard";
-    const shippingFee = shippingMethod === "priority" ? 995 : shippingMethod === "pickup" ? 0 : 595;
 
     const sale = await productSalesService.createSale(
       tenantId,
@@ -240,14 +264,17 @@ patientPortalDataRouter.post("/store/orders", async (req: PatientPortalRequest, 
       { method: "credit", reference: paymentReference },
       `portal:${req.patient!.accountId}`,
       undefined,
-      0
+      quote.itemDiscount,
+      "completed",
+      { code: quote.promotionCode, summary: quote }
     );
 
     await productSalesService.createStoreFulfillment(tenantId, sale.id, patientId, {
       channel: "patient_portal",
       fulfillmentStatus: "paid",
       shippingMethod,
-      shippingFee,
+      shippingFee: quote.shippingFee,
+      shippingDiscount: quote.shippingDiscount,
       shippingAddress: parsed.data.shippingAddress,
       notificationEmail: parsed.data.notificationEmail || req.patient!.email,
       notificationStatus: "queued",
@@ -257,7 +284,7 @@ patientPortalDataRouter.post("/store/orders", async (req: PatientPortalRequest, 
 
     const [order] = await productSalesService.getStoreOrders(tenantId, { saleId: sale.id, limit: 1 });
 
-    return res.status(201).json({ order: order || sale, sale });
+    return res.status(201).json({ order: order || sale, sale, quote });
   } catch (error) {
     logPatientPortalDataError("Portal store order error", error);
     return res.status(400).json({
@@ -280,22 +307,12 @@ patientPortalDataRouter.post("/store/checkout-session", async (req: PatientPorta
 
     const tenantId = req.patient!.tenantId;
     const patientId = req.patient!.patientId;
-    const requestedProductIds = new Set(parsed.data.items.map((item) => item.productId));
-    const activeProducts = await productSalesService.getProducts(tenantId, { isActive: true });
-    const productsById = new Map(activeProducts.map((product) => [product.id, product]));
-
-    for (const productId of requestedProductIds) {
-      const product = productsById.get(productId);
-      if (!product) {
-        return res.status(404).json({ error: "One or more products are no longer available" });
-      }
-      if (product.category === "prescription") {
-        return res.status(400).json({ error: "Prescription products cannot be purchased through the store" });
-      }
-    }
-
     const shippingMethod = parsed.data.shippingMethod || "standard";
-    const shippingFee = shippingMethod === "priority" ? 995 : shippingMethod === "pickup" ? 0 : 595;
+    const quote = await productSalesService.calculateStorePromotionQuote(tenantId, {
+      items: parsed.data.items,
+      shippingMethod,
+      promotionCode: parsed.data.promotionCode,
+    });
     const paymentReference = `stripe_checkout_pending_${Date.now()}`;
     const integrationService = getIntegrationService(tenantId);
     const paymentAdapter = await integrationService.getPaymentAdapter();
@@ -308,15 +325,17 @@ patientPortalDataRouter.post("/store/checkout-session", async (req: PatientPorta
       { method: "credit", reference: paymentReference },
       `portal:${req.patient!.accountId}`,
       undefined,
-      0,
-      useMockCheckout ? "completed" : "pending"
+      quote.itemDiscount,
+      useMockCheckout ? "completed" : "pending",
+      { code: quote.promotionCode, summary: quote }
     );
 
     await productSalesService.createStoreFulfillment(tenantId, sale.id, patientId, {
       channel: "patient_portal",
       fulfillmentStatus: useMockCheckout ? "paid" : "awaiting_payment",
       shippingMethod,
-      shippingFee,
+      shippingFee: quote.shippingFee,
+      shippingDiscount: quote.shippingDiscount,
       shippingAddress: parsed.data.shippingAddress,
       notificationEmail: parsed.data.notificationEmail || req.patient!.email,
       notificationStatus: "queued",
@@ -339,19 +358,26 @@ patientPortalDataRouter.post("/store/checkout-session", async (req: PatientPorta
         source: "patient_portal_store",
       },
       lineItems: [
-        ...(sale.items || []).map((item) => ({
-          name: item.productName,
-          description: item.productSku,
-          unitAmountCents: item.unitPrice,
-          quantity: item.quantity,
-          productId: item.productId,
-          sku: item.productSku,
-        })),
+        ...(sale.discount > 0
+          ? [{
+              name: "Office store items after discounts",
+              description: quote.appliedPromotions.map((promotion) => promotion.name).join(", ") || "Store promotion",
+              unitAmountCents: Math.max(0, sale.subtotal - sale.discount),
+              quantity: 1,
+            }]
+          : (sale.items || []).map((item) => ({
+              name: item.productName,
+              description: item.productSku,
+              unitAmountCents: item.unitPrice,
+              quantity: item.quantity,
+              productId: item.productId,
+              sku: item.productSku,
+            }))),
         ...(sale.tax > 0
           ? [{ name: "Sales tax", unitAmountCents: sale.tax, quantity: 1 }]
           : []),
-        ...(shippingFee > 0
-          ? [{ name: shippingMethod === "priority" ? "Priority delivery" : "Standard delivery", unitAmountCents: shippingFee, quantity: 1 }]
+        ...(quote.shippingFee > 0
+          ? [{ name: shippingMethod === "priority" ? "Priority delivery" : "Standard delivery", unitAmountCents: quote.shippingFee, quantity: 1 }]
           : []),
       ],
     });
@@ -380,6 +406,7 @@ patientPortalDataRouter.post("/store/checkout-session", async (req: PatientPorta
       checkout,
       order: paidOrder || pendingOrder || sale,
       sale,
+      quote,
       paymentMode: checkout.mode,
     });
   } catch (error) {

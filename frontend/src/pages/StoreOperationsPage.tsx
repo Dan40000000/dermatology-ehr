@@ -7,12 +7,14 @@ import {
   CalendarDays,
   CreditCard,
   DollarSign,
+  Percent,
   Loader2,
   PackageCheck,
   Plus,
   RefreshCw,
   Search,
   Send,
+  Ticket,
   Truck,
   Upload,
   X,
@@ -23,12 +25,15 @@ import { Skeleton } from '../components/ui';
 import {
   adjustProductInventory,
   createProduct,
+  createStorePromotion,
   fetchInventoryStatus,
   fetchLowStockProducts,
   fetchProductSales,
   fetchProducts,
   fetchSalesReport,
+  fetchStorePromotions,
   updateProduct,
+  updateStorePromotion,
   updateStoreOrderFulfillment,
 } from '../api';
 import { getProductImageUrl } from '../utils/productImages';
@@ -40,10 +45,13 @@ import type {
   StoreFulfillmentStatus,
   StoreNotificationStatus,
   StoreOrder,
+  StorePromotion,
+  StorePromotionData,
+  StorePromotionType,
   StoreShippingMethod,
 } from '../types';
 
-type StoreTab = 'orders' | 'products' | 'shipping' | 'payments' | 'notifications';
+type StoreTab = 'orders' | 'products' | 'deals' | 'shipping' | 'payments' | 'notifications';
 type StoreOrderRange = 'today' | 'week' | 'month' | 'all';
 
 interface StoreOrderRangeOption {
@@ -79,6 +87,19 @@ interface ProductForm {
   imageUrl: string;
 }
 
+interface PromotionForm {
+  name: string;
+  code: string;
+  promotionType: StorePromotionType;
+  value: string;
+  minimumSubtotal: string;
+  startsAt: string;
+  endsAt: string;
+  isActive: boolean;
+  isAutomatic: boolean;
+  maxRedemptions: string;
+}
+
 interface OrderDraft {
   fulfillmentStatus: StoreFulfillmentStatus;
   shippingMethod: StoreShippingMethod;
@@ -110,6 +131,19 @@ const EMPTY_PRODUCT_FORM: ProductForm = {
   imageUrl: '',
 };
 
+const EMPTY_PROMOTION_FORM: PromotionForm = {
+  name: '',
+  code: '',
+  promotionType: 'percentage',
+  value: '10',
+  minimumSubtotal: '0',
+  startsAt: '',
+  endsAt: '',
+  isActive: true,
+  isAutomatic: false,
+  maxRedemptions: '',
+};
+
 const CATEGORY_OPTIONS: Array<{ value: ProductCategory | 'all'; label: string }> = [
   { value: 'all', label: 'All products' },
   { value: 'skincare', label: 'Skincare' },
@@ -138,7 +172,7 @@ const FULFILLMENT_LABELS: Record<StoreFulfillmentStatus, string> = {
 };
 
 function normalizeTab(value: string | null): StoreTab {
-  if (value === 'products' || value === 'shipping' || value === 'payments' || value === 'notifications') {
+  if (value === 'products' || value === 'deals' || value === 'shipping' || value === 'payments' || value === 'notifications') {
     return value;
   }
   return 'orders';
@@ -165,6 +199,52 @@ function centsToDollars(cents: number): string {
 function dollarsToCents(value: string): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100)) : 0;
+}
+
+function promotionFormToPayload(form: PromotionForm): StorePromotionData {
+  return {
+    name: form.name.trim(),
+    code: form.isAutomatic ? null : form.code.trim().toUpperCase() || null,
+    promotionType: form.promotionType,
+    value: form.promotionType === 'free_shipping'
+      ? 0
+      : form.promotionType === 'fixed'
+        ? dollarsToCents(form.value)
+        : (Number.parseInt(form.value, 10) || 0),
+    minimumSubtotal: dollarsToCents(form.minimumSubtotal),
+    startsAt: form.startsAt || null,
+    endsAt: form.endsAt || null,
+    isActive: form.isActive,
+    isAutomatic: form.isAutomatic,
+    maxRedemptions: form.maxRedemptions ? Math.max(1, Number.parseInt(form.maxRedemptions, 10) || 1) : null,
+  };
+}
+
+function dateTimeInputValue(value?: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function endOfTodayInputValue(): string {
+  const end = new Date();
+  end.setHours(23, 59, 0, 0);
+  return dateTimeInputValue(end.toISOString());
+}
+
+function formatPromotionValue(promotion: Pick<StorePromotion, 'promotionType' | 'value'>): string {
+  if (promotion.promotionType === 'free_shipping') return 'Free shipping';
+  if (promotion.promotionType === 'percentage') return `${promotion.value}% off`;
+  return `${formatCurrency(promotion.value)} off`;
+}
+
+function formatPromotionWindow(promotion: StorePromotion): string {
+  if (!promotion.startsAt && !promotion.endsAt) return 'Always available';
+  if (promotion.startsAt && promotion.endsAt) return `${formatDate(promotion.startsAt)} - ${formatDate(promotion.endsAt)}`;
+  if (promotion.startsAt) return `Starts ${formatDate(promotion.startsAt)}`;
+  return `Ends ${formatDate(promotion.endsAt)}`;
 }
 
 function formatCurrency(cents: number): string {
@@ -320,12 +400,14 @@ export function StoreOperationsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<StoreOrder[]>([]);
   const [orderHistory, setOrderHistory] = useState<StoreOrder[]>([]);
+  const [promotions, setPromotions] = useState<StorePromotion[]>([]);
   const [inventoryStatus, setInventoryStatus] = useState<InventoryStatus | null>(null);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [salesReport, setSalesReport] = useState<SalesReport | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<ProductCategory | 'all'>('all');
   const [productForm, setProductForm] = useState<ProductForm>(EMPTY_PRODUCT_FORM);
+  const [promotionForm, setPromotionForm] = useState<PromotionForm>(EMPTY_PROMOTION_FORM);
   const [orderDrafts, setOrderDrafts] = useState<Record<string, OrderDraft>>({});
   const [productDrafts, setProductDrafts] = useState<Record<string, ProductDraft>>({});
   const [adjustProductId, setAdjustProductId] = useState('');
@@ -337,6 +419,7 @@ export function StoreOperationsPage() {
       setProducts([]);
       setOrders([]);
       setOrderHistory([]);
+      setPromotions([]);
       setLoading(false);
       return;
     }
@@ -354,13 +437,14 @@ export function StoreOperationsPage() {
 
     try {
       setLoading(true);
-      const [productRes, orderRes, orderHistoryRes, inventoryRes, lowStockRes, reportRes] = await Promise.all([
+      const [productRes, orderRes, orderHistoryRes, inventoryRes, lowStockRes, reportRes, promotionRes] = await Promise.all([
         fetchProducts(session.tenantId, session.accessToken),
         fetchProductSales(session.tenantId, session.accessToken, orderFilters),
         fetchProductSales(session.tenantId, session.accessToken, { limit: 500 }),
         fetchInventoryStatus(session.tenantId, session.accessToken),
         fetchLowStockProducts(session.tenantId, session.accessToken),
         fetchSalesReport(session.tenantId, session.accessToken, reportFilters),
+        fetchStorePromotions(session.tenantId, session.accessToken),
       ]);
 
       const scopedOrders = orderRes.orders || [];
@@ -370,6 +454,7 @@ export function StoreOperationsPage() {
       setProducts(productRes.products || []);
       setOrders(scopedOrders);
       setOrderHistory(historyOrders);
+      setPromotions(promotionRes.promotions || []);
       setInventoryStatus(inventoryRes.status || null);
       setLowStockProducts(lowStockRes.products || []);
       setSalesReport(reportRes.report || null);
@@ -456,6 +541,14 @@ export function StoreOperationsPage() {
   const queuedNotifications = useMemo(
     () => orderHistory.filter((order) => order.notificationStatus === 'queued').length,
     [orderHistory]
+  );
+  const activeDealCount = useMemo(
+    () => promotions.filter((promotion) => promotion.isActive).length,
+    [promotions]
+  );
+  const discountGiven = useMemo(
+    () => orders.reduce((sum, order) => sum + (order.discount || 0) + (order.shippingDiscount || 0), 0),
+    [orders]
   );
   const inventoryValue = inventoryStatus?.totalValue || products.reduce((sum, product) => sum + product.cost * product.inventoryCount, 0);
 
@@ -572,6 +665,49 @@ export function StoreOperationsPage() {
     } catch (error) {
       console.error('Failed to create store product:', error);
       showError(error instanceof Error ? error.message : 'Failed to create product');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreatePromotion = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!session || saving) return;
+    if (!promotionForm.name.trim()) {
+      showError('Deal name is required');
+      return;
+    }
+    if (!promotionForm.isAutomatic && !promotionForm.code.trim()) {
+      showError('Discount code deals need a code');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await createStorePromotion(session.tenantId, session.accessToken, promotionFormToPayload(promotionForm));
+      setPromotionForm(EMPTY_PROMOTION_FORM);
+      showSuccess('Store deal added');
+      await loadStore();
+    } catch (error) {
+      console.error('Failed to create store promotion:', error);
+      showError(error instanceof Error ? error.message : 'Failed to create store deal');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTogglePromotion = async (promotion: StorePromotion) => {
+    if (!session || saving) return;
+    try {
+      setSaving(true);
+      const response = await updateStorePromotion(session.tenantId, session.accessToken, promotion.id, {
+        isActive: !promotion.isActive,
+      });
+      setPromotions((current) => current.map((item) => item.id === promotion.id ? response.promotion : item));
+      showSuccess(response.promotion.isActive ? 'Deal activated' : 'Deal paused');
+    } catch (error) {
+      console.error('Failed to update store promotion:', error);
+      showError(error instanceof Error ? error.message : 'Failed to update store deal');
     } finally {
       setSaving(false);
     }
@@ -732,6 +868,11 @@ export function StoreOperationsPage() {
           <strong>{formatCurrency(capturedPayments)}</strong>
         </article>
         <article>
+          <Ticket size={21} />
+          <span>Active Deals</span>
+          <strong>{activeDealCount}</strong>
+        </article>
+        <article>
           <Bell size={21} />
           <span>Queued Notices</span>
           <strong>{queuedNotifications}</strong>
@@ -759,6 +900,7 @@ export function StoreOperationsPage() {
         {([
           ['orders', 'Orders'],
           ['products', 'Products'],
+          ['deals', 'Deals'],
           ['shipping', 'Shipping'],
           ['payments', 'Payments'],
           ['notifications', 'Notifications'],
@@ -811,6 +953,12 @@ export function StoreOperationsPage() {
                               <span className="store-ops-order-id">#{order.id.slice(0, 8)}</span>
                               <h3>{patientName(order)}</h3>
                               <p>{formatDate(order.saleDate)} · {formatCurrency(order.total)} · {order.items?.length || 0} line items</p>
+                              {(order.discount || order.shippingDiscount || order.promotionCode) ? (
+                                <p className="store-ops-order-deal">
+                                  {order.promotionCode ? `${order.promotionCode} · ` : ''}
+                                  {formatCurrency((order.discount || 0) + (order.shippingDiscount || 0))} discount applied
+                                </p>
+                              ) : null}
                             </div>
                             <span className={`store-ops-status ${draft.fulfillmentStatus}`}>
                               {FULFILLMENT_LABELS[draft.fulfillmentStatus]}
@@ -1133,6 +1281,181 @@ export function StoreOperationsPage() {
                   <button type="submit" disabled={saving}>
                     <Plus size={16} />
                     Add Product
+                  </button>
+                </form>
+              </aside>
+            </section>
+          )}
+
+          {activeTab === 'deals' && (
+            <section className="store-ops-grid">
+              <div className="store-ops-panel">
+                <div className="store-ops-panel-header">
+                  <div>
+                    <h2>Store Deals</h2>
+                    <p>Discount codes, free-shipping thresholds, timed sale days, and tracked redemptions</p>
+                  </div>
+                  <div className="store-ops-deal-summary">
+                    <Ticket size={16} />
+                    <strong>{activeDealCount} active</strong>
+                    <span>{formatCurrency(discountGiven)} given {orderRangeBounds.label.toLowerCase()}</span>
+                  </div>
+                </div>
+                <div className="store-ops-deal-list">
+                  {promotions.length === 0 ? (
+                    <div className="store-ops-empty compact">No store deals have been created yet.</div>
+                  ) : (
+                    promotions.map((promotion) => (
+                      <article key={promotion.id} className={!promotion.isActive ? 'paused' : ''}>
+                        <div>
+                          <span className="store-ops-deal-kind">{promotion.isAutomatic ? 'Automatic' : promotion.code || 'Code'}</span>
+                          <h3>{promotion.name}</h3>
+                          <p>{formatPromotionValue(promotion)} · {formatPromotionWindow(promotion)}</p>
+                        </div>
+                        <div className="store-ops-deal-meta">
+                          <span>Min {formatCurrency(promotion.minimumSubtotal)}</span>
+                          <span>{promotion.redemptionCount}{promotion.maxRedemptions ? ` / ${promotion.maxRedemptions}` : ''} redeemed</span>
+                        </div>
+                        <button type="button" onClick={() => handleTogglePromotion(promotion)} disabled={saving}>
+                          {promotion.isActive ? 'Pause' : 'Activate'}
+                        </button>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <aside className="store-ops-panel">
+                <h2>Add Deal</h2>
+                <form className="store-ops-form store-ops-deal-form" onSubmit={handleCreatePromotion}>
+                  <label>
+                    Deal name
+                    <input
+                      value={promotionForm.name}
+                      onChange={(event) => setPromotionForm((current) => ({ ...current, name: event.target.value }))}
+                      placeholder="Free standard shipping over $80"
+                    />
+                  </label>
+                  <div className="store-ops-form-row">
+                    <label>
+                      Type
+                      <select
+                        value={promotionForm.promotionType}
+                        onChange={(event) => setPromotionForm((current) => ({ ...current, promotionType: event.target.value as StorePromotionType }))}
+                      >
+                        <option value="percentage">Percent off</option>
+                        <option value="fixed">Fixed dollars off</option>
+                        <option value="free_shipping">Free shipping</option>
+                      </select>
+                    </label>
+                    <label>
+                      Value
+                      <input
+                        value={promotionForm.value}
+                        disabled={promotionForm.promotionType === 'free_shipping'}
+                        onChange={(event) => setPromotionForm((current) => ({ ...current, value: event.target.value }))}
+                        inputMode="numeric"
+                        placeholder={promotionForm.promotionType === 'percentage' ? '10' : '15.00'}
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    Discount code
+                    <input
+                      value={promotionForm.code}
+                      disabled={promotionForm.isAutomatic}
+                      onChange={(event) => setPromotionForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))}
+                      placeholder="WELCOME10"
+                    />
+                  </label>
+                  <label className="store-ops-check">
+                    <input
+                      type="checkbox"
+                      checked={promotionForm.isAutomatic}
+                      onChange={(event) => setPromotionForm((current) => ({ ...current, isAutomatic: event.target.checked, code: event.target.checked ? '' : current.code }))}
+                    />
+                    Apply automatically
+                  </label>
+                  <div className="store-ops-form-row">
+                    <label>
+                      Minimum cart
+                      <input
+                        value={promotionForm.minimumSubtotal}
+                        onChange={(event) => setPromotionForm((current) => ({ ...current, minimumSubtotal: event.target.value }))}
+                        inputMode="decimal"
+                        placeholder="80.00"
+                      />
+                    </label>
+                    <label>
+                      Max redemptions
+                      <input
+                        value={promotionForm.maxRedemptions}
+                        onChange={(event) => setPromotionForm((current) => ({ ...current, maxRedemptions: event.target.value }))}
+                        inputMode="numeric"
+                        placeholder="No limit"
+                      />
+                    </label>
+                  </div>
+                  <div className="store-ops-form-row">
+                    <label>
+                      Starts
+                      <input
+                        type="datetime-local"
+                        value={promotionForm.startsAt}
+                        onChange={(event) => setPromotionForm((current) => ({ ...current, startsAt: event.target.value }))}
+                      />
+                    </label>
+                    <label>
+                      Ends
+                      <input
+                        type="datetime-local"
+                        value={promotionForm.endsAt}
+                        onChange={(event) => setPromotionForm((current) => ({ ...current, endsAt: event.target.value }))}
+                      />
+                    </label>
+                  </div>
+                  <label className="store-ops-check">
+                    <input
+                      type="checkbox"
+                      checked={promotionForm.isActive}
+                      onChange={(event) => setPromotionForm((current) => ({ ...current, isActive: event.target.checked }))}
+                    />
+                    Active now
+                  </label>
+                  <div className="store-ops-template-list">
+                    <button
+                      type="button"
+                      onClick={() => setPromotionForm({
+                        ...EMPTY_PROMOTION_FORM,
+                        name: 'Free standard shipping over $80',
+                        promotionType: 'free_shipping',
+                        value: '0',
+                        minimumSubtotal: '80.00',
+                        isAutomatic: true,
+                      })}
+                    >
+                      <Truck size={15} />
+                      Free shipping
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPromotionForm({
+                        ...EMPTY_PROMOTION_FORM,
+                        name: 'Sale Day 50% Off',
+                        promotionType: 'percentage',
+                        value: '50',
+                        isAutomatic: true,
+                        startsAt: dateTimeInputValue(new Date().toISOString()),
+                        endsAt: endOfTodayInputValue(),
+                      })}
+                    >
+                      <Percent size={15} />
+                      50% sale day
+                    </button>
+                  </div>
+                  <button type="submit" disabled={saving}>
+                    <Plus size={16} />
+                    Add Deal
                   </button>
                 </form>
               </aside>

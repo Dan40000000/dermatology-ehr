@@ -495,6 +495,9 @@ export type OrderStatus =
   | 'pending'
   | 'draft'
   | 'ordered'
+  | 'scheduled'
+  | 'received'
+  | 'reviewed'
   | 'completed'
   | 'cancelled';
 
@@ -523,11 +526,19 @@ export interface Order {
   patientId: string;
   providerId: string;
   providerName?: string;
+  patientName?: string;
+  patientMrn?: string;
   type: string;
   status: OrderStatus;
   priority?: OrderPriority;
   details?: string;
   notes?: string;
+  results?: string;
+  resultsProcessed?: string;
+  resultSource?: 'manual' | 'lab_interface' | 'fax' | 'outside_lab' | 'correction';
+  resultUpdatedAt?: string;
+  resultUpdatedBy?: string;
+  resultChangeReason?: string;
   resultFlag?: ResultFlagType;
   resultFlagUpdatedAt?: string;
   resultFlagUpdatedBy?: string;

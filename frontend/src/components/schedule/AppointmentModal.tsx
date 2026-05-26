@@ -14,6 +14,7 @@ import {
   getRecommendedAppointmentDuration,
   hasAccessibilityNeeds,
 } from '../../utils/accessibilityAccommodations';
+import { PatientLookupSelect } from '../patients/PatientLookupSelect';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -377,23 +378,16 @@ export function AppointmentModal({
       <div className="modal-form">
         {/* Patient Selection */}
         <div className="form-field">
-          <label htmlFor="patient">
-            Patient <span className="required">*</span>
-          </label>
-          <select
+          <PatientLookupSelect
             id="patient"
+            patients={patients}
             value={formData.patientId}
-            onChange={(e) => handleChange('patientId', e.target.value)}
+            onChange={(patientId) => handleChange('patientId', patientId)}
             disabled={!!appointment}
-            className={errors.patientId ? 'error' : ''}
-          >
-            <option value="">Select patient...</option>
-            {patients.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.lastName}, {p.firstName} - DOB: {formatPatientDob(p.dob || p.dateOfBirth)}
-              </option>
-            ))}
-          </select>
+            label="Patient"
+            required
+            selectClassName={errors.patientId ? 'error' : ''}
+          />
           {errors.patientId && <span className="field-error">{errors.patientId}</span>}
         </div>
 

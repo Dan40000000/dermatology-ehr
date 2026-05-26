@@ -24,6 +24,9 @@ const orderSchema = z.object({
   priority: z.enum(['normal', 'high', 'stat', 'routine', 'urgent']).optional(),
   details: z.string().max(500).optional(),
   notes: z.string().max(1000).optional(),
+  facility: z.string().trim().max(200).optional(),
+  ddx: z.string().trim().max(500).optional(),
+  location: z.string().trim().max(255).optional(),
   billable: z.boolean().optional(),
   cptCode: z.string().trim().min(3).max(20).optional(),
   icdCodes: z.array(z.string().trim().min(3).max(10)).optional(),
@@ -35,6 +38,22 @@ const orderSchema = z.object({
 const orderStatusSchema = z.object({
   status: z.enum(ORDER_STATUSES),
 });
+
+const orderResultSchema = z.object({
+  results: z.string().trim().max(4000).optional(),
+  status: z.enum(ORDER_STATUSES).optional(),
+  resultSource: z.enum(["manual", "lab_interface", "fax", "outside_lab", "correction"]).optional(),
+  resultsProcessedAt: z.string().datetime().optional().nullable(),
+  changeReason: z.string().trim().max(500).optional(),
+}).refine(
+  (data) =>
+    data.results !== undefined ||
+    data.status !== undefined ||
+    data.resultSource !== undefined ||
+    data.resultsProcessedAt !== undefined ||
+    data.changeReason !== undefined,
+  { message: "At least one result field is required" },
+);
 
 const erxSchema = z.object({
   orderId: z.string().optional(),
@@ -131,13 +150,25 @@ ordersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       o.priority,
       o.details,
       o.notes,
+      o.facility,
+      o.ddx,
+      o.body_location as "location",
+      o.results,
+      o.results_processed_at as "resultsProcessed",
+      o.result_source as "resultSource",
+      o.result_updated_at as "resultUpdatedAt",
+      o.result_updated_by as "resultUpdatedBy",
+      o.result_change_reason as "resultChangeReason",
       o.result_flag as "resultFlag",
       o.result_flag_updated_at as "resultFlagUpdatedAt",
       o.result_flag_updated_by as "resultFlagUpdatedBy",
       o.created_at as "createdAt",
-      p.full_name as "providerName"
+      p.full_name as "providerName",
+      trim(concat_ws(' ', pt.first_name, pt.last_name)) as "patientName",
+      pt.mrn as "patientMrn"
     from orders o
     left join providers p on o.provider_id = p.id and o.tenant_id = p.tenant_id
+    left join patients pt on o.patient_id = pt.id and o.tenant_id = pt.tenant_id
     where o.tenant_id = $1
   `;
 
@@ -176,7 +207,17 @@ ordersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 
   // Search filter
   if (search && typeof search === 'string' && search.trim()) {
-    query += ` and (o.details ilike $${paramIndex} or o.notes ilike $${paramIndex})`;
+    query += ` and (
+      o.details ilike $${paramIndex}
+      or o.notes ilike $${paramIndex}
+      or o.facility ilike $${paramIndex}
+      or o.ddx ilike $${paramIndex}
+      or o.body_location ilike $${paramIndex}
+      or o.results ilike $${paramIndex}
+      or trim(concat_ws(' ', pt.first_name, pt.last_name)) ilike $${paramIndex}
+      or trim(concat_ws(' ', pt.last_name, pt.first_name)) ilike $${paramIndex}
+      or pt.mrn ilike $${paramIndex}
+    )`;
     params.push(`%${search.trim()}%`);
     paramIndex++;
   }
@@ -214,8 +255,11 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
     }
 
     await pool.query(
-      `insert into orders(id, tenant_id, encounter_id, patient_id, provider_id, provider_name, type, status, priority, details, notes)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `insert into orders(
+         id, tenant_id, encounter_id, patient_id, provider_id, provider_name, type, status, priority,
+         details, notes, facility, ddx, body_location
+       )
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         id,
         tenantId,
@@ -227,7 +271,10 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
         normalizeWorkflowStatus(o.status || "draft"),
         o.priority || "normal",
         o.details || null,
-        o.notes || null
+        o.notes || null,
+        o.facility || null,
+        o.ddx || null,
+        o.location || null
       ],
     );
     await auditLog(tenantId, req.user!.id, "order_create", "order", id);
@@ -269,6 +316,88 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
     });
     res.status(500).json({ error: "Failed to create order" });
   }
+});
+
+ordersRouter.post("/:id/result", requireAuth, requireRoles(["provider", "ma", "nurse", "admin"]), async (req: AuthedRequest, res) => {
+  const parsed = orderResultSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  const tenantId = req.user!.tenantId;
+  const orderId = req.params.id;
+  const resultPayload = parsed.data;
+
+  const existingResult = await pool.query(
+    `select id, status, results, result_source, results_processed_at
+       from orders
+      where id = $1 and tenant_id = $2`,
+    [orderId, tenantId],
+  );
+  const existingOrder = existingResult.rows[0];
+  if (!existingOrder) {
+    return res.status(404).json({ error: "Order not found" });
+  }
+
+  const results = resultPayload.results !== undefined ? (resultPayload.results || null) : existingOrder.results;
+  const resultSource = resultPayload.resultSource || existingOrder.result_source || "manual";
+  const status = normalizeWorkflowStatus(
+    resultPayload.status || (results ? "received" : existingOrder.status),
+  );
+  const resultsProcessedAt =
+    resultPayload.resultsProcessedAt !== undefined
+      ? resultPayload.resultsProcessedAt
+      : (results && !existingOrder.results_processed_at ? new Date().toISOString() : existingOrder.results_processed_at);
+
+  if (existingOrder.results && resultPayload.results !== undefined && !resultPayload.changeReason?.trim()) {
+    return res.status(400).json({ error: "Change reason is required when editing an existing result" });
+  }
+
+  const updated = await pool.query(
+    `update orders
+        set results = $1,
+            status = $2,
+            result_source = $3,
+            results_processed_at = $4,
+            result_updated_at = now(),
+            result_updated_by = $5,
+            result_change_reason = $6
+      where id = $7 and tenant_id = $8
+      returning
+        id,
+        encounter_id as "encounterId",
+        patient_id as "patientId",
+        provider_id as "providerId",
+        type,
+        status,
+        priority,
+        details,
+        notes,
+        facility,
+        ddx,
+        body_location as "location",
+        results,
+        results_processed_at as "resultsProcessed",
+        result_source as "resultSource",
+        result_updated_at as "resultUpdatedAt",
+        result_updated_by as "resultUpdatedBy",
+        result_change_reason as "resultChangeReason",
+        result_flag as "resultFlag",
+        result_flag_updated_at as "resultFlagUpdatedAt",
+        result_flag_updated_by as "resultFlagUpdatedBy",
+        created_at as "createdAt"`,
+    [
+      results,
+      status,
+      resultSource,
+      resultsProcessedAt,
+      req.user!.id,
+      resultPayload.changeReason || null,
+      orderId,
+      tenantId,
+    ],
+  );
+
+  await auditLog(tenantId, req.user?.id ?? "unknown", "order_result_update", "order", String(orderId));
+  res.json({ order: updated.rows[0] });
 });
 
 ordersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "ma", "admin"]), async (req: AuthedRequest, res) => {

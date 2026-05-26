@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Modal } from '../ui';
+import { PatientLookupSelect } from '../patients/PatientLookupSelect';
 import type { Task, TaskCategory, TaskPriority, TaskStatus, Patient } from '../../types';
 
 interface TaskFormModalProps {
@@ -115,25 +116,13 @@ export function TaskFormModal({ isOpen, onClose, onSubmit, task, patients, users
 
         {/* Patient Selection */}
         <div className="form-field">
-          <label>Related Patient</label>
-          <select
+          <PatientLookupSelect
+            patients={patients}
             value={form.patientId}
-            onChange={(e) => setForm((prev) => ({ ...prev, patientId: e.target.value }))}
-          >
-            <option value="">No patient (general task)</option>
-            {patients
-              .sort((a, b) => {
-                const nameA = `${a.lastName}, ${a.firstName}`.toLowerCase();
-                const nameB = `${b.lastName}, ${b.firstName}`.toLowerCase();
-                return nameA.localeCompare(nameB);
-              })
-              .map((patient) => (
-                <option key={patient.id} value={patient.id}>
-                  {patient.lastName}, {patient.firstName}
-                  {patient.dob && ` (DOB: ${new Date(patient.dob).toLocaleDateString()})`}
-                </option>
-              ))}
-          </select>
+            onChange={(patientId) => setForm((prev) => ({ ...prev, patientId }))}
+            label="Related Patient"
+            placeholder="No patient (general task)"
+          />
         </div>
 
         {/* Category */}

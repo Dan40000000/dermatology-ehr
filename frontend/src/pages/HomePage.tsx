@@ -782,7 +782,7 @@ export function HomePage() {
         canLoadAppointments &&
         effectiveRoles.some((role) => ['admin', 'front_desk', 'ma', 'provider'].includes(role));
       const canLoadEncounters = canAccessAnyModule('notes');
-      const canLoadOrders = canAccessAnyModule('orders');
+      const canLoadOrders = canAccessAnyModule('labs');
       const canLoadUnreadMessages = canAccessAnyModule('mail');
       const canLoadBiopsySafety = canAccessAnyModule('labs') && canViewCommandSection('banner_pathology');
       const canLoadFinancials =
@@ -834,7 +834,7 @@ export function HomePage() {
           : Promise.resolve({ encounters: [] }),
         safeLoad('tasks', fetchTasks(session.tenantId, session.accessToken), { tasks: [] }),
         canLoadOrders
-          ? safeLoad('orders', fetchOrders(session.tenantId, session.accessToken), { orders: [] })
+          ? safeLoad('lab/path orders', fetchOrders(session.tenantId, session.accessToken), { orders: [] })
           : Promise.resolve({ orders: [] }),
         canLoadUnreadMessages
           ? safeLoad('clinical inbox', fetchUnreadCount(session.tenantId, session.accessToken), { count: 0 })
@@ -1793,7 +1793,7 @@ export function HomePage() {
   const showProviderThroughputPanel = canAccessAnyModule('schedule') && canViewCommandSection('panel_provider_throughput');
   const showEndOfDayPanel = canViewCommandSection('panel_end_of_day');
   const showPatientFlowSection = canAccessAnyModule(['schedule', 'office_flow']) && canViewCommandSection('panel_patient_flow');
-  const showClinicalWorkSection = canAccessAnyModule(['notes', 'orders', 'labs']) && canViewCommandSection('panel_clinical_work');
+  const showClinicalWorkSection = canAccessAnyModule(['notes', 'labs']) && canViewCommandSection('panel_clinical_work');
   const showRevenueCycleSection = canAccessAnyModule('financials') && canViewCommandSection('panel_revenue_cycle');
 
   const renderQueueItems = (items: HomeActionQueueItem[], emptyLabel: string) => (

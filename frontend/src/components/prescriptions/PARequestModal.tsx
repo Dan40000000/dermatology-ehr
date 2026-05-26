@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { Modal } from '../ui';
+import { PatientLookupSelect } from '../patients/PatientLookupSelect';
 import { createPARequest, fetchPatients } from '../../api';
 import type { Order, Patient } from '../../types';
 
@@ -169,23 +170,15 @@ export function PARequestModal({ isOpen, onClose, onSuccess, prescription }: PAR
           <h3 className="form-section-title">Patient & Insurance Information</h3>
 
           <div className="form-field">
-            <label htmlFor="patientId">
-              Patient <span style={{ color: '#ef4444' }}>*</span>
-            </label>
-            <select
+            <PatientLookupSelect
               id="patientId"
+              patients={patients}
               value={formData.patientId}
-              onChange={(e) => setFormData((prev) => ({ ...prev, patientId: e.target.value }))}
+              onChange={(patientId) => setFormData((prev) => ({ ...prev, patientId }))}
               required
               disabled={!!prescription}
-            >
-              <option value="">Select patient...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName} - DOB: {p.dob || p.dateOfBirth || 'N/A'}
-                </option>
-              ))}
-            </select>
+              label="Patient"
+            />
           </div>
 
           <div className="form-row">

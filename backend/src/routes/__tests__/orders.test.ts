@@ -231,6 +231,40 @@ describe("Orders routes", () => {
     expect(auditMock).toHaveBeenCalled();
   });
 
+  it("POST /orders/:id/result saves a manual lab/path result", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ id: "order-1", status: "pending", results: null, result_source: null, results_processed_at: null }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "order-1", results: "Benign nevus", status: "received" }] });
+
+    const res = await request(app).post("/orders/order-1/result").send({
+      results: "Benign nevus",
+      status: "received",
+      resultSource: "manual",
+      resultsProcessedAt: "2026-05-26T12:00:00.000Z",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.order.results).toBe("Benign nevus");
+    expect(queryMock.mock.calls[1][0]).toEqual(expect.stringContaining("result_source"));
+    expect(auditMock).toHaveBeenCalledWith("tenant-1", "user-1", "order_result_update", "order", "order-1");
+  });
+
+  it("POST /orders/:id/result requires a change reason when editing an existing result", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "order-1", status: "received", results: "Old result", result_source: "lab_interface" }],
+    });
+
+    const res = await request(app).post("/orders/order-1/result").send({
+      results: "New result",
+      status: "received",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Change reason is required when editing an existing result");
+  });
+
   it("POST /orders/erx/send rejects invalid payload", async () => {
     const res = await request(app).post("/orders/erx/send").send({ orderId: 123 });
     expect(res.status).toBe(400);

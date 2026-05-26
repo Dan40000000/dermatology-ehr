@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { InsuranceStatusBadge } from '../components/Insurance';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { fetchOrders, fetchPatients, updateOrderStatus, createOrder } from '../api';
 import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import type { Order, Patient } from '../types';
@@ -749,37 +750,14 @@ export function OrdersPage() {
       }} size="lg">
         <div className="modal-form">
           <div className="form-field">
-            <label htmlFor="order-patient-search">Find Patient</label>
-            <input
-              id="order-patient-search"
-              name="order-patient-search"
-              type="text"
-              value={newOrderPatientSearch}
-              onChange={(e) => setNewOrderPatientSearch(e.target.value)}
-              placeholder="Search by name, DOB, or MRN..."
-            />
-            <label htmlFor="order-patient">Patient *</label>
-            <select
+            <PatientLookupSelect
               id="order-patient"
-              name="order-patient"
+              patients={patients}
               value={newOrder.patientId}
-              onChange={(e) => setNewOrder((prev) => ({ ...prev, patientId: e.target.value }))}
-            >
-              <option value="">Select patient...</option>
-              {patientsForNewOrderSelect.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {formatPatientOptionLabel(p)}
-                </option>
-              ))}
-              {patientsForNewOrderSelect.length === 0 && (
-                <option disabled value="">
-                  No patients found
-                </option>
-              )}
-            </select>
-            <small style={{ color: '#6b7280', marginTop: '0.25rem', display: 'block' }}>
-              {patientsForNewOrderSelect.length} patient{patientsForNewOrderSelect.length === 1 ? '' : 's'} shown
-            </small>
+              onChange={(patientId) => setNewOrder((prev) => ({ ...prev, patientId }))}
+              label="Patient"
+              required
+            />
           </div>
 
           <div className="form-row">

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Modal, Skeleton } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import {
   fetchSMSTemplates,
   createSMSTemplate,
@@ -2248,13 +2249,14 @@ function ScheduleForm({
   return (
     <form onSubmit={handleSubmit}>
       <div className="sms-form-group">
-        <label>Patient *</label>
-        <select value={patientId} onChange={e => setPatientId(e.target.value)} className="sms-select" required>
-          <option value="">Select patient...</option>
-          {patients.map(p => (
-            <option key={p.id} value={p.id}>{p.firstName} {p.lastName}</option>
-          ))}
-        </select>
+        <PatientLookupSelect
+          patients={patients}
+          value={patientId}
+          onChange={setPatientId}
+          label="Patient"
+          required
+          selectClassName="sms-select"
+        />
       </div>
       <div className="sms-form-group">
         <label>Template (optional)</label>

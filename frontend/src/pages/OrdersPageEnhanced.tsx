@@ -6,6 +6,7 @@ import { fetchOrders, fetchPatients, updateOrderStatus, createOrder } from '../a
 import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import { QuickFilters } from '../components/orders/QuickFilters';
 import { GroupedOrdersTable } from '../components/orders/GroupedOrdersTable';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import type {
   Order,
   Patient,
@@ -959,19 +960,14 @@ export function OrdersPageEnhanced() {
       <Modal isOpen={showNewOrderModal} title="Create New Order" onClose={() => setShowNewOrderModal(false)} size="lg">
         <div className="modal-form">
           <div className="form-field">
-            <label htmlFor="patient-select">Patient *</label>
-            <select
+            <PatientLookupSelect
               id="patient-select"
+              patients={patients}
               value={newOrder.patientId}
-              onChange={(e) => setNewOrder((prev) => ({ ...prev, patientId: e.target.value }))}
-            >
-              <option value="">Select patient...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setNewOrder((prev) => ({ ...prev, patientId }))}
+              label="Patient"
+              required
+            />
           </div>
 
           <div className="form-row">

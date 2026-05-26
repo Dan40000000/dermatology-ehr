@@ -3,11 +3,12 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
-import { fetchOrders, fetchPatients, fetchProviders, createOrder, updateOrderStatus } from '../api';
+import { fetchOrders, fetchPatients, fetchProviders, createOrder, updateOrderStatus, updateOrderResult } from '../api';
 import { updateOrderResultFlag } from '../api/resultFlags';
 import type { Order, Patient, Provider, ResultFlagType } from '../types';
 import { ResultFlagBadge, ResultFlagSelect, ResultFlagFilter, QuickFilterButtons } from '../components/ResultFlagBadge';
 import { InsuranceStatusBadge } from '../components/Insurance';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import {
   isLabOrderType,
@@ -21,6 +22,7 @@ type MainTab = 'all' | 'path' | 'lab';
 
 // Sub-tab type
 type SubTab = 'open' | 'pending-results' | 'pending-plan' | 'completed' | 'unresolved';
+type ResultSource = 'manual' | 'lab_interface' | 'fax' | 'outside_lab' | 'correction';
 
 // Filter state interface
 interface FilterState {
@@ -48,6 +50,22 @@ interface PathLabResult extends Order {
   resultFlag?: ResultFlagType;
   resultFlagUpdatedAt?: string;
   resultFlagUpdatedBy?: string;
+  resultSource?: ResultSource;
+}
+
+const RESULT_SOURCE_LABELS: Record<ResultSource, string> = {
+  manual: 'Manual',
+  lab_interface: 'Lab interface',
+  fax: 'Fax',
+  outside_lab: 'Outside lab',
+  correction: 'Correction',
+};
+
+function toDateInputValue(value?: string | null): string {
+  if (!value) return new Date().toISOString().slice(0, 10);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
 }
 
 // Common dermatology procedures
@@ -159,6 +177,22 @@ export function LabsPage() {
     resultFlag: 'none',
     changeReason: '',
   });
+  const [showResultUpdateModal, setShowResultUpdateModal] = useState(false);
+  const [selectedItemForResult, setSelectedItemForResult] = useState<PathLabResult | null>(null);
+  const [updatingResult, setUpdatingResult] = useState(false);
+  const [resultUpdateData, setResultUpdateData] = useState<{
+    results: string;
+    status: 'received' | 'reviewed' | 'completed' | 'cancelled';
+    resultSource: ResultSource;
+    resultsProcessedDate: string;
+    changeReason: string;
+  }>({
+    results: '',
+    status: 'received',
+    resultSource: 'manual',
+    resultsProcessedDate: toDateInputValue(),
+    changeReason: '',
+  });
 
   const [sortField, setSortField] = useState<string>('createdAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -251,6 +285,9 @@ export function LabsPage() {
         type: newEntry.type === 'path' ? 'pathology' : 'lab',
         details,
         notes: newEntry.notes,
+        facility: newEntry.facility,
+        ddx: newEntry.ddx,
+        location: newEntry.location,
         status: 'pending',
       });
 
@@ -287,6 +324,8 @@ export function LabsPage() {
   };
 
   const getPatientName = (patientId: string) => {
+    const loadedItem = [...pathResults, ...labResults].find((item) => item.patientId === patientId);
+    if (loadedItem?.patientName) return loadedItem.patientName;
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
   };
@@ -312,7 +351,7 @@ export function LabsPage() {
       const normalizedStatus = normalizeLabPathValue(item.status);
       if (subTab === 'open' && !isOpenLabPathOrder(item)) return false;
       if (subTab === 'pending-results' && !['ordered', 'pending', 'sent', 'received_by_lab', 'processing'].includes(normalizedStatus)) return false;
-      if (subTab === 'pending-plan' && !['in-progress', 'in_progress', 'resulted', 'reviewed'].includes(normalizedStatus)) return false;
+      if (subTab === 'pending-plan' && !['in-progress', 'in_progress', 'received', 'resulted', 'reviewed'].includes(normalizedStatus)) return false;
       if (subTab === 'completed' && normalizedStatus !== 'completed') return false;
       if (subTab === 'unresolved' && !['cancelled', 'canceled', 'failed'].includes(normalizedStatus)) return false;
 
@@ -325,6 +364,14 @@ export function LabsPage() {
       // Filter by entry date
       if (filters.entryDateStart && new Date(item.createdAt) < new Date(filters.entryDateStart)) return false;
       if (filters.entryDateEnd && new Date(item.createdAt) > new Date(filters.entryDateEnd)) return false;
+
+      // Filter by result processed date
+      if (filters.resultsDateStart || filters.resultsDateEnd) {
+        if (!item.resultsProcessed) return false;
+        const processedDate = new Date(item.resultsProcessed);
+        if (filters.resultsDateStart && processedDate < new Date(filters.resultsDateStart)) return false;
+        if (filters.resultsDateEnd && processedDate > new Date(`${filters.resultsDateEnd}T23:59:59`)) return false;
+      }
 
       // Filter by result flags
       if (filters.resultFlags.length > 0) {
@@ -452,6 +499,71 @@ export function LabsPage() {
     }
   };
 
+  const handleOpenResultModal = (item: PathLabResult) => {
+    const resultStatus = ['received', 'reviewed', 'completed', 'cancelled'].includes(item.status)
+      ? (item.status as 'received' | 'reviewed' | 'completed' | 'cancelled')
+      : 'received';
+    setSelectedItemForResult(item);
+    setResultUpdateData({
+      results: item.results || '',
+      status: resultStatus,
+      resultSource: item.resultSource || 'manual',
+      resultsProcessedDate: toDateInputValue(item.resultsProcessed),
+      changeReason: '',
+    });
+    setShowResultUpdateModal(true);
+  };
+
+  const handleUpdateResult = async () => {
+    if (!session || !selectedItemForResult) return;
+
+    if (!resultUpdateData.results.trim()) {
+      showError('Enter a result before saving');
+      return;
+    }
+
+    if (selectedItemForResult.results?.trim() && !resultUpdateData.changeReason.trim()) {
+      showError('Enter a change reason before editing an existing result');
+      return;
+    }
+
+    setUpdatingResult(true);
+    try {
+      const processedIso = resultUpdateData.resultsProcessedDate
+        ? new Date(`${resultUpdateData.resultsProcessedDate}T12:00:00`).toISOString()
+        : null;
+
+      await updateOrderResult(
+        session.tenantId,
+        session.accessToken,
+        selectedItemForResult.id,
+        {
+          results: resultUpdateData.results.trim(),
+          status: resultUpdateData.status,
+          resultSource: resultUpdateData.resultSource,
+          resultsProcessedAt: processedIso,
+          changeReason: resultUpdateData.changeReason.trim() || undefined,
+        }
+      );
+
+      showSuccess('Result saved');
+      setShowResultUpdateModal(false);
+      setSelectedItemForResult(null);
+      const nextSubTab = resultUpdateData.status === 'completed'
+        ? 'completed'
+        : resultUpdateData.status === 'cancelled'
+          ? 'unresolved'
+          : 'pending-plan';
+      setSubTab(nextSubTab);
+      setSearchParams({ tab: buildLabsTabParam(mainTab, nextSubTab) });
+      loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to save result');
+    } finally {
+      setUpdatingResult(false);
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -488,7 +600,7 @@ export function LabsPage() {
     ['ordered', 'pending', 'sent', 'received_by_lab', 'processing'].includes(normalizeLabPathValue(i.status))
   ).length;
   const pendingPlanCount = currentData.filter((i) =>
-    ['in-progress', 'in_progress', 'resulted', 'reviewed'].includes(normalizeLabPathValue(i.status))
+    ['in-progress', 'in_progress', 'received', 'resulted', 'reviewed'].includes(normalizeLabPathValue(i.status))
   ).length;
   const completedCount = currentData.filter((i) => normalizeLabPathValue(i.status) === 'completed').length;
   const unresolvedCount = currentData.filter((i) =>
@@ -803,20 +915,15 @@ export function LabsPage() {
           </div>
 
           <div className="ema-filter-group">
-            <label className="ema-filter-label">Patient</label>
-            <select
-              className="ema-filter-select"
+            <PatientLookupSelect
+              patients={patients}
               value={filters.patient}
-              onChange={(e) => setFilters({ ...filters, patient: e.target.value })}
-              style={{ width: '100%' }}
-            >
-              <option value="">All Patients</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patient) => setFilters({ ...filters, patient })}
+              label="Patient"
+              includeAllOption
+              allValue=""
+              compact
+            />
           </div>
 
           <div className="ema-filter-group">
@@ -1191,14 +1298,40 @@ export function LabsPage() {
                     </div>
                   </td>
                   <td>
-                    <span
-                      className={`ema-status ${item.status === 'completed' ? 'established' : 'pending'}`}
-                    >
-                      {item.results || item.status}
-                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start' }}>
+                      <span
+                        className={`ema-status ${item.status === 'completed' ? 'established' : 'pending'}`}
+                        style={{ maxWidth: '18rem', whiteSpace: 'normal', lineHeight: 1.35 }}
+                      >
+                        {item.results || item.status}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenResultModal(item)}
+                        style={{
+                          padding: '0.25rem 0.5rem',
+                          background: item.results ? '#ffffff' : '#fce7f3',
+                          color: '#be123c',
+                          border: '1px solid #fb7185',
+                          borderRadius: '4px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {item.results ? 'Edit result' : 'Add result'}
+                      </button>
+                    </div>
                   </td>
                   <td style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                    {item.resultsProcessed ? new Date(item.resultsProcessed).toLocaleDateString() : '--'}
+                    {item.resultsProcessed ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                        <span>{new Date(item.resultsProcessed).toLocaleDateString()}</span>
+                        <span style={{ color: '#9ca3af' }}>
+                          {RESULT_SOURCE_LABELS[item.resultSource || 'manual']}
+                        </span>
+                      </div>
+                    ) : '--'}
                   </td>
                   <td style={{ textAlign: 'center' }}>
                     {item.photos && item.photos.length > 0 ? (
@@ -1326,6 +1459,130 @@ export function LabsPage() {
         </div>
       </Modal>
 
+      {/* Result Entry Modal */}
+      <Modal
+        isOpen={showResultUpdateModal}
+        title={selectedItemForResult?.results ? 'Edit Result' : 'Add Result'}
+        onClose={() => {
+          setShowResultUpdateModal(false);
+          setSelectedItemForResult(null);
+        }}
+        size="lg"
+      >
+        <div className="modal-form">
+          {selectedItemForResult && (
+            <>
+              <div style={{ marginBottom: '1rem', padding: '1rem', background: '#f9fafb', borderRadius: '8px' }}>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>
+                  <strong>Patient:</strong> {getPatientName(selectedItemForResult.patientId)}
+                </div>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>
+                  <strong>Order:</strong> {selectedItemForResult.details || selectedItemForResult.type}
+                </div>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                  <strong>Status:</strong> {selectedItemForResult.status}
+                </div>
+              </div>
+
+              <div className="form-field">
+                <label>Result *</label>
+                <textarea
+                  value={resultUpdateData.results}
+                  onChange={(e) => setResultUpdateData({ ...resultUpdateData, results: e.target.value })}
+                  placeholder="Paste or enter the lab/pathology result..."
+                  rows={6}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    lineHeight: 1.45,
+                  }}
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Result Source</label>
+                  <select
+                    value={resultUpdateData.resultSource}
+                    onChange={(e) => setResultUpdateData({
+                      ...resultUpdateData,
+                      resultSource: e.target.value as ResultSource,
+                    })}
+                  >
+                    <option value="manual">Manual entry</option>
+                    <option value="lab_interface">Lab interface</option>
+                    <option value="fax">Fax</option>
+                    <option value="outside_lab">Outside lab</option>
+                    <option value="correction">Correction</option>
+                  </select>
+                </div>
+
+                <div className="form-field">
+                  <label>Workflow Status</label>
+                  <select
+                    value={resultUpdateData.status}
+                    onChange={(e) => setResultUpdateData({
+                      ...resultUpdateData,
+                      status: e.target.value as 'received' | 'reviewed' | 'completed' | 'cancelled',
+                    })}
+                  >
+                    <option value="received">Result received</option>
+                    <option value="reviewed">Reviewed, plan pending</option>
+                    <option value="completed">Plan completed</option>
+                    <option value="cancelled">Unresolved / cancelled</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Results Processed</label>
+                  <input
+                    type="date"
+                    value={resultUpdateData.resultsProcessedDate}
+                    onChange={(e) => setResultUpdateData({ ...resultUpdateData, resultsProcessedDate: e.target.value })}
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>{selectedItemForResult.results ? 'Change Reason *' : 'Change Reason'}</label>
+                  <input
+                    type="text"
+                    value={resultUpdateData.changeReason}
+                    onChange={(e) => setResultUpdateData({ ...resultUpdateData, changeReason: e.target.value })}
+                    placeholder={selectedItemForResult.results ? 'Required when editing a saved result' : 'Optional note for audit trail'}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowResultUpdateModal(false);
+              setSelectedItemForResult(null);
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleUpdateResult}
+            disabled={updatingResult}
+          >
+            {updatingResult ? 'Saving...' : 'Save Result'}
+          </button>
+        </div>
+      </Modal>
+
       {/* Manual Entry Modal */}
       <Modal
         isOpen={showManualEntryModal}
@@ -1358,18 +1615,13 @@ export function LabsPage() {
             </div>
 
             <div className="form-field">
-              <label>Patient *</label>
-              <select
+              <PatientLookupSelect
+                patients={patients}
                 value={newEntry.patientId}
-                onChange={(e) => setNewEntry({ ...newEntry, patientId: e.target.value })}
-              >
-                <option value="">Select patient...</option>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.lastName}, {p.firstName}
-                  </option>
-                ))}
-              </select>
+                onChange={(patientId) => setNewEntry({ ...newEntry, patientId })}
+                label="Patient"
+                required
+              />
             </div>
           </div>
 

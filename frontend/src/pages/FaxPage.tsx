@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Modal, Button, Skeleton } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import {
   fetchFaxInbox,
   fetchFaxOutbox,
@@ -498,22 +499,17 @@ export function FaxPage() {
               )}
             </select>
 
-            <select
-              value={patientFilter}
-              onChange={(e) => setPatientFilter(e.target.value)}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-              }}
-            >
-              <option value="all">All Patients</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+            <div style={{ minWidth: '260px' }}>
+              <PatientLookupSelect
+                patients={patients}
+                value={patientFilter}
+                onChange={setPatientFilter}
+                label="Patient"
+                includeAllOption
+                allValue="all"
+                compact
+              />
+            </div>
 
             {activeTab === 'inbox' && (
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0 1rem' }}>
@@ -831,26 +827,13 @@ export function FaxPage() {
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.25rem' }}>
-              Patient (Optional)
-            </label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={sendForm.patientId}
-              onChange={(e) => setSendForm({ ...sendForm, patientId: e.target.value })}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-              }}
-            >
-              <option value="">Select patient</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setSendForm({ ...sendForm, patientId })}
+              label="Patient (Optional)"
+              placeholder="Select patient"
+            />
           </div>
 
           <div>
@@ -1057,26 +1040,13 @@ export function FaxPage() {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.25rem' }}>
-              Select Patient
-            </label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={assignForm.patientId}
-              onChange={(e) => setAssignForm({ ...assignForm, patientId: e.target.value })}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-              }}
-            >
-              <option value="">Select patient</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setAssignForm({ ...assignForm, patientId })}
+              label="Select Patient"
+              placeholder="Select patient"
+            />
           </div>
 
           <div>

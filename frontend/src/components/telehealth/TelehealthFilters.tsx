@@ -1,4 +1,5 @@
 import React from 'react';
+import { PatientLookupSelect } from '../patients/PatientLookupSelect';
 
 export interface FilterValues {
   datePreset: string;
@@ -194,19 +195,16 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
         </div>
 
         <div className="filter-group">
-          <label htmlFor="patientSearch">Patient</label>
-          <select
+          <PatientLookupSelect
             id="patientSearch"
+            patients={patients}
             value={filters.patientSearch}
-            onChange={(e) => handleChange('patientSearch', e.target.value)}
-          >
-            <option value="">All Patients</option>
-            {patients.map((patient) => (
-              <option key={patient.id} value={patient.id}>
-                {patient.firstName} {patient.lastName}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => handleChange('patientSearch', value)}
+            label="Patient"
+            includeAllOption
+            allValue=""
+            compact
+          />
         </div>
 
         <div className="filter-group">

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { fetchPatients } from '../api';
 import type { Patient } from '../types';
 
@@ -866,18 +867,13 @@ export function QuotesPage() {
       >
         <div className="modal-form">
           <div className="form-field">
-            <label>Patient *</label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={newQuote.patientId}
-              onChange={(e) => setNewQuote((prev) => ({ ...prev, patientId: e.target.value }))}
-            >
-              <option value="">Select patient...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setNewQuote((prev) => ({ ...prev, patientId }))}
+              label="Patient"
+              required
+            />
           </div>
 
           <div className="form-field">

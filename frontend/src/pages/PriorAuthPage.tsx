@@ -12,6 +12,7 @@ import {
   fetchPatients,
 } from '../api';
 import { PAStatusTracker } from '../components/workflows';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import '../styles/prior-auth.css';
 
 interface PriorAuth {
@@ -609,28 +610,24 @@ function CreatePAModal({
           {step === 1 && (
             <div className="epa-form-step">
               <div className="epa-form-group">
-                <label>Select Patient <span className="required">*</span></label>
                 {loadingPatients ? (
                   <div className="epa-loading-inline">Loading patients...</div>
                 ) : (
-                  <select
+                  <PatientLookupSelect
+                    patients={patients}
                     value={formData.patientId}
-                    onChange={(e) => {
-                      const patient = patients.find((p) => p.id === e.target.value);
+                    onChange={(patientId) => {
+                      const patient = patients.find((p) => p.id === patientId);
                       setFormData({
                         ...formData,
-                        patientId: e.target.value,
+                        patientId,
                         insuranceName: patient?.insurance || formData.insuranceName,
                       });
                     }}
-                  >
-                    <option value="">Choose a patient...</option>
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName || p.first_name} {p.lastName || p.last_name} - DOB: {new Date(p.dateOfBirth || p.date_of_birth).toLocaleDateString()}
-                      </option>
-                    ))}
-                  </select>
+                    label="Select Patient"
+                    required
+                    placeholder="Choose a patient..."
+                  />
                 )}
               </div>
 

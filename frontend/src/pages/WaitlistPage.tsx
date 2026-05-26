@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Modal, Skeleton } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { fetchPatients, fetchProviders, notifyWaitlistPatient, getWaitlistNotifications, fillWaitlistEntry } from '../api';
 import { API_BASE_URL } from '../utils/apiBase';
 import type { Patient, Provider } from '../types';
@@ -584,18 +585,14 @@ export function WaitlistPage() {
         <div className="modal-form">
           <div className="form-row">
             <div className="form-field">
-              <label>Patient *</label>
-              <select
+              <PatientLookupSelect
+                patients={patients}
                 value={formData.patientId}
-                onChange={(e) => setFormData((prev) => ({ ...prev, patientId: e.target.value }))}
-              >
-                <option value="">Select Patient</option>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.lastName}, {p.firstName}
-                  </option>
-                ))}
-              </select>
+                onChange={(patientId) => setFormData((prev) => ({ ...prev, patientId }))}
+                label="Patient"
+                required
+                placeholder="Select Patient"
+              />
             </div>
 
             <div className="form-field">

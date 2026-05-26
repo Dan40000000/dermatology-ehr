@@ -47,7 +47,6 @@ const PatientsPage = lazy(() => import('../pages/PatientsPage').then(m => ({ def
 const PatientDetailPage = lazy(() => import('../pages/PatientDetailPage').then(m => ({ default: m.PatientDetailPage })));
 const NewPatientPage = lazy(() => import('../pages/NewPatientPage').then(m => ({ default: m.NewPatientPage })));
 const EncounterPage = lazy(() => import('../pages/EncounterPage').then(m => ({ default: m.EncounterPage })));
-const OrdersPage = lazy(() => import('../pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
 const DocumentsPage = lazy(() => import('../pages/DocumentsPage').then(m => ({ default: m.DocumentsPage })));
 const PhotosPage = lazy(() => import('../pages/PhotosPage').then(m => ({ default: m.PhotosPage })));
 const AnalyticsPage = lazy(() => import('../pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
@@ -280,7 +279,7 @@ export const routes: RouteObject[] = [
       { path: 'clinical-copilot', element: <Navigate to="/ai-assistant" replace /> },
       { path: 'ambient-scribe', element: lazyWithSuspense(AmbientScribePage) },
       { path: 'coding-review', element: lazyWithSuspense(PostVisitCodingReviewPage) },
-      { path: 'orders', element: lazyWithSuspense(OrdersPage) },
+      { path: 'orders', element: <Navigate to="/labs?tab=all-open" replace /> },
       { path: 'rx', element: lazyWithSuspense(PrescriptionsPage) },
       { path: 'prior-auth', element: lazyWithSuspense(PriorAuthPage) },
       { path: 'labs', element: lazyWithSuspense(LabsPage) },

@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import {
   fetchDocuments,
   fetchPatients,
@@ -1330,18 +1331,15 @@ export function DocumentsPage() {
         </div>
 
         <div className="filter-group">
-          <label>Patient:</label>
-          <select
+          <PatientLookupSelect
+            patients={patients}
             value={selectedPatient}
-            onChange={(e) => setSelectedPatient(e.target.value)}
-          >
-            <option value="all">All Patients</option>
-            {patients.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.lastName}, {p.firstName}
-              </option>
-            ))}
-          </select>
+            onChange={setSelectedPatient}
+            label="Patient"
+            includeAllOption
+            allValue="all"
+            compact
+          />
         </div>
 
         <div className="filter-tabs">
@@ -1516,20 +1514,13 @@ export function DocumentsPage() {
       >
         <div className="modal-form">
           <div className="form-field">
-            <label>Patient *</label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={uploadForm.patientId}
-              onChange={(e) =>
-                setUploadForm((prev) => ({ ...prev, patientId: e.target.value }))
-              }
-            >
-              <option value="">Select patient...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setUploadForm((prev) => ({ ...prev, patientId }))}
+              label="Patient"
+              required
+            />
           </div>
 
           <div className="form-row">

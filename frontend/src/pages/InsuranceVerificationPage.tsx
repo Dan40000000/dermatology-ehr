@@ -12,6 +12,7 @@ import { AlertTriangle, CheckCircle, Users, TrendingUp, Calendar, AlertCircle, C
 import { api } from '../api';
 import { BatchEligibility } from '../components/Insurance/BatchEligibility';
 import { CoverageSummaryCard } from '../components/Insurance/CoverageSummaryCard';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 
 interface PatientsWithIssues {
   patientId: string;
@@ -289,21 +290,21 @@ export const InsuranceVerificationPage: React.FC = () => {
 
         <div className="p-6">
           <div className="flex space-x-3 mb-6">
-            <select
+            <PatientLookupSelect
+              patients={patientsNeedingVerification.map((patient) => ({
+                id: patient.patientId,
+                name: patient.patientName,
+              }))}
               value={selectedPatientForBenefits}
-              onChange={(e) => {
-                setSelectedPatientForBenefits(e.target.value);
-                if (e.target.value) loadPatientBenefits(e.target.value);
+              onChange={(patientId) => {
+                setSelectedPatientForBenefits(patientId);
+                if (patientId) loadPatientBenefits(patientId);
               }}
-              className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">Select a patient...</option>
-              {patientsNeedingVerification.map((patient) => (
-                <option key={patient.patientId} value={patient.patientId}>
-                  {patient.patientName}
-                </option>
-              ))}
-            </select>
+              label="Patient"
+              placeholder="Select a patient..."
+              style={{ flex: 1 }}
+              showInitialResults={false}
+            />
             <button
               onClick={() => selectedPatientForBenefits && loadPatientBenefits(selectedPatientForBenefits)}
               disabled={!selectedPatientForBenefits || loadingBenefits}

@@ -5,6 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { Modal, Skeleton } from '../components/ui';
 import { API_BASE_URL } from '../utils/apiBase';
 import { fetchAppointments, fetchOrders, fetchPatients, recordPrintedDocument } from '../api';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 
 type InstructionType =
   | 'all'
@@ -14,6 +15,8 @@ type InstructionType =
   | 'prescription_instructions'
   | 'rash_care'
   | 'cleansing';
+
+type HandoutTab = 'library' | 'custom' | 'assigned';
 
 interface Handout {
   id: string;
@@ -63,6 +66,23 @@ interface PatientsResponseLike {
   data?: Array<Record<string, unknown>>;
 }
 
+interface AssignedHandoutDocument {
+  id: string;
+  patientId?: string;
+  encounterId?: string | null;
+  title: string;
+  type?: string;
+  category?: string;
+  description?: string | null;
+  url?: string;
+  objectKey?: string | null;
+  storage?: string | null;
+  mimeType?: string | null;
+  createdAt?: string;
+  patientName?: string | null;
+  uploadedByEmail?: string | null;
+}
+
 const CATEGORIES = [
   'Skin Conditions',
   'Procedures',
@@ -74,6 +94,14 @@ const CATEGORIES = [
   'General Information',
 ];
 
+const HANDOUT_TAB_LABELS: Record<HandoutTab, string> = {
+  library: 'Browse Library',
+  custom: 'Custom Templates',
+  assigned: 'Assigned to Patients',
+};
+
+const PRINTED_HANDOUT_CATEGORIES = ['After Visit Instructions', 'Printed Documents'];
+
 const INSTRUCTION_TYPE_LABELS: Record<InstructionType, string> = {
   all: 'All Templates',
   general: 'General',
@@ -84,15 +112,55 @@ const INSTRUCTION_TYPE_LABELS: Record<InstructionType, string> = {
   cleansing: 'Cleansing',
 };
 
-const PLACEHOLDER_GUIDE = [
-  '{{patient_name}}',
-  '{{patient_dob}}',
-  '{{provider_name}}',
-  '{{today_date}}',
-  '{{medication_name}}',
-  '{{dosage_instructions}}',
-  '{{lab_summary}}',
-  '{{follow_up_date}}',
+const PLACEHOLDER_DEFINITIONS = [
+  {
+    canonical: '{{patient_name}}',
+    label: 'Patient name',
+    description: 'Selected patient full name',
+    aliases: ['patient_name', 'patient name', 'patient-name', 'patientName'],
+  },
+  {
+    canonical: '{{patient_dob}}',
+    label: 'Patient DOB',
+    description: 'Selected patient date of birth',
+    aliases: ['patient_dob', 'patient dob', 'patient-date-of-birth', 'patientDateOfBirth', 'dob'],
+  },
+  {
+    canonical: '{{provider_name}}',
+    label: 'Provider name',
+    description: 'Current provider or staff name',
+    aliases: ['provider_name', 'provider name', 'provider-name', 'providerName'],
+  },
+  {
+    canonical: '{{today_date}}',
+    label: 'Today',
+    description: 'Date the handout is generated',
+    aliases: ['today_date', 'today date', 'today-date', 'todayDate', 'date'],
+  },
+  {
+    canonical: '{{medication_name}}',
+    label: 'Medication',
+    description: 'Medication entered before printing',
+    aliases: ['medication_name', 'medication name', 'medication-name', 'medicationName', 'medication'],
+  },
+  {
+    canonical: '{{dosage_instructions}}',
+    label: 'Dose / plan',
+    description: 'Dose, care plan, or custom instructions',
+    aliases: ['dosage_instructions', 'dosage instructions', 'dosage-instructions', 'dosageInstructions', 'dose instructions'],
+  },
+  {
+    canonical: '{{lab_summary}}',
+    label: 'Lab summary',
+    description: 'Lab/pathology summary or extra notes',
+    aliases: ['lab_summary', 'lab summary', 'lab-summary', 'labSummary', 'result summary'],
+  },
+  {
+    canonical: '{{follow_up_date}}',
+    label: 'Follow-up',
+    description: 'Next scheduled follow-up date',
+    aliases: ['follow_up_date', 'follow up date', 'follow-up-date', 'followUpDate', 'follow up'],
+  },
 ];
 
 const HANDOUT_PATIENT_LOOKUP_LIMIT = 1000;
@@ -164,6 +232,11 @@ const defaultFormState: HandoutFormState = {
   isActive: true,
 };
 
+function normalizeHandoutTab(value: string | null): HandoutTab {
+  if (value === 'custom' || value === 'assigned') return value;
+  return 'library';
+}
+
 function formatInstructionType(value: Exclude<InstructionType, 'all'>): string {
   return INSTRUCTION_TYPE_LABELS[value] || 'General';
 }
@@ -183,7 +256,11 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-function renderTemplateContent(template: string, values: PersonalizationState): string {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getPlaceholderValue(canonical: string, values: PersonalizationState): string {
   const replacements: Record<string, string> = {
     '{{patient_name}}': values.patientName || '________________',
     '{{patient_dob}}': values.patientDob || '________________',
@@ -194,10 +271,79 @@ function renderTemplateContent(template: string, values: PersonalizationState): 
     '{{lab_summary}}': values.labSummary || '________________',
     '{{follow_up_date}}': values.followUpDate || '________________',
   };
+  return replacements[canonical] || '________________';
+}
 
-  return Object.entries(replacements).reduce(
-    (acc, [token, value]) => acc.replaceAll(token, value),
-    template,
+function replacePlaceholderAliases(template: string, replacer: (canonical: string) => string): string {
+  return PLACEHOLDER_DEFINITIONS.reduce((acc, definition) => {
+    return definition.aliases.reduce((next, alias) => {
+      const escapedAlias = escapeRegExp(alias);
+      const pattern = new RegExp(
+        `\\{\\{\\s*${escapedAlias}\\s*\\}\\}|\\{\\s*${escapedAlias}\\s*\\}|\\[\\s*${escapedAlias}\\s*\\]`,
+        'gi',
+      );
+      return next.replace(pattern, replacer(definition.canonical));
+    }, acc);
+  }, template);
+}
+
+export function normalizeTemplatePlaceholders(template: string): string {
+  return replacePlaceholderAliases(template, (canonical) => canonical);
+}
+
+export function renderTemplateContent(template: string, values: PersonalizationState): string {
+  return replacePlaceholderAliases(template, (canonical) => getPlaceholderValue(canonical, values));
+}
+
+function appendTemplateToken(content: string, token: string): string {
+  const needsSeparator = content.trim().length > 0 && !content.endsWith(' ') && !content.endsWith('\n');
+  return `${content}${needsSeparator ? ' ' : ''}${token}`;
+}
+
+function getHandoutDisplayCategory(handout: Handout): string {
+  const explicitCategory = handout.category || 'General Information';
+  const haystack = `${handout.title} ${handout.condition} ${handout.content}`.toLowerCase();
+
+  if (/biopsy|wound|bandage|dressing|suture|excision|procedure|post[-\s]?op|healing/.test(haystack)) {
+    return 'Post-Procedure Care';
+  }
+  if (/tretinoin|isotretinoin|doxycycline|medication|prescription|dose|cream|ointment|topical/.test(haystack)) {
+    return 'Medications';
+  }
+  if (/lab|cbc|blood|result/.test(haystack)) {
+    return 'Lab Results';
+  }
+  if (/pathology|biopsy result|histology|specimen/.test(haystack)) {
+    return 'Pathology Reports';
+  }
+  if (/sunscreen|sun protection|spf|prevention|skin check/.test(haystack)) {
+    return 'Prevention';
+  }
+  if (/cleanser|cleansing|sensitive skin|moisturizer|skincare|skin care/.test(haystack)) {
+    return 'General Information';
+  }
+  if (/rash|dermatitis|eczema|psoriasis|acne|rosacea|wart|mole|lesion/.test(haystack)) {
+    return 'Skin Conditions';
+  }
+
+  return explicitCategory;
+}
+
+function compareCategories(a: string, b: string): number {
+  const aIndex = CATEGORIES.indexOf(a);
+  const bIndex = CATEGORIES.indexOf(b);
+  if (aIndex !== -1 || bIndex !== -1) {
+    return (aIndex === -1 ? CATEGORIES.length : aIndex) - (bIndex === -1 ? CATEGORIES.length : bIndex);
+  }
+  return a.localeCompare(b);
+}
+
+function isPrintedHandoutDocument(document: AssignedHandoutDocument): boolean {
+  const category = document.category || '';
+  if (document.type === 'printed_document') return true;
+  if (PRINTED_HANDOUT_CATEGORIES.includes(category)) return true;
+  return /handout|aftercare|patient instruction|printed document/i.test(
+    `${document.title} ${document.description || ''} ${category}`,
   );
 }
 
@@ -456,16 +602,76 @@ function toPrintableHtml(
 `;
 }
 
+function PlaceholderGuidePanel({
+  onInsert,
+  compact = false,
+}: {
+  onInsert?: (token: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        background: '#eff6ff',
+        border: '1px solid #bfdbfe',
+        borderRadius: '8px',
+        padding: compact ? '0.65rem 0.75rem' : '0.75rem 1rem',
+        fontSize: '0.85rem',
+        color: '#1e3a8a',
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: '0.35rem' }}>Template placeholders</div>
+      <div style={{ marginBottom: '0.6rem' }}>
+        Use the double-brace tokens below. The page also accepts common friendly versions like{' '}
+        <code>{'{patient name}'}</code>, but it saves them as <code>{'{{patient_name}}'}</code> so they print correctly.
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+        {PLACEHOLDER_DEFINITIONS.map((definition) =>
+          onInsert ? (
+            <button
+              key={definition.canonical}
+              type="button"
+              className="btn-secondary btn-sm"
+              title={definition.description}
+              onClick={() => onInsert(definition.canonical)}
+            >
+              {definition.canonical}
+            </button>
+          ) : (
+            <span
+              key={definition.canonical}
+              title={definition.description}
+              style={{
+                background: '#ffffff',
+                border: '1px solid #bfdbfe',
+                borderRadius: '999px',
+                padding: '0.2rem 0.45rem',
+                fontFamily: 'monospace',
+                fontSize: '0.78rem',
+              }}
+            >
+              {definition.canonical}
+            </span>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function HandoutsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const queryInstructionType = searchParams.get('instructionType') as InstructionType | null;
+  const queryTab = normalizeHandoutTab(searchParams.get('tab'));
   const preferredPatientId = searchParams.get('patientId') || '';
 
   const [loading, setLoading] = useState(true);
   const [handouts, setHandouts] = useState<Handout[]>([]);
+  const [assignedHandoutDocuments, setAssignedHandoutDocuments] = useState<AssignedHandoutDocument[]>([]);
+  const [handoutTab, setHandoutTab] = useState<HandoutTab>(queryTab);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [instructionTypeFilter, setInstructionTypeFilter] = useState<InstructionType>(
     queryInstructionType && INSTRUCTION_TYPE_LABELS[queryInstructionType]
@@ -492,7 +698,6 @@ export function HandoutsPage() {
     followUpDate: '',
   });
   const [patientOptions, setPatientOptions] = useState<PatientOption[]>([]);
-  const [patientSearch, setPatientSearch] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [followUpLoading, setFollowUpLoading] = useState(false);
@@ -503,32 +708,83 @@ export function HandoutsPage() {
     }
   }, [queryInstructionType]);
 
+  useEffect(() => {
+    setHandoutTab(queryTab);
+  }, [queryTab]);
+
   const loadData = useCallback(async () => {
     if (!session) return;
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (categoryFilter !== 'all') params.append('category', categoryFilter);
       if (searchTerm) params.append('search', searchTerm);
       if (instructionTypeFilter !== 'all') params.append('instructionType', instructionTypeFilter);
       params.append('isActive', 'true');
 
-      const response = await fetch(`${API_BASE_URL}/api/handouts?${params.toString()}`, {
+      const handoutsRequest = fetch(`${API_BASE_URL}/api/handouts?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${session.accessToken}`,
           'x-tenant-id': session.tenantId,
         },
       });
 
+      const response = await handoutsRequest;
       if (!response.ok) throw new Error('Failed to load handout templates');
       const data = await response.json();
       setHandouts(Array.isArray(data) ? data : []);
+
+      if (handoutTab === 'assigned') {
+        try {
+          const documentResponses = await Promise.all(
+            PRINTED_HANDOUT_CATEGORIES.map((category) => {
+              const documentParams = new URLSearchParams({
+                category,
+                limit: '100',
+              });
+              return fetch(`${API_BASE_URL}/api/documents?${documentParams.toString()}`, {
+                headers: {
+                  Authorization: `Bearer ${session.accessToken}`,
+                  'x-tenant-id': session.tenantId,
+                },
+              });
+            }),
+          );
+
+          const documentPayloads = await Promise.all(
+            documentResponses.map(async (documentResponse) => {
+              if (!documentResponse.ok) throw new Error('Failed to load assigned handouts');
+              return documentResponse.json();
+            }),
+          );
+          const deduped = new Map<string, AssignedHandoutDocument>();
+          documentPayloads.forEach((payload) => {
+            const rows = Array.isArray(payload) ? payload : payload.documents || payload.data || [];
+            rows.forEach((document: AssignedHandoutDocument) => {
+              if (document?.id && isPrintedHandoutDocument(document)) {
+                deduped.set(document.id, document);
+              }
+            });
+          });
+          setAssignedHandoutDocuments(
+            Array.from(deduped.values()).sort((a, b) => {
+              const aTime = new Date(a.createdAt || '').getTime();
+              const bTime = new Date(b.createdAt || '').getTime();
+              return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+            }),
+          );
+        } catch {
+          setAssignedHandoutDocuments([]);
+          showError('Assigned handouts could not be loaded. Templates are still available.');
+        }
+      } else {
+        setAssignedHandoutDocuments([]);
+      }
     } catch (err: unknown) {
       showError(getErrorMessage(err, 'Failed to load handout templates'));
     } finally {
       setLoading(false);
     }
-  }, [session, categoryFilter, searchTerm, instructionTypeFilter, showError]);
+  }, [session, searchTerm, instructionTypeFilter, handoutTab, showError]);
 
   useEffect(() => {
     loadData();
@@ -541,7 +797,6 @@ export function HandoutsPage() {
   const openPreview = (handout: Handout) => {
     setSelectedHandout(handout);
     setSelectedPatientId(preferredPatientId);
-    setPatientSearch('');
     setPersonalization({
       patientName: '',
       patientDob: '',
@@ -601,8 +856,6 @@ export function HandoutsPage() {
 
       const selected = patientOptions.find((p) => p.id === patientId);
       if (!selected) return;
-
-      setPatientSearch(`${selected.lastName}, ${selected.firstName}`);
 
       setPersonalization((prev) => ({
         ...prev,
@@ -705,7 +958,10 @@ export function HandoutsPage() {
           Authorization: `Bearer ${session.accessToken}`,
           'x-tenant-id': session.tenantId,
         },
-        body: JSON.stringify(createForm),
+        body: JSON.stringify({
+          ...createForm,
+          content: normalizeTemplatePlaceholders(createForm.content),
+        }),
       });
 
       if (!response.ok) throw new Error('Failed to create handout template');
@@ -753,7 +1009,10 @@ export function HandoutsPage() {
           Authorization: `Bearer ${session.accessToken}`,
           'x-tenant-id': session.tenantId,
         },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify({
+          ...editForm,
+          content: normalizeTemplatePlaceholders(editForm.content),
+        }),
       });
 
       if (!response.ok) throw new Error('Failed to update handout template');
@@ -806,7 +1065,7 @@ export function HandoutsPage() {
       {
         disclaimer: selectedHandout.print_disclaimer,
         instructionType: selectedHandout.instruction_type,
-        category: selectedHandout.category,
+        category: getHandoutDisplayCategory(selectedHandout),
         patientName: personalization.patientName,
         patientDob: personalization.patientDob,
         providerName: personalization.providerName,
@@ -856,7 +1115,9 @@ export function HandoutsPage() {
   };
 
   const filteredHandouts = handouts.filter((h) => {
-    if (categoryFilter !== 'all' && h.category !== categoryFilter) return false;
+    if (handoutTab === 'custom' && h.is_system_template) return false;
+    if (handoutTab === 'assigned') return false;
+    if (categoryFilter !== 'all' && getHandoutDisplayCategory(h) !== categoryFilter) return false;
     if (instructionTypeFilter !== 'all' && h.instruction_type !== instructionTypeFilter) return false;
 
     if (searchTerm) {
@@ -870,35 +1131,39 @@ export function HandoutsPage() {
     return true;
   });
 
+  const filteredAssignedHandouts = assignedHandoutDocuments.filter((document) => {
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      document.title.toLowerCase().includes(term) ||
+      (document.description || '').toLowerCase().includes(term) ||
+      (document.patientName || '').toLowerCase().includes(term) ||
+      (document.category || '').toLowerCase().includes(term)
+    );
+  });
+
   const groupedByType = filteredHandouts.reduce(
     (acc, handout) => {
       const key = handout.instruction_type || 'general';
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(handout);
+      const category = getHandoutDisplayCategory(handout);
+      if (!acc[key]) acc[key] = {};
+      if (!acc[key][category]) acc[key][category] = [];
+      acc[key][category].push(handout);
       return acc;
     },
-    {} as Record<string, Handout[]>,
+    {} as Record<string, Record<string, Handout[]>>,
   );
 
-  const filteredPatients = useMemo(() => {
-    const term = patientSearch.trim().toLowerCase();
-    if (!term) return patientOptions;
-    return patientOptions.filter((patient) => {
-      const fullName = `${patient.firstName} ${patient.lastName}`.toLowerCase();
-      const reverseName = `${patient.lastName} ${patient.firstName}`.toLowerCase();
-      const dob = formatDateLabel(patient.dateOfBirth).toLowerCase();
-      const mrn = (patient.mrn || '').toLowerCase();
-      const phone = (patient.phone || '').replace(/\D/g, '');
-      const phoneSearch = term.replace(/\D/g, '');
-      return (
-        fullName.includes(term) ||
-        reverseName.includes(term) ||
-        dob.includes(term) ||
-        mrn.includes(term) ||
-        (phoneSearch.length >= 3 && phone.includes(phoneSearch))
-      );
-    });
-  }, [patientOptions, patientSearch]);
+  const setHandoutTabFilter = (next: HandoutTab) => {
+    setHandoutTab(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'library') {
+      params.delete('tab');
+    } else {
+      params.set('tab', next);
+    }
+    setSearchParams(params);
+  };
 
   const setInstructionFilter = (next: InstructionType) => {
     setInstructionTypeFilter(next);
@@ -926,38 +1191,64 @@ export function HandoutsPage() {
 
       <div className="ema-section-header">Clinical Print Templates</div>
 
+      <div style={{ padding: '0 1rem 1rem 1rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {(Object.keys(HANDOUT_TAB_LABELS) as HandoutTab[]).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={handoutTab === tab ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+              onClick={() => setHandoutTabFilter(tab)}
+            >
+              {HANDOUT_TAB_LABELS[tab]}
+            </button>
+          ))}
+        </div>
+        <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: '#64748b' }}>
+          {handoutTab === 'assigned'
+            ? 'Assigned handouts are the printed patient instructions saved to the chart and shared to the portal.'
+            : handoutTab === 'custom'
+              ? 'Custom templates are office-created templates. These can be edited and deleted by authorized staff.'
+              : 'Browse all active clinical print templates, grouped by clinical category.'}
+        </div>
+      </div>
+
       <div className="ema-filter-panel">
         <div className="ema-filter-row">
-          <div className="ema-filter-group">
-            <label className="ema-filter-label">Template Type</label>
-            <select
-              className="ema-filter-select"
-              value={instructionTypeFilter}
-              onChange={(e) => setInstructionFilter(e.target.value as InstructionType)}
-            >
-              {(Object.keys(INSTRUCTION_TYPE_LABELS) as InstructionType[]).map((type) => (
-                <option key={type} value={type}>
-                  {INSTRUCTION_TYPE_LABELS[type]}
-                </option>
-              ))}
-            </select>
-          </div>
+          {handoutTab !== 'assigned' && (
+            <>
+              <div className="ema-filter-group">
+                <label className="ema-filter-label">Template Type</label>
+                <select
+                  className="ema-filter-select"
+                  value={instructionTypeFilter}
+                  onChange={(e) => setInstructionFilter(e.target.value as InstructionType)}
+                >
+                  {(Object.keys(INSTRUCTION_TYPE_LABELS) as InstructionType[]).map((type) => (
+                    <option key={type} value={type}>
+                      {INSTRUCTION_TYPE_LABELS[type]}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div className="ema-filter-group">
-            <label className="ema-filter-label">Category</label>
-            <select
-              className="ema-filter-select"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-            >
-              <option value="all">All Categories</option>
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className="ema-filter-group">
+                <label className="ema-filter-label">Category</label>
+                <select
+                  className="ema-filter-select"
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                >
+                  <option value="all">All Categories</option>
+                  {CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
 
           <div className="ema-filter-group" style={{ flex: 1 }}>
             <label className="ema-filter-label">Search</label>
@@ -972,25 +1263,104 @@ export function HandoutsPage() {
         </div>
       </div>
 
-      <div
-        style={{
-          margin: '0 1rem 1rem 1rem',
-          background: '#eff6ff',
-          border: '1px solid #bfdbfe',
-          borderRadius: '8px',
-          padding: '0.75rem 1rem',
-          fontSize: '0.85rem',
-          color: '#1e3a8a',
-        }}
-      >
-        Placeholder tokens supported in templates: {PLACEHOLDER_GUIDE.join(' • ')}
-      </div>
+      {handoutTab !== 'assigned' && (
+        <div style={{ margin: '0 1rem 1rem 1rem' }}>
+          <PlaceholderGuidePanel compact />
+        </div>
+      )}
 
       {loading ? (
         <Skeleton variant="card" height={400} />
       ) : (
         <div style={{ padding: '1rem' }}>
-          {Object.keys(groupedByType).length === 0 ? (
+          {handoutTab === 'assigned' ? (
+            filteredAssignedHandouts.length === 0 ? (
+              <div
+                style={{
+                  textAlign: 'center',
+                  padding: '3rem',
+                  color: '#6b7280',
+                  background: '#f9fafb',
+                  borderRadius: '8px',
+                }}
+              >
+                <div style={{ fontSize: '1.125rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                  No assigned handouts found
+                </div>
+                <div style={{ fontSize: '0.875rem' }}>
+                  Print a template for a selected patient to save it to the chart and portal.
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                  gap: '1rem',
+                }}
+              >
+                {filteredAssignedHandouts.map((document) => (
+                  <div
+                    key={document.id}
+                    style={{
+                      background: '#ffffff',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      padding: '1rem',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                      <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1f2937' }}>
+                        {document.title}
+                      </div>
+                      <span
+                        style={{
+                          background: '#ecfdf5',
+                          color: '#047857',
+                          fontSize: '0.7rem',
+                          borderRadius: '999px',
+                          padding: '0.15rem 0.5rem',
+                          fontWeight: 700,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Assigned
+                      </span>
+                    </div>
+                    <div style={{ marginTop: '0.6rem', display: 'grid', gap: '0.35rem', fontSize: '0.82rem', color: '#475569' }}>
+                      <div>
+                        <strong>Patient:</strong> {document.patientName || 'Patient on chart'}
+                      </div>
+                      <div>
+                        <strong>Category:</strong> {document.category || 'Printed Documents'}
+                      </div>
+                      <div>
+                        <strong>Generated:</strong> {formatDateLabel(document.createdAt) || 'Date unavailable'}
+                      </div>
+                      {document.description && <div>{document.description}</div>}
+                    </div>
+                    {(document.url || document.objectKey) && (
+                      <div style={{ marginTop: '0.85rem' }}>
+                        <button
+                          type="button"
+                          className="btn-secondary btn-sm"
+                          onClick={() => {
+                            const url =
+                              document.storage === 's3' && document.objectKey
+                                ? `${API_BASE_URL}/api/documents/view/${document.objectKey}`
+                                : document.url || `${API_BASE_URL}/api/documents/${document.id}/file`;
+                            window.open(url, '_blank', 'noopener,noreferrer');
+                          }}
+                        >
+                          Open Saved Copy
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          ) : Object.keys(groupedByType).length === 0 ? (
             <div
               style={{
                 textAlign: 'center',
@@ -1008,7 +1378,9 @@ export function HandoutsPage() {
               </div>
             </div>
           ) : (
-            Object.entries(groupedByType).map(([type, templates]) => (
+            Object.entries(groupedByType).map(([type, categories]) => {
+              const templatesCount = Object.values(categories).reduce((sum, templates) => sum + templates.length, 0);
+              return (
               <div key={type} style={{ marginBottom: '2rem' }}>
                 <h3
                   style={{
@@ -1020,86 +1392,114 @@ export function HandoutsPage() {
                     paddingBottom: '0.5rem',
                   }}
                 >
-                  {formatInstructionType(type as Exclude<InstructionType, 'all'>)} ({templates.length})
+                  {formatInstructionType(type as Exclude<InstructionType, 'all'>)} ({templatesCount})
                 </h3>
 
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-                    gap: '1rem',
-                  }}
-                >
-                  {templates.map((handout) => (
-                    <div
-                      key={handout.id}
-                      style={{
-                        background: '#ffffff',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        padding: '1rem',
-                        transition: 'all 0.2s',
-                      }}
-                    >
+                {Object.entries(categories)
+                  .sort(([a], [b]) => compareCategories(a, b))
+                  .map(([category, templates]) => (
+                    <div key={`${type}-${category}`} style={{ marginBottom: '1.25rem' }}>
                       <div
                         style={{
+                          fontSize: '0.88rem',
+                          fontWeight: 700,
+                          color: '#334155',
+                          marginBottom: '0.65rem',
                           display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'flex-start',
-                          gap: '0.5rem',
-                          marginBottom: '0.5rem',
+                          alignItems: 'center',
+                          gap: '0.4rem',
                         }}
                       >
-                        <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1f2937' }}>
-                          {handout.title}
-                        </div>
                         <span
                           style={{
-                            background: handout.is_system_template ? '#ecfccb' : '#e0f2fe',
-                            color: handout.is_system_template ? '#3f6212' : '#075985',
-                            fontSize: '0.7rem',
+                            width: '8px',
+                            height: '8px',
                             borderRadius: '999px',
-                            padding: '0.15rem 0.5rem',
-                            fontWeight: 600,
+                            background: '#14b8a6',
+                            display: 'inline-block',
                           }}
-                        >
-                          {handout.is_system_template ? 'System' : 'Custom'}
-                        </span>
+                        />
+                        {category} ({templates.length})
                       </div>
-
-                      <div style={{ fontSize: '0.85rem', color: '#4b5563', marginBottom: '0.5rem' }}>
-                        {handout.condition}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.75rem' }}>
-                        Category: {handout.category}
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.75rem' }}>
-                        {handout.content.slice(0, 110)}
-                        {handout.content.length > 110 ? '...' : ''}
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <button type="button" className="btn-primary btn-sm" onClick={() => openPreview(handout)}>
-                          Preview / Print
-                        </button>
-                        <button type="button" className="btn-secondary btn-sm" onClick={() => openEdit(handout)}>
-                          Edit
-                        </button>
-                        {!handout.is_system_template && (
-                          <button
-                            type="button"
-                            className="btn-sm btn-danger"
-                            onClick={() => handleDelete(handout.id)}
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                          gap: '1rem',
+                        }}
+                      >
+                        {templates.map((handout) => (
+                          <div
+                            key={handout.id}
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '8px',
+                              padding: '1rem',
+                              transition: 'all 0.2s',
+                            }}
                           >
-                            Delete
-                          </button>
-                        )}
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'flex-start',
+                                gap: '0.5rem',
+                                marginBottom: '0.5rem',
+                              }}
+                            >
+                              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1f2937' }}>
+                                {handout.title}
+                              </div>
+                              <span
+                                style={{
+                                  background: handout.is_system_template ? '#ecfccb' : '#e0f2fe',
+                                  color: handout.is_system_template ? '#3f6212' : '#075985',
+                                  fontSize: '0.7rem',
+                                  borderRadius: '999px',
+                                  padding: '0.15rem 0.5rem',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {handout.is_system_template ? 'System' : 'Custom'}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: '0.85rem', color: '#4b5563', marginBottom: '0.5rem' }}>
+                              {handout.condition}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.75rem' }}>
+                              Category: {getHandoutDisplayCategory(handout)}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.75rem' }}>
+                              {handout.content.slice(0, 110)}
+                              {handout.content.length > 110 ? '...' : ''}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <button type="button" className="btn-primary btn-sm" onClick={() => openPreview(handout)}>
+                                Preview / Print
+                              </button>
+                              <button type="button" className="btn-secondary btn-sm" onClick={() => openEdit(handout)}>
+                                Edit
+                              </button>
+                              {!handout.is_system_template && (
+                                <button
+                                  type="button"
+                                  className="btn-sm btn-danger"
+                                  onClick={() => handleDelete(handout.id)}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}
-                </div>
               </div>
-            ))
+            )})
           )}
         </div>
       )}
@@ -1123,7 +1523,7 @@ export function HandoutsPage() {
               >
                 <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{selectedHandout.condition}</div>
                 <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                  {formatInstructionType(selectedHandout.instruction_type)} • {selectedHandout.category}
+                  {formatInstructionType(selectedHandout.instruction_type)} • {getHandoutDisplayCategory(selectedHandout)}
                 </div>
               </div>
 
@@ -1144,78 +1544,19 @@ export function HandoutsPage() {
                     marginBottom: '0.5rem',
                   }}
                 >
-                  <input
-                    type="text"
-                    placeholder="Search patient by name, DOB, MRN, or phone"
-                    value={patientSearch}
-                    onChange={(e) => setPatientSearch(e.target.value)}
-                    disabled={patientsLoading}
-                  />
-                  {!patientsLoading && filteredPatients.length > 0 && (
-                    <div
-                      style={{
-                        maxHeight: '180px',
-                        overflowY: 'auto',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        background: '#f8fafc',
-                        padding: '0.25rem',
-                      }}
-                    >
-                      {filteredPatients.slice(0, 8).map((patient) => {
-                        const isSelected = patient.id === selectedPatientId;
-                        return (
-                          <button
-                            key={patient.id}
-                            type="button"
-                            onClick={() => void handleSelectPatient(patient.id)}
-                            style={{
-                              width: '100%',
-                              textAlign: 'left',
-                              padding: '0.5rem 0.625rem',
-                              border: 'none',
-                              borderRadius: '6px',
-                              background: isSelected ? '#dbeafe' : 'transparent',
-                              color: '#111827',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              gap: '0.5rem',
-                            }}
-                          >
-                            <span style={{ fontWeight: 600 }}>
-                              {patient.lastName}, {patient.firstName}
-                            </span>
-                            <span style={{ color: '#6b7280', fontSize: '0.8rem' }}>
-                              {patient.dateOfBirth ? `DOB ${formatDateLabel(patient.dateOfBirth)}` : patient.mrn ? `MRN ${patient.mrn}` : ''}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <select
+                  <PatientLookupSelect
+                    patients={patientOptions}
                     value={selectedPatientId}
-                    onChange={(e) => void handleSelectPatient(e.target.value)}
-                    disabled={patientsLoading}
-                  >
-                    <option value="">
-                      {patientsLoading ? 'Loading patients...' : 'Select patient to auto-fill demographics'}
-                    </option>
-                    {filteredPatients.slice(0, 150).map((patient) => (
-                      <option key={patient.id} value={patient.id}>
-                        {patient.lastName}, {patient.firstName}
-                        {patient.dateOfBirth ? ` • DOB ${formatDateLabel(patient.dateOfBirth)}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                    Selecting a patient auto-fills DOB and next follow-up date (if an upcoming visit exists).
-                    {isLabOrPathologyTemplate(selectedHandout)
-                      ? ' Recent lab/pathology details also auto-fill when available.'
-                      : ''}
-                    {followUpLoading ? ' Looking up follow-up date...' : ''}
-                  </div>
+                    onChange={(patientId) => void handleSelectPatient(patientId)}
+                    label="Patient"
+                    loading={patientsLoading}
+                    placeholder="Select patient to auto-fill demographics"
+                    helperText={`Selecting a patient auto-fills DOB and next follow-up date (if an upcoming visit exists).${
+                      isLabOrPathologyTemplate(selectedHandout)
+                        ? ' Recent lab/pathology details also auto-fill when available.'
+                        : ''
+                    }${followUpLoading ? ' Looking up follow-up date...' : ''}`}
+                  />
                 </div>
                 <div
                   style={{
@@ -1399,12 +1740,21 @@ export function HandoutsPage() {
 
           <div className="form-field">
             <label>Content *</label>
+            <PlaceholderGuidePanel
+              compact
+              onInsert={(token) =>
+                setCreateForm((prev) => ({
+                  ...prev,
+                  content: appendTemplateToken(prev.content, token),
+                }))
+              }
+            />
             <textarea
               value={createForm.content}
               onChange={(e) => setCreateForm((prev) => ({ ...prev, content: e.target.value }))}
-              placeholder="Use placeholder tokens like {{patient_name}} and {{dosage_instructions}}"
+              placeholder="Use tokens like {{patient_name}}. Friendly versions like {patient name} are also accepted."
               rows={14}
-              style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+              style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginTop: '0.65rem' }}
             />
           </div>
 
@@ -1494,11 +1844,20 @@ export function HandoutsPage() {
 
           <div className="form-field">
             <label>Content *</label>
+            <PlaceholderGuidePanel
+              compact
+              onInsert={(token) =>
+                setEditForm((prev) => ({
+                  ...prev,
+                  content: appendTemplateToken(prev.content, token),
+                }))
+              }
+            />
             <textarea
               value={editForm.content}
               onChange={(e) => setEditForm((prev) => ({ ...prev, content: e.target.value }))}
               rows={14}
-              style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+              style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginTop: '0.65rem' }}
             />
           </div>
 

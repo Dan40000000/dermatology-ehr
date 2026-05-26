@@ -121,17 +121,6 @@ const navItems: NavItem[] = [
     module: 'ai_assistant',
   },
   {
-    label: 'Orders',
-    path: '/orders',
-    module: 'orders',
-    dropdown: [
-      { label: 'All Orders', path: '/orders' },
-      { label: 'Pending', path: '/orders?tab=pending' },
-      { label: 'In Progress', path: '/orders?tab=in-progress' },
-      { label: 'Completed', path: '/orders?tab=completed' },
-    ]
-  },
-  {
     label: 'Rx / ePA',
     path: '/rx',
     activePaths: ['/rx', '/prior-auth'],

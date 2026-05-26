@@ -13425,6 +13425,36 @@ Consider age-appropriate treatments and include family counseling points.',
     );
     `,
   },
+  {
+    name: "191_order_result_entry_fields",
+    sql: `
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS results text,
+      ADD COLUMN IF NOT EXISTS results_processed_at timestamptz,
+      ADD COLUMN IF NOT EXISTS result_source text DEFAULT 'manual',
+      ADD COLUMN IF NOT EXISTS result_updated_at timestamptz,
+      ADD COLUMN IF NOT EXISTS result_updated_by text REFERENCES users(id),
+      ADD COLUMN IF NOT EXISTS result_change_reason text,
+      ADD COLUMN IF NOT EXISTS facility text,
+      ADD COLUMN IF NOT EXISTS ddx text,
+      ADD COLUMN IF NOT EXISTS body_location text;
+
+    CREATE INDEX IF NOT EXISTS idx_orders_results_processed_at
+      ON orders(tenant_id, results_processed_at DESC)
+      WHERE results_processed_at IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_orders_result_source
+      ON orders(tenant_id, result_source)
+      WHERE result_source IS NOT NULL;
+
+    COMMENT ON COLUMN orders.results IS 'Clinical lab/pathology result text captured from electronic interface, fax/outside report, or controlled manual entry.';
+    COMMENT ON COLUMN orders.result_source IS 'Source of the result: manual, lab_interface, fax, outside_lab, or correction.';
+    COMMENT ON COLUMN orders.result_change_reason IS 'Staff-entered reason for editing an existing result.';
+    COMMENT ON COLUMN orders.facility IS 'Lab or pathology facility selected for the order.';
+    COMMENT ON COLUMN orders.ddx IS 'Differential diagnosis or clinical concern for lab/pathology orders.';
+    COMMENT ON COLUMN orders.body_location IS 'Anatomic location or specimen site for lab/pathology orders.';
+    `,
+  },
 
 ];
 

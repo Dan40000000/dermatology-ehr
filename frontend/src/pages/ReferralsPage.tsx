@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { EmptyState, Modal } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { createReferral, fetchPatients, fetchReferrals, updateReferral } from '../api';
 import type { Patient, Referral } from '../types';
 
@@ -392,19 +393,14 @@ export function ReferralsPage() {
       >
         <div className="modal-form">
           <div className="form-field">
-            <label htmlFor="referral-patient">Patient</label>
-            <select
+            <PatientLookupSelect
               id="referral-patient"
+              patients={patients}
               value={formData.patientId}
-              onChange={(e) => setFormData((prev) => ({ ...prev, patientId: e.target.value }))}
-            >
-              <option value="">Select patient</option>
-              {patients.map((patient) => (
-                <option key={patient.id} value={patient.id}>
-                  {patient.lastName}, {patient.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setFormData((prev) => ({ ...prev, patientId }))}
+              label="Patient"
+              placeholder="Select patient"
+            />
           </div>
           <div
             style={{

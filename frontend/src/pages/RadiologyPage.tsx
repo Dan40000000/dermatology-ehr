@@ -6,6 +6,7 @@ import { fetchOrders, fetchPatients, createOrder, updateOrderStatus } from '../a
 import type { Order, Patient, ResultFlagType } from '../types';
 import { ResultFlagBadge, ResultFlagSelect } from '../components/ResultFlagBadge';
 import { InsuranceStatusBadge } from '../components/Insurance';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 
 type ImagingFilter = 'all' | 'pending' | 'scheduled' | 'completed';
@@ -900,18 +901,13 @@ export function RadiologyPage() {
         <div className="modal-form">
           <div className="form-row">
             <div className="form-field">
-              <label>Patient *</label>
-              <select
+              <PatientLookupSelect
+                patients={patients}
                 value={newImaging.patientId}
-                onChange={(e) => setNewImaging((prev) => ({ ...prev, patientId: e.target.value }))}
-              >
-                <option value="">Select patient...</option>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.lastName}, {p.firstName}
-                  </option>
-                ))}
-              </select>
+                onChange={(patientId) => setNewImaging((prev) => ({ ...prev, patientId }))}
+                label="Patient"
+                required
+              />
             </div>
 
             <div className="form-field">

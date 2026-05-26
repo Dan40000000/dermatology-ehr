@@ -4,6 +4,7 @@ import "./App.css";
 import { Toast } from "./components/Toast";
 import { ConflictBanner } from "./components/ConflictBanner";
 import { Legend } from "./components/Legend";
+import { PatientLookupSelect } from "./components/patients/PatientLookupSelect";
 import {
   fetchAppointmentTypes,
   fetchAppointments,
@@ -398,6 +399,13 @@ function App() {
       })),
   });
 
+  const setFormField = (section: string, field: string, value: string) => {
+    setFormState((s: any) => ({
+      ...s,
+      [section]: { ...s[section], [field]: value },
+    }));
+  };
+
   const requireFields = (fields: { label: string; value: any }[]) => {
     const missing = fields.filter((f) => !f.value);
     if (missing.length) {
@@ -548,25 +556,17 @@ function App() {
         <div className="topbar">
           <div className="brand">Dermatology DEMO Office</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1, justifyContent: 'center', maxWidth: '500px', margin: '0 2rem' }}>
-            <select
-              style={{
-                flex: 1,
-                padding: '0.5rem 1rem',
-                borderRadius: '4px',
-                border: '1px solid rgba(255,255,255,0.3)',
-                background: 'white',
-                fontSize: '0.875rem',
-                color: '#374151'
-              }}
-              defaultValue=""
-            >
-              <option value="" disabled>Patient Search...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+            <PatientLookupSelect
+              patients={patients}
+              value=""
+              onChange={() => undefined}
+              label="Patient Search"
+              labelClassName="sr-only"
+              placeholder="Patient Search..."
+              compact
+              style={{ flex: 1 }}
+              showInitialResults={false}
+            />
             <button
               type="button"
               style={{
@@ -724,17 +724,15 @@ function App() {
             <details>
               <summary className="ghost">+ Schedule</summary>
               <div className="sheet">
-                <label>
-                  Patient
-                  <select {...bind("appointment", "patientId")}>
-                    <option value="">Select</option>
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div>
+                  <PatientLookupSelect
+                    patients={patients}
+                    value={formState.appointment.patientId}
+                    onChange={(patientId) => setFormField("appointment", "patientId", patientId)}
+                    label="Patient"
+                    placeholder="Select"
+                  />
+                </div>
                 <label>
                   Provider
                   <select {...bind("appointment", "providerId")}>
@@ -810,17 +808,15 @@ function App() {
             <details>
               <summary className="ghost">+ Encounter</summary>
               <div className="sheet">
-                <label>
-                  Patient
-                  <select {...bind("encounter", "patientId")}>
-                    <option value="">Select</option>
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div>
+                  <PatientLookupSelect
+                    patients={patients}
+                    value={formState.encounter.patientId}
+                    onChange={(patientId) => setFormField("encounter", "patientId", patientId)}
+                    label="Patient"
+                    placeholder="Select"
+                  />
+                </div>
                 <label>
                   Provider
                   <select {...bind("encounter", "providerId")}>
@@ -891,17 +887,15 @@ function App() {
             <details>
               <summary className="ghost">+ Message</summary>
               <div className="sheet">
-                <label>
-                  Patient
-                  <select {...bind("message", "patientId")}>
-                    <option value="">Select</option>
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div>
+                  <PatientLookupSelect
+                    patients={patients}
+                    value={formState.message.patientId}
+                    onChange={(patientId) => setFormField("message", "patientId", patientId)}
+                    label="Patient"
+                    placeholder="Select"
+                  />
+                </div>
                 <label>
                   Subject
                   <input {...bind("message", "subject")} />
@@ -982,17 +976,15 @@ function App() {
             <details>
               <summary className="ghost">+ Document</summary>
               <div className="sheet">
-                <label>
-                  Patient
-                  <select {...bind("document", "patientId")}>
-                    <option value="">Select</option>
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div>
+                  <PatientLookupSelect
+                    patients={patients}
+                    value={formState.document.patientId}
+                    onChange={(patientId) => setFormField("document", "patientId", patientId)}
+                    label="Patient"
+                    placeholder="Select"
+                  />
+                </div>
                 <label>
                   Title
                   <input {...bind("document", "title")} />
@@ -1063,17 +1055,15 @@ function App() {
             <details>
               <summary className="ghost">+ Photo</summary>
               <div className="sheet">
-                <label>
-                  Patient
-                  <select {...bind("photo", "patientId")}>
-                    <option value="">Select</option>
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div>
+                  <PatientLookupSelect
+                    patients={patients}
+                    value={formState.photo.patientId}
+                    onChange={(patientId) => setFormField("photo", "patientId", patientId)}
+                    label="Patient"
+                    placeholder="Select"
+                  />
+                </div>
                 <label>
                   Body location
                   <input {...bind("photo", "bodyLocation")} />
@@ -1155,17 +1145,15 @@ function App() {
                     ))}
                   </select>
                 </label>
-                <label>
-                  Patient
-                  <select {...bind("order", "patientId")}>
-                    <option value="">Select</option>
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div>
+                  <PatientLookupSelect
+                    patients={patients}
+                    value={formState.order.patientId}
+                    onChange={(patientId) => setFormField("order", "patientId", patientId)}
+                    label="Patient"
+                    placeholder="Select"
+                  />
+                </div>
                 <label>
                   Provider
                   <select {...bind("order", "providerId")}>

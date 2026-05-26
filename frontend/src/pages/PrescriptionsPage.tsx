@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { InsuranceStatusBadge } from '../components/Insurance';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import {
   fetchOrders,
@@ -1624,18 +1625,13 @@ export function PrescriptionsPage() {
       }} size="lg">
         <div className="modal-form">
           <div className="form-field">
-            <label>Patient *</label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={newRx.patientId}
-              onChange={(e) => setNewRx((prev) => ({ ...prev, patientId: e.target.value }))}
-            >
-              <option value="">Select patient...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setNewRx((prev) => ({ ...prev, patientId }))}
+              label="Patient"
+              required
+            />
           </div>
 
           <div className="form-field">

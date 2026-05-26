@@ -51,6 +51,7 @@ import {
   generateAiNoteDraft,
   createOrder,
   updateOrderStatus,
+  updateOrderResult,
   sendErx,
   fetchReportAppointmentsCsv,
   fetchFhirExamples,
@@ -722,9 +723,24 @@ describe('api.ts', () => {
     expect(options?.body).toBe(JSON.stringify({ status: 'sent' }));
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
-    await sendErx(tenantId, token, { orderId: 'order-1' });
+    await updateOrderResult(tenantId, token, 'order-1', {
+      results: 'Benign nevus',
+      status: 'received',
+      resultSource: 'manual',
+    });
 
     [url, options] = fetchMock.mock.calls[2];
+    expect(url).toBe(`${API_BASE_URL}/api/orders/order-1/result`);
+    expect(options?.body).toBe(JSON.stringify({
+      results: 'Benign nevus',
+      status: 'received',
+      resultSource: 'manual',
+    }));
+
+    fetchMock.mockResolvedValueOnce(okResponse({}));
+    await sendErx(tenantId, token, { orderId: 'order-1' });
+
+    [url, options] = fetchMock.mock.calls[3];
     expect(url).toBe(`${API_BASE_URL}/api/orders/erx/send`);
     expect(options?.body).toBe(JSON.stringify({ orderId: 'order-1' }));
 

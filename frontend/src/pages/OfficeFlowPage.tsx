@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import {
   fetchFrontDeskSchedule,
   updateFrontDeskStatus,
@@ -782,25 +783,16 @@ export function OfficeFlowPage() {
             </div>
 
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>
-                Patient
-              </label>
-              <select
+              <PatientLookupSelect
+                patients={patients}
                 value={filterPatient}
-                onChange={(e) => setFilterPatient(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '4px',
-                  fontSize: '0.875rem',
-                }}
-              >
-                <option value="">Patient Search...</option>
-                {patients.map(p => (
-                  <option key={p.id} value={p.id}>{p.lastName}, {p.firstName}</option>
-                ))}
-              </select>
+                onChange={setFilterPatient}
+                label="Patient"
+                includeAllOption
+                allValue=""
+                allLabel="All Patients"
+                compact
+              />
             </div>
 
             <div>

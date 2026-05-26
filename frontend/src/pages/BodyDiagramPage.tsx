@@ -8,6 +8,7 @@ import { PremiumBodyDiagram, MARKING_TYPES } from '../components/body-diagram/Pr
 import type { BodyMarking as PremiumBodyMarking } from '../components/body-diagram/PremiumBodyDiagram';
 import { MarkingDetailModal } from '../components/body-diagram/MarkingDetailModal';
 import type { MarkingFormData } from '../components/body-diagram/MarkingDetailModal';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import { api, fetchPatients } from '../api';
 import type { Patient } from '../types';
 
@@ -241,28 +242,14 @@ export function BodyDiagramPage() {
           boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
         }}
       >
-        <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: '#374151' }}>
-          Select Patient
-        </label>
-        <select
+        <PatientLookupSelect
+          patients={patients}
           value={selectedPatientId}
-          onChange={(e) => setSelectedPatientId(e.target.value)}
-          style={{
-            width: '100%',
-            maxWidth: '500px',
-            padding: '12px',
-            border: '1px solid #D1D5DB',
-            borderRadius: '6px',
-            fontSize: '14px',
-          }}
-        >
-          <option value="">-- Select a patient --</option>
-          {patients.map((patient) => (
-            <option key={patient.id} value={patient.id}>
-              {patient.lastName}, {patient.firstName} - DOB: {patient.dob || 'N/A'} - MRN: {patient.mrn || 'N/A'}
-            </option>
-          ))}
-        </select>
+          onChange={setSelectedPatientId}
+          label="Select Patient"
+          placeholder="-- Select a patient --"
+          style={{ maxWidth: '500px' }}
+        />
 
         {selectedPatient && (
           <div

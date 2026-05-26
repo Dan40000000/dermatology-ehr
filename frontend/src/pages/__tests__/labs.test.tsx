@@ -18,8 +18,10 @@ const toastMocks = vi.hoisted(() => ({
 const apiMocks = vi.hoisted(() => ({
   fetchOrders: vi.fn(),
   fetchPatients: vi.fn(),
+  fetchProviders: vi.fn(),
   createOrder: vi.fn(),
   updateOrderStatus: vi.fn(),
+  updateOrderResult: vi.fn(),
   fetchEligibilityHistory: vi.fn(),
   fetchEligibilityHistoryBatch: vi.fn(),
 }));
@@ -130,9 +132,11 @@ beforeEach(() => {
   });
   apiMocks.fetchEligibilityHistory.mockResolvedValue({ history: [] });
   apiMocks.fetchEligibilityHistoryBatch.mockResolvedValue({ history: {} });
+  apiMocks.fetchProviders.mockResolvedValue({ providers: [] });
 
   apiMocks.createOrder.mockResolvedValue({ id: 'order-new' });
   apiMocks.updateOrderStatus.mockResolvedValue({ ok: true });
+  apiMocks.updateOrderResult.mockResolvedValue({ order: { id: 'order-1' } });
 });
 
 afterEach(() => {

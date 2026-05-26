@@ -7,6 +7,7 @@ import { getEffectiveRoles } from '../../utils/roles';
 import { HelpModal } from '../HelpModal';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { Modal } from '../ui';
+import { PatientLookupSelect } from '../patients/PatientLookupSelect';
 import { FeedbackScreenshotEditor } from '../feedback/FeedbackScreenshotEditor';
 import type { Patient } from '../../types';
 import { API_BASE_URL } from '../../utils/apiBase';
@@ -389,23 +390,19 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
 
         <div className="ema-header-center">
           <div className="ema-patient-search" role="search" aria-label="Patient search">
-            <label htmlFor="patient-search" className="sr-only">
-              Search for a patient
-            </label>
-            <select
+            <PatientLookupSelect
               id="patient-search"
-              className="ema-search-select"
+              patients={patients}
               value={searchValue}
-              onChange={(e) => handlePatientSelect(e.target.value)}
-              aria-label="Patient search dropdown"
-            >
-              <option value="">Patient Search...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName} - {p.mrn || 'No MRN'}
-                </option>
-              ))}
-            </select>
+              onChange={handlePatientSelect}
+              label="Search for a patient"
+              labelClassName="sr-only"
+              placeholder="Patient Search..."
+              selectClassName="ema-search-select"
+              compact
+              maxResults={6}
+              showInitialResults={false}
+            />
             {onRefresh && (
               <button
                 type="button"

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Modal } from './ui';
+import { PatientLookupSelect } from './patients/PatientLookupSelect';
 import { api } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -228,20 +229,15 @@ export function InventoryUsageModal({
 
         <div className="form-row">
           <div className="form-field">
-            <label>Patient *</label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={patientId}
-              onChange={(e) => setPatientId(e.target.value)}
+              onChange={setPatientId}
+              label="Patient"
               required
               disabled={!!initialPatientId}
-            >
-              <option value="">Select a patient...</option>
-              {patients.map((patient) => (
-                <option key={patient.id} value={patient.id}>
-                  {patient.lastName}, {patient.firstName}
-                </option>
-              ))}
-            </select>
+              placeholder="Select a patient..."
+            />
           </div>
 
           <div className="form-field">

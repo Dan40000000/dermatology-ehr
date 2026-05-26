@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import {
   fetchEncounters,
   fetchProviders,
@@ -237,24 +238,15 @@ export function NotesPage() {
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem', color: '#374151' }}>
-              Patient
-            </label>
-            <select
+            <PatientLookupSelect
+              patients={Array.isArray(patients) ? patients.filter(Boolean) : []}
               value={patientFilter}
-              onChange={(e) => setPatientFilter(e.target.value)}
-              style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.875rem' }}
-            >
-              <option value="all">All Patients</option>
-              {Array.isArray(patients) && patients.map((p) => {
-                if (!p) return null;
-                return (
-                  <option key={p.id} value={p.id}>
-                    {p.lastName || ''}, {p.firstName || ''}
-                  </option>
-                );
-              })}
-            </select>
+              onChange={setPatientFilter}
+              label="Patient"
+              includeAllOption
+              allValue="all"
+              compact
+            />
           </div>
 
           <div>

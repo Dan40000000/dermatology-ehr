@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import {
   fetchMessageThreads,
   fetchMessageThread,
@@ -1125,35 +1126,13 @@ export function MailPage() {
           </div>
 
           <div style={{ marginBottom: '1rem' }}>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: '0.5rem',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                color: '#374151',
-              }}
-            >
-              Link to Patient (Optional)
-            </label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={newThread.patientId || ''}
-              onChange={(e) => setNewThread((prev) => ({ ...prev, patientId: e.target.value }))}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '4px',
-                fontSize: '0.875rem',
-              }}
-            >
-              <option value="">No Patient Link</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setNewThread((prev) => ({ ...prev, patientId }))}
+              label="Link to Patient (Optional)"
+              placeholder="No Patient Link"
+            />
           </div>
 
           <div style={{ marginBottom: '1rem' }}>

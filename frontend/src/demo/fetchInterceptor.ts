@@ -3332,11 +3332,56 @@ function handleProviderRoute(
   }
 
   if (path === '/api/orders') {
+    if (method.toUpperCase() === 'POST') {
+      const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `demo-order-${Date.now()}`;
+      const order = {
+        id,
+        tenantId: 'tenant-demo',
+        patientId: body?.patientId,
+        providerId: body?.providerId || 'demo-provider-1',
+        providerName: 'Dr. David Skin, MD, FAAD',
+        type: body?.type || 'lab',
+        status: body?.status || 'pending',
+        priority: body?.priority || 'routine',
+        details: body?.details || '',
+        notes: body?.notes || '',
+        facility: body?.facility || '',
+        ddx: body?.ddx || '',
+        location: body?.location || '',
+        createdAt: new Date().toISOString(),
+        resultFlag: 'none',
+      };
+      ALL_ORDERS.unshift(order as any);
+      return mockResponse({ id, order }, 201);
+    }
+
     const patientId = params.get('patientId');
     const orders = patientId
       ? ALL_ORDERS.filter((order) => order.patientId === patientId)
       : ALL_ORDERS;
-    return mockResponse({ data: orders });
+    return mockResponse({ data: orders, orders });
+  }
+
+  const orderResultMatch = path.match(/^\/api\/orders\/([^/]+)\/result$/);
+  if (orderResultMatch && method.toUpperCase() === 'POST') {
+    const orderId = decodeURIComponent(orderResultMatch[1]);
+    const order = ALL_ORDERS.find((candidate) => String(candidate.id) === orderId);
+    if (!order) {
+      return mockResponse({ error: 'Order not found' }, 404);
+    }
+    const orderRecord = order as any;
+
+    const updated = {
+      ...orderRecord,
+      results: body?.results || orderRecord.results,
+      status: body?.status || orderRecord.status || 'received',
+      resultSource: body?.resultSource || orderRecord.resultSource || 'manual',
+      resultsProcessed: body?.resultsProcessedAt || orderRecord.resultsProcessed || new Date().toISOString(),
+      resultUpdatedAt: new Date().toISOString(),
+      resultChangeReason: body?.changeReason || orderRecord.resultChangeReason,
+    };
+    Object.assign(orderRecord, updated);
+    return mockResponse({ order: updated });
   }
 
   if (path === '/api/documents') {

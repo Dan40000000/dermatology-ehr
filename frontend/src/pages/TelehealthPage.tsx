@@ -18,6 +18,7 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { DataTable } from '../components/ui/DataTable';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import VideoRoom from '../components/telehealth/VideoRoom';
 import VirtualWaitingRoom from '../components/telehealth/VirtualWaitingRoom';
 import TelehealthNotes from '../components/telehealth/TelehealthNotes';
@@ -551,19 +552,13 @@ const TelehealthPage: React.FC = () => {
         >
           <form onSubmit={handleCreateSession} className="telehealth-modal-form">
             <div>
-              <label>Patient</label>
-              <select
+              <PatientLookupSelect
+                patients={patients}
                 value={newSessionForm.patientId}
-                onChange={(e) => setNewSessionForm({ ...newSessionForm, patientId: e.target.value })}
+                onChange={(patientId) => setNewSessionForm({ ...newSessionForm, patientId })}
+                label="Patient"
                 required
-              >
-                <option value="">Select patient...</option>
-                {patients.map((patient) => (
-                  <option key={patient.id} value={patient.id}>
-                    {patient.firstName} {patient.lastName}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             <div>

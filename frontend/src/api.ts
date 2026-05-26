@@ -1477,7 +1477,11 @@ export async function fetchOrders(
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
   });
   if (!res.ok) throw new Error("Failed to load orders");
-  return res.json();
+  const payload = await res.json();
+  if (payload && Array.isArray(payload.data) && !Array.isArray(payload.orders)) {
+    return { ...payload, orders: payload.data };
+  }
+  return payload;
 }
 
 export const createOrder = (tenantId: string, accessToken: string, data: any) =>
@@ -1650,6 +1654,18 @@ export async function fetchPatientNoShowRisk(tenantId: string, accessToken: stri
 
 export const updateOrderStatus = (tenantId: string, accessToken: string, id: string, status: string) =>
   authedPost(tenantId, accessToken, `/api/orders/${id}/status`, { status });
+export const updateOrderResult = (
+  tenantId: string,
+  accessToken: string,
+  id: string,
+  data: {
+    results?: string;
+    status?: string;
+    resultSource?: 'manual' | 'lab_interface' | 'fax' | 'outside_lab' | 'correction';
+    resultsProcessedAt?: string | null;
+    changeReason?: string;
+  }
+) => authedPost(tenantId, accessToken, `/api/orders/${id}/result`, data);
 export const sendErx = (tenantId: string, accessToken: string, payload: any) =>
   authedPost(tenantId, accessToken, "/api/orders/erx/send", payload);
 

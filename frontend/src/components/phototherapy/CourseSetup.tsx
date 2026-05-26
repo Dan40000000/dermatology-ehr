@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Patient, Provider } from '../../types';
+import { PatientLookupSelect } from '../patients/PatientLookupSelect';
 
 interface Protocol {
   id: string;
@@ -69,7 +70,6 @@ export function CourseSetup({
 }: CourseSetupProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [patientSearch, setPatientSearch] = useState('');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -86,14 +86,6 @@ export function CourseSetup({
     clinicalNotes: '',
     precautions: '',
   });
-
-  // Filter patients based on search
-  const filteredPatients = patients.filter(p => {
-    const search = patientSearch.toLowerCase();
-    const fullName = `${p.firstName} ${p.lastName}`.toLowerCase();
-    const mrn = (p.mrn || '').toLowerCase();
-    return fullName.includes(search) || mrn.includes(search);
-  }).slice(0, 20);
 
   // Get selected protocol details
   const selectedProtocol = protocols.find(p => p.id === formData.protocolId);
@@ -169,48 +161,14 @@ export function CourseSetup({
       <div className="p-4 space-y-6">
         {/* Patient Selection */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Patient <span className="text-red-500">*</span>
-          </label>
-          <div className="relative">
-            <input
-              type="text"
-              value={patientSearch}
-              onChange={e => setPatientSearch(e.target.value)}
-              placeholder="Search patients by name or MRN..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            {patientSearch && filteredPatients.length > 0 && !formData.patientId && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
-                {filteredPatients.map(patient => (
-                  <button
-                    key={patient.id}
-                    type="button"
-                    onClick={() => {
-                      setFormData(prev => ({ ...prev, patientId: patient.id }));
-                      setPatientSearch(`${patient.firstName} ${patient.lastName}`);
-                    }}
-                    className="w-full px-3 py-2 text-left hover:bg-gray-100 flex items-center justify-between"
-                  >
-                    <span>{patient.firstName} {patient.lastName}</span>
-                    {patient.mrn && <span className="text-sm text-gray-500">MRN: {patient.mrn}</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {formData.patientId && (
-            <button
-              type="button"
-              onClick={() => {
-                setFormData(prev => ({ ...prev, patientId: '' }));
-                setPatientSearch('');
-              }}
-              className="mt-1 text-sm text-blue-600 hover:text-blue-800"
-            >
-              Clear selection
-            </button>
-          )}
+          <PatientLookupSelect
+            patients={patients}
+            value={formData.patientId}
+            onChange={(patientId) => setFormData(prev => ({ ...prev, patientId }))}
+            label="Patient"
+            required
+            searchPlaceholder="Search patients by name, DOB, MRN, or phone"
+          />
         </div>
 
         {/* Protocol Selection */}

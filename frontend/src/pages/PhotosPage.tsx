@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
 import {
   fetchPhotos,
   fetchPatients,
@@ -518,19 +519,16 @@ export function PhotosPage() {
           </div>
 
           <div className="photos-field">
-            <label htmlFor="photos-patient-filter">Patient</label>
-            <select
+            <PatientLookupSelect
               id="photos-patient-filter"
+              patients={patients}
               value={selectedPatient}
-              onChange={(e) => setSelectedPatient(e.target.value)}
-            >
-              <option value="all">All Patients</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedPatient}
+              label="Patient"
+              includeAllOption
+              allValue="all"
+              compact
+            />
           </div>
 
           <div className="photos-field">
@@ -771,20 +769,13 @@ export function PhotosPage() {
       >
         <div className="modal-form">
           <div className="form-field">
-            <label>Patient *</label>
-            <select
+            <PatientLookupSelect
+              patients={patients}
               value={uploadForm.patientId}
-              onChange={(e) =>
-                setUploadForm((prev) => ({ ...prev, patientId: e.target.value }))
-              }
-            >
-              <option value="">Select patient...</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
-            </select>
+              onChange={(patientId) => setUploadForm((prev) => ({ ...prev, patientId }))}
+              label="Patient"
+              required
+            />
           </div>
 
           <div className="form-row">

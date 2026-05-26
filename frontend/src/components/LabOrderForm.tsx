@@ -26,6 +26,7 @@ import {
 } from '@mui/material';
 import { Delete as DeleteIcon } from '@mui/icons-material';
 import { API_BASE_URL } from '../utils/apiBase';
+import { PatientLookupSelect } from './patients/PatientLookupSelect';
 
 interface LabOrderFormProps {
   patientId: string | null;
@@ -268,21 +269,14 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
       <Grid container spacing={3}>
         {/* Patient Selection */}
         <Grid item xs={12}>
-          <TextField
-            fullWidth
-            required
-            select
-            label="Patient"
+          <PatientLookupSelect
+            patients={patients}
             value={formData.patient_id}
-            onChange={(e) => setFormData({ ...formData, patient_id: e.target.value })}
+            onChange={(patient_id) => setFormData({ ...formData, patient_id })}
             disabled={!!patientId}
-          >
-            {patients.map((patient) => (
-              <MenuItem key={patient.id} value={patient.id}>
-                {patient.first_name} {patient.last_name} (MRN: {patient.mrn})
-              </MenuItem>
-            ))}
-          </TextField>
+            label="Patient"
+            required
+          />
         </Grid>
 
         {/* Provider Selection */}

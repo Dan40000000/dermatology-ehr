@@ -174,6 +174,49 @@ const clinicalCopilotApplySchema = z.object({
 const AMBIENT_CLINICAL_ROLES = ['provider', 'ma', 'admin'] as const;
 const AMBIENT_REVIEW_ROLES = ['provider', 'admin'] as const;
 const AMBIENT_SCRIBE_PROMPT_VERSION = 'ambient-scribe-contextual-v1';
+const KNOWN_PATIENT_NAME_BLOCK_TYPE = 'known_patient_name';
+const MAX_KNOWN_PATIENT_NAME_CANDIDATES = 250;
+const NAME_CANDIDATE_STOP_WORDS = new Set([
+  'a',
+  'about',
+  'after',
+  'and',
+  'are',
+  'assistant',
+  'billing',
+  'body',
+  'can',
+  'chart',
+  'code',
+  'codes',
+  'diagnosis',
+  'documentation',
+  'for',
+  'from',
+  'has',
+  'have',
+  'help',
+  'hpi',
+  'icd',
+  'in',
+  'is',
+  'me',
+  'note',
+  'patient',
+  'plan',
+  'please',
+  'review',
+  'should',
+  'skin',
+  'summary',
+  'the',
+  'this',
+  'to',
+  'use',
+  'visit',
+  'what',
+  'with',
+]);
 const COPILOT_VISIT_SUMMARY_PROMPT = [
   'Summarize this dermatology visit for the patient history.',
   'Use the linked encounter, ambient note, transcript, orders, diagnoses, medications, and follow-up context when available.',
@@ -203,6 +246,69 @@ function logAmbientWarning(message: string, error: unknown): void {
   logger.warn(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+function collectClinicalCopilotTextValues(input: {
+  prompt?: string;
+  history?: Array<{ content?: string }>;
+}): string[] {
+  return [
+    input.prompt,
+    ...(Array.isArray(input.history) ? input.history.map((item) => item.content) : []),
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+}
+
+function normalizeKnownPatientNameCandidate(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function extractKnownPatientNameCandidates(values: string[]): string[] {
+  const candidates = new Set<string>();
+
+  for (const value of values) {
+    const rawTokens = value.match(/[A-Za-z][A-Za-z'-]{1,}/g) || [];
+    const tokens = rawTokens
+      .map((token) => normalizeKnownPatientNameCandidate(token.replace(/^['-]+|['-]+$/g, '')))
+      .filter((token) => token.length >= 2 && !NAME_CANDIDATE_STOP_WORDS.has(token));
+
+    for (let index = 0; index < tokens.length - 1; index += 1) {
+      candidates.add(`${tokens[index]} ${tokens[index + 1]}`);
+      if (index < tokens.length - 2) {
+        candidates.add(`${tokens[index]} ${tokens[index + 1]} ${tokens[index + 2]}`);
+      }
+      if (candidates.size >= MAX_KNOWN_PATIENT_NAME_CANDIDATES) {
+        return Array.from(candidates);
+      }
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+async function assertClinicalCopilotInputHasNoKnownPatientNames(
+  tenantId: string,
+  input: { prompt?: string; history?: Array<{ content?: string }> }
+): Promise<void> {
+  const candidates = extractKnownPatientNameCandidates(collectClinicalCopilotTextValues(input));
+  if (!candidates.length) {
+    return;
+  }
+
+  const result = await pool.query(
+    `SELECT id
+       FROM patients
+      WHERE tenant_id = $1
+        AND lower(regexp_replace(trim(concat_ws(' ', first_name, last_name)), '\\s+', ' ', 'g')) = ANY($2::text[])
+      LIMIT 1`,
+    [tenantId, candidates]
+  );
+
+  if (result.rowCount && result.rows[0]) {
+    throw new AiPhiBlockError([KNOWN_PATIENT_NAME_BLOCK_TYPE]);
+  }
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -2201,6 +2307,7 @@ router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_R
     const userId = req.user!.id;
     const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
     assertClinicalAiPromptIsSafeForExternalAi({ prompt, history });
+    await assertClinicalCopilotInputHasNoKnownPatientNames(tenantId, { prompt, history });
 
     const context = await resolveClinicalCopilotContext(tenantId, {
       patientId,
@@ -2264,6 +2371,7 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
     const userId = req.user!.id;
     const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
     assertClinicalAiPromptIsSafeForExternalAi({ prompt, history });
+    await assertClinicalCopilotInputHasNoKnownPatientNames(tenantId, { prompt, history });
 
     const context = await resolveClinicalCopilotContext(tenantId, {
       patientId,

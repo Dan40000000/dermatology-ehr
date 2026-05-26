@@ -913,6 +913,26 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(askClinicalCopilotMock).not.toHaveBeenCalled();
     });
 
+    it('should block bare known patient names before calling the assistant', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ id: 'p-synth-0217' }],
+        rowCount: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/ambient/copilot/respond')
+        .send({
+          prompt: 'Dominic Lopez has acne. What code should I use?',
+          patientId: 'p-synth-0217',
+        });
+
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe('AI_PHI_BLOCKED');
+      expect(res.body.blockedTypes).toContain('known_patient_name');
+      expect(queryMock.mock.calls[0][1][1]).toEqual(expect.arrayContaining(['dominic lopez']));
+      expect(askClinicalCopilotMock).not.toHaveBeenCalled();
+    });
+
     it('should tolerate null optional appointment context identifiers', async () => {
       const res = await request(app)
         .post('/api/ambient/copilot/respond')
@@ -941,6 +961,25 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
   });
 
   describe('POST /api/ambient/copilot/visit-summary', () => {
+    it('should block known patient names in history before saving a visit summary', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ id: 'p-synth-0217' }],
+        rowCount: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/ambient/copilot/visit-summary')
+        .send({
+          patientId: 'p-synth-0217',
+          history: [{ role: 'user', content: 'Please summarize dominic lopez visit.' }],
+        });
+
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe('AI_PHI_BLOCKED');
+      expect(res.body.blockedTypes).toContain('known_patient_name');
+      expect(askClinicalCopilotMock).not.toHaveBeenCalled();
+    });
+
     it('should summarize an encounter and save it to patient visit history', async () => {
       queryMock
         .mockResolvedValueOnce({

@@ -933,6 +933,25 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(askClinicalCopilotMock).not.toHaveBeenCalled();
     });
 
+    it('should block the selected patient first name in appointment context', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ firstName: 'Dominic', lastName: 'Lopez' }],
+        rowCount: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/ambient/copilot/respond')
+        .send({
+          prompt: 'Dominic',
+          patientId: 'p-synth-0217',
+        });
+
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe('AI_PHI_BLOCKED');
+      expect(res.body.blockedTypes).toContain('known_patient_name');
+      expect(askClinicalCopilotMock).not.toHaveBeenCalled();
+    });
+
     it('should tolerate null optional appointment context identifiers', async () => {
       const res = await request(app)
         .post('/api/ambient/copilot/respond')

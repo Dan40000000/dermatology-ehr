@@ -288,25 +288,90 @@ function extractKnownPatientNameCandidates(values: string[]): string[] {
   return Array.from(candidates);
 }
 
+function extractKnownPatientNameTokens(values: string[]): Set<string> {
+  const tokens = new Set<string>();
+  for (const value of values) {
+    for (const token of value.match(/[A-Za-z][A-Za-z'-]{1,}/g) || []) {
+      const normalized = normalizeKnownPatientNameCandidate(token.replace(/^['-]+|['-]+$/g, ''));
+      if (normalized.length >= 2) {
+        tokens.add(normalized);
+      }
+    }
+  }
+  return tokens;
+}
+
+function normalizedPatientNameParts(row: any): { firstName?: string; fullName?: string } {
+  const firstName = normalizeKnownPatientNameCandidate(String(row?.firstName || row?.first_name || ''));
+  const lastName = normalizeKnownPatientNameCandidate(String(row?.lastName || row?.last_name || ''));
+  return {
+    firstName: firstName || undefined,
+    fullName: firstName && lastName ? `${firstName} ${lastName}` : undefined,
+  };
+}
+
 async function assertClinicalCopilotInputHasNoKnownPatientNames(
   tenantId: string,
-  input: { prompt?: string; history?: Array<{ content?: string }> }
+  input: {
+    prompt?: string;
+    history?: Array<{ content?: string }>;
+    patientId?: string;
+    encounterId?: string;
+  }
 ): Promise<void> {
-  const candidates = extractKnownPatientNameCandidates(collectClinicalCopilotTextValues(input));
-  if (!candidates.length) {
+  const textValues = collectClinicalCopilotTextValues(input);
+  if (!textValues.length) {
     return;
   }
 
-  const result = await pool.query(
-    `SELECT id
-       FROM patients
-      WHERE tenant_id = $1
-        AND lower(regexp_replace(trim(concat_ws(' ', first_name, last_name)), '\\s+', ' ', 'g')) = ANY($2::text[])
-      LIMIT 1`,
-    [tenantId, candidates]
-  );
+  const candidates = extractKnownPatientNameCandidates(textValues);
+  if (candidates.length) {
+    const result = await pool.query(
+      `SELECT id
+         FROM patients
+        WHERE tenant_id = $1
+          AND lower(regexp_replace(trim(concat_ws(' ', first_name, last_name)), '\\s+', ' ', 'g')) = ANY($2::text[])
+        LIMIT 1`,
+      [tenantId, candidates]
+    );
 
-  if (result.rowCount && result.rows[0]) {
+    if (result.rowCount && result.rows[0]) {
+      throw new AiPhiBlockError([KNOWN_PATIENT_NAME_BLOCK_TYPE]);
+    }
+  }
+
+  if (!input.patientId && !input.encounterId) {
+    return;
+  }
+
+  const contextPatientResult = input.patientId
+    ? await pool.query(
+        `SELECT first_name as "firstName", last_name as "lastName"
+           FROM patients
+          WHERE tenant_id = $1 AND id = $2
+          LIMIT 1`,
+        [tenantId, input.patientId]
+      )
+    : await pool.query(
+        `SELECT p.first_name as "firstName", p.last_name as "lastName"
+           FROM encounters e
+           JOIN patients p ON p.id = e.patient_id AND p.tenant_id = e.tenant_id
+          WHERE e.tenant_id = $1 AND e.id = $2
+          LIMIT 1`,
+        [tenantId, input.encounterId]
+      );
+
+  if (!contextPatientResult.rowCount || !contextPatientResult.rows[0]) {
+    return;
+  }
+
+  const patientName = normalizedPatientNameParts(contextPatientResult.rows[0]);
+  const tokens = extractKnownPatientNameTokens(textValues);
+  const normalizedText = normalizeKnownPatientNameCandidate(textValues.join(' '));
+  if (
+    (patientName.firstName && tokens.has(patientName.firstName)) ||
+    (patientName.fullName && normalizedText.includes(patientName.fullName))
+  ) {
     throw new AiPhiBlockError([KNOWN_PATIENT_NAME_BLOCK_TYPE]);
   }
 }
@@ -2307,7 +2372,7 @@ router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_R
     const userId = req.user!.id;
     const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
     assertClinicalAiPromptIsSafeForExternalAi({ prompt, history });
-    await assertClinicalCopilotInputHasNoKnownPatientNames(tenantId, { prompt, history });
+    await assertClinicalCopilotInputHasNoKnownPatientNames(tenantId, { prompt, history, patientId, encounterId });
 
     const context = await resolveClinicalCopilotContext(tenantId, {
       patientId,
@@ -2371,7 +2436,7 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
     const userId = req.user!.id;
     const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
     assertClinicalAiPromptIsSafeForExternalAi({ prompt, history });
-    await assertClinicalCopilotInputHasNoKnownPatientNames(tenantId, { prompt, history });
+    await assertClinicalCopilotInputHasNoKnownPatientNames(tenantId, { prompt, history, patientId, encounterId });
 
     const context = await resolveClinicalCopilotContext(tenantId, {
       patientId,

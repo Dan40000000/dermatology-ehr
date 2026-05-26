@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -9,6 +9,7 @@ import {
   fetchPatients,
   createPhoto,
   uploadPhotoFile,
+  updatePhotoMetadata,
   updatePhotoAnnotations,
   createComparisonGroup,
   getPresignedAccess,
@@ -24,6 +25,15 @@ import { ClinicalPhotoImage } from '../components/clinical/ClinicalPhotoImage';
 type ViewMode = 'grid' | 'list' | 'timeline' | 'comparison';
 type PhotoCategory = 'all' | 'clinical' | 'dermoscopy' | 'before-after' | 'other';
 type PhotoFilter = 'all' | 'recent';
+type PhotoWorkflowFilter = 'all' | 'needs-context' | 'needs-encounter' | 'compare-ready' | 'annotated';
+
+interface PhotoContextFormState {
+  photoType: PhotoType;
+  category: Exclude<PhotoCategory, 'all'>;
+  bodyLocation: string;
+  description: string;
+  encounterId: string;
+}
 
 const BODY_REGIONS = [
   'Face', 'Scalp', 'Neck', 'Chest', 'Back', 'Abdomen',
@@ -37,10 +47,19 @@ const createInitialUploadForm = () => ({
   category: 'clinical' as PhotoCategory,
   photoType: 'clinical' as PhotoType,
   bodyRegion: '',
+  encounterId: '',
   description: '',
   file: null as File | null,
   previewUrl: '',
 });
+
+const defaultContextForm: PhotoContextFormState = {
+  photoType: 'clinical',
+  category: 'clinical',
+  bodyLocation: '',
+  description: '',
+  encounterId: '',
+};
 
 const getLocalUploadKey = (photo: Photo) => {
   if (photo.objectKey) {
@@ -65,9 +84,73 @@ const getLocalUploadKey = (photo: Photo) => {
   return null;
 };
 
+function getPhotoBodySite(photo: Photo): string {
+  return (photo.bodyLocation || photo.bodyRegion || '').trim();
+}
+
+function photoHasBodySite(photo: Photo): boolean {
+  return getPhotoBodySite(photo).length > 0;
+}
+
+function photoHasAnnotations(photo: Photo): boolean {
+  return Boolean(photo.annotations?.shapes?.length);
+}
+
+function photoNeedsContext(photo: Photo): boolean {
+  return !photoHasBodySite(photo) || !(photo.description || '').trim();
+}
+
+function photoNeedsEncounterLink(photo: Photo): boolean {
+  return !photo.encounterId;
+}
+
+function isComparisonCandidate(photo: Photo, allPhotos: Photo[]): boolean {
+  const type = photo.photoType || '';
+  const category = photo.category || '';
+  if (['before', 'after', 'baseline'].includes(type) || category === 'before-after') {
+    return true;
+  }
+
+  const bodySite = getPhotoBodySite(photo).toLowerCase();
+  if (!bodySite) return false;
+
+  return allPhotos.some((candidate) => (
+    candidate.id !== photo.id &&
+    candidate.patientId === photo.patientId &&
+    getPhotoBodySite(candidate).toLowerCase() === bodySite
+  ));
+}
+
+function getPhotoTypeDisplay(photoType?: string): string {
+  switch (photoType) {
+    case 'before':
+      return 'Before Treatment';
+    case 'after':
+      return 'After Treatment';
+    case 'baseline':
+      return 'Baseline';
+    case 'dermoscopy':
+      return 'Dermoscopy';
+    case 'clinical':
+      return 'Clinical';
+    default:
+      return 'Clinical';
+  }
+}
+
+function getEffectivePhotoCategory(photo: Photo): Exclude<PhotoCategory, 'all'> {
+  if (photo.category === 'clinical' || photo.category === 'dermoscopy' || photo.category === 'before-after' || photo.category === 'other') {
+    return photo.category;
+  }
+  if (photo.photoType === 'dermoscopy') return 'dermoscopy';
+  if (photo.photoType === 'before' || photo.photoType === 'after') return 'before-after';
+  return 'clinical';
+}
+
 export function PhotosPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -78,19 +161,23 @@ export function PhotosPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [categoryFilter, setCategoryFilter] = useState<PhotoCategory>('all');
   const [photoFilter, setPhotoFilter] = useState<PhotoFilter>('all');
+  const [workflowFilter, setWorkflowFilter] = useState<PhotoWorkflowFilter>('all');
   const [selectedPatient, setSelectedPatient] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [showAnnotateModal, setShowAnnotateModal] = useState(false);
+  const [showContextModal, setShowContextModal] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [savingContext, setSavingContext] = useState(false);
   const [selectedForComparison, setSelectedForComparison] = useState<Photo[]>([]);
   const [isUploadDragOver, setIsUploadDragOver] = useState(false);
   const [resolvedPhotoUrls, setResolvedPhotoUrls] = useState<Record<string, string>>({});
 
   const [uploadForm, setUploadForm] = useState(createInitialUploadForm);
+  const [contextForm, setContextForm] = useState<PhotoContextFormState>(defaultContextForm);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -186,17 +273,60 @@ export function PhotosPage() {
   useEffect(() => {
     const action = searchParams.get('action');
     const filter = searchParams.get('filter');
+    const patientId = searchParams.get('patientId');
+    const encounterId = searchParams.get('encounterId');
+    const workflow = searchParams.get('workflow');
+    const view = searchParams.get('view');
+    const photoType = searchParams.get('photoType');
 
-    // Handle action parameter (e.g., action=upload)
     if (action === 'upload') {
       setShowUploadModal(true);
     }
 
-    // Handle filter parameter (e.g., filter=recent)
     if (filter === 'recent') {
       setPhotoFilter('recent');
     } else if (!filter) {
       setPhotoFilter('all');
+    }
+
+    if (patientId) {
+      setSelectedPatient(patientId);
+      setUploadForm((prev) => ({
+        ...prev,
+        patientId,
+        encounterId: encounterId || prev.encounterId,
+      }));
+    } else {
+      setSelectedPatient('all');
+    }
+
+    if (encounterId) {
+      setUploadForm((prev) => ({ ...prev, encounterId }));
+    }
+
+    if (
+      workflow === 'needs-context' ||
+      workflow === 'needs-encounter' ||
+      workflow === 'compare-ready' ||
+      workflow === 'annotated'
+    ) {
+      setWorkflowFilter(workflow);
+    } else if (!workflow) {
+      setWorkflowFilter('all');
+    }
+
+    if (view === 'grid' || view === 'list' || view === 'timeline' || view === 'comparison') {
+      setViewMode(view);
+    }
+
+    if (
+      photoType === 'clinical' ||
+      photoType === 'before' ||
+      photoType === 'after' ||
+      photoType === 'dermoscopy' ||
+      photoType === 'baseline'
+    ) {
+      setUploadForm((prev) => ({ ...prev, photoType }));
     }
   }, [searchParams]);
 
@@ -295,6 +425,7 @@ export function PhotosPage() {
       // Create photo record
       await createPhoto(session.tenantId, session.accessToken, {
         patientId: uploadForm.patientId,
+        encounterId: uploadForm.encounterId || undefined,
         url: uploadResult.url,
         objectKey: uploadResult.objectKey,
         storage: uploadResult.storage,
@@ -332,6 +463,44 @@ export function PhotosPage() {
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to save annotations');
+    }
+  };
+
+  const openContextEditor = (photo: Photo) => {
+    setSelectedPhoto(photo);
+    setContextForm({
+      photoType: (photo.photoType || 'clinical') as PhotoType,
+      category: getEffectivePhotoCategory(photo),
+      bodyLocation: photo.bodyLocation || photo.bodyRegion || '',
+      description: photo.description || '',
+      encounterId: photo.encounterId || '',
+    });
+    setShowViewModal(false);
+    setShowContextModal(true);
+  };
+
+  const handleSaveContext = async () => {
+    if (!session || !selectedPhoto) return;
+
+    setSavingContext(true);
+    try {
+      await updatePhotoMetadata(session.tenantId, session.accessToken, selectedPhoto.id, {
+        encounterId: contextForm.encounterId.trim() || null,
+        bodyLocation: contextForm.bodyLocation.trim() || null,
+        bodyRegion: contextForm.bodyLocation.trim() || null,
+        photoType: contextForm.photoType,
+        category: contextForm.category,
+        description: contextForm.description.trim() || null,
+      });
+
+      showSuccess('Photo clinical context updated');
+      setShowContextModal(false);
+      setSelectedPhoto(null);
+      await loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to update photo context');
+    } finally {
+      setSavingContext(false);
     }
   };
 
@@ -375,6 +544,11 @@ export function PhotosPage() {
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
   };
 
+  const getPatientDisplayName = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    return patient ? `${patient.firstName} ${patient.lastName}` : 'Selected patient';
+  };
+
   const getPhotoUrl = (photo: Photo) => {
     const resolvedUrl = resolvedPhotoUrls[photo.id];
     if (resolvedUrl) {
@@ -386,9 +560,64 @@ export function PhotosPage() {
     return photo.url;
   };
 
+  const navigateToPatientChart = (photo: Photo) => {
+    navigate(`/patients/${photo.patientId}?tab=photos`);
+  };
+
+  const navigateToBodyMap = (photo: Photo) => {
+    const params = new URLSearchParams({ patientId: photo.patientId });
+    if (photo.encounterId) params.set('encounterId', photo.encounterId);
+    params.set('source', 'photos');
+    params.set('photoId', photo.id);
+    navigate(`/body-diagram?${params.toString()}`);
+  };
+
+  const navigateToEncounter = (photo: Photo) => {
+    if (!photo.encounterId) return;
+    navigate(`/patients/${photo.patientId}/encounter/${photo.encounterId}`);
+  };
+
+  const setWorkflowAndParams = (next: PhotoWorkflowFilter) => {
+    setWorkflowFilter(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'all') {
+      params.delete('workflow');
+    } else {
+      params.set('workflow', next);
+    }
+    setSearchParams(params);
+  };
+
+  const setSelectedPatientFilter = (patientId: string) => {
+    setSelectedPatient(patientId);
+    const params = new URLSearchParams(searchParams);
+    if (!patientId || patientId === 'all') {
+      params.delete('patientId');
+    } else {
+      params.set('patientId', patientId);
+    }
+    setSearchParams(params);
+  };
+
+  const setViewModeWithParams = (next: ViewMode) => {
+    setViewMode(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'grid') {
+      params.delete('view');
+    } else {
+      params.set('view', next);
+    }
+    setSearchParams(params);
+  };
+
   const filteredPhotos = photos.filter((photo) => {
-    if (categoryFilter !== 'all' && photo.category !== categoryFilter) return false;
+    if (categoryFilter !== 'all' && getEffectivePhotoCategory(photo) !== categoryFilter) return false;
     if (selectedPatient !== 'all' && photo.patientId !== selectedPatient) return false;
+
+    if (workflowFilter === 'needs-context' && !photoNeedsContext(photo)) return false;
+    if (workflowFilter === 'needs-encounter' && !photoNeedsEncounterLink(photo)) return false;
+    if (workflowFilter === 'compare-ready' && !isComparisonCandidate(photo, photos)) return false;
+    if (workflowFilter === 'annotated' && !photoHasAnnotations(photo)) return false;
 
     // Filter by recent (photos from last 30 days)
     if (photoFilter === 'recent') {
@@ -401,7 +630,7 @@ export function PhotosPage() {
     if (searchTerm) {
       const patientName = getPatientName(photo.patientId).toLowerCase();
       const desc = (photo.description || '').toLowerCase();
-      const region = (photo.bodyRegion || '').toLowerCase();
+      const region = getPhotoBodySite(photo).toLowerCase();
       if (
         !patientName.includes(searchTerm.toLowerCase()) &&
         !desc.includes(searchTerm.toLowerCase()) &&
@@ -439,13 +668,50 @@ export function PhotosPage() {
     threshold.setDate(threshold.getDate() - 30);
     return new Date(photo.createdAt) >= threshold;
   }).length;
-  const annotatedPhotosCount = photos.filter((photo) => photo.annotations?.shapes?.length).length;
+  const needsContextCount = photos.filter(photoNeedsContext).length;
+  const needsEncounterCount = photos.filter(photoNeedsEncounterLink).length;
+  const bodySiteTaggedCount = photos.filter(photoHasBodySite).length;
+  const compareReadyCount = photos.filter((photo) => isComparisonCandidate(photo, photos)).length;
+  const annotatedPhotosCount = photos.filter(photoHasAnnotations).length;
+  const selectedPatientName = selectedPatient !== 'all' ? getPatientDisplayName(selectedPatient) : '';
+
+  const workflowCards: Array<{
+    key: PhotoWorkflowFilter;
+    label: string;
+    count: number;
+    detail: string;
+  }> = [
+    {
+      key: 'needs-context',
+      label: 'Needs Context',
+      count: needsContextCount,
+      detail: 'Missing body site or clinical note',
+    },
+    {
+      key: 'needs-encounter',
+      label: 'Needs Chart Link',
+      count: needsEncounterCount,
+      detail: 'No encounter attached',
+    },
+    {
+      key: 'compare-ready',
+      label: 'Ready to Compare',
+      count: compareReadyCount,
+      detail: 'Before/after, baseline, or repeated site',
+    },
+    {
+      key: 'annotated',
+      label: 'Annotated',
+      count: annotatedPhotosCount,
+      detail: 'Has markup saved',
+    },
+  ];
 
   if (loading) {
     return (
       <div className="photos-page">
         <div className="page-header">
-          <h1>Clinical Photos</h1>
+          <h1>Clinical Photos & Imaging</h1>
         </div>
         <Skeleton variant="card" height={60} />
         <div className="photo-grid">
@@ -461,8 +727,24 @@ export function PhotosPage() {
     <div className="photos-page">
       <div className="photos-hero">
         <div>
-          <h1>Clinical Photos</h1>
-          <p className="muted">Track skin findings, compare progression, and annotate images from one workspace.</p>
+          <h1>Clinical Photos & Imaging</h1>
+          <p className="muted">Capture, tag, compare, and route clinical images back into the patient chart.</p>
+          <div className="photos-hero-metrics">
+            <span>{recentPhotosCount} recent</span>
+            <span>{needsEncounterCount} need encounter link</span>
+            <span>{selectedForComparison.length} selected</span>
+          </div>
+          {selectedPatientName && (
+            <div className="photos-patient-scope">
+              Viewing {selectedPatientName}
+              <button type="button" onClick={() => navigate(`/patients/${selectedPatient}?tab=photos`)}>
+                Open Chart
+              </button>
+              <button type="button" onClick={() => navigate(`/body-diagram?patientId=${selectedPatient}&source=photos`)}>
+                Body Map
+              </button>
+            </div>
+          )}
         </div>
         <div className="photos-hero-actions">
           {selectedForComparison.length >= 2 && (
@@ -490,17 +772,34 @@ export function PhotosPage() {
           <div className="photos-kpi-value">{totalPhotos}</div>
         </div>
         <div className="photos-kpi-card">
-          <div className="photos-kpi-label">Recent (30 days)</div>
-          <div className="photos-kpi-value">{recentPhotosCount}</div>
+          <div className="photos-kpi-label">Needs Context</div>
+          <div className="photos-kpi-value">{needsContextCount}</div>
         </div>
         <div className="photos-kpi-card">
-          <div className="photos-kpi-label">Annotated</div>
-          <div className="photos-kpi-value">{annotatedPhotosCount}</div>
+          <div className="photos-kpi-label">Body Site Tagged</div>
+          <div className="photos-kpi-value">{bodySiteTaggedCount}</div>
         </div>
         <div className="photos-kpi-card">
-          <div className="photos-kpi-label">Selected for Compare</div>
-          <div className="photos-kpi-value">{selectedForComparison.length}</div>
+          <div className="photos-kpi-label">Ready to Compare</div>
+          <div className="photos-kpi-value">{compareReadyCount}</div>
         </div>
+      </div>
+
+      <div className="photos-workflow-row">
+        {workflowCards.map((card) => (
+          <button
+            key={card.key}
+            type="button"
+            className={`photos-workflow-card ${workflowFilter === card.key ? 'active' : ''}`}
+            onClick={() => setWorkflowAndParams(workflowFilter === card.key ? 'all' : card.key)}
+          >
+            <span>
+              <strong>{card.count}</strong>
+              {card.label}
+            </span>
+            <small>{card.detail}</small>
+          </button>
+        ))}
       </div>
 
       {/* Filters */}
@@ -523,7 +822,7 @@ export function PhotosPage() {
               id="photos-patient-filter"
               patients={patients}
               value={selectedPatient}
-              onChange={setSelectedPatient}
+              onChange={setSelectedPatientFilter}
               label="Patient"
               includeAllOption
               allValue="all"
@@ -539,12 +838,13 @@ export function PhotosPage() {
               onChange={(e) => {
                 const newFilter = e.target.value as PhotoFilter;
                 setPhotoFilter(newFilter);
-                // Update URL to reflect the filter change
+                const params = new URLSearchParams(searchParams);
                 if (newFilter === 'recent') {
-                  setSearchParams({ filter: 'recent' });
+                  params.set('filter', 'recent');
                 } else {
-                  setSearchParams({});
+                  params.delete('filter');
                 }
+                setSearchParams(params);
               }}
             >
               <option value="all">All Photos</option>
@@ -570,35 +870,35 @@ export function PhotosPage() {
           </div>
 
           <div className="view-toggle photos-view-toggle">
-            <button
-              type="button"
-              className={viewMode === 'grid' ? 'active' : ''}
-              onClick={() => setViewMode('grid')}
-              title="Grid view"
-            >
+              <button
+                type="button"
+                className={viewMode === 'grid' ? 'active' : ''}
+                onClick={() => setViewModeWithParams('grid')}
+                title="Grid view"
+              >
               Grid
             </button>
-            <button
-              type="button"
-              className={viewMode === 'list' ? 'active' : ''}
-              onClick={() => setViewMode('list')}
-              title="List view"
-            >
+              <button
+                type="button"
+                className={viewMode === 'list' ? 'active' : ''}
+                onClick={() => setViewModeWithParams('list')}
+                title="List view"
+              >
               List
             </button>
-            <button
-              type="button"
-              className={viewMode === 'timeline' ? 'active' : ''}
-              onClick={() => setViewMode('timeline')}
-              title="Timeline view"
-            >
+              <button
+                type="button"
+                className={viewMode === 'timeline' ? 'active' : ''}
+                onClick={() => setViewModeWithParams('timeline')}
+                title="Timeline view"
+              >
               Timeline
             </button>
-            <button
-              type="button"
-              className={viewMode === 'comparison' ? 'active' : ''}
-              onClick={() => setViewMode('comparison')}
-              title="Comparison view"
+              <button
+                type="button"
+                className={viewMode === 'comparison' ? 'active' : ''}
+                onClick={() => setViewModeWithParams('comparison')}
+                title="Comparison view"
               disabled={selectedForComparison.length < 2}
             >
               Compare ({selectedForComparison.length})
@@ -609,6 +909,24 @@ export function PhotosPage() {
         {selectedForComparison.length > 0 && (
           <div className="photos-selection-chip">
             {selectedForComparison.length} selected for comparison
+          </div>
+        )}
+        {(workflowFilter !== 'all' || photoFilter !== 'all' || selectedPatient !== 'all' || categoryFilter !== 'all' || searchTerm) && (
+          <div className="photos-filter-status">
+            Showing {filteredPhotos.length} of {photos.length} photos
+            <button
+              type="button"
+              onClick={() => {
+                setWorkflowFilter('all');
+                setPhotoFilter('all');
+                setSelectedPatient('all');
+                setCategoryFilter('all');
+                setSearchTerm('');
+                setSearchParams(new URLSearchParams());
+              }}
+            >
+              Clear Filters
+            </button>
           </div>
         )}
       </div>
@@ -648,6 +966,9 @@ export function PhotosPage() {
         <div className="photo-grid">
           {filteredPhotos.map((photo) => {
             const isSelected = selectedForComparison.find((p) => p.id === photo.id);
+            const needsContext = photoNeedsContext(photo);
+            const needsEncounter = photoNeedsEncounterLink(photo);
+            const compareCandidate = isComparisonCandidate(photo, photos);
             return (
               <div
                 key={photo.id}
@@ -665,8 +986,8 @@ export function PhotosPage() {
                     alt={photo.description || 'Clinical photo'}
                     loading="lazy"
                   />
-                  <span className={`photo-category ${photo.category || photo.photoType}`}>
-                    {getCategoryLabel(photo.category || photo.photoType)}
+                  <span className={`photo-category ${getEffectivePhotoCategory(photo)}`}>
+                    {getCategoryLabel(getEffectivePhotoCategory(photo))}
                   </span>
                   {photo.annotations && photo.annotations.shapes.length > 0 && (
                     <span className="photo-annotated-badge" title="Has annotations">
@@ -701,6 +1022,22 @@ export function PhotosPage() {
                   {photo.description && (
                     <div className="photo-desc muted tiny">{photo.description}</div>
                   )}
+                  <div className="photo-workflow-badges">
+                    {needsContext && <span className="warning">Needs context</span>}
+                    {needsEncounter && <span>Needs chart link</span>}
+                    {compareCandidate && <span>Compare-ready</span>}
+                  </div>
+                  <div className="photo-card-actions">
+                    <button type="button" onClick={() => openContextEditor(photo)}>
+                      Context
+                    </button>
+                    <button type="button" onClick={() => navigateToPatientChart(photo)}>
+                      Chart
+                    </button>
+                    <button type="button" onClick={() => navigateToBodyMap(photo)}>
+                      Body Map
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -727,8 +1064,8 @@ export function PhotosPage() {
               <div className="photo-list-content">
                 <div className="photo-list-header">
                   <span className="strong">{getPatientName(photo.patientId)}</span>
-                  <span className={`pill ${photo.category}`}>
-                    {getCategoryLabel(photo.category)}
+                  <span className={`pill ${getEffectivePhotoCategory(photo)}`}>
+                    {getCategoryLabel(getEffectivePhotoCategory(photo))}
                   </span>
                 </div>
                 {photo.bodyRegion && (
@@ -748,6 +1085,12 @@ export function PhotosPage() {
                   onClick={() => togglePhotoSelection(photo)}
                 >
                   {selectedForComparison.some((p) => p.id === photo.id) ? 'Selected' : 'Compare'}
+                </button>
+                <button type="button" className="photo-compare-btn" onClick={() => openContextEditor(photo)}>
+                  Context
+                </button>
+                <button type="button" className="photo-compare-btn" onClick={() => navigateToPatientChart(photo)}>
+                  Chart
                 </button>
               </div>
             </div>
@@ -777,6 +1120,12 @@ export function PhotosPage() {
               required
             />
           </div>
+
+          {uploadForm.encounterId && (
+            <div className="photos-context-note">
+              This photo will be attached to encounter {uploadForm.encounterId}.
+            </div>
+          )}
 
           <div className="form-row">
             <div className="form-field">
@@ -950,7 +1299,7 @@ export function PhotosPage() {
               <div className="detail-row">
                 <span className="label">Photo Type:</span>
                 <span className={`pill ${selectedPhoto.photoType || selectedPhoto.category}`}>
-                  {getCategoryLabel(selectedPhoto.photoType || selectedPhoto.category)}
+                  {getPhotoTypeDisplay(selectedPhoto.photoType || selectedPhoto.category)}
                 </span>
               </div>
               {(selectedPhoto.bodyRegion || selectedPhoto.bodyLocation) && (
@@ -975,8 +1324,19 @@ export function PhotosPage() {
                 <span className="label">Uploaded:</span>
                 <span>{new Date(selectedPhoto.createdAt).toLocaleString()}</span>
               </div>
+              <div className="detail-row">
+                <span className="label">Chart Link:</span>
+                <span>{selectedPhoto.encounterId ? `Encounter ${selectedPhoto.encounterId}` : 'No encounter attached'}</span>
+              </div>
 
               <div className="photo-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => openContextEditor(selectedPhoto)}
+                >
+                  Edit Context
+                </button>
                 <button
                   type="button"
                   className="btn-secondary"
@@ -999,9 +1359,145 @@ export function PhotosPage() {
                     ? 'Remove from Comparison'
                     : 'Add to Comparison'}
                 </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => navigateToPatientChart(selectedPhoto)}
+                >
+                  Patient Chart
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => navigateToBodyMap(selectedPhoto)}
+                >
+                  Body Map
+                </button>
+                {selectedPhoto.encounterId && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => navigateToEncounter(selectedPhoto)}
+                  >
+                    Encounter Note
+                  </button>
+                )}
               </div>
             </div>
           </div>
+        )}
+      </Modal>
+
+      {/* Context Modal */}
+      <Modal
+        isOpen={showContextModal}
+        title="Photo Clinical Context"
+        onClose={() => {
+          setShowContextModal(false);
+          setSelectedPhoto(null);
+        }}
+        size="lg"
+      >
+        {selectedPhoto && (
+          <>
+            <div className="modal-form">
+              <div className="photos-context-note">
+                {getPatientDisplayName(selectedPhoto.patientId)} • {new Date(selectedPhoto.createdAt).toLocaleDateString()}
+              </div>
+
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Photo Type</label>
+                  <select
+                    value={contextForm.photoType}
+                    onChange={(e) => setContextForm((prev) => ({ ...prev, photoType: e.target.value as PhotoType }))}
+                  >
+                    <option value="clinical">Clinical</option>
+                    <option value="baseline">Baseline</option>
+                    <option value="before">Before Treatment</option>
+                    <option value="after">After Treatment</option>
+                    <option value="dermoscopy">Dermoscopy</option>
+                  </select>
+                </div>
+
+                <div className="form-field">
+                  <label>Category</label>
+                  <select
+                    value={contextForm.category}
+                    onChange={(e) =>
+                      setContextForm((prev) => ({
+                        ...prev,
+                        category: e.target.value as Exclude<PhotoCategory, 'all'>,
+                      }))
+                    }
+                  >
+                    <option value="clinical">Clinical</option>
+                    <option value="dermoscopy">Dermoscopy</option>
+                    <option value="before-after">Before/After</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Body Site</label>
+                  <select
+                    value={contextForm.bodyLocation}
+                    onChange={(e) => setContextForm((prev) => ({ ...prev, bodyLocation: e.target.value }))}
+                  >
+                    <option value="">Select region...</option>
+                    {BODY_REGIONS.map((region) => (
+                      <option key={region} value={region}>
+                        {region}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-field">
+                  <label>Encounter ID</label>
+                  <input
+                    type="text"
+                    value={contextForm.encounterId}
+                    onChange={(e) => setContextForm((prev) => ({ ...prev, encounterId: e.target.value }))}
+                    placeholder="Optional encounter link"
+                  />
+                </div>
+              </div>
+
+              <div className="form-field">
+                <label>Clinical Description</label>
+                <textarea
+                  value={contextForm.description}
+                  onChange={(e) => setContextForm((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="Example: baseline left cheek inflammatory papules before isotretinoin start"
+                  rows={4}
+                />
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setShowContextModal(false);
+                  setSelectedPhoto(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={savingContext}
+                onClick={handleSaveContext}
+              >
+                {savingContext ? 'Saving...' : 'Save Context'}
+              </button>
+            </div>
+          </>
         )}
       </Modal>
 

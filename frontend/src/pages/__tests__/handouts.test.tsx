@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -135,6 +135,32 @@ describe('HandoutsPage tabs', () => {
 
     await waitFor(() => expect(screen.getByText('Custom Wound Care')).toBeInTheDocument());
     expect(screen.queryByText('System Biopsy Aftercare')).not.toBeInTheDocument();
+  });
+
+  it('allows system templates to be hidden and custom templates to be deleted', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter initialEntries={['/handouts']}>
+        <HandoutsPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText('System Biopsy Aftercare')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://localhost:4000/api/handouts/system-1',
+        expect.objectContaining({ method: 'DELETE' }),
+      ),
+    );
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Hide this system template from the active library? It can be restored later by an admin.',
+    );
   });
 
   it('uses the assigned menu tab to show saved patient handouts', async () => {

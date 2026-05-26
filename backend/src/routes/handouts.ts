@@ -316,16 +316,37 @@ router.delete('/:id', async (req: AuthedRequest, res, next) => {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
 
-    const result = await pool.query(
+    const existing = await pool.query(
+      'SELECT id, is_system_template FROM patient_handouts WHERE id = $1 AND tenant_id = $2',
+      [id, tenantId]
+    );
+
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Handout not found' });
+    }
+
+    if (existing.rows[0].is_system_template) {
+      await pool.query(
+        `UPDATE patient_handouts
+         SET is_active = false, updated_at = $3
+         WHERE id = $1 AND tenant_id = $2
+         RETURNING id`,
+        [id, tenantId, new Date().toISOString()]
+      );
+
+      return res.json({
+        message: 'System template hidden from active library',
+        deleted: false,
+        hidden: true,
+      });
+    }
+
+    await pool.query(
       'DELETE FROM patient_handouts WHERE id = $1 AND tenant_id = $2 RETURNING id',
       [id, tenantId]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Handout not found' });
-    }
-
-    res.json({ message: 'Handout deleted' });
+    res.json({ message: 'Handout deleted', deleted: true, hidden: false });
   } catch (error) {
     next(error);
   }

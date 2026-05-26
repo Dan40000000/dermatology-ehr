@@ -1028,12 +1028,15 @@ export function HandoutsPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (handout: Handout) => {
     if (!session) return;
-    if (!window.confirm('Delete this template? This cannot be undone.')) return;
+    const confirmMessage = handout.is_system_template
+      ? 'Hide this system template from the active library? It can be restored later by an admin.'
+      : 'Delete this custom template? This cannot be undone.';
+    if (!window.confirm(confirmMessage)) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/handouts/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/handouts/${handout.id}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${session.accessToken}`,
@@ -1042,8 +1045,9 @@ export function HandoutsPage() {
       });
 
       if (!response.ok) throw new Error('Failed to delete template');
+      const payload = await response.json().catch(() => null);
 
-      showSuccess('Template deleted');
+      showSuccess(payload?.message || (handout.is_system_template ? 'Template hidden' : 'Template deleted'));
       loadData();
     } catch (err: unknown) {
       showError(getErrorMessage(err, 'Failed to delete template'));
@@ -1209,7 +1213,7 @@ export function HandoutsPage() {
             ? 'Assigned handouts are the printed patient instructions saved to the chart and shared to the portal.'
             : handoutTab === 'custom'
               ? 'Custom templates are office-created templates. These can be edited and deleted by authorized staff.'
-              : 'Browse all active clinical print templates, grouped by clinical category.'}
+              : 'Browse all active clinical print templates, grouped by clinical category. System templates can be hidden from the active library.'}
         </div>
       </div>
 
@@ -1483,15 +1487,13 @@ export function HandoutsPage() {
                               <button type="button" className="btn-secondary btn-sm" onClick={() => openEdit(handout)}>
                                 Edit
                               </button>
-                              {!handout.is_system_template && (
-                                <button
-                                  type="button"
-                                  className="btn-sm btn-danger"
-                                  onClick={() => handleDelete(handout.id)}
-                                >
-                                  Delete
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                className="btn-sm btn-danger"
+                                onClick={() => handleDelete(handout)}
+                              >
+                                {handout.is_system_template ? 'Hide' : 'Delete'}
+                              </button>
                             </div>
                           </div>
                         ))}

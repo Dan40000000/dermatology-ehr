@@ -152,6 +152,15 @@ const legacyPhotoSchema = z.object({
   fileSize: z.coerce.number().int().optional(),
 });
 
+const legacyPhotoMetadataSchema = z.object({
+  encounterId: z.string().trim().min(1).max(120).nullable().optional(),
+  bodyLocation: z.string().trim().max(120).nullable().optional(),
+  bodyRegion: z.string().trim().max(120).nullable().optional(),
+  photoType: z.enum(LEGACY_PHOTO_TYPES).optional(),
+  category: z.enum(['clinical', 'dermoscopy', 'before-after', 'other']).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+});
+
 const legacyComparisonGroupSchema = z.object({
   patientId: z.string().min(1),
   name: z.string().min(1),
@@ -430,6 +439,79 @@ photosRouter.put('/:photoId/body-location', requireAuth, async (req: AuthedReque
   } catch (error: any) {
     logPhotosError('Error updating body location', error);
     res.status(500).json({ error: 'Failed to update body location' });
+  }
+});
+
+/**
+ * Legacy: PUT /api/photos/:id/metadata
+ * Update charting context for a clinical photo.
+ */
+photosRouter.put('/:photoId/metadata', requireAuth, async (req: AuthedRequest, res) => {
+  const { photoId } = req.params;
+  const tenantId = req.user!.tenantId;
+  const parsed = legacyPhotoMetadataSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid metadata', details: parsed.error.issues });
+  }
+
+  try {
+    const photoColumns = await getTableColumns('photos');
+    const columnMap: Record<string, string> = {
+      encounterId: 'encounter_id',
+      bodyLocation: 'body_location',
+      bodyRegion: 'body_region',
+      photoType: 'photo_type',
+      category: 'category',
+      description: 'description',
+    };
+
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    Object.entries(parsed.data).forEach(([key, value]) => {
+      if (value === undefined) return;
+      const column = columnMap[key];
+      if (!column || !photoColumns.has(column)) return;
+      updates.push(`${column} = $${paramIndex}`);
+      values.push(value === '' ? null : value);
+      paramIndex += 1;
+    });
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No supported metadata fields to update' });
+    }
+
+    values.push(photoId, tenantId);
+    const result = await pool.query(
+      `UPDATE photos
+       SET ${updates.join(', ')}
+       WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
+       RETURNING
+         id,
+         patient_id as "patientId",
+         tenant_id as "tenantId",
+         encounter_id as "encounterId",
+         body_location as "bodyLocation",
+         body_region as "bodyRegion",
+         photo_type as "photoType",
+         url,
+         description,
+         category,
+         annotations,
+         created_at as "createdAt"`,
+      values,
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+
+    res.json({ photo: result.rows[0] });
+  } catch (error: any) {
+    logPhotosError('Error updating photo metadata', error);
+    res.status(500).json({ error: 'Failed to update photo metadata' });
   }
 });
 

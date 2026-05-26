@@ -108,9 +108,25 @@ describe("Handouts routes", () => {
   });
 
   it("DELETE /handouts deletes handout", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "h1" }] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "h1", is_system_template: false }] })
+      .mockResolvedValueOnce({ rows: [{ id: "h1" }] });
     const res = await request(app).delete("/handouts/h1");
     expect(res.status).toBe(200);
     expect(res.body.message).toBe("Handout deleted");
+    expect(res.body.deleted).toBe(true);
+    expect(queryMock.mock.calls[1][0]).toContain("DELETE FROM patient_handouts");
+  });
+
+  it("DELETE /handouts hides system templates instead of reseeding them", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "h1", is_system_template: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: "h1" }] });
+    const res = await request(app).delete("/handouts/h1");
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe("System template hidden from active library");
+    expect(res.body.hidden).toBe(true);
+    expect(queryMock.mock.calls[1][0]).toContain("UPDATE patient_handouts");
+    expect(queryMock.mock.calls[1][0]).toContain("is_active = false");
   });
 });

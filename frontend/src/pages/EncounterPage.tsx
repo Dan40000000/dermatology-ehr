@@ -1604,26 +1604,43 @@ export function EncounterPage() {
                 <div className="ema-section-header">
                   Patient Body Diagram (Shared with Profile)
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/body-diagram?patientId=${patientId}&encounterId=${encounter.id || encounterId}`)}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: '#6B46C1',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                  }}
-                >
-                  <span>🗺️</span>
-                  Full Body Diagram
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/photos?patientId=${patientId}&encounterId=${encounter.id || encounterId}&action=upload`)}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: '#0f766e',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '0.875rem',
+                      fontWeight: '500',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Capture Photo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/body-diagram?patientId=${patientId}&encounterId=${encounter.id || encounterId}`)}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: '#6B46C1',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '0.875rem',
+                      fontWeight: '500',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    Full Body Diagram
+                  </button>
+                </div>
               </div>
               <p style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.8rem', color: '#4b5563' }}>
                 Markers added here update the same body diagram shown on the patient profile.

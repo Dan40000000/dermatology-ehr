@@ -4851,6 +4851,43 @@ pre {
   font-size: 0.875rem;
 }
 
+.photos-hero-metrics,
+.photos-patient-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.65rem;
+}
+
+.photos-hero-metrics span,
+.photos-patient-scope {
+  font-size: 0.75rem;
+  color: #475569;
+}
+
+.photos-hero-metrics span {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+}
+
+.photos-patient-scope {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.photos-patient-scope button {
+  border: 1px solid #99f6e4;
+  background: #f0fdfa;
+  color: #0f766e;
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .photos-hero-actions {
   display: flex;
   gap: 0.5rem;
@@ -4883,6 +4920,54 @@ pre {
   color: var(--gray-900);
   line-height: 1.15;
   margin-top: 0.2rem;
+}
+
+.photos-workflow-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.photos-workflow-card {
+  text-align: left;
+  border: 1px solid var(--gray-200);
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  color: var(--gray-700);
+}
+
+.photos-workflow-card:hover {
+  border-color: #14b8a6;
+  background: #f0fdfa;
+}
+
+.photos-workflow-card.active {
+  border-color: #0f766e;
+  background: #ccfbf1;
+}
+
+.photos-workflow-card span,
+.photos-workflow-card small {
+  display: block;
+}
+
+.photos-workflow-card strong {
+  display: inline-block;
+  min-width: 2.1rem;
+  font-size: 1.05rem;
+  color: var(--gray-900);
+}
+
+.photos-workflow-card span {
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.photos-workflow-card small {
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  color: #64748b;
 }
 
 .photos-toolbar {
@@ -5081,6 +5166,25 @@ pre {
   padding: 0.35rem 0.65rem;
 }
 
+.photos-filter-status {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  color: #475569;
+  font-size: 0.78rem;
+}
+
+.photos-filter-status button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  color: #334155;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
 .photo-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -5254,6 +5358,46 @@ pre {
   overflow: hidden;
 }
 
+.photo-workflow-badges {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.photo-workflow-badges span {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 999px;
+  padding: 0.14rem 0.42rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.photo-workflow-badges span.warning {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.photo-card-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.photo-card-actions button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  border-radius: 6px;
+  padding: 0.28rem 0.48rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
 .photo-compare-btn {
   border: 1px solid var(--gray-300);
   background: #ffffff;
@@ -5325,6 +5469,8 @@ pre {
 .photo-list-actions {
   display: flex;
   align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
 }
 
 .upload-dropzone {
@@ -5370,6 +5516,16 @@ pre {
   max-width: 100%;
   max-height: 200px;
   border-radius: 8px;
+}
+
+.photos-context-note {
+  border: 1px solid #bae6fd;
+  background: #f0f9ff;
+  color: #075985;
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .photo-view-modal {
@@ -5437,7 +5593,8 @@ pre {
 }
 
 @media (max-width: 1200px) {
-  .photos-kpi-row {
+  .photos-kpi-row,
+  .photos-workflow-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -5478,7 +5635,8 @@ pre {
     padding: 1rem 0.75rem 1.5rem;
   }
 
-  .photos-kpi-row {
+  .photos-kpi-row,
+  .photos-workflow-row {
     grid-template-columns: 1fr;
   }
 

@@ -1284,6 +1284,35 @@ export async function updatePhotoBodyLocation(
   return res.json();
 }
 
+export async function updatePhotoMetadata(
+  tenantId: string,
+  accessToken: string,
+  photoId: string,
+  data: {
+    encounterId?: string | null;
+    bodyLocation?: string | null;
+    bodyRegion?: string | null;
+    photoType?: string;
+    category?: string;
+    description?: string | null;
+  }
+) {
+  const res = await fetch(`${API_BASE}/api/photos/${photoId}/metadata`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update photo metadata");
+  }
+  return res.json();
+}
+
 export async function createComparisonGroup(
   tenantId: string,
   accessToken: string,

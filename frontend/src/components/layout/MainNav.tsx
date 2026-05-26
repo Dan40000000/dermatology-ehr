@@ -202,11 +202,14 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Photos',
+    label: 'Clinical Photos',
     path: '/photos',
     module: 'photos',
     dropdown: [
-      { label: 'All Photos', path: '/photos' },
+      { label: 'Imaging Workbench', path: '/photos' },
+      { label: 'Needs Context', path: '/photos?workflow=needs-context' },
+      { label: 'Needs Chart Link', path: '/photos?workflow=needs-encounter' },
+      { label: 'Compare Ready', path: '/photos?workflow=compare-ready' },
       { label: 'Upload', path: '/photos?action=upload' },
       { label: 'Recent', path: '/photos?filter=recent' },
     ]

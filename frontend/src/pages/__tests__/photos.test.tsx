@@ -20,6 +20,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchPatients: vi.fn(),
   createPhoto: vi.fn(),
   uploadPhotoFile: vi.fn(),
+  updatePhotoMetadata: vi.fn(),
   updatePhotoAnnotations: vi.fn(),
   createComparisonGroup: vi.fn(),
   fetchComparisonGroup: vi.fn(),
@@ -165,6 +166,7 @@ describe('PhotosPage', () => {
       storage: 's3',
     });
     apiMocks.createPhoto.mockResolvedValue({ id: 'photo-3' });
+    apiMocks.updatePhotoMetadata.mockResolvedValue({ photo: { id: 'photo-1' } });
     apiMocks.updatePhotoAnnotations.mockResolvedValue({ ok: true });
     apiMocks.getPresignedAccess.mockResolvedValue({ url: 'http://signed.test/photo' });
     apiMocks.signUploadKey.mockResolvedValue({ url: '/api/uploads/file?token=t', token: 't' });
@@ -182,7 +184,7 @@ describe('PhotosPage', () => {
       </MemoryRouter>
     );
 
-    await screen.findByText('Clinical Photos');
+    await screen.findByText('Clinical Photos & Imaging');
 
     fireEvent.click(screen.getByRole('button', { name: '+ Upload Photo' }));
     const uploadModal = await screen.findByTestId('modal-upload-clinical-photo');
@@ -207,6 +209,7 @@ describe('PhotosPage', () => {
     await waitFor(() =>
       expect(apiMocks.createPhoto).toHaveBeenCalledWith('tenant-1', 'token-1', {
         patientId: 'patient-1',
+        encounterId: undefined,
         url: 'http://upload.test/photo',
         objectKey: 'photo-key',
         storage: 's3',
@@ -245,7 +248,7 @@ describe('PhotosPage', () => {
       </MemoryRouter>
     );
 
-    await screen.findByText('Clinical Photos');
+    await screen.findByText('Clinical Photos & Imaging');
     const compareButtons = screen.getAllByRole('button', { name: 'Compare' });
     fireEvent.click(compareButtons[0]);
     fireEvent.click(compareButtons[1]);

@@ -1805,6 +1805,7 @@ export function PatientDetailPage() {
           <PhotosTab
             photos={photos}
             onUpload={() => setShowPhotoUploadModal(true)}
+            onOpenWorkbench={() => navigate(`/photos?patientId=${patientId}`)}
             onView={(photo) => setSelectedPhoto(photo)}
             getPhotoUrl={getPhotoDisplayUrl}
           />
@@ -3411,11 +3412,13 @@ function DocumentsTab({
 function PhotosTab({
   photos,
   onUpload,
+  onOpenWorkbench,
   onView,
   getPhotoUrl,
 }: {
   photos: Photo[];
   onUpload: () => void;
+  onOpenWorkbench: () => void;
   onView: (photo: Photo) => void;
   getPhotoUrl: (photo: Photo) => string;
 }) {
@@ -3423,10 +3426,15 @@ function PhotosTab({
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div className="ema-section-header">Clinical Photos</div>
-        <button type="button" className="ema-action-btn" onClick={onUpload}>
-          <span className="icon"></span>
-          Upload Photo
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button type="button" className="ema-action-btn" onClick={onOpenWorkbench}>
+            Imaging Workbench
+          </button>
+          <button type="button" className="ema-action-btn" onClick={onUpload}>
+            <span className="icon"></span>
+            Upload Photo
+          </button>
+        </div>
       </div>
 
       {photos.length === 0 ? (

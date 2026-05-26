@@ -547,6 +547,62 @@ describe("Photos routes", () => {
     });
   });
 
+  describe("PUT /photos/:id/metadata", () => {
+    it("updates photo charting context", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "photo-1",
+            patientId: "patient-1",
+            bodyLocation: "Face",
+            bodyRegion: "Face",
+            photoType: "clinical",
+            category: "clinical",
+            description: "Baseline acne photos",
+          },
+        ],
+      });
+
+      const res = await request(app)
+        .put("/photos/photo-1/metadata")
+        .send({
+          bodyLocation: "Face",
+          bodyRegion: "Face",
+          photoType: "clinical",
+          category: "clinical",
+          description: "Baseline acne photos",
+          encounterId: "encounter-1",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.photo.id).toBe("photo-1");
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("UPDATE photos"),
+        expect.arrayContaining(["encounter-1", "Face", "clinical", "Baseline acne photos", "photo-1", "tenant-1"])
+      );
+      expect(queryMock.mock.calls[0][0]).toContain("body_location");
+      expect(queryMock.mock.calls[0][0]).toContain("encounter_id");
+    });
+
+    it("returns 400 for invalid metadata", async () => {
+      const res = await request(app)
+        .put("/photos/photo-1/metadata")
+        .send({ photoType: "unsupported" });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 when metadata target is missing", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .put("/photos/missing-photo/metadata")
+        .send({ bodyLocation: "Face" });
+
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe("POST /photos/comparison-group", () => {
     const validGroupPayload = {
       patientId: "patient-1",

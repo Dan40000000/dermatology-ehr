@@ -11,6 +11,7 @@ import {
   getUtcRangeForPracticeDate,
 } from "../lib/practiceTimeZone";
 import { logger } from "../lib/logger";
+import { getFinancialSnapshots } from "../services/financialSnapshotService";
 
 export const commandCenterRouter = Router();
 
@@ -234,10 +235,12 @@ async function loadClaimsSummary(tenantId: string): Promise<ClaimsSummary> {
 
 async function loadFinancialSummary(tenantId: string, dateKey: string): Promise<FinancialSummary> {
   const [
+    snapshots,
     collectionsResult,
     workQueueResult,
     arResult,
   ] = await Promise.all([
+    getFinancialSnapshots(tenantId, dateKey),
     pool.query(
       `with patient as (
          select coalesce(sum(amount_cents), 0) as patient_collections_cents
@@ -263,58 +266,11 @@ async function loadFinancialSummary(tenantId: string, dateKey: string): Promise<
            and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
            and ps.sale_date::date = $2::date
        ),
-       appointment_revenue as (
-         select coalesce(sum(revenue_earned_cents), 0) as revenue_cents
-         from (
-           select
-             a.id,
-             coalesce(sum(
-               case
-                 when c.status is null or c.status <> 'void' then coalesce(c.amount_cents, 0)
-                 else 0
-               end
-             ), 0) as revenue_earned_cents
-           from appointments a
-           left join encounters e
-             on e.appointment_id = a.id
-            and e.tenant_id = a.tenant_id
-           left join charges c
-             on c.encounter_id = e.id
-            and c.tenant_id = a.tenant_id
-           where a.tenant_id = $1
-             and a.status = 'completed'
-             and coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date = $2::date
-           group by a.id
-         ) revenue_rows
-       ),
-       standalone_bill_revenue as (
-         select coalesce(sum(total_charges_cents), 0) as revenue_cents
-         from bills
-         where tenant_id = $1
-           and encounter_id is null
-           and bill_date = $2::date
-       ),
-       store_revenue as (
-         select coalesce(sum(coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0)), 0) as revenue_cents
-         from product_sales ps
-         left join store_order_fulfillments sof
-           on sof.sale_id::text = ps.id::text
-          and sof.tenant_id = ps.tenant_id
-         where ps.tenant_id = $1
-           and ps.status = 'completed'
-           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
-           and ps.sale_date::date = $2::date
-       )
        select
          patient.patient_collections_cents,
          payer.payer_collections_cents,
-         store.store_collections_cents,
-         (
-           appointment_revenue.revenue_cents
-           + standalone_bill_revenue.revenue_cents
-           + store_revenue.revenue_cents
-         ) as revenue_today_cents
-       from patient, payer, store, appointment_revenue, standalone_bill_revenue, store_revenue`,
+         store.store_collections_cents
+       from patient, payer, store`,
       [tenantId, dateKey],
     ),
     pool.query(
@@ -359,7 +315,7 @@ async function loadFinancialSummary(tenantId: string, dateKey: string): Promise<
   const storeCollectionsCents = toNumber(collections.store_collections_cents);
   const netCollectionsCents = patientCollectionsCents + payerCollectionsCents;
   const totalCollectionsCents = netCollectionsCents + storeCollectionsCents;
-  const revenueTodayCents = toNumber(collections.revenue_today_cents);
+  const revenueTodayCents = toNumber(snapshots.daily.totalRevenueCents);
 
   return {
     revenueTodayCents,
@@ -368,7 +324,7 @@ async function loadFinancialSummary(tenantId: string, dateKey: string): Promise<
     payerCollectionsCents,
     storeCollectionsCents,
     collectionRateToday:
-      revenueTodayCents > 0 ? Math.round((totalCollectionsCents / revenueTodayCents) * 100) : 0,
+      revenueTodayCents > 0 ? Number(((totalCollectionsCents / revenueTodayCents) * 100).toFixed(1)) : 0,
     financialWorkQueueCount: toNumber(workQueue.financial_work_queue_count),
     claimWorkQueueCount: toNumber(workQueue.claim_work_queue_count),
     billingWorkQueueCount: toNumber(workQueue.billing_work_queue_count),

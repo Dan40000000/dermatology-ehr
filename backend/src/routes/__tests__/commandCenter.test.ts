@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { commandCenterRouter } from "../commandCenter";
 import { pool } from "../../db/pool";
+import { getFinancialSnapshots } from "../../services/financialSnapshotService";
 
 let mockUser = {
   id: "admin-1",
@@ -32,11 +33,16 @@ jest.mock("../../lib/logger", () => ({
   },
 }));
 
+jest.mock("../../services/financialSnapshotService", () => ({
+  getFinancialSnapshots: jest.fn(),
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/command-center", commandCenterRouter);
 
 const queryMock = pool.query as jest.Mock;
+const getFinancialSnapshotsMock = getFinancialSnapshots as jest.Mock;
 
 function mockCommandCenterQueries() {
   queryMock.mockImplementation(async (sql: string) => {
@@ -80,7 +86,6 @@ function mockCommandCenterQueries() {
             patient_collections_cents: "90000",
             payer_collections_cents: "240000",
             store_collections_cents: "35000",
-            revenue_today_cents: "410000",
           },
         ],
       };
@@ -115,6 +120,12 @@ function mockCommandCenterQueries() {
 
 beforeEach(() => {
   queryMock.mockReset();
+  getFinancialSnapshotsMock.mockReset();
+  getFinancialSnapshotsMock.mockResolvedValue({
+    daily: {
+      totalRevenueCents: 410000,
+    },
+  });
   mockUser = {
     id: "admin-1",
     tenantId: "tenant-1",
@@ -142,6 +153,7 @@ describe("Command Center routes", () => {
     expect(res.body.financials.netCollectionsCents).toBe(330000);
     expect(res.body.financials.storeCollectionsCents).toBe(35000);
     expect(res.body.financials.collectionRateToday).toBe(89);
+    expect(getFinancialSnapshotsMock).toHaveBeenCalledWith("tenant-1", "2026-05-18");
     expect(res.body.financials.financialWorkQueueCount).toBe(6);
     expect(res.body.financials.arOver90Cents).toBe(250000);
     expect(res.body.dataHealth.failedSources).toEqual([]);

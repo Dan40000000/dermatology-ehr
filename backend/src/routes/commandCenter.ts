@@ -265,7 +265,7 @@ async function loadFinancialSummary(tenantId: string, dateKey: string): Promise<
            and ps.status = 'completed'
            and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
            and ps.sale_date::date = $2::date
-       ),
+       )
        select
          patient.patient_collections_cents,
          payer.payer_collections_cents,

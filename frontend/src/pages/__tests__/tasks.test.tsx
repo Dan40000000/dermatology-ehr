@@ -222,6 +222,13 @@ describe('TasksPage', () => {
 
     expect(screen.getByText('Kanban Board: 3 tasks')).toBeInTheDocument();
 
+    fireEvent.click(screen.getByText('Overdue'));
+    await waitFor(() => expect(screen.getByText('Kanban Board: 1 tasks')).toBeInTheDocument());
+    expect(apiMocks.fetchTasks.mock.calls.some(([, , params]) => params?.assignedTo === 'overdue')).toBe(false);
+
+    fireEvent.click(screen.getByText('Total Tasks'));
+    await waitFor(() => expect(screen.getByText('Kanban Board: 3 tasks')).toBeInTheDocument());
+
     fireEvent.click(screen.getByRole('button', { name: /New Task/ }));
     expect(await screen.findByText('New Task Modal')).toBeInTheDocument();
 

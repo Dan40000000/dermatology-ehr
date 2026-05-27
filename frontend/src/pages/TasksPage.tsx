@@ -55,6 +55,7 @@ export function TasksPage() {
     category: '',
     priority: '',
     assignedTo: '',
+    overdueOnly: false,
   });
 
   // Read tab from URL and apply appropriate filters
@@ -65,6 +66,7 @@ export function TasksPage() {
       setFilters((prev) => ({
         ...prev,
         assignedTo: 'me',
+        overdueOnly: false,
         status: prev.status === 'completed' ? '' : prev.status // Clear completed filter when switching to received
       }));
     } else if (tab === 'sent') {
@@ -72,6 +74,7 @@ export function TasksPage() {
       setFilters((prev) => ({
         ...prev,
         assignedTo: 'sent',
+        overdueOnly: false,
         status: prev.status === 'completed' ? '' : prev.status // Clear completed filter when switching to sent
       }));
     } else if (tab === 'completed') {
@@ -79,6 +82,7 @@ export function TasksPage() {
       setFilters((prev) => ({
         ...prev,
         status: 'completed',
+        overdueOnly: false,
         assignedTo: prev.assignedTo === 'sent' ? '' : prev.assignedTo // Clear sent filter when switching to completed
       }));
     }
@@ -91,9 +95,16 @@ export function TasksPage() {
     const { showLoading: shouldShowLoading = true } = options;
     if (shouldShowLoading) setLoading(true);
     try {
+      const taskApiFilters = {
+        search: filters.search,
+        status: filters.status,
+        category: filters.category,
+        priority: filters.priority,
+        assignedTo: filters.assignedTo,
+      };
       const [tasksRes, patientsRes, providersRes, biopsyRes] = await Promise.all([
         fetchTasks(session.tenantId, session.accessToken, {
-          ...filters,
+          ...taskApiFilters,
           sortBy: 'dueDate',
           sortOrder: 'asc',
         }),
@@ -321,6 +332,9 @@ export function TasksPage() {
       if (!title.includes(searchLower) && !patientName.includes(searchLower)) {
         return false;
       }
+    }
+    if (filters.overdueOnly && (task.status === 'completed' || !isOverdue(task.dueDate))) {
+      return false;
     }
     // Handle "sent" filter - tasks created by current user but assigned to others
     if (filters.assignedTo === 'sent') {
@@ -597,7 +611,7 @@ export function TasksPage() {
           }}
           onClick={() => {
             setSearchParams({});
-            setFilters((prev) => ({ ...prev, status: '', assignedTo: '' }));
+            setFilters((prev) => ({ ...prev, status: '', assignedTo: '', overdueOnly: false }));
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
@@ -624,7 +638,7 @@ export function TasksPage() {
           }}
           onClick={() => {
             setSearchParams({});
-            setFilters((prev) => ({ ...prev, status: 'todo', assignedTo: '' }));
+            setFilters((prev) => ({ ...prev, status: 'todo', assignedTo: '', overdueOnly: false }));
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
@@ -651,7 +665,7 @@ export function TasksPage() {
           }}
           onClick={() => {
             setSearchParams({});
-            setFilters((prev) => ({ ...prev, status: 'in_progress', assignedTo: '' }));
+            setFilters((prev) => ({ ...prev, status: 'in_progress', assignedTo: '', overdueOnly: false }));
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
@@ -678,7 +692,7 @@ export function TasksPage() {
           }}
           onClick={() => {
             setSearchParams({});
-            setFilters((prev) => ({ ...prev, assignedTo: 'overdue', status: '' }));
+            setFilters((prev) => ({ ...prev, assignedTo: '', status: '', overdueOnly: true }));
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
@@ -705,7 +719,7 @@ export function TasksPage() {
           }}
           onClick={() => {
             setSearchParams({ tab: 'received' });
-            setFilters((prev) => ({ ...prev, assignedTo: 'me', status: '' }));
+            setFilters((prev) => ({ ...prev, assignedTo: 'me', status: '', overdueOnly: false }));
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
@@ -791,12 +805,12 @@ export function TasksPage() {
             </select>
           </div>
 
-          {(filters.search || filters.category || filters.priority || filters.assignedTo) && (
+          {(filters.search || filters.category || filters.priority || filters.assignedTo || filters.overdueOnly) && (
             <button
               type="button"
               onClick={() => {
                 setSearchParams({});
-                setFilters({ search: '', status: '', category: '', priority: '', assignedTo: '' });
+                setFilters({ search: '', status: '', category: '', priority: '', assignedTo: '', overdueOnly: false });
               }}
               style={{
                 padding: '0.5rem 1rem',
@@ -833,7 +847,7 @@ export function TasksPage() {
           <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
           <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No Tasks Found</h3>
           <p style={{ color: '#6b7280', margin: '0 0 1rem' }}>
-            {filters.search || filters.category || filters.priority || filters.assignedTo
+            {filters.search || filters.category || filters.priority || filters.assignedTo || filters.overdueOnly
               ? 'No tasks match your filter criteria'
               : 'Get started by creating your first task'}
           </p>

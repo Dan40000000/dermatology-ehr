@@ -1,4 +1,7 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import type { LucideIcon } from 'lucide-react';
+import { BookOpenCheck, ClipboardCheck, FileText, FlaskConical, Pill, Workflow } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchProtocol } from '../../api';
 import type { ProtocolWithDetails } from '../../types/protocol';
@@ -8,8 +11,25 @@ interface ProtocolDetailsModalProps {
   onClose: () => void;
 }
 
+const connectedWorkflows: Array<{ label: string; path: string; icon: LucideIcon }> = [
+  { label: 'Notes', path: '/notes', icon: FileText },
+  { label: 'Rx / ePA', path: '/rx', icon: Pill },
+  { label: 'Labs / Path', path: '/labs', icon: FlaskConical },
+  { label: 'Handouts', path: '/handouts', icon: BookOpenCheck },
+  { label: 'Recalls', path: '/reminders?tab=due', icon: Workflow },
+];
+
+function formatLabel(value?: string | null): string {
+  if (!value) return '-';
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function ProtocolDetailsModal({ protocolId, onClose }: ProtocolDetailsModalProps) {
-  const { tenantId, accessToken } = useAuth();
+  const { session } = useAuth();
+  const tenantId = session?.tenantId;
+  const accessToken = session?.accessToken;
   const [protocol, setProtocol] = useState<ProtocolWithDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'steps' | 'orders' | 'handouts'>('steps');
@@ -95,17 +115,9 @@ export function ProtocolDetailsModal({ protocolId, onClose }: ProtocolDetailsMod
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          style={{
-            padding: '1.5rem',
-            borderBottom: '1px solid var(--border)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'start',
-          }}
-        >
+        <div className="protocol-detail-header">
           <div>
+            <div className="eyebrow">Care Pathway Detail</div>
             <h2 style={{ margin: '0 0 0.5rem 0' }}>{protocol.name}</h2>
             {protocol.description && (
               <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.875rem' }}>
@@ -113,7 +125,7 @@ export function ProtocolDetailsModal({ protocolId, onClose }: ProtocolDetailsMod
               </p>
             )}
           </div>
-          <button type="button" onClick={onClose} style={{ padding: '0.5rem' }}>
+          <button type="button" onClick={onClose} className="ghost" style={{ padding: '0.5rem' }}>
             Close
           </button>
         </div>
@@ -129,16 +141,16 @@ export function ProtocolDetailsModal({ protocolId, onClose }: ProtocolDetailsMod
           }}
         >
           <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
-              Category
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                Category
+              </div>
+              <div style={{ fontWeight: 600 }}>{formatLabel(protocol.category)}</div>
             </div>
-            <div style={{ fontWeight: 600 }}>{protocol.category}</div>
-          </div>
           <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
-              Status
-            </div>
-            <div style={{ fontWeight: 600 }}>{protocol.status}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                Status
+              </div>
+              <div style={{ fontWeight: 600 }}>{formatLabel(protocol.status)}</div>
           </div>
           <div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
@@ -181,6 +193,27 @@ export function ProtocolDetailsModal({ protocolId, onClose }: ProtocolDetailsMod
             </div>
           </div>
         )}
+
+        <div className="protocol-detail-workflows">
+          <div>
+            <div className="protocol-detail-workflows-title">
+              <ClipboardCheck size={18} />
+              Connected outputs
+            </div>
+            <p className="muted">Use this pathway as the clinical source for orders, education, and follow-up queues.</p>
+          </div>
+          <div className="protocol-detail-workflow-links">
+            {connectedWorkflows.map((workflow) => {
+              const Icon = workflow.icon;
+              return (
+                <Link to={workflow.path} key={workflow.label} onClick={onClose}>
+                  <Icon size={15} />
+                  {workflow.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Tabs */}
         <div style={{ borderBottom: '1px solid var(--border)', display: 'flex', padding: '0 1.5rem' }}>

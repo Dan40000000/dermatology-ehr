@@ -16,7 +16,9 @@ export function ApplyProtocolModal({
   onClose,
   onSuccess,
 }: ApplyProtocolModalProps) {
-  const { tenantId, accessToken } = useAuth();
+  const { session } = useAuth();
+  const tenantId = session?.tenantId;
+  const accessToken = session?.accessToken;
   const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedProtocol, setSelectedProtocol] = useState<string>('');

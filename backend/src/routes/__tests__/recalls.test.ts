@@ -283,6 +283,32 @@ describe('Recalls Routes', () => {
         expect.arrayContaining(['tenant-123', 'campaign-123'])
       );
     });
+
+    it('should default the due worklist to pending recalls only', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const response = await request(app).get('/api/recalls/due');
+
+      expect(response.status).toBe(200);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining('pr.status = $2'),
+        ['tenant-123', 'pending']
+      );
+    });
+
+    it('should allow all recall statuses when requested', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const response = await request(app).get('/api/recalls/due').query({
+        status: 'all',
+      });
+
+      expect(response.status).toBe(200);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.not.stringContaining('pr.status = $2'),
+        ['tenant-123']
+      );
+    });
   });
 
   describe('POST /api/recalls/patient', () => {

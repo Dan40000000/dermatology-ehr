@@ -232,7 +232,7 @@ export async function getFinancialSnapshots(
          COALESCE(
            SUM(
              CASE
-               WHEN c.status IS NULL OR c.status <> 'void' THEN COALESCE(c.amount_cents, 0)
+               WHEN c.status IS NULL OR c.status NOT IN ('void', 'voided') THEN COALESCE(c.amount_cents, 0)
                ELSE 0
              END
            ),

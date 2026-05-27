@@ -104,7 +104,7 @@ export const moduleAccess: Record<ModuleKey, Role[]> = {
   preferences: ["admin", "provider", "ma", "front_desk", "billing", "nurse", "manager", "scheduler", "compliance_officer"],
   help: ["admin", "provider", "ma", "front_desk", "billing", "nurse", "manager", "scheduler", "compliance_officer", "staff", "hr"],
   telehealth: ["admin", "provider", "ma", "nurse", "manager"],
-  inventory: ["admin", "ma", "front_desk", "manager"],
+  inventory: ["admin", "provider", "ma", "nurse", "front_desk", "manager"],
   store: ["admin", "front_desk", "manager", "billing"],
   financials: FINANCIAL_DASHBOARD_ROLES,
   claims: REVENUE_CYCLE_ROLES,

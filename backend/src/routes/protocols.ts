@@ -673,7 +673,25 @@ protocolsRouter.get("/stats/overview", requireAuth, async (req: AuthedRequest, r
         count(distinct case when p.status = 'active' then p.id end) as active_protocols,
         count(distinct pa.id) as total_applications,
         count(distinct case when pa.status = 'active' then pa.id end) as active_applications,
-        count(distinct case when pa.status = 'completed' then pa.id end) as completed_applications
+        count(distinct case when pa.status = 'completed' then pa.id end) as completed_applications,
+        coalesce((
+          select jsonb_object_agg(status_key, category_totals)
+          from (
+            select status_key, jsonb_object_agg(category, total) as category_totals
+            from (
+              select p2.status::text as status_key, p2.category::text as category, count(*) as total
+              from protocols p2
+              where p2.tenant_id = $1
+              group by p2.status, p2.category
+              union all
+              select 'all' as status_key, p3.category::text as category, count(*) as total
+              from protocols p3
+              where p3.tenant_id = $1
+              group by p3.category
+            ) category_rows
+            group by status_key
+          ) status_rows
+        ), '{}'::jsonb) as category_counts
       from protocols p
       left join protocol_applications pa on p.id = pa.protocol_id and pa.tenant_id = p.tenant_id
       where p.tenant_id = $1`,

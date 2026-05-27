@@ -296,6 +296,7 @@ router.get('/due', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { startDate, endDate, campaignId, status } = req.query;
+    const statusFilter = Array.isArray(status) ? status[0] : status;
 
     let query = `
       SELECT
@@ -359,10 +360,14 @@ router.get('/due', async (req: AuthedRequest, res) => {
       params.push(campaignId);
     }
 
-    if (status) {
+    if (statusFilter && statusFilter !== 'all') {
       paramCount++;
       query += ` AND pr.status = $${paramCount}`;
-      params.push(status);
+      params.push(statusFilter);
+    } else if (!statusFilter) {
+      paramCount++;
+      query += ` AND pr.status = $${paramCount}`;
+      params.push('pending');
     }
 
     query += ' ORDER BY COALESCE(pr.due_date, pr.recall_date) ASC, p.last_name ASC';
@@ -726,6 +731,10 @@ router.get('/stats', async (req: AuthedRequest, res) => {
         COUNT(*) FILTER (WHERE status = 'scheduled')::int as total_scheduled,
         COUNT(*) FILTER (WHERE status = 'completed')::int as total_completed,
         COUNT(*) FILTER (WHERE status = 'dismissed')::int as total_dismissed,
+        COUNT(*) FILTER (
+          WHERE status NOT IN ('completed', 'dismissed', 'scheduled')
+            AND COALESCE(due_date, recall_date) < CURRENT_DATE
+        )::int as total_overdue,
         COUNT(*)::int as total_recalls
       FROM patient_recalls pr
       WHERE pr.tenant_id = $1 ${campaignFilter} ${dateFilter}`,
@@ -743,7 +752,11 @@ router.get('/stats', async (req: AuthedRequest, res) => {
         COUNT(*) FILTER (WHERE pr.status = 'contacted')::int as contacted,
         COUNT(*) FILTER (WHERE pr.status = 'scheduled')::int as scheduled,
         COUNT(*) FILTER (WHERE pr.status = 'completed')::int as completed,
-        COUNT(*) FILTER (WHERE pr.status = 'dismissed')::int as dismissed
+        COUNT(*) FILTER (WHERE pr.status = 'dismissed')::int as dismissed,
+        COUNT(*) FILTER (
+          WHERE pr.status NOT IN ('completed', 'dismissed', 'scheduled')
+            AND COALESCE(pr.due_date, pr.recall_date) < CURRENT_DATE
+        )::int as overdue
       FROM recall_campaigns rc
       LEFT JOIN patient_recalls pr ON pr.campaign_id = rc.id AND pr.tenant_id = rc.tenant_id ${dateFilter}
       WHERE rc.tenant_id = $1 ${campaignFilter}

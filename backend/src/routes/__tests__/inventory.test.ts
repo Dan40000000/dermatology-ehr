@@ -455,6 +455,51 @@ describe("Inventory routes", () => {
     expect(queryTextList.some((sql) => sql.includes("INSERT INTO bill_line_items"))).toBe(true);
   });
 
+  it("POST /inventory/usage creates insurance-routed charges for claimable inventory", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ id: "item-1", name: "Kenalog-10 Injection Unit", quantity: 20, unit_cost_cents: 280 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "dx-1", icd10_code: "L73.2" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id: "usage-insurance", used_at: "2025-01-01" }] })
+      .mockResolvedValueOnce({ rows: [] }) // insert charge
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // encounter bill lookup
+      .mockResolvedValueOnce({ rows: [] }) // insert bill
+      .mockResolvedValueOnce({ rows: [] }) // insert bill line item
+      .mockResolvedValueOnce({ rows: [] }) // update inventory usage links
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/inventory/usage").send({
+      itemId: "00000000-0000-0000-0000-000000000000",
+      quantityUsed: 2,
+      patientId: "p1",
+      providerId: "prov-1",
+      encounterId: "enc-1",
+      billingRoute: "insurance",
+      chargeCode: "J3301",
+      codeType: "HCPCS",
+      sellPriceCents: 1100,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.billingRoute).toBe("insurance");
+    expect(res.body.saleStatus).toBe("insurance");
+    expect(res.body.patientChargeCents).toBe(0);
+    expect(res.body.insuranceChargeCents).toBe(2200);
+
+    const chargeCall = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO charges"));
+    expect(chargeCall?.[1]?.[5]).toBe("J3301");
+    expect(chargeCall?.[1]?.[6]).toBe("HCPCS");
+    expect(chargeCall?.[1]?.[7]).toBe("insurance");
+    expect(chargeCall?.[1]?.[9]).toEqual(["L73.2"]);
+    expect(chargeCall?.[1]?.[18]).toBe(0);
+    expect(chargeCall?.[1]?.[19]).toBe(2200);
+  });
+
   it("GET /inventory/usage returns list", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "usage-1" }] });
     const res = await request(app).get("/inventory/usage?patientId=p1&limit=5");

@@ -82,6 +82,7 @@ describe('RecallsPage', () => {
         total_scheduled: 0,
         total_completed: 1,
         total_dismissed: 1,
+        total_overdue: 1,
         total_recalls: 4,
         contactRate: 25,
         conversionRate: 25,
@@ -97,6 +98,7 @@ describe('RecallsPage', () => {
           scheduled: 0,
           completed: 1,
           dismissed: 1,
+          overdue: 1,
         },
         {
           id: 'campaign-annual',
@@ -108,6 +110,7 @@ describe('RecallsPage', () => {
           scheduled: 0,
           completed: 0,
           dismissed: 0,
+          overdue: 0,
         },
       ],
     });
@@ -200,7 +203,7 @@ describe('RecallsPage', () => {
     await waitFor(() =>
       expect(apiMocks.fetchDueRecalls).toHaveBeenLastCalledWith('tenant-1', 'token-1', {
         campaignId: 'campaign-melanoma',
-        status: '',
+        status: 'all',
         startDate: '',
         endDate: '',
       }),
@@ -216,5 +219,6 @@ describe('RecallsPage', () => {
     expect(within(table).getByText('pending')).toBeInTheDocument();
     expect(within(table).getByText('completed')).toBeInTheDocument();
     expect(within(table).getByText('dismissed')).toBeInTheDocument();
+    expect(within(table).getByText('Overdue')).toBeInTheDocument();
   });
 });

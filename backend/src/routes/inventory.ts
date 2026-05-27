@@ -48,6 +48,66 @@ inventoryRouter.use(requireAuth, requireModuleAccess("inventory"));
 
 const INVENTORY_BILL_LINE_CPT_CODE = "INV-ITEM";
 const INVENTORY_BILL_NOTES_TAG = "[INVENTORY_USAGE]";
+const INVENTORY_CHARGE_SOURCE = "inventory_usage";
+const INVENTORY_CHARGE_GROUP = "visit_inventory";
+const LOCKED_INVENTORY_CHARGE_STATUSES = new Set(["submitted", "claimed", "paid", "denied"]);
+
+type VisitInventoryBillingRoute = "bundled" | "insurance" | "self_pay" | "sample";
+type ChargeBillingRoute = "insurance" | "self_pay";
+type InventoryChargeCodeType = "CPT" | "HCPCS" | "INTERNAL";
+
+function inferInventoryCodeType(code: string, requested?: InventoryChargeCodeType): InventoryChargeCodeType {
+  if (requested) return requested;
+  const normalized = code.trim().toUpperCase();
+  if (/^\d{5}$/.test(normalized)) return "CPT";
+  if (/^[A-Z]\d{4}$/.test(normalized)) return "HCPCS";
+  return "INTERNAL";
+}
+
+function normalizeInventoryBillingRoute(payload: {
+  billingRoute?: VisitInventoryBillingRoute;
+  givenAsSample?: boolean;
+  sellPriceCents?: number;
+}): VisitInventoryBillingRoute {
+  if (payload.givenAsSample) return "sample";
+  if (payload.billingRoute) return payload.billingRoute;
+  return (payload.sellPriceCents || 0) > 0 ? "self_pay" : "bundled";
+}
+
+function saleStatusCaseSql(): string {
+  return `
+      CASE
+        WHEN COALESCE(NULLIF(to_jsonb(u)->>'billing_route', ''), '') = 'insurance' THEN 'insurance'
+        WHEN COALESCE(NULLIF(to_jsonb(u)->>'billing_route', ''), '') = 'self_pay' THEN 'sold'
+        WHEN COALESCE(NULLIF(to_jsonb(u)->>'billing_route', ''), '') = 'bundled' THEN 'bundled'
+        WHEN u.given_as_sample THEN 'sample'
+        WHEN COALESCE(u.sell_price_cents, 0) > 0 THEN 'sold'
+        ELSE 'used'
+      END`;
+}
+
+async function loadEncounterDiagnosisContext(
+  client: PoolClient,
+  tenantId: string,
+  encounterId?: string,
+): Promise<{ icdCodes: string[]; diagnosisIds: string[] }> {
+  if (!encounterId) {
+    return { icdCodes: [], diagnosisIds: [] };
+  }
+
+  const result = await client.query(
+    `SELECT id, icd10_code
+     FROM encounter_diagnoses
+     WHERE tenant_id = $1 AND encounter_id = $2
+     ORDER BY is_primary DESC, created_at ASC`,
+    [tenantId, encounterId],
+  );
+
+  return {
+    icdCodes: Array.from(new Set(result.rows.map((row) => String(row.icd10_code || "").trim()).filter(Boolean))),
+    diagnosisIds: result.rows.map((row) => String(row.id || "").trim()).filter(Boolean),
+  };
+}
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -124,6 +184,12 @@ async function appendInventoryChargeToBill(params: {
   itemName: string;
   quantityUsed: number;
   sellPriceCents: number;
+  chargeCode: string;
+  codeType: InventoryChargeCodeType;
+  billingRoute: ChargeBillingRoute;
+  icdCodes: string[];
+  patientResponsibilityCents: number;
+  insuranceResponsibilityCents: number;
 }): Promise<{ billId: string; billLineItemId: string }> {
   const {
     client,
@@ -136,6 +202,12 @@ async function appendInventoryChargeToBill(params: {
     itemName,
     quantityUsed,
     sellPriceCents,
+    chargeCode,
+    codeType,
+    billingRoute,
+    icdCodes,
+    patientResponsibilityCents,
+    insuranceResponsibilityCents,
   } = params;
 
   const lineTotalCents = sellPriceCents * quantityUsed;
@@ -188,7 +260,7 @@ async function appendInventoryChargeToBill(params: {
         total_charges_cents, insurance_responsibility_cents, patient_responsibility_cents,
         paid_amount_cents, adjustment_amount_cents, balance_cents, status,
         service_date_start, service_date_end, notes, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $8, 0, 0, $8, 'new', $6, $6, $9, $10)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, 0, $10, 'new', $6, $6, $11, $12)`,
       [
         billId,
         tenantId,
@@ -198,6 +270,8 @@ async function appendInventoryChargeToBill(params: {
         serviceDate,
         addDays(serviceDate, 30),
         lineTotalCents,
+        insuranceResponsibilityCents,
+        patientResponsibilityCents,
         INVENTORY_BILL_NOTES_TAG,
         userId,
       ]
@@ -206,18 +280,27 @@ async function appendInventoryChargeToBill(params: {
     await client.query(
       `UPDATE bills
        SET total_charges_cents = total_charges_cents + $1,
-           patient_responsibility_cents = patient_responsibility_cents + $1,
-           balance_cents = balance_cents + $1,
-           service_date_start = COALESCE(LEAST(service_date_start, $2::date), $2::date),
-           service_date_end = COALESCE(GREATEST(service_date_end, $2::date), $2::date),
+           insurance_responsibility_cents = insurance_responsibility_cents + $2,
+           patient_responsibility_cents = patient_responsibility_cents + $3,
+           balance_cents = balance_cents + $3,
+           service_date_start = COALESCE(LEAST(service_date_start, $4::date), $4::date),
+           service_date_end = COALESCE(GREATEST(service_date_end, $4::date), $4::date),
            notes = CASE
-             WHEN notes IS NULL OR notes = '' THEN $3
-             WHEN notes LIKE '%' || $3 || '%' THEN notes
-             ELSE notes || E'\n' || $3
+             WHEN notes IS NULL OR notes = '' THEN $5
+             WHEN notes LIKE '%' || $5 || '%' THEN notes
+             ELSE notes || E'\n' || $5
            END,
            updated_at = NOW()
-       WHERE id = $4 AND tenant_id = $5`,
-      [lineTotalCents, serviceDate, INVENTORY_BILL_NOTES_TAG, billId, tenantId]
+       WHERE id = $6 AND tenant_id = $7`,
+      [
+        lineTotalCents,
+        insuranceResponsibilityCents,
+        patientResponsibilityCents,
+        serviceDate,
+        INVENTORY_BILL_NOTES_TAG,
+        billId,
+        tenantId,
+      ]
     );
   }
 
@@ -225,20 +308,23 @@ async function appendInventoryChargeToBill(params: {
 
   await client.query(
     `INSERT INTO bill_line_items(
-      id, tenant_id, bill_id, charge_id, service_date, cpt_code, description, quantity,
-      unit_price_cents, total_cents, icd_codes
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ARRAY[]::text[])`,
+      id, tenant_id, bill_id, charge_id, service_date, cpt_code, code_type, billing_route,
+      description, quantity, unit_price_cents, total_cents, icd_codes
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::text[])`,
     [
       billLineItemId,
       tenantId,
       billId,
       chargeId || null,
       serviceDate,
-      INVENTORY_BILL_LINE_CPT_CODE,
+      chargeCode,
+      codeType,
+      billingRoute,
       `Inventory item: ${itemName}`,
       quantityUsed,
       sellPriceCents,
       lineTotalCents,
+      icdCodes,
     ]
   );
 
@@ -290,6 +376,17 @@ inventoryRouter.get("/usage", requireAuth, async (req: AuthedRequest, res) => {
       u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
+      to_jsonb(u)->>'charge_id' as "chargeId",
+      to_jsonb(u)->>'bill_id' as "billId",
+      to_jsonb(u)->>'bill_line_item_id' as "billLineItemId",
+      COALESCE(NULLIF(to_jsonb(u)->>'billing_route', ''),
+        CASE
+          WHEN u.given_as_sample THEN 'sample'
+          WHEN COALESCE(u.sell_price_cents, 0) > 0 THEN 'self_pay'
+          ELSE 'bundled'
+        END
+      ) as "billingRoute",
+      ${saleStatusCaseSql()} as "saleStatus",
       u.encounter_id as "encounterId",
       u.appointment_id as "appointmentId",
       u.patient_id as "patientId",
@@ -554,6 +651,17 @@ inventoryRouter.get("/:id/usage", requireAuth, async (req: AuthedRequest, res) =
       u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
+      to_jsonb(u)->>'charge_id' as "chargeId",
+      to_jsonb(u)->>'bill_id' as "billId",
+      to_jsonb(u)->>'bill_line_item_id' as "billLineItemId",
+      COALESCE(NULLIF(to_jsonb(u)->>'billing_route', ''),
+        CASE
+          WHEN u.given_as_sample THEN 'sample'
+          WHEN COALESCE(u.sell_price_cents, 0) > 0 THEN 'self_pay'
+          ELSE 'bundled'
+        END
+      ) as "billingRoute",
+      ${saleStatusCaseSql()} as "saleStatus",
       u.encounter_id as "encounterId",
       u.appointment_id as "appointmentId",
       u.patient_id as "patientId",
@@ -778,6 +886,10 @@ const createUsageSchema = z.object({
   providerId: z.string().min(1),
   encounterId: z.string().optional(),
   appointmentId: z.string().optional(),
+  billingRoute: z.enum(["bundled", "insurance", "self_pay", "sample"]).optional(),
+  chargeCode: z.string().trim().min(2).max(20).optional(),
+  codeType: z.enum(["CPT", "HCPCS", "INTERNAL"]).optional(),
+  icdCodes: z.array(z.string().trim().min(3).max(10)).optional(),
   sellPriceCents: z.number().int().min(0).optional(),
   givenAsSample: z.boolean().optional(),
   notes: z.string().optional(),
@@ -816,16 +928,51 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
       });
     }
 
-    const givenAsSample = payload.givenAsSample ?? false;
-    const sellPriceCents = givenAsSample ? 0 : payload.sellPriceCents ?? 0;
+    const billingRoute = normalizeInventoryBillingRoute(payload);
+    const givenAsSample = billingRoute === "sample";
+    const chargeableRoute = billingRoute === "insurance" || billingRoute === "self_pay";
+    const sellPriceCents = chargeableRoute ? payload.sellPriceCents ?? 0 : 0;
     const lineTotalCents = sellPriceCents * payload.quantityUsed;
+    const chargeCode = (payload.chargeCode || INVENTORY_BILL_LINE_CPT_CODE).trim().toUpperCase();
+    const codeType = inferInventoryCodeType(chargeCode, payload.codeType);
+
+    if (chargeableRoute && sellPriceCents <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Charge amount is required for self-pay or insurance inventory billing" });
+    }
+
+    let icdCodes = Array.from(new Set((payload.icdCodes || []).map((code) => code.trim().toUpperCase()).filter(Boolean)));
+    let linkedDiagnosisIds: string[] = [];
+
+    if (billingRoute === "insurance") {
+      if (!payload.encounterId) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "Insurance-billable inventory must be attached to an encounter" });
+      }
+      if (!payload.chargeCode || codeType === "INTERNAL") {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "Insurance-billable inventory requires a CPT or HCPCS charge code" });
+      }
+
+      const diagnosisContext = await loadEncounterDiagnosisContext(client, tenantId, payload.encounterId);
+      if (icdCodes.length === 0) {
+        icdCodes = diagnosisContext.icdCodes;
+      }
+      linkedDiagnosisIds = diagnosisContext.diagnosisIds;
+
+      if (icdCodes.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "Insurance-billable inventory requires at least one diagnosis code" });
+      }
+    }
 
     // Insert usage record (trigger will automatically decrease inventory)
     const result = await client.query(
       `INSERT INTO inventory_usage(
         tenant_id, item_id, quantity_used, unit_cost_cents,
-        sell_price_cents, given_as_sample, patient_id, provider_id, encounter_id, appointment_id, notes, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        sell_price_cents, given_as_sample, billing_route, patient_id, provider_id,
+        encounter_id, appointment_id, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id, used_at`,
       [
         tenantId,
@@ -834,6 +981,7 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
         item.unit_cost_cents,
         sellPriceCents,
         givenAsSample,
+        billingRoute,
         payload.patientId,
         payload.providerId,
         payload.encounterId || null,
@@ -845,27 +993,45 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
 
     let billId: string | null = null;
     let inventoryChargeId: string | null = null;
-    if (!givenAsSample && lineTotalCents > 0) {
+    let billLineItemId: string | null = null;
+    if (chargeableRoute && lineTotalCents > 0) {
       const serviceDate = await resolveUsageServiceDate(client, tenantId, payload.appointmentId);
       inventoryChargeId = crypto.randomUUID();
+      const chargeBillingRoute: ChargeBillingRoute = billingRoute === "insurance" ? "insurance" : "self_pay";
+      const chargeStatus = chargeBillingRoute === "insurance" ? "pending" : "self_pay";
+      const patientResponsibilityCents = chargeBillingRoute === "self_pay" ? lineTotalCents : 0;
+      const insuranceResponsibilityCents = chargeBillingRoute === "insurance" ? lineTotalCents : 0;
 
       await client.query(
         `INSERT INTO charges(
           id, tenant_id, encounter_id, patient_id, service_date, cpt_code,
-          description, icd_codes, linked_diagnosis_ids, quantity,
-          fee_cents, amount_cents, amount, status, transaction_type, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, ARRAY[]::text[], ARRAY[]::text[], $8::integer, $9::integer, $10::integer, ROUND(($10::numeric / 100), 2), 'self_pay', 'charge', NOW())`,
+          code_type, billing_route, description, icd_codes, linked_diagnosis_ids, quantity,
+          fee_cents, amount_cents, amount, status, transaction_type, source, charge_group,
+          line_note, patient_responsibility_cents, insurance_responsibility_cents, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], $11::text[],
+                  $12::integer, $13::integer, $14::integer, ROUND(($14::numeric / 100), 2),
+                  $15, 'charge', $16, $17, $18, $19::integer, $20::integer, NOW())`,
         [
           inventoryChargeId,
           tenantId,
           payload.encounterId || null,
           payload.patientId,
           serviceDate,
-          INVENTORY_BILL_LINE_CPT_CODE,
+          chargeCode,
+          codeType,
+          chargeBillingRoute,
           `Inventory item: ${item.name}`,
+          icdCodes,
+          linkedDiagnosisIds,
           payload.quantityUsed,
           sellPriceCents,
           lineTotalCents,
+          chargeStatus,
+          INVENTORY_CHARGE_SOURCE,
+          INVENTORY_CHARGE_GROUP,
+          payload.notes || `Inventory ${chargeBillingRoute === "insurance" ? "billed to insurance" : "sold"} during visit: ${item.name}`,
+          patientResponsibilityCents,
+          insuranceResponsibilityCents,
         ]
       );
 
@@ -881,8 +1047,24 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
         itemName: item.name,
         quantityUsed: payload.quantityUsed,
         sellPriceCents,
+        chargeCode,
+        codeType,
+        billingRoute: chargeBillingRoute,
+        icdCodes,
+        patientResponsibilityCents,
+        insuranceResponsibilityCents,
       });
       billId = billResult.billId;
+      billLineItemId = billResult.billLineItemId;
+
+      await client.query(
+        `UPDATE inventory_usage
+         SET charge_id = $1,
+             bill_id = $2,
+             bill_line_item_id = $3
+         WHERE id = $4 AND tenant_id = $5`,
+        [inventoryChargeId, billId, billLineItemId, result.rows[0].id, tenantId]
+      );
     }
 
     await client.query("COMMIT");
@@ -893,7 +1075,19 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
       usedAt: result.rows[0].used_at,
       billId,
       chargeId: inventoryChargeId,
-      patientChargeCents: lineTotalCents,
+      billLineItemId,
+      patientChargeCents: billingRoute === "self_pay" ? lineTotalCents : 0,
+      insuranceChargeCents: billingRoute === "insurance" ? lineTotalCents : 0,
+      billingRoute,
+      saleStatus: billingRoute === "sample"
+        ? "sample"
+        : billingRoute === "insurance"
+          ? "insurance"
+          : billingRoute === "self_pay" && lineTotalCents > 0
+            ? "sold"
+            : billingRoute === "bundled"
+              ? "bundled"
+              : "used",
       message: `${payload.quantityUsed} units of ${item.name} recorded`
     });
   } catch (error: any) {
@@ -922,6 +1116,17 @@ inventoryRouter.get("/usage/:id", requireAuth, async (req: AuthedRequest, res) =
       u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
+      to_jsonb(u)->>'charge_id' as "chargeId",
+      to_jsonb(u)->>'bill_id' as "billId",
+      to_jsonb(u)->>'bill_line_item_id' as "billLineItemId",
+      COALESCE(NULLIF(to_jsonb(u)->>'billing_route', ''),
+        CASE
+          WHEN u.given_as_sample THEN 'sample'
+          WHEN COALESCE(u.sell_price_cents, 0) > 0 THEN 'self_pay'
+          ELSE 'bundled'
+        END
+      ) as "billingRoute",
+      ${saleStatusCaseSql()} as "saleStatus",
       u.encounter_id as "encounterId",
       u.appointment_id as "appointmentId",
       u.patient_id as "patientId",
@@ -958,7 +1163,14 @@ inventoryRouter.delete("/usage/:id", requireAuth, requireRoles(["admin"]), async
 
     // Get usage details
     const usageResult = await client.query(
-      `SELECT item_id, quantity_used FROM inventory_usage WHERE id = $1 AND tenant_id = $2`,
+      `SELECT
+         u.item_id,
+         u.quantity_used,
+         to_jsonb(u)->>'charge_id' as charge_id,
+         to_jsonb(u)->>'bill_id' as bill_id,
+         to_jsonb(u)->>'bill_line_item_id' as bill_line_item_id
+       FROM inventory_usage u
+       WHERE u.id = $1 AND u.tenant_id = $2`,
       [id, tenantId]
     );
 
@@ -968,6 +1180,9 @@ inventoryRouter.delete("/usage/:id", requireAuth, requireRoles(["admin"]), async
     }
 
     const usage = usageResult.rows[0];
+    const chargeId = usage.charge_id as string | null;
+    const billId = usage.bill_id as string | null;
+    const billLineItemId = usage.bill_line_item_id as string | null;
 
     // Add quantity back to inventory
     await client.query(
@@ -975,6 +1190,78 @@ inventoryRouter.delete("/usage/:id", requireAuth, requireRoles(["admin"]), async
        WHERE id = $2 AND tenant_id = $3`,
       [usage.quantity_used, usage.item_id, tenantId]
     );
+
+    if (chargeId) {
+      const chargeResult = await client.query(
+        `SELECT status
+         FROM charges
+         WHERE id = $1 AND tenant_id = $2`,
+        [chargeId, tenantId]
+      );
+      const chargeStatus = String(chargeResult.rows[0]?.status || "").toLowerCase();
+      if (LOCKED_INVENTORY_CHARGE_STATUSES.has(chargeStatus)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "Inventory usage cannot be deleted because its charge is already locked in billing.",
+        });
+      }
+
+      await client.query(
+        `UPDATE charges
+         SET status = 'voided',
+             amount_cents = 0,
+             amount = 0,
+             patient_responsibility_cents = 0,
+             insurance_responsibility_cents = 0,
+             line_note = trim(concat(coalesce(line_note, ''), E'\nVoided after inventory usage correction.')),
+             updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $2`,
+        [chargeId, tenantId]
+      );
+    }
+
+    let billAdjustmentCents = 0;
+    let resolvedBillId = billId;
+    let billLineRoute = "";
+    if (billLineItemId || chargeId) {
+      const billLineResult = await client.query(
+        `SELECT id, bill_id, total_cents, billing_route
+         FROM bill_line_items
+         WHERE tenant_id = $1
+           AND ($2::text IS NULL OR id = $2)
+           AND ($3::text IS NULL OR charge_id = $3)
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [tenantId, billLineItemId, chargeId]
+      );
+
+      if (billLineResult.rowCount) {
+        billAdjustmentCents = Number(billLineResult.rows[0].total_cents || 0);
+        resolvedBillId = billLineResult.rows[0].bill_id || resolvedBillId;
+        billLineRoute = String(billLineResult.rows[0].billing_route || "").toLowerCase();
+
+        await client.query(
+          `DELETE FROM bill_line_items
+           WHERE id = $1 AND tenant_id = $2`,
+          [billLineResult.rows[0].id, tenantId]
+        );
+      }
+    }
+
+    if (resolvedBillId && billAdjustmentCents > 0) {
+      const patientAdjustmentCents = billLineRoute === "insurance" ? 0 : billAdjustmentCents;
+      const insuranceAdjustmentCents = billLineRoute === "insurance" ? billAdjustmentCents : 0;
+      await client.query(
+        `UPDATE bills
+         SET total_charges_cents = GREATEST(0, COALESCE(total_charges_cents, 0) - $1),
+             insurance_responsibility_cents = GREATEST(0, COALESCE(insurance_responsibility_cents, 0) - $2),
+             patient_responsibility_cents = GREATEST(0, COALESCE(patient_responsibility_cents, 0) - $3),
+             balance_cents = GREATEST(0, COALESCE(balance_cents, 0) - $3),
+             updated_at = NOW()
+         WHERE id = $4 AND tenant_id = $5`,
+        [billAdjustmentCents, insuranceAdjustmentCents, patientAdjustmentCents, resolvedBillId, tenantId]
+      );
+    }
 
     // Delete usage record
     await client.query(

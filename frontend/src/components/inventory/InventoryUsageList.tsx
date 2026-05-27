@@ -29,6 +29,23 @@ function getCategoryBadgeClass(category?: string) {
   return classes[category || ''] || 'bg-gray-100 text-gray-800';
 }
 
+function getUsageStatus(record: InventoryUsage): 'sold' | 'insurance' | 'bundled' | 'sample' | 'used' {
+  if (
+    record.saleStatus === 'sold' ||
+    record.saleStatus === 'insurance' ||
+    record.saleStatus === 'bundled' ||
+    record.saleStatus === 'sample' ||
+    record.saleStatus === 'used'
+  ) {
+    return record.saleStatus;
+  }
+  if (record.billingRoute === 'insurance') return 'insurance';
+  if (record.billingRoute === 'bundled') return 'bundled';
+  if (record.billingRoute === 'self_pay') return 'sold';
+  if (record.givenAsSample) return 'sample';
+  return (record.sellPriceCents || 0) > 0 ? 'sold' : 'used';
+}
+
 export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModal }: InventoryUsageListProps) {
   const { session } = useAuth();
   const { showError } = useToast();
@@ -72,18 +89,22 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
     0
   );
   const totalPatientChargeCents = usageRecords.reduce(
-    (sum, record) => sum + (record.givenAsSample ? 0 : (record.sellPriceCents || 0) * record.quantityUsed),
+    (sum, record) => sum + (getUsageStatus(record) === 'sold' ? (record.sellPriceCents || 0) * record.quantityUsed : 0),
     0
   );
-  const sampleCount = usageRecords.filter((record) => record.givenAsSample).length;
-  const billableCount = usageRecords.length - sampleCount;
+  const totalInsuranceChargeCents = usageRecords.reduce(
+    (sum, record) => sum + (getUsageStatus(record) === 'insurance' ? (record.sellPriceCents || 0) * record.quantityUsed : 0),
+    0
+  );
+  const sampleCount = usageRecords.filter((record) => getUsageStatus(record) === 'sample').length;
+  const soldCount = usageRecords.filter((record) => getUsageStatus(record) === 'sold').length;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold text-gray-900">Inventory Used</h3>
-          <p className="text-sm text-gray-500">Track supplies, dispensed samples, and patient billables.</p>
+          <p className="text-sm text-gray-500">Bundled, insurance, self-pay, and sample inventory all reduce stock with separate billing treatment.</p>
         </div>
         {onOpenUsageModal && (
           <button
@@ -115,24 +136,24 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+	            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <div className="rounded-lg border border-gray-200 bg-white p-3">
               <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Entries</div>
               <div className="mt-1 text-xl font-semibold text-gray-900">{usageRecords.length}</div>
             </div>
             <div className="rounded-lg border border-gray-200 bg-white p-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Billable</div>
-              <div className="mt-1 text-xl font-semibold text-emerald-700">{billableCount}</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Sold</div>
+              <div className="mt-1 text-xl font-semibold text-emerald-700">{soldCount}</div>
             </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Samples</div>
-              <div className="mt-1 text-xl font-semibold text-amber-700">{sampleCount}</div>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Patient Charge</div>
-              <div className="mt-1 text-xl font-semibold text-indigo-700">{formatCurrency(totalPatientChargeCents)}</div>
-            </div>
-          </div>
+	            <div className="rounded-lg border border-gray-200 bg-white p-3">
+	              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Samples</div>
+	              <div className="mt-1 text-xl font-semibold text-amber-700">{sampleCount}</div>
+	            </div>
+	            <div className="rounded-lg border border-gray-200 bg-white p-3">
+	              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Insurance AR</div>
+	              <div className="mt-1 text-xl font-semibold text-blue-700">{formatCurrency(totalInsuranceChargeCents)}</div>
+	            </div>
+	          </div>
 
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             <table className="min-w-full divide-y divide-gray-200">
@@ -140,7 +161,7 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Item</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Qty</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Type</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Status</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Unit Price</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Line Total</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Used</th>
@@ -148,9 +169,10 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {usageRecords.map((record) => {
-                  const unitPrice = record.givenAsSample ? 0 : (record.sellPriceCents || 0);
-                  const lineTotal = unitPrice * record.quantityUsed;
-                  return (
+	                  const usageStatus = getUsageStatus(record);
+	                  const unitPrice = usageStatus === 'sold' || usageStatus === 'insurance' ? (record.sellPriceCents || 0) : 0;
+	                  const lineTotal = unitPrice * record.quantityUsed;
+	                  return (
                     <tr key={record.id} className="align-top">
                       <td className="px-4 py-3">
                         <div className="font-medium text-gray-900">{record.itemName}</div>
@@ -169,18 +191,27 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
                       </td>
                       <td className="px-4 py-3 text-right text-sm font-medium text-gray-900">{record.quantityUsed}</td>
                       <td className="px-4 py-3 text-sm text-gray-700">
-                        {record.givenAsSample ? (
-                          <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">Sample</span>
-                        ) : (
-                          <span className="rounded-md bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Billable</span>
+	                        {usageStatus === 'sample' ? (
+	                          <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">Sample</span>
+	                        ) : usageStatus === 'insurance' ? (
+	                          <span className="rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800">Insurance</span>
+	                        ) : usageStatus === 'bundled' ? (
+	                          <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Bundled</span>
+	                        ) : usageStatus === 'sold' ? (
+	                          <span className="rounded-md bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Sold</span>
+	                        ) : (
+                          <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700">Used</span>
+                        )}
+                        {record.chargeId && (
+                          <div className="mt-1 text-[11px] text-gray-500">Charge posted</div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right text-sm text-gray-700">
-                        {record.givenAsSample ? '-' : formatCurrency(unitPrice)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">
-                        {record.givenAsSample ? 'Sample' : formatCurrency(lineTotal)}
-                      </td>
+	                      <td className="px-4 py-3 text-right text-sm text-gray-700">
+	                        {unitPrice > 0 ? formatCurrency(unitPrice) : '-'}
+	                      </td>
+	                      <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">
+	                        {unitPrice > 0 ? formatCurrency(lineTotal) : usageStatus === 'sample' ? 'Sample' : 'Bundled'}
+	                      </td>
                       <td className="px-4 py-3 text-right text-sm text-gray-600">{formatTimestamp(record.usedAt)}</td>
                     </tr>
                   );
@@ -192,9 +223,9 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
           <div className="flex justify-end rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
             <div className="space-y-1 text-right">
               <div className="text-sm text-gray-600">Inventory cost: {formatCurrency(totalCostCents)}</div>
-              <div className="text-lg font-semibold text-gray-900">
-                Total patient billables: {formatCurrency(totalPatientChargeCents)}
-              </div>
+	              <div className="text-lg font-semibold text-gray-900">
+	                Self-pay: {formatCurrency(totalPatientChargeCents)} | Insurance AR: {formatCurrency(totalInsuranceChargeCents)}
+	              </div>
             </div>
           </div>
         </>

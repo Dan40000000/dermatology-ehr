@@ -61,6 +61,7 @@ vi.mock('../../api', () => ({
   fetchPasiHistory: vi.fn().mockResolvedValue({ data: [] }),
   fetchProtocols: vi.fn().mockResolvedValue({ data: [] }),
   fetchProtocolStats: vi.fn().mockResolvedValue({
+    total_protocols: 0,
     active_protocols: 0,
     total_applications: 0,
     active_applications: 0,
@@ -86,6 +87,7 @@ vi.mock('../../api', () => ({
       total_scheduled: 0,
       total_completed: 0,
       total_dismissed: 0,
+      total_overdue: 0,
       contactRate: 0,
       conversionRate: 0,
     },
@@ -103,7 +105,7 @@ describe('Missing module placeholder pages', () => {
     { Component: RegistryPage, heading: 'Patient Registries', emptyTitle: 'No data available' },
     { Component: ReferralsPage, heading: 'Referrals', emptyTitle: 'No referrals yet' },
     { Component: FormsPage, heading: 'Forms', emptyTitle: 'No forms configured' },
-    { Component: ProtocolsPage, heading: 'Treatment Protocols', emptyTitle: 'No protocols found' },
+    { Component: ProtocolsPage, heading: 'Care Pathways & Protocols', emptyTitle: 'No protocols found' },
     { Component: HelpPage, heading: 'Role-Based Training Center', emptyTitle: 'First-time user onboarding with role-specific workflows, visual snapshots, and step-by-step checklists.' },
     { Component: RecallsPage, heading: 'Registry, Reminders & Recalls', emptyTitle: 'No campaigns yet' },
   ];

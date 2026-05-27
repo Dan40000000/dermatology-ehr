@@ -246,13 +246,16 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Protocols',
+    label: 'Care Pathways',
     path: '/protocols',
     module: 'protocols',
     dropdown: [
-      { label: 'All Protocols', path: '/protocols' },
-      { label: 'Clinical Protocols', path: '/protocols?type=clinical' },
-      { label: 'Administrative', path: '/protocols?type=admin' },
+      { label: 'All Pathways', path: '/protocols' },
+      { label: 'Medical Dermatology', path: '/protocols?category=medical' },
+      { label: 'Procedures', path: '/protocols?category=procedure' },
+      { label: 'Cosmetic', path: '/protocols?category=cosmetic' },
+      { label: 'Governance Queue', path: '/protocols?status=draft' },
+      { label: 'Archived', path: '/protocols?status=archived' },
     ]
   },
   {

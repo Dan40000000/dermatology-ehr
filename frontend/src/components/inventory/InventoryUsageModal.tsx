@@ -21,8 +21,10 @@ interface InventoryUsageModalProps {
 interface UsageItem {
   itemId: string;
   quantityUsed: number;
+  billingRoute: 'bundled' | 'insurance' | 'self_pay' | 'sample';
+  chargeCode: string;
+  codeType: 'CPT' | 'HCPCS';
   sellPriceCents: number;
-  givenAsSample: boolean;
   notes: string;
 }
 
@@ -86,6 +88,28 @@ export function InventoryUsageModal({
     return true;
   });
 
+  const defaultSellPriceCents = (item: InventoryItem) => {
+    const costCents = Number(item.unitCostCents || 0);
+    if (costCents <= 0) return 0;
+
+    const markupByCategory: Record<string, number> = {
+      cosmetic: 2,
+      medication: 1.6,
+      supply: 1.25,
+      equipment: 1,
+    };
+
+    const multiplier = markupByCategory[item.category] ?? 1.25;
+    return Math.round((costCents * multiplier) / 100) * 100;
+  };
+
+  const defaultBillingRoute = (item: InventoryItem): UsageItem['billingRoute'] => (
+    item.category === 'cosmetic' ? 'self_pay' : 'bundled'
+  );
+
+  const isChargeableRoute = (billingRoute: UsageItem['billingRoute']) =>
+    billingRoute === 'self_pay' || billingRoute === 'insurance';
+
   const toggleItem = (item: InventoryItem) => {
     const newSelected = new Map(selectedItems);
     if (newSelected.has(item.id)) {
@@ -94,8 +118,10 @@ export function InventoryUsageModal({
       newSelected.set(item.id, {
         itemId: item.id,
         quantityUsed: 1,
-        sellPriceCents: item.unitCostCents,
-        givenAsSample: false,
+        billingRoute: defaultBillingRoute(item),
+        chargeCode: '',
+        codeType: 'HCPCS',
+        sellPriceCents: defaultSellPriceCents(item),
         notes: '',
       });
     }
@@ -138,14 +164,37 @@ export function InventoryUsageModal({
     }
   };
 
-  const updateGivenAsSample = (itemId: string, givenAsSample: boolean) => {
+  const updateBillingRoute = (itemId: string, billingRoute: UsageItem['billingRoute']) => {
     const newSelected = new Map(selectedItems);
     const usageItem = newSelected.get(itemId);
     if (usageItem) {
       newSelected.set(itemId, {
         ...usageItem,
-        givenAsSample,
-        sellPriceCents: givenAsSample ? 0 : usageItem.sellPriceCents,
+        billingRoute,
+      });
+      setSelectedItems(newSelected);
+    }
+  };
+
+  const updateChargeCode = (itemId: string, chargeCode: string) => {
+    const newSelected = new Map(selectedItems);
+    const usageItem = newSelected.get(itemId);
+    if (usageItem) {
+      newSelected.set(itemId, {
+        ...usageItem,
+        chargeCode,
+      });
+      setSelectedItems(newSelected);
+    }
+  };
+
+  const updateCodeType = (itemId: string, codeType: UsageItem['codeType']) => {
+    const newSelected = new Map(selectedItems);
+    const usageItem = newSelected.get(itemId);
+    if (usageItem) {
+      newSelected.set(itemId, {
+        ...usageItem,
+        codeType,
       });
       setSelectedItems(newSelected);
     }
@@ -168,8 +217,11 @@ export function InventoryUsageModal({
             providerId,
             encounterId,
             appointmentId,
-            sellPriceCents: item.givenAsSample ? 0 : item.sellPriceCents,
-            givenAsSample: item.givenAsSample,
+            billingRoute: item.billingRoute,
+            chargeCode: item.billingRoute === 'insurance' ? item.chargeCode.trim() : undefined,
+            codeType: item.billingRoute === 'insurance' ? item.codeType : undefined,
+            sellPriceCents: isChargeableRoute(item.billingRoute) ? item.sellPriceCents : 0,
+            givenAsSample: item.billingRoute === 'sample',
             notes: item.notes || undefined,
           })
         )
@@ -186,7 +238,19 @@ export function InventoryUsageModal({
           showError('Failed to record inventory usage');
         }
       } else {
-        showSuccess(`Successfully recorded usage for ${items.length} item(s)`);
+        const patientChargeTotal = items.reduce(
+          (sum, item) => sum + (item.billingRoute === 'self_pay' ? item.sellPriceCents * item.quantityUsed : 0),
+          0
+        );
+        const insuranceChargeTotal = items.reduce(
+          (sum, item) => sum + (item.billingRoute === 'insurance' ? item.sellPriceCents * item.quantityUsed : 0),
+          0
+        );
+        showSuccess(
+          patientChargeTotal + insuranceChargeTotal > 0
+            ? `Recorded ${items.length} item(s): $${(patientChargeTotal / 100).toFixed(2)} self-pay and $${(insuranceChargeTotal / 100).toFixed(2)} insurance AR`
+            : `Successfully recorded usage for ${items.length} item(s)`
+        );
       }
 
       setSelectedItems(new Map());
@@ -209,15 +273,20 @@ export function InventoryUsageModal({
     return classes[category] || 'bg-gray-100 text-gray-800';
   };
 
-  const selectedEstimatedRevenue = Array.from(selectedItems.values()).reduce((sum, usageItem) => {
-    if (usageItem.givenAsSample) return sum;
+  const selectedPatientCharge = Array.from(selectedItems.values()).reduce((sum, usageItem) => {
+    if (usageItem.billingRoute !== 'self_pay') return sum;
+    return sum + usageItem.sellPriceCents * usageItem.quantityUsed;
+  }, 0);
+
+  const selectedInsuranceCharge = Array.from(selectedItems.values()).reduce((sum, usageItem) => {
+    if (usageItem.billingRoute !== 'insurance') return sum;
     return sum + usageItem.sellPriceCents * usageItem.quantityUsed;
   }, 0);
 
   return (
     <Modal
       isOpen={isOpen}
-      title="Use Inventory Items"
+      title="Use / Bill Inventory Items"
       onClose={onClose}
       size="lg"
     >
@@ -251,7 +320,8 @@ export function InventoryUsageModal({
               {selectedItems.size} item(s) selected
             </p>
             <p className="text-xs text-purple-700 mt-1">
-              Estimated charge: ${(selectedEstimatedRevenue / 100).toFixed(2)}
+              Bundled and sample items reduce stock only. Insurance and self-pay items post charge lines.
+              Self-pay: ${(selectedPatientCharge / 100).toFixed(2)} | Insurance AR: ${(selectedInsuranceCharge / 100).toFixed(2)}
             </p>
           </div>
         )}
@@ -304,7 +374,7 @@ export function InventoryUsageModal({
                               Available: <span className="font-medium">{item.quantity}</span>
                             </p>
                             <p className="text-xs text-gray-500">
-                              ${(item.unitCostCents / 100).toFixed(2)} each
+                              Cost ${(item.unitCostCents / 100).toFixed(2)}
                             </p>
                           </div>
                         </div>
@@ -328,28 +398,54 @@ export function InventoryUsageModal({
                             </div>
                             <div className="flex items-center gap-3">
                               <label className="text-sm font-medium text-gray-700 w-20">
-                                Type:
+                                Route:
                               </label>
-                              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                                <input
-                                  type="checkbox"
-                                  checked={usageItem.givenAsSample}
-                                  onChange={(e) => updateGivenAsSample(item.id, e.target.checked)}
-                                  className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
-                                />
-                                Given as sample (no charge)
-                              </label>
+                              <select
+                                value={usageItem.billingRoute}
+                                onChange={(e) => updateBillingRoute(item.id, e.target.value as UsageItem['billingRoute'])}
+                                className="rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                              >
+                                <option value="bundled">Bundled cost</option>
+                                <option value="insurance" disabled={!encounterId}>Bill insurance</option>
+                                <option value="self_pay">Patient self-pay</option>
+                                <option value="sample">Sample / no charge</option>
+                              </select>
+                              {usageItem.billingRoute === 'insurance' && !encounterId && (
+                                <span className="text-xs text-red-600">Open the encounter first</span>
+                              )}
                             </div>
+                            {usageItem.billingRoute === 'insurance' && (
+                              <div className="flex items-center gap-3">
+                                <label className="text-sm font-medium text-gray-700 w-20">
+                                  Code:
+                                </label>
+                                <select
+                                  value={usageItem.codeType}
+                                  onChange={(e) => updateCodeType(item.id, e.target.value as UsageItem['codeType'])}
+                                  className="rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                >
+                                  <option value="HCPCS">HCPCS</option>
+                                  <option value="CPT">CPT</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  value={usageItem.chargeCode}
+                                  onChange={(e) => updateChargeCode(item.id, e.target.value.toUpperCase())}
+                                  placeholder="J-code / CPT"
+                                  className="w-36 rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                />
+                              </div>
+                            )}
                             <div className="flex items-center gap-3">
                               <label className="text-sm font-medium text-gray-700 w-20">
-                                Sell price:
+                                Charge:
                               </label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={(usageItem.sellPriceCents / 100).toFixed(2)}
-                                disabled={usageItem.givenAsSample}
+                                disabled={!isChargeableRoute(usageItem.billingRoute)}
                                 onChange={(e) =>
                                   updateSellPrice(item.id, parseDollarInputToCents(e.target.value))
                                 }
@@ -358,7 +454,7 @@ export function InventoryUsageModal({
                               <span className="text-xs text-gray-500">
                                 Total: $
                                 {(
-                                  (usageItem.givenAsSample ? 0 : usageItem.sellPriceCents) *
+                                  (isChargeableRoute(usageItem.billingRoute) ? usageItem.sellPriceCents : 0) *
                                   usageItem.quantityUsed /
                                   100
                                 ).toFixed(2)}
@@ -402,7 +498,7 @@ export function InventoryUsageModal({
             disabled={saving || selectedItems.size === 0}
             className="px-4 py-2 text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saving ? 'Recording...' : `Record Usage (${selectedItems.size})`}
+            {saving ? 'Recording...' : `Record Inventory (${selectedItems.size})`}
           </button>
         </div>
       </div>

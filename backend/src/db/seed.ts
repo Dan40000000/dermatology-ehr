@@ -824,6 +824,9 @@ async function seed() {
     const hasPatientSmsPreferences = Boolean(
       (await pool.query("select to_regclass('patient_sms_preferences') as table_name")).rows[0]?.table_name,
     );
+    const hasSmsOptOut = Boolean(
+      (await pool.query("select to_regclass('sms_opt_out') as table_name")).rows[0]?.table_name,
+    );
     const ensureRecallCommunicationPreferences = async (patientId: string, preferredMethod: string) => {
       await pool.query(
         `update patient_communication_preferences
@@ -883,6 +886,94 @@ async function seed() {
         );
       }
     };
+
+    const ensureAllDemoPatientsSmsOptedIn = async () => {
+      await pool.query(
+        `update patient_communication_preferences pcp
+         set allow_email = true,
+             allow_sms = true,
+             allow_phone = true,
+             allow_mail = true,
+             preferred_method = 'sms',
+             opted_out = false,
+             opted_out_at = null,
+             updated_at = now()
+         from patients p
+         where pcp.tenant_id = $1
+           and p.tenant_id = $1
+           and pcp.patient_id = p.id`,
+        [tenantId],
+      );
+
+      await pool.query(
+        `insert into patient_communication_preferences(
+          id,
+          tenant_id,
+          patient_id,
+          allow_email,
+          allow_sms,
+          allow_phone,
+          allow_mail,
+          preferred_method,
+          opted_out,
+          created_at,
+          updated_at
+        )
+        select 'demo-comm-pref-' || p.id,$1,p.id,true,true,true,true,'sms',false,now(),now()
+        from patients p
+        where p.tenant_id = $1
+          and not exists (
+            select 1
+            from patient_communication_preferences pcp
+            where pcp.tenant_id = p.tenant_id and pcp.patient_id = p.id
+          )`,
+        [tenantId],
+      );
+
+      if (hasPatientSmsPreferences) {
+        await pool.query(
+          `insert into patient_sms_preferences(
+            id,
+            tenant_id,
+            patient_id,
+            opted_in,
+            appointment_reminders,
+            transactional_messages,
+            marketing_messages,
+            consent_date,
+            consent_method,
+            opted_out_at,
+            opted_out_via,
+            updated_at
+          )
+          select 'sms-pref-demo-' || p.id,$1,p.id,true,true,true,false,now(),'demo_seed',null,null,now()
+          from patients p
+          where p.tenant_id = $1
+          on conflict (tenant_id, patient_id) do update set
+            opted_in = true,
+            appointment_reminders = true,
+            transactional_messages = true,
+            opted_out_at = null,
+            opted_out_via = null,
+            consent_date = coalesce(patient_sms_preferences.consent_date, now()),
+            consent_method = coalesce(patient_sms_preferences.consent_method, 'demo_seed'),
+            updated_at = now()`,
+          [tenantId],
+        );
+      }
+
+      if (hasSmsOptOut) {
+        await pool.query(
+          `update sms_opt_out
+           set is_active = false,
+               opted_in_at = now()
+           where tenant_id = $1`,
+          [tenantId],
+        );
+      }
+    };
+
+    await ensureAllDemoPatientsSmsOptedIn();
 
     const melanomaPatientIds = [
       "p-demo",

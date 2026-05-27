@@ -34,9 +34,11 @@ const RECALL_TYPES = [
 ];
 
 const STATUS_OPTIONS = ['pending', 'contacted', 'scheduled', 'completed', 'dismissed'];
+const STATUS_FILTER_OPTIONS = ['pending', 'all', ...STATUS_OPTIONS.filter((status) => status !== 'pending')];
 const CONTACT_METHODS = ['email', 'sms', 'phone', 'mail', 'portal'];
 const TAB_OPTIONS = ['campaigns', 'due', 'registry', 'history', 'stats'] as const;
 type ReminderTab = (typeof TAB_OPTIONS)[number];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function isInteractiveCampaignTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('button, a, input, select, textarea, label'));
@@ -44,7 +46,8 @@ function isInteractiveCampaignTarget(target: EventTarget | null): boolean {
 
 function formatDate(value?: string | null): string {
   if (!value) return '-';
-  return new Date(value).toLocaleDateString();
+  const date = parseDateOnly(value) || new Date(value);
+  return date.toLocaleDateString();
 }
 
 function formatDateTime(value?: string | null): string {
@@ -68,6 +71,39 @@ function formatTitle(value?: string | null): string {
 function buildTelHref(phone?: string | null): string | null {
   const digits = (phone || '').replace(/\D/g, '');
   return digits ? `tel:${digits}` : null;
+}
+
+function parseDateOnly(value?: string | null): Date | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (match) {
+    const [, year, month, day] = match;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfToday(): Date {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
+}
+
+function getOverdueDays(recall: PatientRecall): number | null {
+  if (['completed', 'dismissed', 'scheduled'].includes(recall.status)) return null;
+
+  const dueDate = parseDateOnly(recall.dueDate);
+  if (!dueDate) return null;
+  dueDate.setHours(0, 0, 0, 0);
+
+  const diff = startOfToday().getTime() - dueDate.getTime();
+  return diff > 0 ? Math.max(1, Math.floor(diff / DAY_MS)) : null;
+}
+
+function formatOverdueDays(days: number): string {
+  return days === 1 ? '1 day overdue' : `${days} days overdue`;
 }
 
 function getPatientName(recall: PatientRecall): string {
@@ -103,7 +139,7 @@ export function RemindersPage() {
     startDate: '',
     endDate: '',
     campaignId: '',
-    status: '',
+    status: 'pending',
   });
 
   // Contact Modal
@@ -214,7 +250,7 @@ export function RemindersPage() {
       setRecallFilters((prev) => ({ ...prev, campaignId: campaignParam }));
     }
 
-    if (statusParam && STATUS_OPTIONS.includes(statusParam) && statusParam !== recallFilters.status) {
+    if (statusParam && STATUS_FILTER_OPTIONS.includes(statusParam) && statusParam !== recallFilters.status) {
       setRecallFilters((prev) => ({ ...prev, status: statusParam }));
     }
 
@@ -246,7 +282,7 @@ export function RemindersPage() {
   const handleViewCampaignPatients = (campaign: RecallCampaign) => {
     setRecallFilters({
       campaignId: campaign.id,
-      status: '',
+      status: 'all',
       startDate: '',
       endDate: '',
     });
@@ -255,7 +291,7 @@ export function RemindersPage() {
     const params = new URLSearchParams(searchParams);
     params.set('tab', 'due');
     params.set('campaignId', campaign.id);
-    params.delete('status');
+    params.set('status', 'all');
     params.delete('filter');
     setSearchParams(params, { replace: true });
   };
@@ -462,6 +498,10 @@ export function RemindersPage() {
   const selectedDueCampaignStats = selectedDueCampaign
     ? stats?.byCampaign.find((campaign) => campaign.id === selectedDueCampaign.id) || null
     : null;
+  const overdueDueRecalls = dueRecalls.filter((recall) => getOverdueDays(recall) !== null);
+  const duePanelTitle = selectedDueCampaign
+    ? `${selectedDueCampaign.name} Patients (${dueRecalls.length})`
+    : `Due Recalls (${dueRecalls.length})`;
 
   return (
     <div className="reminders-page">
@@ -725,10 +765,9 @@ export function RemindersPage() {
                   value={recallFilters.status}
                   onChange={(e) => setRecallFilters({ ...recallFilters, status: e.target.value })}
                 >
-                  <option value="">All Statuses</option>
-                  {STATUS_OPTIONS.map((s) => (
+                  {STATUS_FILTER_OPTIONS.map((s) => (
                     <option key={s} value={s}>
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                      {s === 'all' ? 'All Statuses' : s === 'pending' ? 'Due Only (Pending)' : s.charAt(0).toUpperCase() + s.slice(1)}
                     </option>
                   ))}
                 </select>
@@ -763,7 +802,7 @@ export function RemindersPage() {
           </Panel>
 
           {/* Recalls Table */}
-          <Panel title={selectedDueCampaign ? `${selectedDueCampaign.name} Patients (${dueRecalls.length})` : `Due Recalls (${dueRecalls.length})`}>
+          <Panel title={duePanelTitle}>
             {selectedDueCampaign && (
               <div style={{ marginBottom: '1rem', display: 'grid', gap: '0.75rem' }}>
                 <div className="muted">
@@ -799,6 +838,22 @@ export function RemindersPage() {
                 )}
               </div>
             )}
+            {dueRecalls.length > 0 && (
+              <div className="recall-worklist-summary">
+                <div className="recall-summary-item">
+                  <span>Current view</span>
+                  <strong>{recallFilters.status === 'all' ? 'All statuses' : formatTitle(recallFilters.status || 'pending')}</strong>
+                </div>
+                <div className={overdueDueRecalls.length > 0 ? 'recall-summary-item alert' : 'recall-summary-item'}>
+                  <span>Overdue</span>
+                  <strong>{overdueDueRecalls.length}</strong>
+                </div>
+                <div className="recall-summary-item">
+                  <span>Pending work</span>
+                  <strong>{dueRecalls.filter((recall) => recall.status === 'pending').length}</strong>
+                </div>
+              </div>
+            )}
             {dueRecalls.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-icon"></div>
@@ -823,9 +878,10 @@ export function RemindersPage() {
                     {dueRecalls.map((recall) => {
                       const telHref = buildTelHref(recall.phone);
                       const patientName = getPatientName(recall);
+                      const overdueDays = getOverdueDays(recall);
 
                       return (
-                        <tr key={recall.id}>
+                        <tr key={recall.id} className={overdueDays ? 'recall-row-overdue' : undefined}>
                           <td>
                             <div>
                               {recall.patientId ? (
@@ -849,7 +905,15 @@ export function RemindersPage() {
                             <div>{recall.campaignName || 'N/A'}</div>
                             <div className="muted tiny">{recall.recallType || ''}</div>
                           </td>
-                          <td>{formatDate(recall.dueDate)}</td>
+                          <td>
+                            <div className="recall-due-date">{formatDate(recall.dueDate)}</div>
+                            {overdueDays && (
+                              <div className="recall-overdue-line">
+                                <span className="recall-overdue-badge">Overdue</span>
+                                <span className="muted tiny">{formatOverdueDays(overdueDays)}</span>
+                              </div>
+                            )}
+                          </td>
                           <td>
                             <span className={`pill ${recall.status}`}>{recall.status}</span>
                           </td>
@@ -893,8 +957,12 @@ export function RemindersPage() {
                                 </button>
                               )}
                               {telHref ? (
-                                <a className="btn-sm btn-secondary" href={telHref}>
-                                  Call Patient
+                                <a
+                                  className="btn-sm btn-secondary"
+                                  href={telHref}
+                                  title="Opens this device's dialer or softphone if one is configured. Otherwise use the office phone and log outreach."
+                                >
+                                  Dial Number
                                 </a>
                               ) : (
                                 <button type="button" className="btn-sm btn-secondary" disabled>
@@ -914,7 +982,7 @@ export function RemindersPage() {
                                 className="btn-sm btn-primary"
                                 onClick={() => handleContactPatient(recall)}
                               >
-                                Contact
+                                Log Outreach
                               </button>
                               <select
                                 className="btn-sm"

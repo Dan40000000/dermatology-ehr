@@ -353,11 +353,13 @@ describe('RemindersPage', () => {
         total_contacted: 1,
         total_scheduled: 1,
         total_completed: 0,
+        total_dismissed: 0,
+        total_overdue: 1,
         contactRate: 33.3,
         conversionRate: 25.0,
       },
       byCampaign: [
-        { id: 'camp-1', total_recalls: 5, pending: 2, contacted: 1, scheduled: 1, completed: 1, dismissed: 0 },
+        { id: 'camp-1', total_recalls: 5, pending: 2, contacted: 1, scheduled: 1, completed: 1, dismissed: 0, overdue: 1 },
       ],
     });
     apiMocks.fetchRecallHistory.mockResolvedValue({
@@ -463,7 +465,7 @@ describe('RemindersPage', () => {
     await waitFor(() =>
       expect(apiMocks.fetchDueRecalls).toHaveBeenCalledWith('tenant-1', 'token-1', {
         campaignId: 'camp-1',
-        status: '',
+        status: 'all',
         startDate: '',
         endDate: '',
       }),
@@ -487,7 +489,7 @@ describe('RemindersPage', () => {
 
     const recallRow = screen.getByText('Derm, Ana').closest('tr');
     expect(recallRow).toBeTruthy();
-    fireEvent.click(within(recallRow as HTMLElement).getByRole('button', { name: 'Contact' }));
+    fireEvent.click(within(recallRow as HTMLElement).getByRole('button', { name: 'Log Outreach' }));
     const contactModal = await screen.findByTestId('modal-record-contact');
     const contactScope = within(contactModal);
     fireEvent.change(contactScope.getByRole('combobox'), { target: { value: 'sms' } });

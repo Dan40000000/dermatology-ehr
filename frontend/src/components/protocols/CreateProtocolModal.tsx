@@ -8,7 +8,9 @@ interface CreateProtocolModalProps {
 }
 
 export function CreateProtocolModal({ onClose }: CreateProtocolModalProps) {
-  const { tenantId, accessToken } = useAuth();
+  const { session } = useAuth();
+  const tenantId = session?.tenantId;
+  const accessToken = session?.accessToken;
   const [formData, setFormData] = useState({
     name: '',
     category: 'medical' as ProtocolCategory,

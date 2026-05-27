@@ -165,6 +165,7 @@ export interface ProtocolStats {
   total_applications: number;
   active_applications: number;
   completed_applications: number;
+  category_counts?: Partial<Record<ProtocolStatus | 'all', Partial<Record<ProtocolCategory, number | string>>>>;
 }
 
 // Form data types for creating/updating

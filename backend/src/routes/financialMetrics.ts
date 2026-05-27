@@ -460,7 +460,7 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date as day,
            coalesce(sum(
              case
-               when c.status is null or c.status <> 'void' then coalesce(c.amount_cents, 0)
+               when c.status is null or c.status not in ('void', 'voided') then coalesce(c.amount_cents, 0)
                else 0
              end
            ), 0) as revenue_earned_cents
@@ -545,7 +545,7 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
              coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date::text as day,
              coalesce(sum(
                case
-                 when c.status is null or c.status <> 'void' then coalesce(c.amount_cents, 0)
+                 when c.status is null or c.status not in ('void', 'voided') then coalesce(c.amount_cents, 0)
                  else 0
                end
              ), 0) as total_charges_cents,
@@ -897,7 +897,7 @@ financialMetricsRouter.get("/revenue-details", requireAuth, async (req: AuthedRe
            max(e.id)::text as encounter_id,
            coalesce(sum(
              case
-               when c.status is null or c.status <> 'void' then coalesce(c.amount_cents, 0)
+               when c.status is null or c.status not in ('void', 'voided') then coalesce(c.amount_cents, 0)
                else 0
              end
            ), 0)::bigint as total_charges_cents,

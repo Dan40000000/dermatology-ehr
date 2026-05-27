@@ -810,8 +810,12 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
                               </button>
                             )}
                             {telHref && (
-                              <a className="btn-sm btn-secondary" href={telHref}>
-                                Call
+                              <a
+                                className="btn-sm btn-secondary"
+                                href={telHref}
+                                title="Opens this device's dialer or softphone if one is configured. Otherwise use the office phone and document the outreach."
+                              >
+                                Dial
                               </a>
                             )}
                             <Link to={`/patients/${patient.patient_id}`} className="btn-sm btn-secondary">

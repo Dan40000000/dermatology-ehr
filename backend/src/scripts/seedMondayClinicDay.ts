@@ -35,6 +35,29 @@ type Charge = {
   billingRoute?: "insurance" | "self_pay" | "cosmetic" | "patient";
 };
 
+type InventoryUse = {
+  sku: string;
+  quantityUsed: number;
+  billingRoute?: "bundled" | "insurance" | "self_pay" | "sample";
+  sellPriceCents?: number;
+  givenAsSample?: boolean;
+  notes?: string;
+  chargeCode?: string;
+  codeType?: "CPT" | "HCPCS" | "INTERNAL";
+  description?: string;
+};
+
+type FinancialLine = {
+  chargeId: string;
+  cpt: string;
+  description: string;
+  amountCents: number;
+  quantity: number;
+  billingRoute: "insurance" | "self_pay" | "cosmetic" | "patient";
+  codeType?: "CPT" | "HCPCS" | "INTERNAL";
+  inventoryUsageId?: string;
+};
+
 type Prescription = {
   medicationName: string;
   sig: string;
@@ -67,6 +90,7 @@ type MondayCase = {
   plan: string;
   diagnoses: Diagnosis[];
   charges: Charge[];
+  inventory?: InventoryUse[];
   prescriptions?: Prescription[];
   orders?: ClinicalOrder[];
   pathology?: {
@@ -142,6 +166,22 @@ const patients: Array<[string, string, string, string, string, string, string]> 
   ["Ryan", "Price", "1961-12-24", "M", "Medicare Advantage", "HUMANA", "Skin check"],
 ];
 
+const clinicInventoryItems: Array<[string, string, "medication" | "supply" | "cosmetic" | "equipment", string, number, number, number, string, string]> = [
+  ["DERM-SMP-TRIAM-01", "Triamcinolone 0.1% Ointment (Sample)", "medication", "Mid-potency corticosteroid ointment sample.", 160, 50, 0, "Derm Rep Program", "Sample Closet"],
+  ["DERM-SMP-TRET-025", "Tretinoin 0.025% Cream (Sample)", "medication", "Topical retinoid acne/photodamage sample.", 140, 40, 0, "Derm Rep Program", "Sample Closet"],
+  ["DERM-SMP-BPO-5W", "Benzoyl Peroxide 5% Wash (Sample)", "medication", "Acne antibacterial wash sample.", 150, 45, 0, "Derm Rep Program", "Sample Closet"],
+  ["DERM-SMP-CERAVE-CRM", "CeraVe Moisturizing Cream (Sample)", "supply", "Barrier-repair moisturizer sample.", 220, 60, 65, "L'Oreal Dermatological", "Sample Closet"],
+  ["DERM-MED-KENALOG-10", "Kenalog-10 Injection Unit", "medication", "Triamcinolone acetonide injection inventory tracked for insurance buy-and-bill.", 90, 18, 280, "Bristol Myers Squibb", "Medication Fridge"],
+  ["DERM-PROC-SHAVE-KIT", "Shave Biopsy Kit", "supply", "Blade, specimen cup, dressing, and wound-care consumables for shave biopsy.", 90, 18, 650, "McKesson", "Procedure Room A"],
+  ["DERM-PROC-CRYO-TIP", "Cryotherapy Treatment Tip", "supply", "Disposable cryotherapy tips and barrier consumables.", 160, 35, 220, "Brymill", "Procedure Room B"],
+  ["DERM-PROC-WOUND-KIT", "Wound Care Dressing Kit", "supply", "Patient take-home petrolatum, dressing, and non-stick pads.", 120, 25, 420, "McKesson", "Checkout Retail Bin"],
+  ["DERM-COS-BOTOX-UNIT", "Botox Cosmetic Unit", "cosmetic", "Cosmetic neurotoxin units tracked for treatment inventory.", 850, 160, 600, "Allergan", "Cosmetic Fridge"],
+  ["DERM-COS-JUV-ULTRA-XC", "Juvederm Ultra XC Syringe", "cosmetic", "Hyaluronic acid filler syringe.", 42, 8, 36000, "Allergan", "Cosmetic Fridge"],
+  ["DERM-COS-IPL-GEL", "IPL Coupling Gel Packet", "supply", "Single-use gel and post-laser calming supplies.", 140, 30, 350, "Cynosure", "Laser Room"],
+  ["DERM-COS-PEEL-KIT", "Post-Peel Recovery Kit", "cosmetic", "Cleanser, bland moisturizer, SPF, and barrier balm for chemical peel recovery.", 55, 12, 1800, "SkinCeuticals", "Checkout Retail Bin"],
+  ["DERM-COS-MICRO-CART", "Microneedling Sterile Cartridge", "supply", "Single-use microneedling cartridge.", 65, 14, 2100, "SkinPen", "Cosmetic Room"],
+];
+
 const cases: MondayCase[] = [
   {
     id: "001",
@@ -181,6 +221,10 @@ const cases: MondayCase[] = [
     plan: "Tangential biopsy performed. Wound care reviewed. Pathology follow-up in 7 days.",
     diagnoses: [{ code: "D48.5", description: "Neoplasm of uncertain behavior of skin", primary: true }],
     charges: [{ cpt: "99213", description: "Problem-focused lesion evaluation", amountCents: 15000 }, { cpt: "11102", description: "Tangential biopsy of skin, single lesion", amountCents: 17500 }],
+    inventory: [
+      { sku: "DERM-PROC-SHAVE-KIT", quantityUsed: 1, billingRoute: "bundled", notes: "Consumed during tangential biopsy; bundled into procedure charge." },
+      { sku: "DERM-PROC-WOUND-KIT", quantityUsed: 1, billingRoute: "self_pay", sellPriceCents: 1200, chargeCode: "WOUNDKIT", description: "Take-home biopsy wound-care kit" },
+    ],
     pathology: { specimenType: "Shave biopsy", specimenSite: "Left upper back", clinicalDiagnosis: "Rule out dysplastic nevus versus melanoma in situ" },
     documentTitle: "Biopsy wound care instructions",
     taskTitle: "Call patient when pathology returns",
@@ -205,6 +249,10 @@ const cases: MondayCase[] = [
     plan: "Continue benzoyl peroxide wash. Start topical clindamycin in the morning and tretinoin at night as tolerated.",
     diagnoses: [{ code: "L70.0", description: "Acne vulgaris", primary: true }],
     charges: [{ cpt: "99213", description: "Acne follow-up visit", amountCents: 15000 }],
+    inventory: [
+      { sku: "DERM-SMP-BPO-5W", quantityUsed: 1, billingRoute: "sample", notes: "Benzoyl peroxide wash sample dispensed with acne regimen." },
+      { sku: "DERM-SMP-TRET-025", quantityUsed: 1, billingRoute: "sample", notes: "Tretinoin starter sample dispensed." },
+    ],
     prescriptions: [{ medicationName: "Clindamycin 1% lotion", strength: "1%", sig: "Apply a thin layer to acne-prone areas every morning.", quantity: 60, quantityUnit: "mL", refills: 2, indication: "Acne vulgaris" }],
     documentTitle: "Acne maintenance plan",
     taskTitle: "Send acne regimen through portal",
@@ -253,6 +301,10 @@ const cases: MondayCase[] = [
     plan: "Start triamcinolone ointment for body flares. Wet wrap education and fragrance-free skin care reviewed.",
     diagnoses: [{ code: "L20.9", description: "Atopic dermatitis, unspecified", primary: true }],
     charges: [{ cpt: "99213", description: "Established patient eczema visit", amountCents: 15000 }],
+    inventory: [
+      { sku: "DERM-SMP-TRIAM-01", quantityUsed: 1, billingRoute: "sample", notes: "Triamcinolone sample dispensed for flare education." },
+      { sku: "DERM-SMP-CERAVE-CRM", quantityUsed: 2, billingRoute: "sample", notes: "Barrier cream samples dispensed." },
+    ],
     prescriptions: [{ medicationName: "Triamcinolone 0.1% ointment", strength: "0.1%", sig: "Apply to eczema patches twice daily for 7 days during flares. Avoid face and groin.", quantity: 80, quantityUnit: "grams", refills: 2, indication: "Atopic dermatitis" }],
     documentTitle: "Eczema wet wrap and skin care plan",
     taskTitle: "Send eczema school note through portal",
@@ -277,6 +329,9 @@ const cases: MondayCase[] = [
     plan: "Cryotherapy performed to six actinic keratoses. Field therapy options discussed if recurrence continues.",
     diagnoses: [{ code: "L57.0", description: "Actinic keratosis", primary: true }],
     charges: [{ cpt: "99213", description: "Actinic keratosis evaluation", amountCents: 15000 }, { cpt: "17000", description: "Destruction premalignant lesion, first lesion", amountCents: 8500 }, { cpt: "17003", description: "Destruction premalignant lesions, 2-14 lesions", amountCents: 7000 }],
+    inventory: [
+      { sku: "DERM-PROC-CRYO-TIP", quantityUsed: 6, billingRoute: "bundled", notes: "Cryotherapy consumables bundled into procedure charges." },
+    ],
     documentTitle: "Cryotherapy aftercare",
     taskTitle: "Schedule 6-month field therapy discussion",
     payer: "Medicare",
@@ -300,6 +355,9 @@ const cases: MondayCase[] = [
     plan: "Botox 34 units administered to glabella and forehead. Post-treatment instructions reviewed.",
     diagnoses: [{ code: "Z41.1", description: "Encounter for cosmetic procedure", primary: true }],
     charges: [{ cpt: "J0585", description: "Cosmetic neurotoxin treatment", amountCents: 48000, billingRoute: "cosmetic" }],
+    inventory: [
+      { sku: "DERM-COS-BOTOX-UNIT", quantityUsed: 34, billingRoute: "self_pay", sellPriceCents: 1400, chargeCode: "BOTOXUNIT", description: "Cosmetic neurotoxin units sold during treatment" },
+    ],
     documentTitle: "Botox post-treatment instructions",
     taskTitle: "Send 2-week cosmetic satisfaction check",
     patientResponsibilityCents: 48000,
@@ -320,6 +378,9 @@ const cases: MondayCase[] = [
     plan: "Hyaluronic acid filler placed conservatively. Ice and aftercare reviewed.",
     diagnoses: [{ code: "Z41.1", description: "Encounter for cosmetic procedure", primary: true }],
     charges: [{ cpt: "A4580", description: "Dermal filler treatment", amountCents: 72000, billingRoute: "cosmetic" }],
+    inventory: [
+      { sku: "DERM-COS-JUV-ULTRA-XC", quantityUsed: 1, billingRoute: "self_pay", sellPriceCents: 72000, chargeCode: "FILLERSYR", description: "Juvederm Ultra XC syringe sold during filler treatment" },
+    ],
     documentTitle: "Filler aftercare instructions",
     taskTitle: "Cosmetic nurse call in 48 hours",
     patientResponsibilityCents: 72000,
@@ -361,9 +422,12 @@ const cases: MondayCase[] = [
     hpi: "Recurrent painful nodules in axillae, currently one draining lesion. Patient wants non-surgical options.",
     ros: "No fever. Reports pain with arm movement.",
     exam: "Left axilla with inflammatory nodule and sinus tract scarring. Hurley stage II pattern.",
-    plan: "Start doxycycline. Hibiclens wash. Discuss biologic if recurrent flares continue.",
+    plan: "Intralesional triamcinolone performed to inflamed nodule. Start doxycycline. Hibiclens wash. Discuss biologic if recurrent flares continue.",
     diagnoses: [{ code: "L73.2", description: "Hidradenitis suppurativa", primary: true }],
     charges: [{ cpt: "99214", description: "Moderate complexity inflammatory derm visit", amountCents: 20000 }],
+    inventory: [
+      { sku: "DERM-MED-KENALOG-10", quantityUsed: 2, billingRoute: "insurance", sellPriceCents: 1100, chargeCode: "J3301", codeType: "HCPCS", description: "Triamcinolone acetonide injection, per 10 mg" },
+    ],
     prescriptions: [{ medicationName: "Doxycycline hyclate", strength: "100 mg", sig: "Take 1 capsule by mouth twice daily with food and water.", quantity: 60, quantityUnit: "capsules", refills: 1, indication: "Hidradenitis suppurativa" }],
     taskTitle: "Check prior authorization criteria for biologic therapy",
     payer: "Aetna PPO",
@@ -387,6 +451,9 @@ const cases: MondayCase[] = [
     plan: "IPL performed with eye protection. Strict sun avoidance and SPF reviewed.",
     diagnoses: [{ code: "Z41.1", description: "Encounter for cosmetic procedure", primary: true }, { code: "L81.4", description: "Other melanin hyperpigmentation" }],
     charges: [{ cpt: "A9999", description: "IPL cosmetic treatment", amountCents: 32500, billingRoute: "cosmetic" }],
+    inventory: [
+      { sku: "DERM-COS-IPL-GEL", quantityUsed: 1, billingRoute: "self_pay", sellPriceCents: 1500, chargeCode: "IPL-GEL", description: "IPL disposable treatment supply kit" },
+    ],
     documentTitle: "Laser and IPL aftercare instructions",
     taskTitle: "Book IPL treatment 3 of 3",
     patientResponsibilityCents: 32500,
@@ -430,6 +497,9 @@ const cases: MondayCase[] = [
     plan: "Salicylic peel performed. Post-peel kit recommended. Follow-up in four weeks.",
     diagnoses: [{ code: "Z41.1", description: "Encounter for cosmetic procedure", primary: true }, { code: "L73.0", description: "Acne keloid" }],
     charges: [{ cpt: "15788", description: "Chemical peel cosmetic session", amountCents: 19500, billingRoute: "cosmetic" }],
+    inventory: [
+      { sku: "DERM-COS-PEEL-KIT", quantityUsed: 1, billingRoute: "self_pay", sellPriceCents: 4500, chargeCode: "PEELKIT", description: "Post-peel recovery kit sold at checkout" },
+    ],
     documentTitle: "Chemical peel aftercare instructions",
     taskTitle: "Confirm patient purchased post-peel kit",
     patientResponsibilityCents: 19500,
@@ -497,6 +567,9 @@ const cases: MondayCase[] = [
     plan: "Microneedling performed. Recovery serum and SPF recommended.",
     diagnoses: [{ code: "Z41.1", description: "Encounter for cosmetic procedure", primary: true }, { code: "L73.0", description: "Acne scarring" }],
     charges: [{ cpt: "96999", description: "Microneedling cosmetic session", amountCents: 32500, billingRoute: "cosmetic" }],
+    inventory: [
+      { sku: "DERM-COS-MICRO-CART", quantityUsed: 1, billingRoute: "self_pay", sellPriceCents: 6000, chargeCode: "MICROCART", description: "Sterile microneedling cartridge sold during treatment" },
+    ],
     documentTitle: "Microneedling aftercare instructions",
     taskTitle: "Send post-procedure skincare bundle recommendation",
     patientResponsibilityCents: 32500,
@@ -794,6 +867,22 @@ function moneyDollars(cents: number): number {
   return Number((cents / 100).toFixed(2));
 }
 
+function billPayCodeForCase(caseId: string): string {
+  const monthDay = Number(CLINIC_DATE.slice(5, 7) + CLINIC_DATE.slice(8, 10));
+  return String(5_000_000 + monthDay * 1000 + Number(caseId));
+}
+
+function deterministicUuid(seed: string): string {
+  const hex = crypto.createHash("sha256").update(seed).digest("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `4${hex.slice(13, 16)}`,
+    `${((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0")}${hex.slice(18, 20)}`,
+    hex.slice(20, 32),
+  ].join("-");
+}
+
 async function query<T = any>(text: string, params: unknown[] = []): Promise<T[]> {
   const result = await pool.query(text, params);
   return result.rows as T[];
@@ -891,6 +980,27 @@ async function resetStaleClinicDateAppointments(): Promise<void> {
 }
 
 async function resetPreviousSeed(): Promise<void> {
+  await pool.query(
+    `update inventory_items i
+        set quantity = i.quantity + u.quantity_used,
+            updated_at = now()
+       from inventory_usage u
+      where u.item_id = i.id
+        and u.tenant_id = i.tenant_id
+        and u.tenant_id = $1
+        and u.created_by = $2
+        and coalesce(u.notes, '') like $3`,
+    [TENANT_ID, CREATED_BY, `${PREFIX}:%`],
+  );
+
+  await pool.query(
+    `delete from inventory_usage
+      where tenant_id = $1
+        and created_by = $2
+        and coalesce(notes, '') like $3`,
+    [TENANT_ID, CREATED_BY, `${PREFIX}:%`],
+  );
+
   const deletes = [
     "delete from bill_activity where id like $1",
     "delete from bill_line_items where id like $1",
@@ -937,6 +1047,49 @@ async function ensureAppointmentTypes(): Promise<Record<string, string>> {
   }
 
   return Object.fromEntries(appointmentTypes.map((type) => [type.id.replace(`${PREFIX}-`, ""), type.id]));
+}
+
+async function ensureClinicInventoryItems(): Promise<void> {
+  for (const [sku, name, category, description, quantity, reorderLevel, unitCostCents, supplier, location] of clinicInventoryItems) {
+    const existing = await query<{ id: string; quantity: number }>(
+      `select id, quantity
+         from inventory_items
+        where tenant_id = $1
+          and (sku = $2 or (lower(name) = lower($3) and category = $4))
+        limit 1`,
+      [TENANT_ID, sku, name, category],
+    );
+
+    if (existing[0]?.id) {
+      await pool.query(
+        `update inventory_items
+            set name = $1,
+                category = $2,
+                sku = $3,
+                description = $4,
+                quantity = greatest(quantity, $5),
+                reorder_level = greatest(reorder_level, $6),
+                unit_cost_cents = $7,
+                supplier = $8,
+                location = $9,
+                updated_at = now()
+          where id = $10 and tenant_id = $11`,
+        [name, category, sku, description, quantity, reorderLevel, unitCostCents, supplier, location, existing[0].id, TENANT_ID],
+      );
+      continue;
+    }
+
+    await pool.query(
+      `insert into inventory_items (
+        tenant_id, name, category, sku, description, quantity, reorder_level,
+        unit_cost_cents, supplier, location, created_by, created_at, updated_at
+      ) values (
+        $1,$2,$3,$4,$5,$6,$7,
+        $8,$9,$10,$11,now(),now()
+      )`,
+      [TENANT_ID, name, category, sku, description, quantity, reorderLevel, unitCostCents, supplier, location, CREATED_BY],
+    );
+  }
 }
 
 async function ensureFallbackProvider(id: string, fullName: string, specialty: string): Promise<string> {
@@ -1056,8 +1209,8 @@ async function insertPatients(): Promise<string[]> {
         index % 3 === 0 ? "Family history of non-melanoma skin cancer" : "No family history of melanoma reported",
         index % 2 === 0 ? "Works indoors; sunscreen use inconsistent" : "Outdoor recreation on weekends; uses hats",
         note,
-        `MON-${String(index + 1).padStart(4, "0")}`,
-        `MONMRN-${String(index + 1).padStart(4, "0")}`,
+        `MON-${CLINIC_DATE.replace(/-/g, "")}-${String(index + 1).padStart(4, "0")}`,
+        `MONMRN-${CLINIC_DATE.replace(/-/g, "")}-${String(index + 1).padStart(4, "0")}`,
       ],
     );
   }
@@ -1322,10 +1475,12 @@ async function insertEncounter(caseItem: MondayCase, appointmentId: string, pati
 async function insertClinicalArtifacts(caseItem: MondayCase, appointmentId: string, encounterId: string, patientId: string, providerId: string, actorId: string): Promise<{
   chargeIds: string[];
   totalCents: number;
+  billLines: FinancialLine[];
 }> {
   const serviceDate = CLINIC_DATE;
   const icdCodes = caseItem.diagnoses.map((diagnosis) => diagnosis.code);
   const chargeIds: string[] = [];
+  const billLines: FinancialLine[] = [];
   let totalCents = 0;
 
   for (let index = 0; index < caseItem.charges.length; index++) {
@@ -1335,6 +1490,16 @@ async function insertClinicalArtifacts(caseItem: MondayCase, appointmentId: stri
     totalCents += amount;
     const id = `${PREFIX}-charge-${caseItem.id}-${index + 1}`;
     chargeIds.push(id);
+    const billingRoute = charge.billingRoute || (caseItem.payer === "Self-Pay" ? "self_pay" : "insurance");
+    billLines.push({
+      chargeId: id,
+      cpt: charge.cpt,
+      description: charge.description,
+      amountCents: charge.amountCents,
+      quantity,
+      billingRoute,
+      codeType: "CPT",
+    });
     const chargeStatus = ["completed", "checkout"].includes(caseItem.status)
       ? "ready"
       : ["cancelled", "no_show"].includes(caseItem.status)
@@ -1381,10 +1546,155 @@ async function insertClinicalArtifacts(caseItem: MondayCase, appointmentId: stri
         patientId,
         serviceDate,
         moneyDollars(amount),
-        charge.billingRoute || (caseItem.payer === "Self-Pay" ? "self_pay" : "insurance"),
+        billingRoute,
         `Simulated ${CLINIC_DATE} ${caseItem.chiefComplaint}`,
       ],
     );
+  }
+
+  for (let index = 0; index < (caseItem.inventory || []).length; index++) {
+    const inventoryUse = caseItem.inventory![index]!;
+    const itemRows = await query<{
+      id: string;
+      name: string;
+      quantity: number;
+      unit_cost_cents: number;
+      category: string;
+    }>(
+      `select id, name, quantity, unit_cost_cents, category
+         from inventory_items
+        where tenant_id = $1 and sku = $2
+        limit 1`,
+      [TENANT_ID, inventoryUse.sku],
+    );
+
+    const item = itemRows[0];
+    if (!item) {
+      throw new Error(`Inventory item with SKU ${inventoryUse.sku} not found`);
+    }
+    if (Number(item.quantity) < inventoryUse.quantityUsed) {
+      throw new Error(`Insufficient inventory for ${item.name}: only ${item.quantity} units available`);
+    }
+
+    const usageId = deterministicUuid(`${PREFIX}-inventory-usage-${caseItem.id}-${index + 1}`);
+    const billingRoute = inventoryUse.givenAsSample
+      ? "sample"
+      : inventoryUse.billingRoute || ((inventoryUse.sellPriceCents || 0) > 0 ? "self_pay" : "bundled");
+    const givenAsSample = billingRoute === "sample";
+    const sellPriceCents = billingRoute === "insurance" || billingRoute === "self_pay" ? inventoryUse.sellPriceCents ?? 0 : 0;
+    const lineTotalCents = sellPriceCents * inventoryUse.quantityUsed;
+    const chargeId = lineTotalCents > 0 && (billingRoute === "insurance" || billingRoute === "self_pay")
+      ? `${PREFIX}-inventory-charge-${caseItem.id}-${index + 1}`
+      : null;
+    const note = `${PREFIX}: ${inventoryUse.notes || `Inventory ${billingRoute === "insurance" ? "billed to insurance" : billingRoute === "self_pay" ? "sold" : billingRoute} during ${caseItem.chiefComplaint}`}`;
+
+    await pool.query(
+      `insert into inventory_usage (
+        id, tenant_id, item_id, quantity_used, unit_cost_cents,
+        sell_price_cents, given_as_sample, billing_route, patient_id, provider_id,
+        encounter_id, appointment_id, notes, created_by, used_at, created_at
+      ) values (
+        $1,$2,$3,$4,$5,
+        $6,$7,$8,$9,$10,
+        $11,$12,$13,$14,$15,$15
+      )`,
+      [
+        usageId,
+        TENANT_ID,
+        item.id,
+        inventoryUse.quantityUsed,
+        item.unit_cost_cents,
+        sellPriceCents,
+        givenAsSample,
+        billingRoute,
+        patientId,
+        providerId,
+        encounterId,
+        appointmentId,
+        note,
+        CREATED_BY,
+        appointmentTimings(caseItem).end.toISOString(),
+      ],
+    );
+
+    if (chargeId) {
+      totalCents += lineTotalCents;
+      const cpt = inventoryUse.chargeCode || "INV-ITEM";
+      const description = inventoryUse.description || `Inventory item: ${item.name}`;
+      const chargeBillingRoute = billingRoute === "insurance" ? "insurance" : "self_pay";
+      const codeType = inventoryUse.codeType || (chargeBillingRoute === "insurance" ? "HCPCS" : "INTERNAL");
+      const patientResponsibilityCents = chargeBillingRoute === "self_pay" ? lineTotalCents : 0;
+      const insuranceResponsibilityCents = chargeBillingRoute === "insurance" ? lineTotalCents : 0;
+      billLines.push({
+        chargeId,
+        cpt,
+        description,
+        amountCents: sellPriceCents,
+        quantity: inventoryUse.quantityUsed,
+        billingRoute: chargeBillingRoute,
+        codeType,
+        inventoryUsageId: usageId,
+      });
+
+      await pool.query(
+        `insert into charges (
+          id, tenant_id, encounter_id, cpt_code, icd_codes, amount_cents, status,
+          description, quantity, fee_cents, linked_diagnosis_ids, patient_id,
+          service_date, amount, transaction_type, code_type, billing_route, source,
+          charge_group, line_note, patient_responsibility_cents, insurance_responsibility_cents
+        ) values (
+          $1,$2,$3,$4,$5,$6,$7,
+          $8,$9,$10,$11,$12,
+          $13,$14,'charge',$15,$16,'inventory_usage',
+          'visit_inventory',$17,$18,$19
+        )
+        on conflict (id) do update set
+          encounter_id = excluded.encounter_id,
+          amount_cents = excluded.amount_cents,
+          status = excluded.status,
+          description = excluded.description,
+          quantity = excluded.quantity,
+          fee_cents = excluded.fee_cents,
+          patient_id = excluded.patient_id,
+          service_date = excluded.service_date,
+          amount = excluded.amount,
+          code_type = excluded.code_type,
+          billing_route = excluded.billing_route,
+          line_note = excluded.line_note,
+          patient_responsibility_cents = excluded.patient_responsibility_cents,
+          insurance_responsibility_cents = excluded.insurance_responsibility_cents`,
+        [
+          chargeId,
+          TENANT_ID,
+          encounterId,
+          cpt,
+          icdCodes,
+          lineTotalCents,
+          ["completed", "checkout"].includes(caseItem.status)
+            ? chargeBillingRoute === "insurance" ? "pending" : "self_pay"
+            : "draft",
+          description,
+          inventoryUse.quantityUsed,
+          sellPriceCents,
+          caseItem.diagnoses.map((_, dxIndex) => `${PREFIX}-dx-${caseItem.id}-${dxIndex + 1}`),
+          patientId,
+          serviceDate,
+          moneyDollars(lineTotalCents),
+          codeType,
+          chargeBillingRoute,
+          note,
+          patientResponsibilityCents,
+          insuranceResponsibilityCents,
+        ],
+      );
+
+      await pool.query(
+        `update inventory_usage
+            set charge_id = $1
+          where id = $2 and tenant_id = $3`,
+        [chargeId, usageId, TENANT_ID],
+      );
+    }
   }
 
   for (let index = 0; index < (caseItem.prescriptions || []).length; index++) {
@@ -1608,7 +1918,7 @@ async function insertClinicalArtifacts(caseItem: MondayCase, appointmentId: stri
     );
   }
 
-  return { chargeIds, totalCents };
+  return { chargeIds, totalCents, billLines };
 }
 
 async function insertOrder(id: string, encounterId: string, patientId: string, providerId: string, order: ClinicalOrder): Promise<void> {
@@ -1653,6 +1963,7 @@ async function insertFinancials(
   patientId: string,
   chargeIds: string[],
   totalCents: number,
+  billLines: FinancialLine[],
   actorId: string,
 ): Promise<void> {
   if (totalCents <= 0) return;
@@ -1661,8 +1972,15 @@ async function insertFinancials(
   if (!billable) return;
 
   const cosmeticOrSelfPay = !caseItem.payer || caseItem.payer === "Self-Pay" || caseItem.charges.some((charge) => charge.billingRoute === "cosmetic" || charge.billingRoute === "self_pay");
+  const selfPayInventoryCents = billLines
+    .filter((line) => line.inventoryUsageId && line.billingRoute === "self_pay")
+    .reduce((sum, line) => sum + line.amountCents * line.quantity, 0);
   const paidCents = Math.min(caseItem.paidAtCheckoutCents || 0, totalCents);
-  const patientResponsibility = Math.min(caseItem.patientResponsibilityCents ?? (cosmeticOrSelfPay ? totalCents : 3500), totalCents);
+  const basePatientResponsibility = caseItem.patientResponsibilityCents ?? (cosmeticOrSelfPay ? totalCents : 3500);
+  const patientResponsibility = Math.min(
+    basePatientResponsibility + (caseItem.patientResponsibilityCents === undefined ? 0 : selfPayInventoryCents),
+    totalCents,
+  );
   const insuranceResponsibility = cosmeticOrSelfPay ? 0 : Math.max(0, totalCents - patientResponsibility);
   const balance = Math.max(0, patientResponsibility - paidCents);
   const billStatus = paidCents >= patientResponsibility
@@ -1717,23 +2035,24 @@ async function insertFinancials(
       billStatus,
       `${caseItem.chiefComplaint} - simulated Monday clinic day.`,
       actorId,
-      String(5180000 + Number(caseItem.id)),
+      billPayCodeForCase(caseItem.id),
       balance > 0 ? "statement_needed" : "complete",
       ["no_show", "cancelled"].includes(caseItem.status) ? "flagged" : "none",
       ["no_show", "cancelled"].includes(caseItem.status) ? "Administrative fee from Monday live-day simulation." : "Monday live-day simulated bill.",
     ],
   );
 
-  for (let index = 0; index < caseItem.charges.length; index++) {
-    const charge = caseItem.charges[index]!;
-    const amount = charge.amountCents * (charge.quantity || 1);
+  for (let index = 0; index < billLines.length; index++) {
+    const line = billLines[index]!;
+    const amount = line.amountCents * line.quantity;
+    const billLineId = `${PREFIX}-bill-line-${caseItem.id}-${index + 1}`;
     await pool.query(
       `insert into bill_line_items (
         id, tenant_id, bill_id, charge_id, service_date, cpt_code, description,
         quantity, unit_price_cents, total_cents, icd_codes, code_type, billing_route, modifier_codes
       ) values (
         $1,$2,$3,$4,$5,$6,$7,
-        $8,$9,$10,$11,'CPT',$12,$13
+        $8,$9,$10,$11,$12,$13,$14
       )
       on conflict (id) do update set
         charge_id = excluded.charge_id,
@@ -1743,23 +2062,35 @@ async function insertFinancials(
         unit_price_cents = excluded.unit_price_cents,
         total_cents = excluded.total_cents,
         icd_codes = excluded.icd_codes,
+        code_type = excluded.code_type,
         billing_route = excluded.billing_route`,
       [
-        `${PREFIX}-bill-line-${caseItem.id}-${index + 1}`,
+        billLineId,
         TENANT_ID,
         billId,
-        chargeIds[index] || null,
+        line.chargeId || chargeIds[index] || null,
         CLINIC_DATE,
-        charge.cpt,
-        charge.description,
-        charge.quantity || 1,
-        charge.amountCents,
+        line.cpt,
+        line.description,
+        line.quantity,
+        line.amountCents,
         amount,
         caseItem.diagnoses.map((diagnosis) => diagnosis.code),
-        charge.billingRoute || (cosmeticOrSelfPay ? "self_pay" : "insurance"),
+        line.codeType || "CPT",
+        line.billingRoute || (cosmeticOrSelfPay ? "self_pay" : "insurance"),
         [],
       ],
     );
+
+    if (line.inventoryUsageId) {
+      await pool.query(
+        `update inventory_usage
+            set bill_id = $1,
+                bill_line_item_id = $2
+          where id = $3 and tenant_id = $4`,
+        [billId, billLineId, line.inventoryUsageId, TENANT_ID],
+      );
+    }
   }
 
   await pool.query(
@@ -1809,8 +2140,11 @@ async function insertFinancials(
     );
   }
 
-  if (!cosmeticOrSelfPay && caseItem.claimStatus && !["no_show", "cancelled"].includes(caseItem.status)) {
+  const claimBillLines = billLines.filter((line) => line.billingRoute === "insurance");
+
+  if (!cosmeticOrSelfPay && caseItem.claimStatus && !["no_show", "cancelled"].includes(caseItem.status) && claimBillLines.length > 0) {
     const claimId = `${PREFIX}-claim-${caseItem.id}`;
+    const claimTotalCents = claimBillLines.reduce((sum, line) => sum + line.amountCents * line.quantity, 0);
     await pool.query(
       `insert into claims (
         id, tenant_id, encounter_id, patient_id, claim_number, total_cents, status,
@@ -1838,21 +2172,21 @@ async function insertFinancials(
       [
         claimId,
         TENANT_ID,
-        encounterId,
-        patientId,
-        `MON-CLM-${CLINIC_DATE.replace(/-/g, "")}-${caseItem.id}`,
-        totalCents,
-        caseItem.claimStatus,
+	        encounterId,
+	        patientId,
+	        `MON-CLM-${CLINIC_DATE.replace(/-/g, "")}-${caseItem.id}`,
+	        claimTotalCents,
+	        caseItem.claimStatus,
         caseItem.payer || "Commercial",
         caseItem.insurancePayerId || "COMM",
         CLINIC_DATE,
         ["accepted", "submitted", "paid"].includes(caseItem.claimStatus) ? appointmentTimings(caseItem).end.toISOString() : null,
-        JSON.stringify(caseItem.charges.map((charge) => ({
-          cptCode: charge.cpt,
-          description: charge.description,
-          amountCents: charge.amountCents * (charge.quantity || 1),
-          icd10Codes: caseItem.diagnoses.map((diagnosis) => diagnosis.code),
-        }))),
+	        JSON.stringify(claimBillLines.map((line) => ({
+	          cptCode: line.cpt,
+	          description: line.description,
+	          amountCents: line.amountCents * line.quantity,
+	          icd10Codes: caseItem.diagnoses.map((diagnosis) => diagnosis.code),
+	        }))),
         actorId,
         caseItem.claimStatus === "paid" ? "paid" : "pending",
         caseItem.claimStatus === "coding_review" ? "needs_review" : "approved",
@@ -1885,6 +2219,7 @@ async function seedMondayClinicDay(): Promise<void> {
     insertPatients(),
     getActorId(),
   ]);
+  await ensureClinicInventoryItems();
 
   for (const rawCaseItem of cases) {
     const caseItem = caseForSnapshot(rawCaseItem);
@@ -1892,8 +2227,8 @@ async function seedMondayClinicDay(): Promise<void> {
     const providerId = providers[caseItem.provider];
     const appointmentId = await insertAppointment(caseItem, patientId, providers, locationId, typeIds);
     const encounterId = await insertEncounter(caseItem, appointmentId, patientId, providerId);
-    const { chargeIds, totalCents } = await insertClinicalArtifacts(caseItem, appointmentId, encounterId, patientId, providerId, actorId);
-    await insertFinancials(caseItem, encounterId, patientId, chargeIds, totalCents, actorId);
+    const { chargeIds, totalCents, billLines } = await insertClinicalArtifacts(caseItem, appointmentId, encounterId, patientId, providerId, actorId);
+    await insertFinancials(caseItem, encounterId, patientId, chargeIds, totalCents, billLines, actorId);
   }
 
   const statusRows = await query<{ status: string; count: string }>(
@@ -1922,6 +2257,7 @@ async function seedMondayClinicDay(): Promise<void> {
     labs: string;
     pathology: string;
     charges: string;
+    inventoryUsage: string;
     bills: string;
     billLines: string;
     payments: string;
@@ -1938,6 +2274,7 @@ async function seedMondayClinicDay(): Promise<void> {
        (select count(*)::text from lab_orders_v2 where tenant_id = $1 and id like $6) as labs,
        (select count(*)::text from pathology_orders where tenant_id = $1 and id like $7) as pathology,
        (select count(*)::text from charges where tenant_id = $1 and id like $8) as charges,
+       (select count(*)::text from inventory_usage where tenant_id = $1 and created_by = $14 and coalesce(notes, '') like $15) as "inventoryUsage",
        (select count(*)::text from bills where tenant_id = $1 and id like $9) as bills,
        (select count(*)::text from bill_line_items where bill_id like $9) as "billLines",
        (select count(*)::text from patient_payments where tenant_id = $1 and id like $10) as payments,
@@ -1958,6 +2295,8 @@ async function seedMondayClinicDay(): Promise<void> {
       `${PREFIX}-claim-%`,
       `${PREFIX}-task-%`,
       `${PREFIX}-doc-%`,
+      CREATED_BY,
+      `${PREFIX}:%`,
     ],
   );
   const flowRows = await query<{

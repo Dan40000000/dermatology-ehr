@@ -2952,6 +2952,7 @@ export interface RecallStats {
     total_scheduled: number;
     total_completed: number;
     total_dismissed: number;
+    total_overdue: number;
     total_recalls: number;
     contactRate: number;
     conversionRate: number;
@@ -2966,6 +2967,7 @@ export interface RecallStats {
     scheduled: number;
     completed: number;
     dismissed: number;
+    overdue: number;
   }>;
 }
 
@@ -7981,6 +7983,11 @@ export interface InventoryUsage {
   unitCostCents: number;
   sellPriceCents?: number | null;
   givenAsSample?: boolean;
+  chargeId?: string | null;
+  billId?: string | null;
+  billLineItemId?: string | null;
+  billingRoute?: 'bundled' | 'insurance' | 'self_pay' | 'sample';
+  saleStatus?: 'sold' | 'insurance' | 'bundled' | 'sample' | 'used';
   notes?: string;
   usedAt: string;
 }
@@ -8181,11 +8188,26 @@ export async function recordInventoryUsage(
     patientId: string;
     providerId: string;
     quantityUsed: number;
+    billingRoute?: 'bundled' | 'insurance' | 'self_pay' | 'sample';
+    chargeCode?: string;
+    codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+    icdCodes?: string[];
     sellPriceCents?: number;
     givenAsSample?: boolean;
     notes?: string;
   }
-): Promise<{ id: string; usedAt: string; message: string }> {
+): Promise<{
+  id: string;
+  usedAt: string;
+  message: string;
+  billId?: string | null;
+  chargeId?: string | null;
+  billLineItemId?: string | null;
+  patientChargeCents?: number;
+  insuranceChargeCents?: number;
+  billingRoute?: 'bundled' | 'insurance' | 'self_pay' | 'sample';
+  saleStatus?: 'sold' | 'insurance' | 'bundled' | 'sample' | 'used';
+}> {
   const res = await fetch(`${API_BASE}/api/inventory/usage`, {
     method: 'POST',
     headers: {

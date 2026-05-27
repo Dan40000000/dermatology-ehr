@@ -13455,6 +13455,180 @@ Consider age-appropriate treatments and include family counseling points.',
     COMMENT ON COLUMN orders.body_location IS 'Anatomic location or specimen site for lab/pathology orders.';
     `,
   },
+  {
+    name: "192_inventory_usage_billing_links",
+    sql: `
+    ALTER TABLE IF EXISTS inventory_usage
+      ADD COLUMN IF NOT EXISTS charge_id TEXT,
+      ADD COLUMN IF NOT EXISTS bill_id TEXT,
+      ADD COLUMN IF NOT EXISTS bill_line_item_id TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_inventory_usage_charge_id
+      ON inventory_usage(tenant_id, charge_id)
+      WHERE charge_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_inventory_usage_bill_id
+      ON inventory_usage(tenant_id, bill_id)
+      WHERE bill_id IS NOT NULL;
+
+    DO $$
+    DECLARE
+      v_tenant_id TEXT;
+      v_created_by TEXT;
+      seed_row RECORD;
+    BEGIN
+      IF to_regclass('public.inventory_items') IS NULL THEN
+        RETURN;
+      END IF;
+
+      FOR v_tenant_id IN SELECT id FROM tenants LOOP
+        SELECT id
+          INTO v_created_by
+          FROM users
+         WHERE tenant_id = v_tenant_id
+         ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, created_at
+         LIMIT 1;
+
+        IF v_created_by IS NULL THEN
+          v_created_by := 'system';
+        END IF;
+
+        FOR seed_row IN
+          SELECT *
+          FROM (
+            VALUES
+              ('DERM-PROC-SHAVE-KIT', 'Shave Biopsy Kit', 'supply', 'Blade, specimen cup, dressing, and wound-care consumables for shave biopsy.', 90, 18, 650, 'McKesson', 'Procedure Room A'),
+              ('DERM-PROC-CRYO-TIP', 'Cryotherapy Treatment Tip', 'supply', 'Disposable cryotherapy tips and barrier consumables.', 160, 35, 220, 'Brymill', 'Procedure Room B'),
+              ('DERM-PROC-WOUND-KIT', 'Wound Care Dressing Kit', 'supply', 'Patient take-home petrolatum, dressing, and non-stick pads.', 120, 25, 420, 'McKesson', 'Checkout Retail Bin'),
+              ('DERM-COS-BOTOX-UNIT', 'Botox Cosmetic Unit', 'cosmetic', 'Cosmetic neurotoxin units tracked for treatment inventory.', 850, 160, 600, 'Allergan', 'Cosmetic Fridge'),
+              ('DERM-COS-JUV-ULTRA-XC', 'Juvederm Ultra XC Syringe', 'cosmetic', 'Hyaluronic acid filler syringe.', 42, 8, 36000, 'Allergan', 'Cosmetic Fridge'),
+              ('DERM-COS-IPL-GEL', 'IPL Coupling Gel Packet', 'supply', 'Single-use gel and post-laser calming supplies.', 140, 30, 350, 'Cynosure', 'Laser Room'),
+              ('DERM-COS-PEEL-KIT', 'Post-Peel Recovery Kit', 'cosmetic', 'Cleanser, bland moisturizer, SPF, and barrier balm for chemical peel recovery.', 55, 12, 1800, 'SkinCeuticals', 'Checkout Retail Bin'),
+              ('DERM-COS-MICRO-CART', 'Microneedling Sterile Cartridge', 'supply', 'Single-use microneedling cartridge.', 65, 14, 2100, 'SkinPen', 'Cosmetic Room')
+          ) AS seeded(
+            sku,
+            name,
+            category,
+            description,
+            quantity,
+            reorder_level,
+            unit_cost_cents,
+            supplier,
+            location
+          )
+        LOOP
+          UPDATE inventory_items
+             SET name = seed_row.name,
+                 category = seed_row.category,
+                 sku = seed_row.sku,
+                 description = seed_row.description,
+                 quantity = GREATEST(inventory_items.quantity, seed_row.quantity),
+                 reorder_level = GREATEST(inventory_items.reorder_level, seed_row.reorder_level),
+                 unit_cost_cents = seed_row.unit_cost_cents,
+                 supplier = seed_row.supplier,
+                 location = seed_row.location,
+                 updated_at = NOW()
+           WHERE inventory_items.tenant_id = v_tenant_id
+             AND (
+               inventory_items.sku = seed_row.sku OR
+               (LOWER(inventory_items.name) = LOWER(seed_row.name) AND inventory_items.category = seed_row.category)
+             );
+
+          IF NOT FOUND THEN
+            INSERT INTO inventory_items (
+              tenant_id,
+              name,
+              category,
+              sku,
+              description,
+              quantity,
+              reorder_level,
+              unit_cost_cents,
+              supplier,
+              location,
+              created_by
+            ) VALUES (
+              v_tenant_id,
+              seed_row.name,
+              seed_row.category,
+              seed_row.sku,
+              seed_row.description,
+              seed_row.quantity,
+              seed_row.reorder_level,
+              seed_row.unit_cost_cents,
+              seed_row.supplier,
+              seed_row.location,
+              v_created_by
+            );
+          END IF;
+        END LOOP;
+      END LOOP;
+    END $$;
+    `,
+  },
+  {
+    name: "193_inventory_usage_billing_routes",
+    sql: `
+    ALTER TABLE IF EXISTS inventory_usage
+      ADD COLUMN IF NOT EXISTS billing_route TEXT DEFAULT 'bundled';
+
+    UPDATE inventory_usage u
+       SET billing_route = CASE
+         WHEN COALESCE(u.given_as_sample, false) THEN 'sample'
+         WHEN COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), '') = 'insurance' THEN 'insurance'
+         WHEN COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), '') = 'self_pay' THEN 'self_pay'
+         WHEN COALESCE(u.sell_price_cents, 0) > 0 THEN 'self_pay'
+         ELSE 'bundled'
+       END
+      FROM charges c
+     WHERE u.charge_id = c.id
+       AND u.tenant_id = c.tenant_id
+       AND (u.billing_route IS NULL OR u.billing_route = '');
+
+    UPDATE inventory_usage
+       SET billing_route = CASE
+         WHEN COALESCE(given_as_sample, false) THEN 'sample'
+         WHEN COALESCE(sell_price_cents, 0) > 0 THEN 'self_pay'
+         ELSE 'bundled'
+       END
+     WHERE billing_route IS NULL OR billing_route = '';
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'inventory_usage_billing_route_check'
+      ) THEN
+        ALTER TABLE inventory_usage
+          ADD CONSTRAINT inventory_usage_billing_route_check
+          CHECK (billing_route IN ('bundled', 'insurance', 'self_pay', 'sample'));
+      END IF;
+    END $$;
+
+    COMMENT ON COLUMN inventory_usage.billing_route IS 'How visit-used inventory is financially handled: bundled cost, insurance-billable, patient self-pay, or sample/no charge.';
+    `,
+  },
+  {
+    name: "194_inventory_visit_role_access",
+    sql: `
+    UPDATE tenant_access_settings
+       SET module_access = jsonb_set(
+         module_access,
+         '{inventory}',
+         (
+           SELECT jsonb_agg(DISTINCT role_value ORDER BY role_value)
+           FROM jsonb_array_elements_text(
+             COALESCE(module_access->'inventory', '["admin","ma","front_desk","manager"]'::jsonb)
+             || '["admin","provider","ma","nurse","front_desk","manager"]'::jsonb
+           ) AS roles(role_value)
+         ),
+         true
+       ),
+       updated_at = now()
+     WHERE module_access ? 'inventory';
+    `,
+  },
 
 ];
 

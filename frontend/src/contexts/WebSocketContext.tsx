@@ -20,12 +20,28 @@ interface WebSocketContextValue {
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null);
 
-const SOCKET_URL =
-  import.meta.env.VITE_WS_URL ||
-  API_BASE_URL ||
-  (import.meta.env.DEV
-    ? 'http://localhost:4000'
-    : (typeof window !== 'undefined' ? window.location.origin : ''));
+function shouldUseDevSocketProxy(configuredUrl: string): boolean {
+  if (!import.meta.env.DEV || API_BASE_URL) return false;
+  try {
+    const parsed = new URL(configuredUrl);
+    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname) && parsed.port === '4000';
+  } catch {
+    return false;
+  }
+}
+
+function resolveSocketUrl(): string {
+  const configuredUrl = import.meta.env.VITE_WS_URL || API_BASE_URL;
+  if (configuredUrl && !shouldUseDevSocketProxy(configuredUrl)) {
+    return configuredUrl;
+  }
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return configuredUrl || 'http://localhost:4000';
+}
+
+const SOCKET_URL = resolveSocketUrl();
 const RECONNECTION_DELAY = 5000;
 const MAX_RECONNECTION_ATTEMPTS = 10;
 const STORAGE_KEY = 'derm_session';

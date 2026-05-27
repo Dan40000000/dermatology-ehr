@@ -30,7 +30,7 @@ const issueDescriptions: Record<PostVisitCodingIssue, string> = {
   missing_cpt_code: 'A charge exists but is missing a CPT code.',
   diagnosis_link_needed: 'Charges should be linked to supporting diagnosis codes before claim release.',
   note_unsigned: 'The clinical note still needs provider signature or lock.',
-  superbill_open: 'The superbill is still draft/open and needs billing review.',
+  superbill_open: 'A generated superbill is still draft or pending review and needs billing review.',
   claim_not_created: 'Charges exist but the claim has not been created yet.',
   claim_coding_review: 'A claim exists but is still being reviewed before release.',
 };
@@ -323,7 +323,7 @@ export function PostVisitCodingReviewPage() {
         }}
       >
         <button type="button" onClick={() => selectIssue('all')} aria-pressed={selectedIssue === 'all'} style={summaryButtonStyle(selectedIssue === 'all')}>
-          <span style={summaryLabelStyle}>Open visits</span>
+          <span style={summaryLabelStyle}>Open coding items</span>
           <strong style={summaryValueStyle}>{data?.summary.total ?? 0}</strong>
         </button>
         <div style={summaryCardStyle}>

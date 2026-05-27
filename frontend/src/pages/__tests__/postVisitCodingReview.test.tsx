@@ -158,7 +158,7 @@ describe('PostVisitCodingReviewPage', () => {
     expect(await screen.findByText('Ben Skin')).toBeInTheDocument();
     expect(screen.queryByText('Ava Jones')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /open visits/i }));
+    fireEvent.click(screen.getByRole('button', { name: /open coding items/i }));
     expect(await screen.findByText('Ava Jones')).toBeInTheDocument();
 
     const avaRow = screen.getByText('Ava Jones').closest('tr');

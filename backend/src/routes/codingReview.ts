@@ -21,7 +21,7 @@ const CODING_REVIEW_ROLES: Role[] = [
 ];
 
 const closedEncounterStatuses = new Set(["signed", "locked", "finalized", "completed", "closed"]);
-const closedSuperbillStatuses = new Set(["submitted", "posted", "finalized"]);
+const closedSuperbillStatuses = new Set(["approved", "submitted", "posted", "finalized", "void"]);
 
 const querySchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -138,7 +138,7 @@ function getIssues(item: CodingReviewRow): CodingReviewIssue[] {
   if (!closedEncounterStatuses.has(encounterStatus)) {
     issues.push("note_unsigned");
   }
-  if (!item.superbillId || !closedSuperbillStatuses.has(superbillStatus)) {
+  if (item.superbillId && !closedSuperbillStatuses.has(superbillStatus)) {
     issues.push("superbill_open");
   }
   if (item.chargeCount > 0 && !item.claimId) {

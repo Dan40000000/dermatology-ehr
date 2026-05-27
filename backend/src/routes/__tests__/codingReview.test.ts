@@ -137,6 +137,43 @@ describe("Coding review routes", () => {
     expect(includeRes.body.items[0].issues).toEqual([]);
   });
 
+  it("does not flag missing superbills as open superbills", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          encounterId: "enc-3",
+          appointmentId: "appt-3",
+          patientId: "patient-3",
+          patientName: "Cara Mole",
+          providerId: "provider-1",
+          providerName: "Dr Demo",
+          serviceAt: "2026-05-24T17:00:00.000Z",
+          appointmentStatus: "completed",
+          encounterStatus: "completed",
+          chiefComplaint: "Skin check",
+          diagnosisCount: 1,
+          primaryDiagnosisCount: 1,
+          diagnosisCodes: ["Z12.83"],
+          chargeCount: 1,
+          missingCptCount: 0,
+          unlinkedChargeCount: 0,
+          totalChargeCents: 15000,
+          cptCodes: ["99213"],
+          superbillId: null,
+          superbillStatus: null,
+          claimId: "claim-3",
+          claimStatus: "coding_review",
+        },
+      ],
+    });
+
+    const res = await request(app).get("/coding-review/post-visit?startDate=2026-05-20&endDate=2026-05-24");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].issues).toContain("claim_coding_review");
+    expect(res.body.items[0].issues).not.toContain("superbill_open");
+  });
+
   it("rejects invalid dates", async () => {
     const res = await request(app).get("/coding-review/post-visit?startDate=bad");
 

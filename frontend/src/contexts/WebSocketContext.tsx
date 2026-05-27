@@ -20,8 +20,7 @@ interface WebSocketContextValue {
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null);
 
-function shouldUseDevSocketProxy(configuredUrl: string): boolean {
-  if (!import.meta.env.DEV || API_BASE_URL) return false;
+function isLocalSocketUrl(configuredUrl: string): boolean {
   try {
     const parsed = new URL(configuredUrl);
     return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname) && parsed.port === '4000';
@@ -31,14 +30,17 @@ function shouldUseDevSocketProxy(configuredUrl: string): boolean {
 }
 
 function resolveSocketUrl(): string {
-  const configuredUrl = import.meta.env.VITE_WS_URL || API_BASE_URL;
-  if (configuredUrl && !shouldUseDevSocketProxy(configuredUrl)) {
-    return configuredUrl;
+  const configuredWsUrl = import.meta.env.VITE_WS_URL;
+  if (configuredWsUrl && !(API_BASE_URL && !import.meta.env.DEV && isLocalSocketUrl(configuredWsUrl))) {
+    return configuredWsUrl;
+  }
+  if (API_BASE_URL) {
+    return API_BASE_URL;
   }
   if (typeof window !== 'undefined') {
     return window.location.origin;
   }
-  return configuredUrl || 'http://localhost:4000';
+  return 'http://localhost:4000';
 }
 
 const SOCKET_URL = resolveSocketUrl();

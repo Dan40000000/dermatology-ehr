@@ -5027,6 +5027,9 @@ export interface SMSReadiness {
   environment: {
     nodeEnv: string;
     liveSendEnabled: boolean;
+    messagingServiceSidConfigured?: boolean;
+    messagingServiceSidSuffix?: string | null;
+    messagingServiceMatchesRegisteredPhone?: boolean;
     inboundSimulationEnabled: boolean;
   };
   twilio: {
@@ -5092,6 +5095,29 @@ export interface SMSReadiness {
   };
   gates: SMSReadinessGate[];
   readyForLiveSend: boolean;
+}
+
+export interface SMSA2PResubmissionResult {
+  success: boolean;
+  message: string;
+  messagingService: {
+    sidSuffix: string;
+    friendlyName?: string;
+  };
+  campaign: {
+    sidSuffix: string;
+    campaignStatus: string;
+    campaignId?: string;
+    usecase?: string;
+    errors?: unknown[];
+  };
+  submission: {
+    brandName: string;
+    consentUrl: string;
+    termsUrl: string;
+    privacyUrl: string;
+    sampleCount: number;
+  };
 }
 
 export interface SMSAutoResponse {
@@ -5187,6 +5213,25 @@ export async function fetchSMSReadiness(
     credentials: 'include',
   });
   if (!res.ok) throw new Error('Failed to fetch SMS readiness');
+  return res.json();
+}
+
+export async function resubmitSMSA2PCampaign(
+  tenantId: string,
+  accessToken: string
+): Promise<SMSA2PResubmissionResult> {
+  const res = await fetch(`${API_BASE}/api/sms/a2p/resubmit`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to resubmit A2P campaign');
+  }
   return res.json();
 }
 

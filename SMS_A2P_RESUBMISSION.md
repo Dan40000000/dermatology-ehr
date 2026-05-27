@@ -6,9 +6,9 @@ Current Twilio status checked from the live account:
 - Phone number: SMS, MMS, and voice capable
 - Messaging Service: configured with Railway production webhooks
 - A2P Brand: approved
-- A2P Campaign: resubmitted / in progress after fixing the consent flow
-- Previous rejection code: `30923`
-- Previous rejection reason: consent cannot be a required condition for service or transaction completion
+- A2P Campaign: rejected by Twilio and awaiting resubmission/re-review
+- Current rejection code: `30909`
+- Current rejection reason: Twilio could not verify the Call to Action / message-flow language
 - Live consent page verified:
   - `https://perry-software-site.vercel.app/sms-consent.html`
   - `http://perrysoftwarellc.com/sms-consent.html`
@@ -23,7 +23,7 @@ The public SMS consent page now makes the opt-in language explicit:
 - Treatment, payment, appointment scheduling, registration, and other office services can continue without SMS consent.
 - The submit button says optional SMS preference instead of implying required consent.
 
-The existing failed Twilio A2P campaign was updated with the corrected optional-consent message flow and resubmitted. Keep production live-send controls gated until Twilio returns `VERIFIED`.
+The existing failed Twilio A2P campaign should be updated with the corrected optional-consent message flow and resubmitted from Text Messages > Settings > Production Readiness. Keep production live-send controls gated until Twilio returns `VERIFIED`.
 
 ## Recommended Campaign Message Flow
 
@@ -59,6 +59,7 @@ Do not enable unrestricted production texting until the Twilio campaign status i
 After Twilio verifies the campaign:
 
 - Confirm `SMS_LIVE_SEND_ENABLED=true` is set in the production API environment if `NODE_ENV=production`.
+- Confirm `TWILIO_MESSAGING_SERVICE_SID` is set to the registered Messaging Service that contains the practice SMS phone number.
 - Send one live test message to an opted-in test patient.
 - Confirm Twilio message status transitions to `sent` or `delivered`.
 - Confirm the app records the outbound SMS message and delivery status.

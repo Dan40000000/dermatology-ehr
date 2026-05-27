@@ -28,6 +28,7 @@ import {
   fetchSMSAuditSummary,
   fetchSMSSettings,
   fetchSMSReadiness,
+  resubmitSMSA2PCampaign,
   updateSMSSettings,
   fetchSMSAutoResponses,
   updateSMSAutoResponse,
@@ -254,10 +255,14 @@ export default function TextMessagesPage() {
   const [settingsDraft, setSettingsDraft] = useState<Partial<SMSSettings>>({});
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [resubmittingA2P, setResubmittingA2P] = useState(false);
 
   // Stats
   const totalUnread = patients.reduce((acc, p) => acc + (p.unreadCount || 0), 0);
   const optedInCount = patients.filter(p => p.smsOptIn !== false).length;
+  const a2pCampaignNeedsResubmission = Boolean(
+    smsReadiness?.a2p.campaigns?.some(campaign => String(campaign.campaignStatus || '').toUpperCase() === 'FAILED')
+  );
 
   // Auto-scroll
   useEffect(() => {
@@ -412,6 +417,21 @@ export default function TextMessagesPage() {
       setSettingsLoading(false);
     }
   }, [session, showError]);
+
+  const handleResubmitA2PCampaign = useCallback(async () => {
+    if (!session || resubmittingA2P) return;
+
+    setResubmittingA2P(true);
+    try {
+      const result = await resubmitSMSA2PCampaign(session.tenantId, session.accessToken);
+      showSuccess(`A2P campaign sent to Twilio (${result.campaign.campaignStatus})`);
+      await loadSMSSettings();
+    } catch (err: any) {
+      showError(err.message || 'Failed to resubmit A2P campaign');
+    } finally {
+      setResubmittingA2P(false);
+    }
+  }, [loadSMSSettings, resubmittingA2P, session, showError, showSuccess]);
 
   const loadAutoResponseRules = useCallback(async () => {
     if (!session) return;
@@ -1881,6 +1901,26 @@ export default function TextMessagesPage() {
                     </div>
                     <span>{smsReadiness.readyForLiveSend ? 'Ready' : 'Blocked'}</span>
                   </div>
+
+                  {a2pCampaignNeedsResubmission && (
+                    <div className="sms-readiness-actions">
+                      <div>
+                        <strong>A2P campaign needs Twilio review</strong>
+                        <p>
+                          The current campaign was rejected for opt-in/CTA language. Resubmitting sends the corrected
+                          optional consent flow and sample messages to Twilio.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={handleResubmitA2PCampaign}
+                        disabled={resubmittingA2P}
+                      >
+                        {resubmittingA2P ? 'Submitting...' : 'Resubmit to Twilio'}
+                      </button>
+                    </div>
+                  )}
 
                   <div className="sms-readiness-grid">
                     {smsReadiness.gates.map(gate => (

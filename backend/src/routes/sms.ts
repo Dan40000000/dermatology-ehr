@@ -9,8 +9,8 @@ import { pool } from '../db/pool';
 import { env } from '../config/env';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireModuleAccess } from '../middleware/moduleAccess';
-import { auditLog } from '../services/audit';
-import { createTwilioService, TwilioService } from '../services/twilioService';
+import { auditLog, createAuditLog } from '../services/audit';
+import { createTwilioService, TwilioService, type TwilioA2PCampaignUpdate } from '../services/twilioService';
 import {
   addMessageToThread,
   findOrCreateMessageThread,
@@ -43,6 +43,10 @@ router.use((req, res, next) => {
 });
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
 const smsRoutingCategories = ['general', 'appointment', 'billing', 'prescription', 'medical', 'other'] as const;
+const SMS_A2P_BRAND_NAME = 'Nuvora Health, operated by Perry Software LLC';
+const SMS_A2P_CONSENT_URL = 'https://perry-software-site.vercel.app/sms-consent.html';
+const SMS_A2P_TERMS_URL = 'https://perry-software-site.vercel.app/sms-terms.html';
+const SMS_A2P_PRIVACY_URL = 'https://perry-software-site.vercel.app/sms-privacy.html';
 
 function isInboundSimulationEnabled(isTestMode: boolean): boolean {
   return (
@@ -85,6 +89,45 @@ function shouldUseMockSms(settings: { is_test_mode?: boolean | null }): boolean 
 
 function isSmsLiveSendEnabled(): boolean {
   return env.nodeEnv !== 'production' || process.env.SMS_LIVE_SEND_ENABLED === 'true';
+}
+
+function getConfiguredMessagingServiceSid(): string | null {
+  return process.env.TWILIO_MESSAGING_SERVICE_SID || null;
+}
+
+function suffixSid(sid?: string | null): string | null {
+  const value = String(sid || '');
+  return value ? value.slice(-6) : null;
+}
+
+function getCampaignStatus(campaign: any): string {
+  return String(campaign?.campaignStatus || '').toUpperCase();
+}
+
+function buildA2PCampaignUpdate(): TwilioA2PCampaignUpdate {
+  return {
+    hasEmbeddedLinks: false,
+    hasEmbeddedPhone: false,
+    ageGated: false,
+    directLending: false,
+    description:
+      `${SMS_A2P_BRAND_NAME} sends patient-authorized operational SMS for dermatology practices, ` +
+      'including appointment reminders, scheduling updates, billing notices, prescription coordination, and care follow-up.',
+    messageFlow:
+      `Patients may optionally opt in to operational SMS messages from ${SMS_A2P_BRAND_NAME} during patient intake, ` +
+      `patient portal registration, staff-assisted registration, or the public SMS preference page at ${SMS_A2P_CONSENT_URL}. ` +
+      'The SMS checkbox is optional, unchecked by default, and not required to receive treatment, complete registration, ' +
+      'schedule an appointment, make a payment, use the patient portal, or receive any other office service. ' +
+      'The opt-in disclosure states that messages may include appointment reminders, scheduling updates, billing notices, ' +
+      'prescription coordination, and care follow-up; message frequency varies; message and data rates may apply; ' +
+      'patients can reply HELP for help and STOP to opt out. Patients may also text START or YES to the practice messaging ' +
+      `number to opt in or re-subscribe after opting out. Terms of Service: ${SMS_A2P_TERMS_URL}. Privacy Policy: ${SMS_A2P_PRIVACY_URL}.`,
+    messageSamples: [
+      'Nuvora Health: Reminder for your dermatology appointment on 05/08 at 2:15 PM. Reply HELP for help or STOP to opt out.',
+      'Nuvora Health: Your billing statement is ready in the patient portal. Reply HELP for help or STOP to opt out.',
+      'Nuvora Health: Your refill request was received and is being reviewed by the office. Reply HELP for help or STOP to opt out.',
+    ],
+  };
 }
 
 function normalizeSmsConversationPhone(value: unknown): string {
@@ -457,6 +500,7 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
     const settings = settingsResult.rows[0];
     const hasCredentials = Boolean(settings?.twilio_account_sid && settings?.twilio_auth_token);
     const appLiveSendEnabled = isSmsLiveSendEnabled();
+    const configuredMessagingServiceSid = getConfiguredMessagingServiceSid();
 
     const messageSummaryResult = await pool.query(
       `SELECT
@@ -524,10 +568,19 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
       : (messagingReadiness?.services || []);
     const campaigns = relevantServices.flatMap((service: any) => service.campaigns || []);
     const verifiedCampaign = campaigns.find(
-      (campaign: any) => String(campaign.campaignStatus || '').toUpperCase() === 'VERIFIED'
+      (campaign: any) => getCampaignStatus(campaign) === 'VERIFIED'
     );
     const approvedBrand = (messagingReadiness?.brandRegistrations || []).find(
       (brand: any) => String(brand.status || '').toUpperCase() === 'APPROVED'
+    );
+    const registeredMessagingService = relevantServices.find((service: any) =>
+      service.includesConfiguredPhone && (service.campaigns || []).length > 0
+    );
+    const configuredMessagingService = configuredMessagingServiceSid
+      ? relevantServices.find((service: any) => service.sid === configuredMessagingServiceSid) || null
+      : null;
+    const messagingServiceMatchesRegisteredPhone = Boolean(
+      configuredMessagingService && configuredMessagingService.includesConfiguredPhone
     );
 
     const smsCapable = Boolean(phoneNumberInfo?.capabilities?.sms || phoneNumberInfo?.capabilities?.SMS);
@@ -561,6 +614,18 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
         detail: smsCapable
           ? `${settings?.twilio_phone_number || 'Configured number'} is SMS capable.`
           : 'Configured number was not confirmed as SMS capable.',
+      },
+      {
+        key: 'messaging_service',
+        label: 'Registered Messaging Service',
+        ok: Boolean(configuredMessagingServiceSid && messagingServiceMatchesRegisteredPhone),
+        detail: !registeredMessagingService
+          ? 'No Messaging Service was found for the configured SMS phone number.'
+          : !configuredMessagingServiceSid
+            ? `TWILIO_MESSAGING_SERVICE_SID is not set, so live sends would use the direct phone number instead of service ${registeredMessagingService.sidSuffix}.`
+            : messagingServiceMatchesRegisteredPhone
+              ? `Live sends are configured to use registered service ${configuredMessagingService?.sidSuffix}.`
+              : 'TWILIO_MESSAGING_SERVICE_SID does not match the Messaging Service containing the configured phone number.',
       },
       {
         key: 'brand',
@@ -607,6 +672,9 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
       environment: {
         nodeEnv: env.nodeEnv,
         liveSendEnabled: appLiveSendEnabled,
+        messagingServiceSidConfigured: Boolean(configuredMessagingServiceSid),
+        messagingServiceSidSuffix: suffixSid(configuredMessagingServiceSid),
+        messagingServiceMatchesRegisteredPhone,
         inboundSimulationEnabled:
           env.nodeEnv !== 'production' || process.env.SMS_INBOUND_SIMULATION_ENABLED === 'true',
       },
@@ -641,6 +709,93 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
   } catch (error: any) {
     logger.error('Error fetching SMS readiness', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch SMS readiness' });
+  }
+});
+
+/**
+ * POST /api/sms/a2p/resubmit
+ * Resubmit the existing Twilio A2P campaign with an explicit optional opt-in/CTA flow.
+ */
+router.post('/a2p/resubmit', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    if (!userHasRole(req.user, 'admin')) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const settingsResult = await pool.query(
+      `SELECT id, twilio_account_sid, twilio_auth_token, twilio_phone_number
+       FROM sms_settings
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    const settings = settingsResult.rows[0];
+    if (!settings?.twilio_account_sid || !settings?.twilio_auth_token || !settings?.twilio_phone_number) {
+      return res.status(400).json({ error: 'Twilio SMS settings are not fully configured' });
+    }
+
+    const twilioService = createTwilioService(settings.twilio_account_sid, settings.twilio_auth_token);
+    const readiness = await twilioService.getMessagingReadiness(settings.twilio_phone_number);
+    const matchingServices = readiness.services.filter((service) => service.includesConfiguredPhone);
+    const candidateServices = matchingServices.length > 0 ? matchingServices : readiness.services;
+    const service = candidateServices.find((candidate) =>
+      (candidate.campaigns || []).some((campaign) => getCampaignStatus(campaign) !== 'VERIFIED')
+    ) || candidateServices.find((candidate) => (candidate.campaigns || []).length > 0);
+
+    if (!service) {
+      return res.status(400).json({ error: 'No A2P Messaging Service campaign found to resubmit' });
+    }
+
+    const campaign = (service.campaigns || []).find((candidate) => getCampaignStatus(candidate) === 'FAILED')
+      || (service.campaigns || []).find((candidate) => getCampaignStatus(candidate) !== 'VERIFIED')
+      || service.campaigns[0];
+
+    if (!campaign) {
+      return res.status(400).json({ error: 'No A2P campaign found to resubmit' });
+    }
+
+    const update = buildA2PCampaignUpdate();
+    const updatedCampaign = await twilioService.updateA2PCampaign(service.sid, campaign.sid, update);
+
+    await createAuditLog({
+      tenantId,
+      userId: req.user!.id,
+      action: 'sms_a2p_campaign_resubmitted',
+      resourceType: 'sms_settings',
+      resourceId: settings.id || tenantId,
+      metadata: {
+        messagingServiceSidSuffix: service.sidSuffix,
+        campaignSidSuffix: updatedCampaign.sidSuffix,
+        campaignStatus: updatedCampaign.campaignStatus,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'A2P campaign submitted to Twilio for review.',
+      messagingService: {
+        sidSuffix: service.sidSuffix,
+        friendlyName: service.friendlyName,
+      },
+      campaign: {
+        sidSuffix: updatedCampaign.sidSuffix,
+        campaignStatus: updatedCampaign.campaignStatus,
+        campaignId: updatedCampaign.campaignId,
+        usecase: updatedCampaign.usecase,
+        errors: updatedCampaign.errors || [],
+      },
+      submission: {
+        brandName: SMS_A2P_BRAND_NAME,
+        consentUrl: SMS_A2P_CONSENT_URL,
+        termsUrl: SMS_A2P_TERMS_URL,
+        privacyUrl: SMS_A2P_PRIVACY_URL,
+        sampleCount: update.messageSamples.length,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Error resubmitting SMS A2P campaign', { error: error.message });
+    res.status(500).json({ error: 'Failed to resubmit A2P campaign' });
   }
 });
 

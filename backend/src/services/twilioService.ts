@@ -101,6 +101,16 @@ export interface TwilioMessagingReadiness {
   errors: string[];
 }
 
+export interface TwilioA2PCampaignUpdate {
+  hasEmbeddedLinks: boolean;
+  hasEmbeddedPhone: boolean;
+  messageSamples: string[];
+  messageFlow: string;
+  description: string;
+  ageGated: boolean;
+  directLending: boolean;
+}
+
 export class TwilioService {
   private client: Twilio;
   private accountSid: string;
@@ -476,17 +486,7 @@ export class TwilioService {
           const serviceCampaigns = await this.client.messaging.v1
             .services(service.sid)
             .usAppToPerson.list({ limit: 20 });
-          campaigns = serviceCampaigns.map((campaign: any) => ({
-            sid: campaign.sid,
-            sidSuffix: sidSuffix(campaign.sid),
-            campaignStatus: campaign.campaignStatus,
-            campaignId: campaign.campaignId,
-            brandRegistrationSid: campaign.brandRegistrationSid,
-            usecase: campaign.usAppToPersonUsecase,
-            description: campaign.description,
-            errors: campaign.errors || [],
-            dateUpdated: campaign.dateUpdated,
-          }));
+          campaigns = serviceCampaigns.map(mapA2PCampaign);
         } catch (error: any) {
           serviceErrors.push(`A2P campaign lookup failed: ${error.message}`);
         }
@@ -514,6 +514,35 @@ export class TwilioService {
       brandRegistrations,
       errors,
     };
+  }
+
+  /**
+   * Update an existing A2P 10DLC campaign after a Twilio rejection.
+   * This is intentionally scoped to campaign metadata only; it never exposes
+   * auth tokens or changes live-send controls.
+   */
+  async updateA2PCampaign(
+    messagingServiceSid: string,
+    campaignSid: string,
+    update: TwilioA2PCampaignUpdate
+  ): Promise<TwilioMessagingServiceCampaign> {
+    try {
+      const campaign = await this.client.messaging.v1
+        .services(messagingServiceSid)
+        .usAppToPerson(campaignSid)
+        .update(update);
+
+      return mapA2PCampaign(campaign);
+    } catch (error: any) {
+      logger.error('Failed to update Twilio A2P campaign', {
+        error: error.message,
+        code: error.code,
+        status: error.status,
+        messagingServiceSid: sidSuffix(messagingServiceSid),
+        campaignSid: sidSuffix(campaignSid),
+      });
+      throw error;
+    }
   }
 
   /**
@@ -586,4 +615,18 @@ function sidSuffix(sid?: string | null): string {
 
 function normalizePhoneDigits(value?: string | null): string {
   return String(value || '').replace(/\D/g, '');
+}
+
+function mapA2PCampaign(campaign: any): TwilioMessagingServiceCampaign {
+  return {
+    sid: campaign.sid,
+    sidSuffix: sidSuffix(campaign.sid),
+    campaignStatus: campaign.campaignStatus,
+    campaignId: campaign.campaignId,
+    brandRegistrationSid: campaign.brandRegistrationSid,
+    usecase: campaign.usAppToPersonUsecase,
+    description: campaign.description,
+    errors: campaign.errors || [],
+    dateUpdated: campaign.dateUpdated,
+  };
 }

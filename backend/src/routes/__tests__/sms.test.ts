@@ -26,6 +26,7 @@ jest.mock('../../db/pool', () => ({
 
 jest.mock('../../services/audit', () => ({
   auditLog: jest.fn(),
+  createAuditLog: jest.fn(),
 }));
 
 jest.mock('../../services/twilioService', () => ({
@@ -93,6 +94,7 @@ const twilioServiceMock = {
   testConnection: jest.fn(),
   getPhoneNumberInfo: jest.fn(),
   getMessagingReadiness: jest.fn(),
+  updateA2PCampaign: jest.fn(),
   validateWebhookSignature: jest.fn(),
 };
 
@@ -114,6 +116,7 @@ beforeEach(() => {
   twilioServiceMock.testConnection.mockReset();
   twilioServiceMock.getPhoneNumberInfo.mockReset();
   twilioServiceMock.getMessagingReadiness.mockReset();
+  twilioServiceMock.updateA2PCampaign.mockReset();
   twilioServiceMock.validateWebhookSignature.mockReset();
 
   queryMock.mockResolvedValue({ rows: [] });
@@ -136,12 +139,21 @@ beforeEach(() => {
   formatPhoneMock.mockImplementation((value: string) => value ? '+15550100' : null);
   twilioServiceMock.sendSMS.mockResolvedValue({ sid: 'sid-1', status: 'sent', numSegments: 1 });
   twilioServiceMock.testConnection.mockResolvedValue({ success: true });
+  twilioServiceMock.updateA2PCampaign.mockResolvedValue({
+    sid: 'camp-1',
+    sidSuffix: 'camp-1',
+    campaignStatus: 'IN_PROGRESS',
+    campaignId: 'C123',
+    usecase: 'LOW_VOLUME',
+    errors: [],
+  });
   twilioServiceMock.validateWebhookSignature.mockReturnValue(true);
   processIncomingMock.mockResolvedValue({ messageId: 'msg-1', autoResponseSent: false });
   sendReminderMock.mockResolvedValue({ success: true });
   processScheduledRemindersMock.mockResolvedValue({ processed: 0, sent: 0, failed: 0 });
   processFollowUpRemindersMock.mockResolvedValue({ processed: 0, sent: 0, failed: 0 });
   userHasRoleMock.mockReturnValue(true);
+  delete process.env.TWILIO_MESSAGING_SERVICE_SID;
 });
 
 describe('SMS routes', () => {
@@ -224,6 +236,7 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/readiness returns sanitized live-readiness gates', async () => {
+    process.env.TWILIO_MESSAGING_SERVICE_SID = 'MGabc123';
     queryMock
       .mockResolvedValueOnce({
         rows: [{
@@ -260,6 +273,7 @@ describe('SMS routes', () => {
     });
     twilioServiceMock.getMessagingReadiness.mockResolvedValueOnce({
       services: [{
+        sid: 'MGabc123',
         sidSuffix: 'abc123',
         friendlyName: 'Clinic service',
         includesConfiguredPhone: true,
@@ -279,7 +293,65 @@ describe('SMS routes', () => {
       expect.arrayContaining([
         expect.objectContaining({ key: 'campaign', ok: true }),
         expect.objectContaining({ key: 'credentials', ok: true }),
+        expect.objectContaining({ key: 'messaging_service', ok: true }),
       ])
+    );
+    expect(res.body.environment.messagingServiceSidConfigured).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain('token');
+  });
+
+  it('POST /sms/a2p/resubmit returns 403 for non-admin', async () => {
+    userHasRoleMock.mockReturnValueOnce(false);
+
+    const res = await request(app).post('/sms/a2p/resubmit');
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Admin access required/i);
+  });
+
+  it('POST /sms/a2p/resubmit updates the failed campaign metadata', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        id: 'settings-1',
+        twilio_account_sid: 'sid',
+        twilio_auth_token: 'token',
+        twilio_phone_number: '+15550001111',
+      }],
+    });
+    twilioServiceMock.getMessagingReadiness.mockResolvedValueOnce({
+      services: [{
+        sid: 'MGabc123',
+        sidSuffix: 'abc123',
+        friendlyName: 'Clinic service',
+        includesConfiguredPhone: true,
+        campaigns: [{ sid: 'camp-1', sidSuffix: 'camp-1', campaignStatus: 'FAILED', usecase: 'LOW_VOLUME' }],
+      }],
+      brandRegistrations: [{ sidSuffix: 'brand1', status: 'APPROVED' }],
+      errors: [],
+    });
+    twilioServiceMock.updateA2PCampaign.mockResolvedValueOnce({
+      sid: 'camp-1',
+      sidSuffix: 'camp-1',
+      campaignStatus: 'IN_PROGRESS',
+      campaignId: 'C123',
+      usecase: 'LOW_VOLUME',
+      errors: [],
+    });
+
+    const res = await request(app).post('/sms/a2p/resubmit');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.campaign.campaignStatus).toBe('IN_PROGRESS');
+    expect(twilioServiceMock.updateA2PCampaign).toHaveBeenCalledWith(
+      'MGabc123',
+      'camp-1',
+      expect.objectContaining({
+        hasEmbeddedLinks: false,
+        hasEmbeddedPhone: false,
+        messageFlow: expect.stringContaining('optional'),
+        messageSamples: expect.arrayContaining([expect.stringContaining('Reply HELP')]),
+      })
     );
     expect(JSON.stringify(res.body)).not.toContain('token');
   });

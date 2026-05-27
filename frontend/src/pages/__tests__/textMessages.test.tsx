@@ -40,6 +40,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchSMSAuditSummary: vi.fn(),
   fetchSMSSettings: vi.fn(),
   fetchSMSReadiness: vi.fn(),
+  resubmitSMSA2PCampaign: vi.fn(),
   updateSMSSettings: vi.fn(),
   fetchSMSAutoResponses: vi.fn(),
   updateSMSAutoResponse: vi.fn(),
@@ -228,6 +229,9 @@ describe('TextMessagesPage', () => {
       environment: {
         nodeEnv: 'test',
         liveSendEnabled: true,
+        messagingServiceSidConfigured: true,
+        messagingServiceSidSuffix: 'abc123',
+        messagingServiceMatchesRegisteredPhone: true,
         inboundSimulationEnabled: true,
       },
       twilio: {
@@ -267,6 +271,19 @@ describe('TextMessagesPage', () => {
       readyForLiveSend: true,
     });
     apiMocks.updateSMSSettings.mockResolvedValue({ success: true });
+    apiMocks.resubmitSMSA2PCampaign.mockResolvedValue({
+      success: true,
+      message: 'A2P campaign submitted to Twilio for review.',
+      messagingService: { sidSuffix: 'abc123', friendlyName: 'Clinic service' },
+      campaign: { sidSuffix: 'camp-1', campaignStatus: 'IN_PROGRESS', usecase: 'LOW_VOLUME', errors: [] },
+      submission: {
+        brandName: 'Nuvora Health, operated by Perry Software LLC',
+        consentUrl: 'https://perry-software-site.vercel.app/sms-consent.html',
+        termsUrl: 'https://perry-software-site.vercel.app/sms-terms.html',
+        privacyUrl: 'https://perry-software-site.vercel.app/sms-privacy.html',
+        sampleCount: 3,
+      },
+    });
     apiMocks.simulateInboundSMSConversationMessage.mockResolvedValue({ success: true, messageId: 'in-1' });
     apiMocks.fetchSMSAutoResponses.mockResolvedValue({
       autoResponses: [
@@ -908,6 +925,66 @@ describe('TextMessagesPage', () => {
       ),
     );
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('SMS settings saved');
+  });
+
+  it('resubmits a failed A2P campaign from settings readiness', async () => {
+    apiMocks.fetchSMSReadiness.mockResolvedValue({
+      settings: {
+        isActive: true,
+        isTestMode: false,
+        twilioPhoneNumber: '+15551112222',
+        appointmentRemindersEnabled: true,
+        allowPatientReplies: true,
+        hasCredentials: true,
+      },
+      environment: {
+        nodeEnv: 'production',
+        liveSendEnabled: false,
+        messagingServiceSidConfigured: false,
+        messagingServiceSidSuffix: null,
+        messagingServiceMatchesRegisteredPhone: false,
+        inboundSimulationEnabled: false,
+      },
+      twilio: {
+        connection: { success: true, accountName: 'Test Twilio' },
+        phoneNumber: { phoneNumber: '+15551112222', capabilities: { sms: true } },
+        messaging: { services: [], brandRegistrations: [], errors: [] },
+        errors: [],
+      },
+      a2p: {
+        brandStatus: 'APPROVED',
+        campaignStatus: 'FAILED',
+        verified: false,
+        campaigns: [{ sidSuffix: 'camp-1', campaignStatus: 'FAILED', usecase: 'LOW_VOLUME' }],
+      },
+      recentTraffic: {
+        total: 0,
+        outbound: 0,
+        inbound: 0,
+        mockMessages: 0,
+        twilioMessages: 0,
+        lastMessageAt: null,
+        statusBreakdown: [],
+      },
+      consent: { total: 10, optedIn: 10, optedOut: 0 },
+      gates: [
+        { key: 'campaign', label: 'A2P campaign', ok: false, detail: 'Campaign status: FAILED.' },
+      ],
+      readyForLiveSend: false,
+    });
+
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    const resubmitButton = await screen.findByRole('button', { name: 'Resubmit to Twilio' });
+    fireEvent.click(resubmitButton);
+
+    await waitFor(() =>
+      expect(apiMocks.resubmitSMSA2PCampaign).toHaveBeenCalledWith('tenant-1', 'token-1'),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('A2P campaign sent to Twilio (IN_PROGRESS)');
   });
 
   it('surfaces conversation load errors', async () => {

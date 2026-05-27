@@ -907,6 +907,30 @@
   text-transform: uppercase;
 }
 
+.sms-readiness-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 14px;
+}
+
+.sms-readiness-actions strong {
+  display: block;
+  color: #1e3a8a;
+  font-size: 14px;
+}
+
+.sms-readiness-actions p {
+  margin: 4px 0 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .sms-readiness-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -1298,6 +1322,12 @@
 
   .sms-readiness-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sms-readiness-actions,
+  .sms-readiness-banner {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .sms-group-filter,

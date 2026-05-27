@@ -185,12 +185,14 @@ export function LabsPage() {
     status: 'received' | 'reviewed' | 'completed' | 'cancelled';
     resultSource: ResultSource;
     resultsProcessedDate: string;
+    resultFlag: ResultFlagType;
     changeReason: string;
   }>({
     results: '',
     status: 'received',
     resultSource: 'manual',
     resultsProcessedDate: toDateInputValue(),
+    resultFlag: 'none',
     changeReason: '',
   });
 
@@ -224,7 +226,7 @@ export function LabsPage() {
     setLoading(true);
     try {
       const [ordersRes, patientsRes, providersRes] = await Promise.all([
-        fetchOrders(session.tenantId, session.accessToken),
+        fetchOrders(session.tenantId, session.accessToken, { limit: 500 }),
         fetchPatients(session.tenantId, session.accessToken),
         fetchProviders(session.tenantId, session.accessToken),
       ]);
@@ -253,9 +255,15 @@ export function LabsPage() {
   // Handle URL query parameters on initial load
   useEffect(() => {
     const tabParam = searchParams.get('tab');
+    const patientIdParam = searchParams.get('patientId');
     const parsed = parseLabsTab(tabParam);
     setMainTab(parsed.mainTab);
     setSubTab(parsed.subTab);
+    if (patientIdParam) {
+      setFilters((current) => (
+        current.patient === patientIdParam ? current : { ...current, patient: patientIdParam }
+      ));
+    }
   }, [searchParams]);
 
   const handleCreateEntry = async () => {
@@ -509,6 +517,7 @@ export function LabsPage() {
       status: resultStatus,
       resultSource: item.resultSource || 'manual',
       resultsProcessedDate: toDateInputValue(item.resultsProcessed),
+      resultFlag: item.resultFlag || 'none',
       changeReason: '',
     });
     setShowResultUpdateModal(true);
@@ -542,6 +551,7 @@ export function LabsPage() {
           status: resultUpdateData.status,
           resultSource: resultUpdateData.resultSource,
           resultsProcessedAt: processedIso,
+          resultFlag: resultUpdateData.resultFlag,
           changeReason: resultUpdateData.changeReason.trim() || undefined,
         }
       );
@@ -1547,6 +1557,21 @@ export function LabsPage() {
                   />
                 </div>
 
+                <div className="form-field">
+                  <label>Result Flag</label>
+                  <ResultFlagSelect
+                    value={resultUpdateData.resultFlag}
+                    onChange={(flag) => setResultUpdateData({ ...resultUpdateData, resultFlag: flag })}
+                  />
+                  {['cancerous', 'panic_value', 'precancerous', 'abnormal', 'high', 'out_of_range'].includes(resultUpdateData.resultFlag) && (
+                    <small style={{ display: 'block', color: '#92400e', marginTop: '0.35rem' }}>
+                      Abnormal flags create a Clinical Inbox follow-up and hold the portal release for provider review.
+                    </small>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-row">
                 <div className="form-field">
                   <label>{selectedItemForResult.results ? 'Change Reason *' : 'Change Reason'}</label>
                   <input

@@ -159,7 +159,7 @@ describe('LabsPage', () => {
 
     // Check that API was called to load orders
     await waitFor(() => {
-      expect(apiMocks.fetchOrders).toHaveBeenCalledWith('tenant-1', 'token-1');
+      expect(apiMocks.fetchOrders).toHaveBeenCalledWith('tenant-1', 'token-1', { limit: 500 });
     });
   });
 

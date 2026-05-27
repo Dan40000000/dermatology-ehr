@@ -16,6 +16,7 @@ import { ActiveMedicationsCard } from '../components/prescriptions';
 import { PharmacySearch, type Pharmacy } from '../components/prescriptions/PharmacySearch';
 import { CoverageSummaryCard } from '../components/Insurance/CoverageSummaryCard';
 import { InsuranceLookupPanel } from '../components/workflows';
+import { ResultFlagBadge } from '../components/ResultFlagBadge';
 import { hasAnyRole, hasRole } from '../utils/roles';
 import { formatPhoneDisplay } from '../utils/phone';
 import {
@@ -2451,6 +2452,7 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
   const getStatusClass = (status?: string) => {
     if (!status) return 'pending';
     if (['completed', 'closed'].includes(status)) return 'established';
+    if (['received', 'reviewed'].includes(status)) return 'active';
     if (['pending', 'draft', 'open', 'sent', 'in-progress', 'ordered'].includes(status)) return 'pending';
     return 'inactive';
   };
@@ -2489,6 +2491,8 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
               <th>Status</th>
               <th>Priority</th>
               <th>Details</th>
+              <th>Result</th>
+              <th>Flag</th>
               <th>Provider</th>
             </tr>
           </thead>
@@ -2505,6 +2509,21 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
                 <td>{order.priority || 'normal'}</td>
                 <td style={{ maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {order.details || '—'}
+                </td>
+                <td style={{ maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={order.results || undefined}>
+                  {order.results ? (
+                    <span>
+                      {order.results}
+                      {order.resultsProcessed ? (
+                        <small style={{ display: 'block', color: '#6b7280', marginTop: '0.15rem' }}>
+                          Processed {new Date(order.resultsProcessed).toLocaleDateString()}
+                        </small>
+                      ) : null}
+                    </span>
+                  ) : '—'}
+                </td>
+                <td>
+                  <ResultFlagBadge flag={order.resultFlag || 'none'} size="sm" />
                 </td>
                 <td>{order.providerName || 'Unknown'}</td>
               </tr>

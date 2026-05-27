@@ -9,6 +9,10 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { logger } from '../lib/logger';
+import {
+  ensureOrderResultFollowUpTask,
+  mirrorOrderResultToPatientObservation,
+} from '../services/orderResultWorkflow';
 
 const router = Router();
 
@@ -59,7 +63,17 @@ router.patch('/orders/:id', requireAuth, requireRoles(['provider', 'admin']), as
 
     // Get current flag for audit
     const currentResult = await client.query(
-      `SELECT result_flag FROM orders WHERE id = $1 AND tenant_id = $2`,
+      `SELECT
+         id,
+         result_flag,
+         patient_id,
+         encounter_id,
+         type,
+         details,
+         results,
+         results_processed_at
+       FROM orders
+       WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );
 
@@ -68,7 +82,8 @@ router.patch('/orders/:id', requireAuth, requireRoles(['provider', 'admin']), as
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const oldFlag = currentResult.rows[0].result_flag;
+    const currentOrder = currentResult.rows[0];
+    const oldFlag = currentOrder.result_flag;
 
     // Update the order
     const updateResult = await client.query(
@@ -96,6 +111,22 @@ router.patch('/orders/:id', requireAuth, requireRoles(['provider', 'admin']), as
       oldFlag,
       newFlag: resultFlag,
       userId
+    });
+
+    await mirrorOrderResultToPatientObservation({
+      tenantId,
+      order: currentOrder,
+      resultText: currentOrder.results || null,
+      resultFlag,
+      resultsProcessedAt: currentOrder.results_processed_at,
+      userId,
+    });
+    await ensureOrderResultFollowUpTask({
+      tenantId,
+      order: currentOrder,
+      resultFlag,
+      resultText: currentOrder.results || null,
+      userId,
     });
 
     res.json(updateResult.rows[0]);

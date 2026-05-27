@@ -110,7 +110,8 @@ export function PortalHealthRecordPage() {
 
   const getAbnormalColor = (flag: string) => {
     const f = flag?.toLowerCase() || '';
-    if (f === 'h' || f === 'high' || f === 'hh') return '#dc2626';
+    if (['h', 'high', 'hh', 'cancerous', 'panic_value', 'critical'].includes(f)) return '#dc2626';
+    if (['abnormal', 'precancerous', 'out_of_range', 'inconclusive'].includes(f)) return '#f59e0b';
     if (f === 'l' || f === 'low' || f === 'll') return '#2563eb';
     return '#10b981';
   };

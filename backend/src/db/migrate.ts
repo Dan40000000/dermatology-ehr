@@ -13629,6 +13629,40 @@ Consider age-appropriate treatments and include family counseling points.',
      WHERE module_access ? 'inventory';
     `,
   },
+  {
+    name: "195_patient_observations_base_table",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS patient_observations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      document_id TEXT,
+      observation_code TEXT,
+      observation_name TEXT,
+      observation_value TEXT,
+      value_type TEXT,
+      units TEXT,
+      reference_range TEXT,
+      abnormal_flag TEXT,
+      observation_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      status TEXT NOT NULL DEFAULT 'final',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_observations_tenant_patient
+      ON patient_observations(tenant_id, patient_id, observation_date DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_patient_observations_status
+      ON patient_observations(tenant_id, status);
+
+    CREATE INDEX IF NOT EXISTS idx_patient_observations_abnormal
+      ON patient_observations(tenant_id, abnormal_flag)
+      WHERE abnormal_flag IS NOT NULL;
+    `,
+  },
 
 ];
 

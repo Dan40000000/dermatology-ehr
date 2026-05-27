@@ -325,6 +325,44 @@ describe('ClinicalInboxPage', () => {
     expect(within(detailPanel).getByText('No item selected')).toBeInTheDocument();
   });
 
+  it('keeps received abnormal lab and pathology results in the results queue', async () => {
+    apiMocks.fetchOrders.mockResolvedValueOnce({
+      orders: [
+        {
+          id: 'order-critical',
+          patientId: 'patient-6',
+          patientName: 'Lisa Brown',
+          patientMrn: 'MRN-6',
+          type: 'pathology',
+          status: 'received',
+          priority: 'routine',
+          details: 'Shave biopsy - left upper back',
+          results: 'Melanoma confirmed on pathology.',
+          resultFlag: 'cancerous',
+          resultsProcessed: '2026-05-26T12:00:00.000Z',
+          createdAt: '2026-05-16T11:00:00.000Z',
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/clinical-inbox?queue=results']}>
+        <ClinicalInboxPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Critical PATHOLOGY result')).toBeInTheDocument();
+    expect(screen.getAllByText('Melanoma confirmed on pathology. | Shave biopsy - left upper back').length).toBeGreaterThan(0);
+    expect(apiMocks.fetchOrders).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({
+        statuses: ['pending', 'open', 'in-progress', 'ordered', 'sent', 'received', 'reviewed'],
+        limit: 500,
+      }),
+    );
+  });
+
   it('executes source-specific actions for messages, tasks, results, orders, texts, and faxes', async () => {
     render(
       <MemoryRouter initialEntries={['/clinical-inbox']}>

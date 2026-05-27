@@ -1692,6 +1692,7 @@ export const updateOrderResult = (
     status?: string;
     resultSource?: 'manual' | 'lab_interface' | 'fax' | 'outside_lab' | 'correction';
     resultsProcessedAt?: string | null;
+    resultFlag?: string;
     changeReason?: string;
   }
 ) => authedPost(tenantId, accessToken, `/api/orders/${id}/result`, data);

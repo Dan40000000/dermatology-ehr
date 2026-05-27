@@ -9,6 +9,10 @@ import { auditLog } from "../services/audit";
 import { logger } from "../lib/logger";
 import { createChargeForOrder } from "../services/orderChargeService";
 import {
+  ensureOrderResultFollowUpTask,
+  mirrorOrderResultToPatientObservation,
+} from "../services/orderResultWorkflow";
+import {
   ORDER_STATUSES,
   immutableEncounterErrorMessage,
   isImmutableEncounterStatus,
@@ -39,11 +43,26 @@ const orderStatusSchema = z.object({
   status: z.enum(ORDER_STATUSES),
 });
 
+const resultFlagValues = [
+  "benign",
+  "inconclusive",
+  "precancerous",
+  "cancerous",
+  "normal",
+  "abnormal",
+  "low",
+  "high",
+  "out_of_range",
+  "panic_value",
+  "none",
+] as const;
+
 const orderResultSchema = z.object({
   results: z.string().trim().max(4000).optional(),
   status: z.enum(ORDER_STATUSES).optional(),
   resultSource: z.enum(["manual", "lab_interface", "fax", "outside_lab", "correction"]).optional(),
   resultsProcessedAt: z.string().datetime().optional().nullable(),
+  resultFlag: z.enum(resultFlagValues).optional(),
   changeReason: z.string().trim().max(500).optional(),
 }).refine(
   (data) =>
@@ -51,6 +70,7 @@ const orderResultSchema = z.object({
     data.status !== undefined ||
     data.resultSource !== undefined ||
     data.resultsProcessedAt !== undefined ||
+    data.resultFlag !== undefined ||
     data.changeReason !== undefined,
   { message: "At least one result field is required" },
 );
@@ -327,7 +347,7 @@ ordersRouter.post("/:id/result", requireAuth, requireRoles(["provider", "ma", "n
   const resultPayload = parsed.data;
 
   const existingResult = await pool.query(
-    `select id, status, results, result_source, results_processed_at
+    `select id, status, results, result_source, results_processed_at, result_flag, patient_id, encounter_id, type, details
        from orders
       where id = $1 and tenant_id = $2`,
     [orderId, tenantId],
@@ -342,6 +362,7 @@ ordersRouter.post("/:id/result", requireAuth, requireRoles(["provider", "ma", "n
   const status = normalizeWorkflowStatus(
     resultPayload.status || (results ? "received" : existingOrder.status),
   );
+  const resultFlag = resultPayload.resultFlag || existingOrder.result_flag || null;
   const resultsProcessedAt =
     resultPayload.resultsProcessedAt !== undefined
       ? resultPayload.resultsProcessedAt
@@ -359,8 +380,11 @@ ordersRouter.post("/:id/result", requireAuth, requireRoles(["provider", "ma", "n
             results_processed_at = $4,
             result_updated_at = now(),
             result_updated_by = $5,
-            result_change_reason = $6
-      where id = $7 and tenant_id = $8
+            result_change_reason = $6,
+            result_flag = $7::result_flag_type,
+            result_flag_updated_at = CASE WHEN $7::result_flag_type IS DISTINCT FROM result_flag THEN now() ELSE result_flag_updated_at END,
+            result_flag_updated_by = CASE WHEN $7::result_flag_type IS DISTINCT FROM result_flag THEN $5 ELSE result_flag_updated_by END
+      where id = $8 and tenant_id = $9
       returning
         id,
         encounter_id as "encounterId",
@@ -391,13 +415,31 @@ ordersRouter.post("/:id/result", requireAuth, requireRoles(["provider", "ma", "n
       resultsProcessedAt,
       req.user!.id,
       resultPayload.changeReason || null,
+      resultFlag,
       orderId,
       tenantId,
     ],
   );
 
+  const updatedOrder = updated.rows[0];
+  await mirrorOrderResultToPatientObservation({
+    tenantId,
+    order: existingOrder,
+    resultText: results,
+    resultFlag,
+    resultsProcessedAt,
+    userId: req.user!.id,
+  });
+  await ensureOrderResultFollowUpTask({
+    tenantId,
+    order: existingOrder,
+    resultFlag,
+    resultText: results,
+    userId: req.user!.id,
+  });
+
   await auditLog(tenantId, req.user?.id ?? "unknown", "order_result_update", "order", String(orderId));
-  res.json({ order: updated.rows[0] });
+  res.json({ order: updatedOrder });
 });
 
 ordersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "ma", "admin"]), async (req: AuthedRequest, res) => {

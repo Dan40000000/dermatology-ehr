@@ -133,6 +133,9 @@ const PRIORITY_WEIGHT: Record<InboxPriority, number> = {
   low: 1,
 };
 
+const ACTIONABLE_RESULT_FLAGS = new Set(['cancerous', 'panic_value', 'precancerous', 'abnormal', 'high', 'out_of_range']);
+const RESULT_ORDER_TYPES = new Set(['lab', 'pathology', 'biopsy', 'radiology', 'dermpath']);
+
 const todayIsoDate = () => new Date().toISOString().slice(0, 10);
 
 const isOpenStatus = (status?: string | null) => {
@@ -218,7 +221,37 @@ const taskPatientName = (task: Task) =>
   normalizeName((task as any).patientFirstName, (task as any).patientLastName) || undefined;
 
 const orderSummary = (order: Order) =>
-  [order.details, order.notes].map((part) => String(part || '').trim()).filter(Boolean).join(' | ') || `${order.type} order`;
+  [order.results, order.details, order.notes].map((part) => String(part || '').trim()).filter(Boolean).join(' | ') || `${order.type} order`;
+
+const isResultOrderType = (order: Order) => RESULT_ORDER_TYPES.has(String(order.type || '').toLowerCase());
+
+const isActionableResultOrder = (order: Order) => {
+  const resultFlag = String(order.resultFlag || '').toLowerCase();
+  return Boolean(order.results) && ACTIONABLE_RESULT_FLAGS.has(resultFlag);
+};
+
+const shouldShowOrderInInbox = (order: Order) => {
+  const status = String(order.status || '').toLowerCase();
+  if (['completed', 'closed', 'cancelled', 'canceled'].includes(status)) return false;
+  if (status === 'reviewed') return isActionableResultOrder(order);
+  return isOpenStatus(order.status) || isActionableResultOrder(order);
+};
+
+const orderPriority = (order: Order): InboxPriority => {
+  const resultFlag = String(order.resultFlag || '').toLowerCase();
+  if (['cancerous', 'panic_value'].includes(resultFlag)) return 'critical';
+  if (ACTIONABLE_RESULT_FLAGS.has(resultFlag)) return 'urgent';
+  return normalizePriority(order.priority);
+};
+
+const orderTitle = (order: Order) => {
+  const type = String(order.type || 'Order').toUpperCase();
+  if (!order.results) return `${type} order`;
+  const resultFlag = String(order.resultFlag || '').toLowerCase();
+  if (['cancerous', 'panic_value'].includes(resultFlag)) return `Critical ${type} result`;
+  if (ACTIONABLE_RESULT_FLAGS.has(resultFlag)) return `Abnormal ${type} result`;
+  return `${type} result ready`;
+};
 
 const getBiopsyQueueItems = (biopsy: any): BiopsySafetyItem[] => {
   const queues = biopsy?.queues || {};
@@ -360,16 +393,20 @@ const toOrderItem = (order: Order): ClinicalInboxItem => ({
   id: `order-${order.id}`,
   source: 'order',
   sourceId: order.id,
-  queue: ['lab', 'pathology', 'biopsy', 'radiology'].includes(String(order.type || '').toLowerCase()) ? 'results' : 'clinical',
-  title: `${String(order.type || 'Order').toUpperCase()} order`,
+  queue: isResultOrderType(order) ? 'results' : 'clinical',
+  title: orderTitle(order),
   summary: orderSummary(order),
   patientId: order.patientId,
-  priority: normalizePriority(order.priority),
+  patientName: order.patientName,
+  patientMrn: order.patientMrn,
+  priority: orderPriority(order),
   status: order.status || 'pending',
   ownerName: order.providerName,
-  updatedAt: order.createdAt,
-  route: '/orders',
-  actionLabel: 'Complete order',
+  updatedAt: order.resultUpdatedAt || order.resultsProcessed || order.createdAt,
+  route: order.results
+    ? `/labs?tab=all-pending-plan&patientId=${encodeURIComponent(order.patientId)}`
+    : '/orders',
+  actionLabel: order.results ? 'Review result' : 'Complete order',
   raw: order,
 });
 
@@ -480,8 +517,8 @@ export function ClinicalInboxPage() {
         : Promise.resolve([]),
       canAccessModule(effectiveRoles, 'labs')
         ? safe('Orders', fetchOrders(session.tenantId, session.accessToken, {
-            statuses: ['pending', 'open', 'in-progress', 'ordered', 'sent'],
-            limit: 100,
+            statuses: ['pending', 'open', 'in-progress', 'ordered', 'sent', 'received', 'reviewed'],
+            limit: 500,
           }), { orders: [] })
         : Promise.resolve({ orders: [] }),
       canAccessModule(effectiveRoles, 'labs')
@@ -511,7 +548,7 @@ export function ClinicalInboxPage() {
       .filter((request: any) => ['pending', 'submitted', 'needs_info', 'error'].includes(String(request.status || '').toLowerCase()))
       .map(toPAItem);
     const orderItems = (ordersRes.orders || [])
-      .filter((order: Order) => isOpenStatus(order.status))
+      .filter((order: Order) => shouldShowOrderInInbox(order))
       .map(toOrderItem);
     const pathologyItems = biopsyRes ? getBiopsyQueueItems(biopsyRes).map(toPathologyItem) : [];
     const faxItems = (faxRes.faxes || [])
@@ -674,8 +711,12 @@ export function ClinicalInboxPage() {
         await updateTaskStatus(session.tenantId, session.accessToken, selectedItem.sourceId, 'completed');
         showSuccess('Task completed');
       } else if (selectedItem.source === 'order') {
-        await updateOrderStatus(session.tenantId, session.accessToken, selectedItem.sourceId, 'completed');
-        showSuccess('Order completed');
+        if (selectedItem.raw?.results) {
+          navigate(selectedItem.route);
+        } else {
+          await updateOrderStatus(session.tenantId, session.accessToken, selectedItem.sourceId, 'completed');
+          showSuccess('Order completed');
+        }
       } else if (selectedItem.source === 'refill') {
         await approveRefillRequest(session.tenantId, session.accessToken, selectedItem.sourceId);
         showSuccess('Refill approved');

@@ -314,6 +314,9 @@ async function hasConflict(
      where tenant_id = $1
        and provider_id = $2
        and id <> $5
+       and scheduled_start is not null
+       and scheduled_end is not null
+       and scheduled_start <= scheduled_end
        and tstzrange(scheduled_start, scheduled_end, '[)') && tstzrange($3::timestamptz, $4::timestamptz, '[)')
      limit 1`,
     [tenantId, providerId, start, end, ignoreId || "0000"],

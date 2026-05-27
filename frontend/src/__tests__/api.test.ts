@@ -158,6 +158,28 @@ describe('api.ts', () => {
     }));
   });
 
+  it('preserves clinical copilot PHI block metadata', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: vi.fn().mockResolvedValue({
+        code: 'AI_PHI_BLOCKED',
+        error: 'Potential protected health information detected in the assistant prompt.',
+        blockedTypes: ['known_patient_name'],
+      }),
+    } as Response);
+
+    await expect(
+      askClinicalCopilot(tenantId, token, {
+        prompt: 'Dominic Lopez has acne. What code should I use?',
+        patientId: 'patient-1',
+      }),
+    ).rejects.toMatchObject({
+      message: 'Potential protected health information detected in the assistant prompt.',
+      code: 'AI_PHI_BLOCKED',
+      blockedTypes: ['known_patient_name'],
+    });
+  });
+
   it('applies a clinical copilot response to chart and billing review', async () => {
     fetchMock.mockResolvedValueOnce(okResponse({ summaryId: 'summary-1' }));
 

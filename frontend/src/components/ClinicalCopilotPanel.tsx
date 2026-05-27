@@ -73,6 +73,33 @@ type AppliedResponseStatus = {
   message: string;
 };
 
+type PhiWarningState = {
+  message: string;
+  blockedTypes: string[];
+};
+
+const blockedTypeLabels: Record<string, string> = {
+  explicit_name: 'typed patient name',
+  known_patient_name: 'known patient name',
+  dob: 'date of birth',
+  date_of_birth: 'date of birth',
+  phone: 'phone number',
+  email: 'email address',
+  address: 'street address',
+  mrn: 'medical record number',
+  insurance_id: 'insurance or member ID',
+  ssn: 'Social Security number',
+  unique_feature: 'unique identifying feature',
+};
+
+function getBlockedTypeLabel(type: string): string {
+  return blockedTypeLabels[type] || type.replace(/_/g, ' ');
+}
+
+function isPhiBlockedError(error: unknown): error is Error & { code: string; blockedTypes?: string[] } {
+  return Boolean(error && typeof error === 'object' && (error as { code?: string }).code === 'AI_PHI_BLOCKED');
+}
+
 function formatConfidence(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
 }
@@ -97,6 +124,7 @@ export function ClinicalCopilotPanel({
   const [appliedResponses, setAppliedResponses] = useState<Record<number, AppliedResponseStatus>>({});
   const [savedSummaryId, setSavedSummaryId] = useState<string | null>(null);
   const [savedSummaryMessage, setSavedSummaryMessage] = useState<string | null>(null);
+  const [phiWarning, setPhiWarning] = useState<PhiWarningState | null>(null);
   const [messages, setMessages] = useState<CopilotConversationTurn[]>([]);
 
   const quickPrompts = useMemo(
@@ -127,6 +155,13 @@ export function ClinicalCopilotPanel({
     return roles.includes('provider') || roles.includes('admin');
   }, [session]);
   const patientHistoryPath = patientId ? `/patients/${patientId}?tab=scribe` : '';
+
+  const showPhiWarning = (error: Error & { blockedTypes?: string[] }) => {
+    setPhiWarning({
+      message: error.message || 'Potential protected health information was detected before the AI request could be sent.',
+      blockedTypes: Array.isArray(error.blockedTypes) ? error.blockedTypes : [],
+    });
+  };
 
   const submitPrompt = async (nextPrompt?: string) => {
     const text = (nextPrompt ?? prompt).trim();
@@ -159,8 +194,13 @@ export function ClinicalCopilotPanel({
         },
       ]);
     } catch (error: any) {
-      showError(error.message || 'Failed to get clinical copilot response');
       setMessages((prev) => prev.slice(0, -1));
+      if (isPhiBlockedError(error)) {
+        setPrompt(text);
+        showPhiWarning(error);
+        return;
+      }
+      showError(error.message || 'Failed to get clinical copilot response');
     } finally {
       setLoading(false);
     }
@@ -204,6 +244,10 @@ export function ClinicalCopilotPanel({
         },
       } : undefined);
     } catch (error: any) {
+      if (isPhiBlockedError(error)) {
+        showPhiWarning(error);
+        return;
+      }
       showError(error.message || 'Failed to save visit summary to patient history');
     } finally {
       setSavingSummary(false);
@@ -250,6 +294,10 @@ export function ClinicalCopilotPanel({
         },
       } : undefined);
     } catch (error: any) {
+      if (isPhiBlockedError(error)) {
+        showPhiWarning(error);
+        return;
+      }
       showError(error.message || 'Failed to apply AI assistant response');
     } finally {
       setApplyingResponseIndex(null);
@@ -257,7 +305,166 @@ export function ClinicalCopilotPanel({
   };
 
   return (
-    <section style={shellStyle} aria-label="AI Assistant">
+    <>
+      {phiWarning && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="clinical-copilot-phi-warning-title"
+          aria-describedby="clinical-copilot-phi-warning-description"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            background: 'rgba(127, 29, 29, 0.92)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1.25rem',
+          }}
+        >
+          <div
+            style={{
+              width: 'min(920px, 100%)',
+              maxHeight: 'min(92vh, 860px)',
+              overflowY: 'auto',
+              background: '#ffffff',
+              borderRadius: 18,
+              border: '5px solid #dc2626',
+              boxShadow: '0 30px 90px rgba(15, 23, 42, 0.42)',
+              padding: compact ? '1.35rem' : '1.7rem',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+              <div
+                aria-hidden="true"
+                style={{
+                  flex: '0 0 auto',
+                  width: 58,
+                  height: 58,
+                  borderRadius: '50%',
+                  background: '#dc2626',
+                  color: '#ffffff',
+                  display: 'grid',
+                  placeItems: 'center',
+                  fontSize: '2rem',
+                  fontWeight: 900,
+                  lineHeight: 1,
+                }}
+              >
+                !
+              </div>
+              <div>
+                <div
+                  style={{
+                    color: '#991b1b',
+                    fontSize: '0.82rem',
+                    fontWeight: 900,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    marginBottom: 6,
+                  }}
+                >
+                  AI Request Stopped
+                </div>
+                <h2
+                  id="clinical-copilot-phi-warning-title"
+                  style={{
+                    margin: 0,
+                    color: '#7f1d1d',
+                    fontSize: compact ? '1.7rem' : '2.15rem',
+                    lineHeight: 1.05,
+                    fontWeight: 900,
+                  }}
+                >
+                  Possible HIPAA Violation Blocked
+                </h2>
+              </div>
+            </div>
+
+            <div
+              id="clinical-copilot-phi-warning-description"
+              style={{
+                marginTop: 18,
+                padding: '1rem 1.1rem',
+                borderRadius: 14,
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#7f1d1d',
+                fontSize: '1rem',
+                lineHeight: 1.55,
+                fontWeight: 700,
+              }}
+            >
+              {phiWarning.message} Your message was not sent to the AI model. Close this warning, remove the identifying information, and submit again.
+            </div>
+
+            {phiWarning.blockedTypes.length > 0 && (
+              <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {phiWarning.blockedTypes.map((type) => (
+                  <span
+                    key={type}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      borderRadius: 999,
+                      background: '#fee2e2',
+                      color: '#991b1b',
+                      border: '1px solid #fca5a5',
+                      padding: '0.38rem 0.7rem',
+                      fontSize: '0.82rem',
+                      fontWeight: 800,
+                    }}
+                  >
+                    Detected: {getBlockedTypeLabel(type)}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 1fr', gap: 14, marginTop: 18 }}>
+              <div style={{ border: '1px solid #fecaca', borderRadius: 14, padding: '1rem', background: '#fff7f7' }}>
+                <div style={{ color: '#991b1b', fontWeight: 900, marginBottom: 8 }}>Do not type</div>
+                <ul style={{ margin: 0, paddingLeft: 20, color: '#334155', lineHeight: 1.55 }}>
+                  <li>Patient names, initials, DOBs, MRNs, phone numbers, emails, addresses, insurance IDs, or account numbers.</li>
+                  <li>Photos, employer details, family details, tattoos, scars, or other unique features that could identify a person.</li>
+                  <li>Rare combinations of facts that point to one specific patient.</li>
+                </ul>
+              </div>
+              <div style={{ border: '1px solid #bbf7d0', borderRadius: 14, padding: '1rem', background: '#f0fdf4' }}>
+                <div style={{ color: '#166534', fontWeight: 900, marginBottom: 8 }}>Use instead</div>
+                <ul style={{ margin: 0, paddingLeft: 20, color: '#334155', lineHeight: 1.55 }}>
+                  <li>Say "the patient," "this encounter," or "adult patient" instead of a name.</li>
+                  <li>Ask clinical or billing questions without identifiers, such as "What CPT code fits this rash visit?"</li>
+                  <li>Use the linked chart context instead of typing private details into the chat box.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 18, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setPhiWarning(null)}
+                autoFocus
+                style={{
+                  border: 'none',
+                  borderRadius: 12,
+                  background: '#dc2626',
+                  color: '#ffffff',
+                  padding: '0.85rem 1.15rem',
+                  fontWeight: 900,
+                  fontSize: '0.98rem',
+                  cursor: 'pointer',
+                }}
+              >
+                I Understand - Edit Message
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section style={shellStyle} aria-label="AI Assistant">
       <div style={{ padding: compact ? '1rem 1rem 0.85rem' : '1.1rem 1.15rem 0.9rem', borderBottom: '1px solid #e5eefb' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
           <div>
@@ -567,6 +774,7 @@ export function ClinicalCopilotPanel({
           </button>
         </div>
       </div>
-    </section>
+      </section>
+    </>
   );
 }

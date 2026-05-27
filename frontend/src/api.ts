@@ -7052,6 +7052,25 @@ function extractClinicalCopilotError(payload: any, fallback: string): string {
   return validationMessages[0] || fallback;
 }
 
+export class ClinicalCopilotApiError extends Error {
+  code?: string;
+  blockedTypes?: string[];
+
+  constructor(message: string, payload?: any) {
+    super(message);
+    this.name = 'ClinicalCopilotApiError';
+    this.code = typeof payload?.code === 'string' ? payload.code : undefined;
+    this.blockedTypes = Array.isArray(payload?.blockedTypes)
+      ? payload.blockedTypes.filter((item: unknown): item is string => typeof item === 'string')
+      : undefined;
+    Object.setPrototypeOf(this, ClinicalCopilotApiError.prototype);
+  }
+}
+
+function buildClinicalCopilotError(payload: any, fallback: string): ClinicalCopilotApiError {
+  return new ClinicalCopilotApiError(extractClinicalCopilotError(payload, fallback), payload);
+}
+
 /**
  * Start a new recording session
  */
@@ -7529,7 +7548,7 @@ export async function askClinicalCopilot(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(extractClinicalCopilotError(err, 'Failed to get clinical copilot response'));
+    throw buildClinicalCopilotError(err, 'Failed to get clinical copilot response');
   }
 
   return res.json();
@@ -7563,7 +7582,7 @@ export async function saveClinicalCopilotVisitSummary(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(extractClinicalCopilotError(err, 'Failed to save clinical copilot visit summary'));
+    throw buildClinicalCopilotError(err, 'Failed to save clinical copilot visit summary');
   }
 
   return res.json();
@@ -7596,7 +7615,7 @@ export async function applyClinicalCopilotResponse(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(extractClinicalCopilotError(err, 'Failed to apply clinical copilot response'));
+    throw buildClinicalCopilotError(err, 'Failed to apply clinical copilot response');
   }
 
   return res.json();

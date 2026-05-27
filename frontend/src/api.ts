@@ -5007,6 +5007,93 @@ export interface SMSSettings {
   updatedAt?: string;
 }
 
+export interface SMSReadinessGate {
+  key: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface SMSReadiness {
+  settings: {
+    isActive: boolean;
+    isTestMode: boolean;
+    twilioPhoneNumber?: string;
+    appointmentRemindersEnabled: boolean;
+    allowPatientReplies: boolean;
+    hasCredentials: boolean;
+    updatedAt?: string;
+  } | null;
+  environment: {
+    nodeEnv: string;
+    liveSendEnabled: boolean;
+    inboundSimulationEnabled: boolean;
+  };
+  twilio: {
+    connection: { success: boolean; accountName?: string; error?: string } | null;
+    phoneNumber: {
+      phoneNumber?: string;
+      friendlyName?: string;
+      capabilities?: Record<string, boolean> | string[];
+      smsUrl?: string;
+      statusCallback?: string;
+    } | null;
+    messaging?: {
+      services?: Array<{
+        sidSuffix: string;
+        friendlyName?: string;
+        usAppToPersonRegistered?: boolean;
+        includesConfiguredPhone?: boolean;
+        campaigns?: Array<{
+          sidSuffix: string;
+          campaignStatus: string;
+          campaignId?: string;
+          usecase?: string;
+          errors?: unknown[];
+        }>;
+        errors?: string[];
+      }>;
+      brandRegistrations?: Array<{
+        sidSuffix: string;
+        status?: string;
+        identityStatus?: string;
+        brandType?: string;
+        errors?: unknown[];
+      }>;
+      errors?: string[];
+    } | null;
+    errors: string[];
+  };
+  a2p: {
+    brandStatus: string | null;
+    campaignStatus: string | null;
+    verified: boolean;
+    campaigns: Array<{
+      sidSuffix: string;
+      campaignStatus: string;
+      campaignId?: string;
+      usecase?: string;
+      errors?: unknown[];
+    }>;
+  };
+  recentTraffic: {
+    total: number;
+    outbound: number;
+    inbound: number;
+    mockMessages: number;
+    twilioMessages: number;
+    lastMessageAt?: string | null;
+    statusBreakdown: Array<{ status: string; count: number }>;
+  };
+  consent: {
+    total: number;
+    optedIn: number;
+    optedOut: number;
+  };
+  gates: SMSReadinessGate[];
+  readyForLiveSend: boolean;
+}
+
 export interface SMSAutoResponse {
   id: string;
   keyword: string;
@@ -5085,6 +5172,21 @@ export async function fetchSMSSettings(
     credentials: 'include',
   });
   if (!res.ok) throw new Error('Failed to fetch SMS settings');
+  return res.json();
+}
+
+export async function fetchSMSReadiness(
+  tenantId: string,
+  accessToken: string
+): Promise<SMSReadiness> {
+  const res = await fetch(`${API_BASE}/api/sms/readiness`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch SMS readiness');
   return res.json();
 }
 

@@ -55,6 +55,52 @@ export interface PlaceVoiceCallResult {
   price?: string;
 }
 
+export interface TwilioMessagingServiceCampaign {
+  sid: string;
+  sidSuffix: string;
+  campaignStatus: string;
+  campaignId?: string;
+  brandRegistrationSid?: string;
+  usecase?: string;
+  description?: string;
+  errors?: any[];
+  dateUpdated?: Date;
+}
+
+export interface TwilioMessagingServiceSummary {
+  sid: string;
+  sidSuffix: string;
+  friendlyName?: string;
+  usecase?: string;
+  usAppToPersonRegistered?: boolean;
+  inboundRequestUrl?: string | null;
+  statusCallback?: string | null;
+  includesConfiguredPhone?: boolean;
+  phoneNumbers: Array<{
+    phoneNumber: string;
+    capabilities?: string[];
+  }>;
+  campaigns: TwilioMessagingServiceCampaign[];
+  errors?: string[];
+}
+
+export interface TwilioBrandRegistrationSummary {
+  sid: string;
+  sidSuffix: string;
+  status?: string;
+  identityStatus?: string;
+  brandType?: string;
+  failureReason?: string;
+  errors?: any[];
+  dateUpdated?: Date;
+}
+
+export interface TwilioMessagingReadiness {
+  services: TwilioMessagingServiceSummary[];
+  brandRegistrations: TwilioBrandRegistrationSummary[];
+  errors: string[];
+}
+
 export class TwilioService {
   private client: Twilio;
   private accountSid: string;
@@ -378,6 +424,99 @@ export class TwilioService {
   }
 
   /**
+   * Fetch non-secret messaging registration details for production readiness checks.
+   */
+  async getMessagingReadiness(configuredPhoneNumber?: string): Promise<TwilioMessagingReadiness> {
+    const errors: string[] = [];
+    const configuredDigits = normalizePhoneDigits(configuredPhoneNumber);
+
+    let brandRegistrations: TwilioBrandRegistrationSummary[] = [];
+    try {
+      const brands = await this.client.messaging.v1.brandRegistrations.list({ limit: 20 });
+      brandRegistrations = brands.map((brand: any) => ({
+        sid: brand.sid,
+        sidSuffix: sidSuffix(brand.sid),
+        status: brand.status,
+        identityStatus: brand.identityStatus,
+        brandType: brand.brandType,
+        failureReason: brand.failureReason || undefined,
+        errors: brand.errors || [],
+        dateUpdated: brand.dateUpdated,
+      }));
+    } catch (error: any) {
+      errors.push(`Brand registration lookup failed: ${error.message}`);
+    }
+
+    let services: any[] = [];
+    try {
+      services = await this.client.messaging.v1.services.list({ limit: 20 });
+    } catch (error: any) {
+      errors.push(`Messaging service lookup failed: ${error.message}`);
+    }
+
+    const serviceSummaries = await Promise.all(
+      services.map(async (service: any): Promise<TwilioMessagingServiceSummary> => {
+        const serviceErrors: string[] = [];
+        let phoneNumbers: Array<{ phoneNumber: string; capabilities?: string[] }> = [];
+        let campaigns: TwilioMessagingServiceCampaign[] = [];
+
+        try {
+          const servicePhoneNumbers = await this.client.messaging.v1
+            .services(service.sid)
+            .phoneNumbers.list({ limit: 50 });
+          phoneNumbers = servicePhoneNumbers.map((phoneNumber: any) => ({
+            phoneNumber: phoneNumber.phoneNumber,
+            capabilities: phoneNumber.capabilities,
+          }));
+        } catch (error: any) {
+          serviceErrors.push(`Phone number lookup failed: ${error.message}`);
+        }
+
+        try {
+          const serviceCampaigns = await this.client.messaging.v1
+            .services(service.sid)
+            .usAppToPerson.list({ limit: 20 });
+          campaigns = serviceCampaigns.map((campaign: any) => ({
+            sid: campaign.sid,
+            sidSuffix: sidSuffix(campaign.sid),
+            campaignStatus: campaign.campaignStatus,
+            campaignId: campaign.campaignId,
+            brandRegistrationSid: campaign.brandRegistrationSid,
+            usecase: campaign.usAppToPersonUsecase,
+            description: campaign.description,
+            errors: campaign.errors || [],
+            dateUpdated: campaign.dateUpdated,
+          }));
+        } catch (error: any) {
+          serviceErrors.push(`A2P campaign lookup failed: ${error.message}`);
+        }
+
+        return {
+          sid: service.sid,
+          sidSuffix: sidSuffix(service.sid),
+          friendlyName: service.friendlyName,
+          usecase: service.usecase,
+          usAppToPersonRegistered: service.usAppToPersonRegistered,
+          inboundRequestUrl: service.inboundRequestUrl || null,
+          statusCallback: service.statusCallback || null,
+          includesConfiguredPhone: configuredDigits
+            ? phoneNumbers.some((phoneNumber) => normalizePhoneDigits(phoneNumber.phoneNumber) === configuredDigits)
+            : undefined,
+          phoneNumbers,
+          campaigns,
+          errors: serviceErrors,
+        };
+      })
+    );
+
+    return {
+      services: serviceSummaries,
+      brandRegistrations,
+      errors,
+    };
+  }
+
+  /**
    * Calculate SMS segment count (for cost estimation)
    * Standard SMS: 160 characters per segment
    * Unicode SMS: 70 characters per segment
@@ -438,4 +577,13 @@ function escapeForTwiml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function sidSuffix(sid?: string | null): string {
+  const value = sid || '';
+  return value.length > 6 ? value.slice(-6) : value;
+}
+
+function normalizePhoneDigits(value?: string | null): string {
+  return String(value || '').replace(/\D/g, '');
 }

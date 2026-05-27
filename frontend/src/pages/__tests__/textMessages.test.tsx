@@ -39,6 +39,7 @@ const apiMocks = vi.hoisted(() => ({
   exportSMSAuditLog: vi.fn(),
   fetchSMSAuditSummary: vi.fn(),
   fetchSMSSettings: vi.fn(),
+  fetchSMSReadiness: vi.fn(),
   updateSMSSettings: vi.fn(),
   fetchSMSAutoResponses: vi.fn(),
   updateSMSAutoResponse: vi.fn(),
@@ -214,6 +215,56 @@ describe('TextMessagesPage', () => {
       rescheduleTemplate: 'Reschedule body',
       isActive: true,
       isTestMode: false,
+    });
+    apiMocks.fetchSMSReadiness.mockResolvedValue({
+      settings: {
+        isActive: true,
+        isTestMode: false,
+        twilioPhoneNumber: '+15551112222',
+        appointmentRemindersEnabled: true,
+        allowPatientReplies: true,
+        hasCredentials: true,
+      },
+      environment: {
+        nodeEnv: 'test',
+        liveSendEnabled: true,
+        inboundSimulationEnabled: true,
+      },
+      twilio: {
+        connection: { success: true, accountName: 'Test Twilio' },
+        phoneNumber: { phoneNumber: '+15551112222', capabilities: { sms: true } },
+        messaging: {
+          services: [],
+          brandRegistrations: [],
+          errors: [],
+        },
+        errors: [],
+      },
+      a2p: {
+        brandStatus: 'APPROVED',
+        campaignStatus: 'VERIFIED',
+        verified: true,
+        campaigns: [],
+      },
+      recentTraffic: {
+        total: 0,
+        outbound: 0,
+        inbound: 0,
+        mockMessages: 0,
+        twilioMessages: 0,
+        lastMessageAt: null,
+        statusBreakdown: [],
+      },
+      consent: {
+        total: 0,
+        optedIn: 0,
+        optedOut: 0,
+      },
+      gates: [
+        { key: 'settings_active', label: 'SMS channel active', ok: true, detail: 'Active' },
+        { key: 'campaign', label: 'A2P campaign', ok: true, detail: 'Verified' },
+      ],
+      readyForLiveSend: true,
     });
     apiMocks.updateSMSSettings.mockResolvedValue({ success: true });
     apiMocks.simulateInboundSMSConversationMessage.mockResolvedValue({ success: true, messageId: 'in-1' });

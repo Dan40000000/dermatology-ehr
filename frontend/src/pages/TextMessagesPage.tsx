@@ -27,6 +27,7 @@ import {
   exportSMSAuditLog,
   fetchSMSAuditSummary,
   fetchSMSSettings,
+  fetchSMSReadiness,
   updateSMSSettings,
   fetchSMSAutoResponses,
   updateSMSAutoResponse,
@@ -43,6 +44,7 @@ import type {
   SMSConsent,
   SMSAuditLog,
   SMSSettings,
+  SMSReadiness,
   SMSAutoResponse,
 } from '../api';
 import '../styles/text-messages.css';
@@ -248,6 +250,7 @@ export default function TextMessagesPage() {
   const [runningFollowupRules, setRunningFollowupRules] = useState(false);
 
   const [smsSettings, setSmsSettings] = useState<SMSSettings | null>(null);
+  const [smsReadiness, setSmsReadiness] = useState<SMSReadiness | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Partial<SMSSettings>>({});
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -383,8 +386,12 @@ export default function TextMessagesPage() {
     if (!session) return;
     setSettingsLoading(true);
     try {
-      const settings = await fetchSMSSettings(session.tenantId, session.accessToken);
+      const [settings, readiness] = await Promise.all([
+        fetchSMSSettings(session.tenantId, session.accessToken),
+        fetchSMSReadiness(session.tenantId, session.accessToken),
+      ]);
       setSmsSettings(settings);
+      setSmsReadiness(readiness);
       setSettingsDraft({
         twilioPhoneNumber: settings.twilioPhoneNumber || '',
         appointmentRemindersEnabled: settings.appointmentRemindersEnabled,
@@ -399,6 +406,7 @@ export default function TextMessagesPage() {
         isTestMode: settings.isTestMode,
       });
     } catch (err: any) {
+      setSmsReadiness(null);
       showError(err.message || 'Failed to load SMS settings');
     } finally {
       setSettingsLoading(false);
@@ -1856,6 +1864,65 @@ export default function TextMessagesPage() {
         {activeTab === 'settings' && (
           <div className="sms-settings-tab">
             <h2>SMS Settings</h2>
+
+            <Panel title="Production Readiness">
+              {settingsLoading ? (
+                <p className="muted">Checking texting readiness...</p>
+              ) : smsReadiness ? (
+                <div className="sms-readiness">
+                  <div className={`sms-readiness-banner ${smsReadiness.readyForLiveSend ? 'ready' : 'blocked'}`}>
+                    <div>
+                      <strong>{smsReadiness.readyForLiveSend ? 'Live texting ready' : 'Live texting not fully enabled'}</strong>
+                      <p>
+                        {smsReadiness.readyForLiveSend
+                          ? 'Twilio registration and the Railway live-send switch are both clear.'
+                          : 'One or more gates below must pass before unrestricted production texting is live.'}
+                      </p>
+                    </div>
+                    <span>{smsReadiness.readyForLiveSend ? 'Ready' : 'Blocked'}</span>
+                  </div>
+
+                  <div className="sms-readiness-grid">
+                    {smsReadiness.gates.map(gate => (
+                      <div key={gate.key} className={`sms-readiness-gate ${gate.ok ? 'ok' : 'blocked'}`}>
+                        <div className="sms-readiness-gate-status">{gate.ok ? 'PASS' : 'CHECK'}</div>
+                        <div>
+                          <strong>{gate.label}</strong>
+                          <p>{gate.detail}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="sms-readiness-metrics">
+                    <div>
+                      <span className="sms-readiness-metric-value">{smsReadiness.consent.optedIn}</span>
+                      <span className="sms-readiness-metric-label">Opted In</span>
+                    </div>
+                    <div>
+                      <span className="sms-readiness-metric-value">{smsReadiness.recentTraffic.twilioMessages}</span>
+                      <span className="sms-readiness-metric-label">Twilio Sends</span>
+                    </div>
+                    <div>
+                      <span className="sms-readiness-metric-value">{smsReadiness.recentTraffic.mockMessages}</span>
+                      <span className="sms-readiness-metric-label">Mock Sends</span>
+                    </div>
+                    <div>
+                      <span className="sms-readiness-metric-value">{smsReadiness.a2p.campaignStatus || 'Unknown'}</span>
+                      <span className="sms-readiness-metric-label">A2P Campaign</span>
+                    </div>
+                  </div>
+
+                  {smsReadiness.twilio.errors.length > 0 && (
+                    <div className="sms-readiness-warning">
+                      {smsReadiness.twilio.errors.join(' ')}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="muted">Readiness details unavailable.</p>
+              )}
+            </Panel>
 
             <Panel title="Message Settings">
               {settingsLoading ? (

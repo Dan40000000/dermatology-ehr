@@ -80,7 +80,11 @@ function handleSmsPrivacyError(res: Response, error: unknown): boolean {
 }
 
 function shouldUseMockSms(settings: { is_test_mode?: boolean | null }): boolean {
-  return settings.is_test_mode === true || (env.nodeEnv === 'production' && process.env.SMS_LIVE_SEND_ENABLED !== 'true');
+  return settings.is_test_mode === true || !isSmsLiveSendEnabled();
+}
+
+function isSmsLiveSendEnabled(): boolean {
+  return env.nodeEnv !== 'production' || process.env.SMS_LIVE_SEND_ENABLED === 'true';
 }
 
 function normalizeSmsConversationPhone(value: unknown): string {
@@ -424,6 +428,219 @@ router.post('/test-connection', requireAuth, async (req: AuthedRequest, res: Res
   } catch (error: any) {
     logger.error('Error testing Twilio connection', { error: error.message });
     res.status(500).json({ error: 'Failed to test connection' });
+  }
+});
+
+/**
+ * GET /api/sms/readiness
+ * Non-secret SMS/Twilio readiness summary for production testing
+ */
+router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+
+    const settingsResult = await pool.query(
+      `SELECT
+        twilio_account_sid,
+        twilio_auth_token,
+        twilio_phone_number,
+        is_active,
+        is_test_mode,
+        appointment_reminders_enabled,
+        allow_patient_replies,
+        updated_at
+       FROM sms_settings
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    const settings = settingsResult.rows[0];
+    const hasCredentials = Boolean(settings?.twilio_account_sid && settings?.twilio_auth_token);
+    const appLiveSendEnabled = isSmsLiveSendEnabled();
+
+    const messageSummaryResult = await pool.query(
+      `SELECT
+         COUNT(*)::int as "total",
+         COUNT(*) FILTER (WHERE direction = 'outbound')::int as "outbound",
+         COUNT(*) FILTER (WHERE direction = 'inbound')::int as "inbound",
+         COUNT(*) FILTER (WHERE twilio_message_sid LIKE 'mock_sms_%')::int as "mockMessages",
+         COUNT(*) FILTER (WHERE twilio_message_sid LIKE 'SM%')::int as "twilioMessages",
+         MAX(created_at) as "lastMessageAt"
+       FROM sms_messages
+       WHERE tenant_id = $1
+         AND created_at >= NOW() - INTERVAL '30 days'`,
+      [tenantId]
+    );
+
+    const statusBreakdownResult = await pool.query(
+      `SELECT status, COUNT(*)::int as count
+       FROM sms_messages
+       WHERE tenant_id = $1
+         AND created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY status
+       ORDER BY status`,
+      [tenantId]
+    );
+
+    const consentSummaryResult = await pool.query(
+      `SELECT
+         COUNT(*)::int as "total",
+         COUNT(*) FILTER (WHERE opted_in = true)::int as "optedIn",
+         COUNT(*) FILTER (WHERE opted_in = false)::int as "optedOut"
+       FROM patient_sms_preferences
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    let twilioConnection: { success: boolean; accountName?: string; error?: string } | null = null;
+    let phoneNumberInfo: any = null;
+    let messagingReadiness: any = null;
+    const twilioErrors: string[] = [];
+
+    if (settings && hasCredentials) {
+      const twilioService = createTwilioService(settings.twilio_account_sid, settings.twilio_auth_token);
+      twilioConnection = await twilioService.testConnection();
+
+      if (settings.twilio_phone_number) {
+        try {
+          phoneNumberInfo = await twilioService.getPhoneNumberInfo(settings.twilio_phone_number);
+        } catch (error: any) {
+          twilioErrors.push(`Phone number check failed: ${error.message}`);
+        }
+      }
+
+      try {
+        messagingReadiness = await twilioService.getMessagingReadiness(settings.twilio_phone_number);
+      } catch (error: any) {
+        twilioErrors.push(`Messaging readiness check failed: ${error.message}`);
+      }
+    }
+
+    const matchingServices = (messagingReadiness?.services || []).filter(
+      (service: any) => service.includesConfiguredPhone
+    );
+    const relevantServices = matchingServices.length > 0
+      ? matchingServices
+      : (messagingReadiness?.services || []);
+    const campaigns = relevantServices.flatMap((service: any) => service.campaigns || []);
+    const verifiedCampaign = campaigns.find(
+      (campaign: any) => String(campaign.campaignStatus || '').toUpperCase() === 'VERIFIED'
+    );
+    const approvedBrand = (messagingReadiness?.brandRegistrations || []).find(
+      (brand: any) => String(brand.status || '').toUpperCase() === 'APPROVED'
+    );
+
+    const smsCapable = Boolean(phoneNumberInfo?.capabilities?.sms || phoneNumberInfo?.capabilities?.SMS);
+    const gates = [
+      {
+        key: 'settings_active',
+        label: 'SMS channel active',
+        ok: Boolean(settings?.is_active),
+        detail: settings?.is_active ? 'Tenant SMS settings are active.' : 'Tenant SMS settings are disabled.',
+      },
+      {
+        key: 'production_mode',
+        label: 'Production mode',
+        ok: Boolean(settings && settings.is_test_mode === false),
+        detail: settings?.is_test_mode === false
+          ? 'SMS settings are not in test mode.'
+          : 'SMS settings are still in test mode.',
+      },
+      {
+        key: 'credentials',
+        label: 'Twilio credentials',
+        ok: hasCredentials && Boolean(twilioConnection?.success),
+        detail: twilioConnection?.success
+          ? `Twilio account reachable: ${twilioConnection.accountName || 'connected'}.`
+          : twilioConnection?.error || 'Twilio credentials are missing or not reachable.',
+      },
+      {
+        key: 'phone_number',
+        label: 'SMS-capable number',
+        ok: smsCapable,
+        detail: smsCapable
+          ? `${settings?.twilio_phone_number || 'Configured number'} is SMS capable.`
+          : 'Configured number was not confirmed as SMS capable.',
+      },
+      {
+        key: 'brand',
+        label: 'A2P brand',
+        ok: Boolean(approvedBrand),
+        detail: approvedBrand
+          ? `Brand approved (${approvedBrand.sidSuffix}).`
+          : 'No approved A2P brand found from Twilio readiness check.',
+      },
+      {
+        key: 'campaign',
+        label: 'A2P campaign',
+        ok: Boolean(verifiedCampaign),
+        detail: verifiedCampaign
+          ? `Campaign verified (${verifiedCampaign.sidSuffix}).`
+          : campaigns.length > 0
+            ? `Campaign status: ${campaigns.map((campaign: any) => campaign.campaignStatus || 'unknown').join(', ')}.`
+            : 'No A2P campaign found for the configured messaging service/phone number.',
+      },
+      {
+        key: 'railway_live_send',
+        label: 'Railway live-send switch',
+        ok: appLiveSendEnabled,
+        detail: appLiveSendEnabled
+          ? 'SMS_LIVE_SEND_ENABLED allows live sends in this environment.'
+          : 'SMS_LIVE_SEND_ENABLED is not true, so production sends are mocked.',
+      },
+    ];
+
+    const readyForLiveSend = gates.every((gate) => gate.ok);
+
+    res.json({
+      settings: settings
+        ? {
+            isActive: Boolean(settings.is_active),
+            isTestMode: Boolean(settings.is_test_mode),
+            twilioPhoneNumber: settings.twilio_phone_number,
+            appointmentRemindersEnabled: Boolean(settings.appointment_reminders_enabled),
+            allowPatientReplies: Boolean(settings.allow_patient_replies),
+            hasCredentials,
+            updatedAt: settings.updated_at,
+          }
+        : null,
+      environment: {
+        nodeEnv: env.nodeEnv,
+        liveSendEnabled: appLiveSendEnabled,
+        inboundSimulationEnabled:
+          env.nodeEnv !== 'production' || process.env.SMS_INBOUND_SIMULATION_ENABLED === 'true',
+      },
+      twilio: {
+        connection: twilioConnection,
+        phoneNumber: phoneNumberInfo,
+        messaging: messagingReadiness,
+        errors: twilioErrors,
+      },
+      a2p: {
+        brandStatus: approvedBrand ? approvedBrand.status : null,
+        campaignStatus: verifiedCampaign
+          ? verifiedCampaign.campaignStatus
+          : campaigns[0]?.campaignStatus || null,
+        verified: Boolean(verifiedCampaign),
+        campaigns: campaigns.map((campaign: any) => ({
+          sidSuffix: campaign.sidSuffix,
+          campaignStatus: campaign.campaignStatus,
+          campaignId: campaign.campaignId,
+          usecase: campaign.usecase,
+          errors: campaign.errors || [],
+        })),
+      },
+      recentTraffic: {
+        ...(messageSummaryResult.rows[0] || {}),
+        statusBreakdown: statusBreakdownResult.rows,
+      },
+      consent: consentSummaryResult.rows[0] || { total: 0, optedIn: 0, optedOut: 0 },
+      gates,
+      readyForLiveSend,
+    });
+  } catch (error: any) {
+    logger.error('Error fetching SMS readiness', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch SMS readiness' });
   }
 });
 

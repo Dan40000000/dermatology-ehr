@@ -91,6 +91,8 @@ const transactionalReleaseMock = jest.fn();
 const twilioServiceMock = {
   sendSMS: jest.fn(),
   testConnection: jest.fn(),
+  getPhoneNumberInfo: jest.fn(),
+  getMessagingReadiness: jest.fn(),
   validateWebhookSignature: jest.fn(),
 };
 
@@ -110,6 +112,8 @@ beforeEach(() => {
   transactionalReleaseMock.mockReset();
   twilioServiceMock.sendSMS.mockReset();
   twilioServiceMock.testConnection.mockReset();
+  twilioServiceMock.getPhoneNumberInfo.mockReset();
+  twilioServiceMock.getMessagingReadiness.mockReset();
   twilioServiceMock.validateWebhookSignature.mockReset();
 
   queryMock.mockResolvedValue({ rows: [] });
@@ -217,6 +221,67 @@ describe('SMS routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it('GET /sms/readiness returns sanitized live-readiness gates', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{
+          twilio_account_sid: 'sid',
+          twilio_auth_token: 'token',
+          twilio_phone_number: '+15550001111',
+          is_active: true,
+          is_test_mode: false,
+          appointment_reminders_enabled: true,
+          allow_patient_replies: true,
+          updated_at: '2026-05-27T00:00:00.000Z',
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          total: 3,
+          outbound: 2,
+          inbound: 1,
+          mockMessages: 1,
+          twilioMessages: 1,
+          lastMessageAt: '2026-05-27T00:00:00.000Z',
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ status: 'sent', count: 2 }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ total: 10, optedIn: 9, optedOut: 1 }],
+      });
+    twilioServiceMock.testConnection.mockResolvedValueOnce({ success: true, accountName: 'Clinic Twilio' });
+    twilioServiceMock.getPhoneNumberInfo.mockResolvedValueOnce({
+      phoneNumber: '+15550001111',
+      capabilities: { sms: true, mms: true, voice: true },
+    });
+    twilioServiceMock.getMessagingReadiness.mockResolvedValueOnce({
+      services: [{
+        sidSuffix: 'abc123',
+        friendlyName: 'Clinic service',
+        includesConfiguredPhone: true,
+        campaigns: [{ sidSuffix: 'def456', campaignStatus: 'VERIFIED', campaignId: 'C123' }],
+      }],
+      brandRegistrations: [{ sidSuffix: 'ghi789', status: 'APPROVED' }],
+      errors: [],
+    });
+
+    const res = await request(app).get('/sms/readiness');
+
+    expect(res.status).toBe(200);
+    expect(res.body.settings.hasCredentials).toBe(true);
+    expect(res.body.twilio.connection.accountName).toBe('Clinic Twilio');
+    expect(res.body.a2p.verified).toBe(true);
+    expect(res.body.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'campaign', ok: true }),
+        expect.objectContaining({ key: 'credentials', ok: true }),
+      ])
+    );
+    expect(JSON.stringify(res.body)).not.toContain('token');
   });
 
   it('POST /sms/send returns 404 when patient missing', async () => {

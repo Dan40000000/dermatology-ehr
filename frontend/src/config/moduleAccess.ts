@@ -361,7 +361,10 @@ export function canAccessModule(role: Role | Role[] | undefined, moduleKey: Modu
     .map((candidate) => ROLE_ALIASES[candidate] || candidate)
     .filter(Boolean);
   if (roles.length === 0) return false;
-  const allowed = MODULE_ACCESS[moduleKey]
+  const allowedRoles = MODULE_ACCESS[moduleKey];
+  if (!allowedRoles) return false;
+
+  const allowed = allowedRoles
     .map((candidate) => String(candidate || '').trim().toLowerCase().replace(/[\s-]+/g, '_'))
     .map((candidate) => ROLE_ALIASES[candidate] || candidate);
   return roles.some((candidate) => allowed.includes(candidate));

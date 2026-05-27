@@ -478,7 +478,7 @@ export function ClinicalInboxPage() {
       canAccessModule(effectiveRoles, 'epa')
         ? safe('ePA', fetchPARequests(session.tenantId, session.accessToken), [])
         : Promise.resolve([]),
-      canAccessModule(effectiveRoles, 'orders')
+      canAccessModule(effectiveRoles, 'labs')
         ? safe('Orders', fetchOrders(session.tenantId, session.accessToken, {
             statuses: ['pending', 'open', 'in-progress', 'ordered', 'sent'],
             limit: 100,

@@ -171,6 +171,26 @@ function severityForIssues(issues: CodingReviewIssue[]) {
   return "low";
 }
 
+function reviewSectionForIssues(issues: CodingReviewIssue[]) {
+  if (
+    issues.some((issue) =>
+      [
+        "missing_diagnosis",
+        "missing_primary_diagnosis",
+        "missing_charge",
+        "missing_cpt_code",
+        "diagnosis_link_needed",
+        "superbill_open",
+        "claim_not_created",
+        "claim_coding_review",
+      ].includes(issue),
+    )
+  ) {
+    return "billing";
+  }
+  return "note";
+}
+
 function buildSummary(items: Array<CodingReviewRow & { issues: CodingReviewIssue[] }>) {
   return items.reduce(
     (summary, item) => {
@@ -311,7 +331,7 @@ codingReviewRouter.get(
           issues,
           recommendedOwner: ownerForIssues(issues),
           severity: severityForIssues(issues),
-          reviewRoute: `/patients/${item.patientId}/encounter/${item.encounterId}`,
+          reviewRoute: `/patients/${item.patientId}/encounter/${item.encounterId}?section=${reviewSectionForIssues(issues)}`,
           claimRoute: item.claimId ? `/claims/${item.claimId}` : null,
         };
       });

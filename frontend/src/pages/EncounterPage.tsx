@@ -116,9 +116,18 @@ export function EncounterPage() {
   // Check if encounter is locked/read-only
   const isLocked = ['signed', 'locked', 'finalized', 'completed', 'closed'].includes(String(encounter.status || '').toLowerCase());
   const isClosedEncounter = isLocked;
+  const userRole = String(session?.user?.role || '').toLowerCase();
+  const canEditBilling = !isNew && (!isLocked || ['admin', 'billing', 'provider', 'ma', 'manager'].includes(userRole));
 
   const [activeSection, setActiveSection] = useState<EncounterSection>('note');
   const [bodyDiagramMarkers, setBodyDiagramMarkers] = useState<BodyMarker[]>([]);
+
+  useEffect(() => {
+    const requestedSection = new URLSearchParams(location.search).get('section');
+    if (requestedSection && ['note', 'exam', 'orders', 'prescriptions', 'billing'].includes(requestedSection)) {
+      setActiveSection(requestedSection as EncounterSection);
+    }
+  }, [location.search]);
 
   // Modals
   const [showVitalsModal, setShowVitalsModal] = useState(false);
@@ -1135,7 +1144,7 @@ export function EncounterPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteCharge(charge.id)}
-                      disabled={isLocked}
+                      disabled={!canEditBilling}
                       style={{
                         padding: '0.25rem 0.5rem',
                         background: '#fee2e2',
@@ -1143,8 +1152,8 @@ export function EncounterPage() {
                         border: '1px solid #fca5a5',
                         borderRadius: '4px',
                         fontSize: '0.75rem',
-                        cursor: isLocked ? 'not-allowed' : 'pointer',
-                        opacity: isLocked ? 0.6 : 1
+                        cursor: canEditBilling ? 'pointer' : 'not-allowed',
+                        opacity: canEditBilling ? 1 : 0.6
                       }}
                     >
                       Delete
@@ -2196,6 +2205,20 @@ export function EncounterPage() {
 
             {/* Procedures/Charges Section */}
             <div className="ema-form-section" style={{ marginBottom: '2rem' }}>
+              {isClosedEncounter && canEditBilling && (
+                <div style={{
+                  background: '#eff6ff',
+                  border: '1px solid #bfdbfe',
+                  borderRadius: '8px',
+                  padding: '0.75rem 1rem',
+                  color: '#1e40af',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  marginBottom: '1rem',
+                }}>
+                  Clinical note is locked. Authorized billing users can still add or correct charge lines for post-visit coding review.
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <div>
                   <div className="ema-section-header">Billing</div>
@@ -2207,7 +2230,7 @@ export function EncounterPage() {
                   <button
                     type="button"
                     onClick={() => setShowPerformedWorkModal(true)}
-                    disabled={isNew || isLocked}
+                    disabled={!canEditBilling}
                     style={{
                       padding: '0.5rem 1rem',
                       background: '#0f766e',
@@ -2215,8 +2238,8 @@ export function EncounterPage() {
                       border: 'none',
                       borderRadius: '4px',
                       fontWeight: 600,
-                      cursor: isNew || isLocked ? 'not-allowed' : 'pointer',
-                      opacity: isNew || isLocked ? 0.6 : 1,
+                      cursor: canEditBilling ? 'pointer' : 'not-allowed',
+                      opacity: canEditBilling ? 1 : 0.6,
                       fontSize: '0.875rem'
                     }}
                   >
@@ -2225,7 +2248,7 @@ export function EncounterPage() {
                   <button
                     type="button"
                     onClick={() => setShowProcedureModal(true)}
-                    disabled={isNew || isLocked}
+                    disabled={!canEditBilling}
                     style={{
                       padding: '0.5rem 1rem',
                       background: '#0369a1',
@@ -2233,8 +2256,8 @@ export function EncounterPage() {
                       border: 'none',
                       borderRadius: '4px',
                       fontWeight: 500,
-                      cursor: isNew || isLocked ? 'not-allowed' : 'pointer',
-                      opacity: isNew || isLocked ? 0.6 : 1,
+                      cursor: canEditBilling ? 'pointer' : 'not-allowed',
+                      opacity: canEditBilling ? 1 : 0.6,
                       fontSize: '0.875rem'
                     }}
                   >
@@ -2275,13 +2298,13 @@ export function EncounterPage() {
               ) : (
                 <div>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-                    <button type="button" className="btn-secondary" onClick={() => setShowProcedureModal(true)} disabled={isLocked}>
+                    <button type="button" className="btn-secondary" onClick={() => setShowProcedureModal(true)} disabled={!canEditBilling}>
                       Edit Charges
                     </button>
-                    <button type="button" className="btn-secondary" onClick={() => setShowProcedureModal(true)} disabled={isLocked}>
+                    <button type="button" className="btn-secondary" onClick={() => setShowProcedureModal(true)} disabled={!canEditBilling}>
                       Override Suggested E/M Code
                     </button>
-                    <button type="button" className="btn-secondary" onClick={() => setShowProcedureModal(true)} disabled={isLocked}>
+                    <button type="button" className="btn-secondary" onClick={() => setShowProcedureModal(true)} disabled={!canEditBilling}>
                       Bill by Time
                     </button>
                   </div>

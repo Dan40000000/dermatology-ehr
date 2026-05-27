@@ -172,6 +172,7 @@ describe("Coding review routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.items[0].issues).toContain("claim_coding_review");
     expect(res.body.items[0].issues).not.toContain("superbill_open");
+    expect(res.body.items[0].reviewRoute).toBe("/patients/patient-3/encounter/enc-3?section=billing");
   });
 
   it("rejects invalid dates", async () => {

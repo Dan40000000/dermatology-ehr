@@ -142,7 +142,7 @@ const CASES = [
   },
   {
     path: "/api/inventory",
-    allowedRoles: ["admin", "ma", "front_desk", "manager"],
+    allowedRoles: ["admin", "provider", "ma", "nurse", "front_desk", "manager"],
   },
   {
     path: "/api/handouts",

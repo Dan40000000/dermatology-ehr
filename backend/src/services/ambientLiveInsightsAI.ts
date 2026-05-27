@@ -1,4 +1,5 @@
 import { logger } from '../lib/logger';
+import { getEnabledOpenAiApiKey } from '../utils/externalAiGate';
 import { redactValue } from '../utils/phiRedaction';
 import {
   generateAmbientLiveInsights,
@@ -19,7 +20,7 @@ type GenerateLiveInsightsOptions = {
 };
 
 function getOpenAIKey(): string | undefined {
-  return process.env.OPENAI_API_KEY;
+  return getEnabledOpenAiApiKey();
 }
 
 function getLiveInsightsModel(): string {

@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
 import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
+import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 
 /**
  * AI Image Analysis Service for Dermatology
@@ -49,8 +50,8 @@ export class AIImageAnalysisService {
   private anthropicApiKey: string | undefined;
 
   constructor() {
-    this.openaiApiKey = process.env.OPENAI_API_KEY;
-    this.anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    this.openaiApiKey = getEnabledOpenAiApiKey();
+    this.anthropicApiKey = getEnabledAnthropicApiKey();
   }
 
   /**
@@ -79,7 +80,7 @@ export class AIImageAnalysisService {
           tenantId,
           photoId,
           "skin_lesion",
-          this.openaiApiKey ? "openai" : "mock",
+          analysis.rawAnalysis?.provider === "openai" ? "openai" : "mock",
           analysis.confidenceScore,
           analysis.primaryFinding,
           JSON.stringify(analysis.differentialDiagnoses),
@@ -232,7 +233,10 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
         riskLevel: analysisResult.riskLevel,
         recommendations: analysisResult.recommendations,
         confidenceScore: analysisResult.confidenceScore,
-        rawAnalysis: data,
+        rawAnalysis: {
+          provider: "openai",
+          response: data,
+        },
       };
     } catch (error) {
       logAIImageAnalysisError("OpenAI Vision API Error", error);
@@ -274,6 +278,7 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
       ],
       confidenceScore: 0.72,
       rawAnalysis: {
+        provider: "mock",
         model: "mock-analysis-v1",
         analysisDate: new Date().toISOString(),
       },

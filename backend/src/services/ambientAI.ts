@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import FormData from 'form-data';
 import { logger } from '../lib/logger';
 import { deidentifyTextForExternalAi, isHipaaClinicalAiEnabled } from '../utils/aiPhiGuard';
+import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from '../utils/externalAiGate';
 import { redactValue } from '../utils/phiRedaction';
 import { AgentConfiguration } from './agentConfigService';
 import { getIntegrationConfig } from '../integrations/baseAdapter';
@@ -169,8 +170,8 @@ async function withRetry<T>(
 }
 
 // Environment configuration
-const getOpenAIKey = () => process.env.OPENAI_API_KEY;
-const getAnthropicKey = () => process.env.ANTHROPIC_API_KEY;
+const getOpenAIKey = () => getEnabledOpenAiApiKey();
+const getAnthropicKey = () => getEnabledAnthropicApiKey();
 const getOpenAITranscribeModel = () =>
   process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
 const getOpenAINoteModel = () => process.env.OPENAI_NOTE_MODEL || 'gpt-4o';

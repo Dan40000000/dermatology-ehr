@@ -6,14 +6,12 @@
 
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
+import { getEnabledAnthropicApiKey } from '../utils/externalAiGate';
 
 // Lazy-load Anthropic SDK to avoid crashes if not installed
-let anthropic: any = null;
+let AnthropicClient: any = null;
 try {
-  const Anthropic = require('@anthropic-ai/sdk').default;
-  anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY || '',
-  });
+  AnthropicClient = require('@anthropic-ai/sdk').default;
 } catch (e) {
   logger.warn('Anthropic SDK not installed - AI letter generation disabled');
 }
@@ -220,6 +218,12 @@ The letter should:
 Generate ONLY the letter text, no additional commentary.`;
 
     try {
+      const apiKey = getEnabledAnthropicApiKey();
+      if (!apiKey || !AnthropicClient) {
+        return this.generateFallbackLetter(params);
+      }
+
+      const anthropic = new AnthropicClient({ apiKey });
       const message = await anthropic.messages.create({
         model: 'claude-3-5-sonnet-20241022',
         max_tokens: 2000,

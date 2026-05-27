@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { logger } from "../lib/logger";
 import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
+import { getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 
 /**
  * Voice Transcription Service
@@ -62,7 +63,7 @@ export class VoiceTranscriptionService {
   private openaiApiKey: string | undefined;
 
   constructor() {
-    this.openaiApiKey = process.env.OPENAI_API_KEY;
+    this.openaiApiKey = getEnabledOpenAiApiKey();
   }
 
   /**

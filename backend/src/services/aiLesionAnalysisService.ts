@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
 import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
+import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 
 /**
  * AI Lesion Analysis Service
@@ -136,8 +137,8 @@ class AILesionAnalysisService {
   private modelVersion = "claude-vision-v1.0";
 
   constructor() {
-    this.anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-    this.openaiApiKey = process.env.OPENAI_API_KEY;
+    this.anthropicApiKey = getEnabledAnthropicApiKey();
+    this.openaiApiKey = getEnabledOpenAiApiKey();
   }
 
   /**

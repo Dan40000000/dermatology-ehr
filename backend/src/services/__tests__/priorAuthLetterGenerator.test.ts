@@ -26,6 +26,7 @@ import { pool } from '../../db/pool';
 import { PriorAuthLetterGenerator } from '../priorAuthLetterGenerator';
 
 const queryMock = pool.query as jest.Mock;
+const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
 
 describe('PriorAuthLetterGenerator', () => {
   const baseParams = {
@@ -43,9 +44,20 @@ describe('PriorAuthLetterGenerator', () => {
   beforeEach(() => {
     queryMock.mockReset();
     createMock.mockReset();
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  afterAll(() => {
+    if (originalAnthropicApiKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+    }
   });
 
   it('generates a letter using AI content and extracts key points', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
     queryMock
       .mockResolvedValueOnce({
         rows: [

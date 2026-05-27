@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
 import { deidentifyTextForExternalAi } from "../utils/aiPhiGuard";
+import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 import { redactValue } from "../utils/phiRedaction";
 
 /**
@@ -103,8 +104,8 @@ export class AINoteDraftingService {
   private anthropicApiKey: string | undefined;
 
   constructor() {
-    this.openaiApiKey = process.env.OPENAI_API_KEY;
-    this.anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    this.openaiApiKey = getEnabledOpenAiApiKey();
+    this.anthropicApiKey = getEnabledAnthropicApiKey();
   }
 
   /**

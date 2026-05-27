@@ -5,6 +5,7 @@ import {
   deidentifyTextForExternalAi,
   isHipaaClinicalAiEnabled,
 } from '../utils/aiPhiGuard';
+import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from '../utils/externalAiGate';
 import { redactValue } from '../utils/phiRedaction';
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
@@ -294,11 +295,11 @@ function parseJsonPayload(raw: string): Omit<ClinicalCopilotResult, 'provider' |
 }
 
 function getOpenAIKey(): string | undefined {
-  return process.env.OPENAI_API_KEY;
+  return getEnabledOpenAiApiKey();
 }
 
 function getAnthropicKey(): string | undefined {
-  return process.env.ANTHROPIC_API_KEY;
+  return getEnabledAnthropicApiKey();
 }
 
 function getOpenAIModel(): string {

@@ -172,6 +172,7 @@ export const envSchema = z.object({
   PRIOR_AUTH_PROVIDER: z.enum(["covermymeds", "surescripts", "mock"]).default("mock"),
 
   OPENAI_API_KEY: stringOptional,
+  OPENAI_API_CALLS_ENABLED: booleanDefault(false),
   OPENAI_NOTE_MODEL: stringOptional,
   OPENAI_TRANSCRIBE_MODEL: stringOptional,
   OPENAI_COPILOT_MODEL: stringOptional,
@@ -180,6 +181,9 @@ export const envSchema = z.object({
   CLINICAL_AI_PHI_ALLOWED: booleanDefault(false),
   OPENAI_BAA_ENABLED: booleanDefault(false),
   ANTHROPIC_API_KEY: stringOptional,
+  ANTHROPIC_API_CALLS_ENABLED: booleanDefault(false),
+  EXTERNAL_AI_API_CALLS_ENABLED: booleanDefault(false),
+  ALLOW_EXTERNAL_AI_IN_TEST: booleanDefault(false),
   ANTHROPIC_NOTE_MODEL: stringOptional,
   AMBIENT_AI_MOCK_DELAY_MS: numberDefault(0),
   AMBIENT_LIVE_TRANSCRIBE_ENABLED: booleanDefault(true),

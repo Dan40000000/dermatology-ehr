@@ -45,6 +45,7 @@ vi.mock('../../components/tasks/TaskKanbanBoard', () => ({
   TaskKanbanBoard: ({ tasks, onTaskClick, onStatusChange }: any) => (
     <div>
       <div>Kanban Board: {tasks.length} tasks</div>
+      <div>First task status: {tasks[0]?.status}</div>
       <button type="button" onClick={() => tasks[0] && onTaskClick(tasks[0])}>
         Open First Task
       </button>
@@ -89,7 +90,11 @@ vi.mock('../../components/tasks/TaskDetailModal', () => ({
     isOpen ? (
       <div>
         <div>Task Detail Modal</div>
+        <div>Selected task status: {task.status}</div>
         <div>Comments: {comments?.length ?? 0}</div>
+        <button type="button" onClick={() => onUpdate(task.id, { status: 'in_progress' })}>
+          Start Mock Task
+        </button>
         <button type="button" onClick={() => onUpdate(task.id, { title: 'Updated' })}>
           Update Task
         </button>
@@ -227,10 +232,16 @@ describe('TasksPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move First Task' }));
     await waitFor(() => expect(apiMocks.updateTaskStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'task-1', 'in_progress'));
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Task moved to in progress');
+    await waitFor(() => expect(screen.getByText('First task status: in_progress')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Open First Task' }));
     await waitFor(() => expect(apiMocks.fetchTaskComments).toHaveBeenCalledWith('tenant-1', 'token-1', 'task-1'));
     expect(screen.getByText('Task Detail Modal')).toBeInTheDocument();
+    expect(screen.getByText('Selected task status: in_progress')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Mock Task' }));
+    await waitFor(() => expect(apiMocks.updateTask).toHaveBeenCalledWith('tenant-1', 'token-1', 'task-1', { status: 'in_progress' }));
+    expect(screen.getByText('Selected task status: in_progress')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Comment' }));
     await waitFor(() => expect(apiMocks.addTaskComment).toHaveBeenCalledWith('tenant-1', 'token-1', 'task-1', 'Note'));

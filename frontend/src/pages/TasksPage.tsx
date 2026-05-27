@@ -85,10 +85,11 @@ export function TasksPage() {
     // Don't do anything if no tab - let user manage filters manually
   }, [searchParams]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (options: { showLoading?: boolean } = {}) => {
     if (!session) return;
 
-    setLoading(true);
+    const { showLoading: shouldShowLoading = true } = options;
+    if (shouldShowLoading) setLoading(true);
     try {
       const [tasksRes, patientsRes, providersRes, biopsyRes] = await Promise.all([
         fetchTasks(session.tenantId, session.accessToken, {
@@ -108,9 +109,31 @@ export function TasksPage() {
     } catch (err: any) {
       showError(err.message || 'Failed to load tasks');
     } finally {
-      setLoading(false);
+      if (shouldShowLoading) setLoading(false);
     }
   }, [session, filters, showError]);
+
+  const patchTaskInState = useCallback((taskId: string, updates: Partial<Task>) => {
+    const patchedUpdates: Partial<Task> = { ...updates };
+    if (updates.status) {
+      if (updates.status === 'completed') {
+        patchedUpdates.completedAt = updates.completedAt || new Date().toISOString();
+        patchedUpdates.completedBy = updates.completedBy || session?.user?.id;
+      } else {
+        patchedUpdates.completedAt = undefined;
+        patchedUpdates.completedBy = undefined;
+      }
+    }
+
+    setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...patchedUpdates } : task)));
+    setSelectedTask((prev) => (prev?.id === taskId ? { ...prev, ...patchedUpdates } : prev));
+  }, [session?.user?.id]);
+
+  const refreshAfterLocalPatch = useCallback((taskId: string, updates: Partial<Task>) => {
+    void loadData({ showLoading: false }).then(() => {
+      patchTaskInState(taskId, updates);
+    });
+  }, [loadData, patchTaskInState]);
 
   useEffect(() => {
     loadData();
@@ -202,8 +225,9 @@ export function TasksPage() {
 
     try {
       await updateTask(session.tenantId, session.accessToken, taskId, updates);
+      patchTaskInState(taskId, updates);
       showSuccess('Task updated successfully');
-      loadData();
+      refreshAfterLocalPatch(taskId, updates);
 
       // Refresh comments if detail modal is open
       if (showDetailModal && selectedTask) {
@@ -220,8 +244,9 @@ export function TasksPage() {
 
     try {
       await updateTaskStatus(session.tenantId, session.accessToken, taskId, newStatus);
+      patchTaskInState(taskId, { status: newStatus });
       showSuccess(`Task moved to ${newStatus.replace('_', ' ')}`);
-      loadData();
+      refreshAfterLocalPatch(taskId, { status: newStatus });
     } catch (err: any) {
       showError(err.message || 'Failed to update task status');
     }
@@ -382,7 +407,7 @@ export function TasksPage() {
             <span className="icon"></span>
             List
           </button>
-          <button type="button" className="ema-action-btn" onClick={loadData}>
+          <button type="button" className="ema-action-btn" onClick={() => loadData()}>
             <span className="icon"></span>
             Refresh
           </button>

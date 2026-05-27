@@ -136,6 +136,25 @@ describe("Encounters routes", () => {
     expect(auditMock).toHaveBeenCalled();
   });
 
+  it("POST /encounters reuses an existing appointment encounter", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "enc-existing", status: "draft" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const res = await request(app).post("/encounters").send({
+      patientId: "pat-1",
+      providerId: "prov-1",
+      appointmentId: "appt-1",
+      chiefComplaint: "Rash",
+      hpi: "Improving",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ id: "enc-existing", existing: true });
+    expect(queryMock.mock.calls[1][0]).toContain("update encounters");
+    expect(auditMock).toHaveBeenCalledWith("tenant-1", "user-1", "encounter_reuse", "encounter", "enc-existing");
+  });
+
   it("POST /encounters/:id returns 404 when missing", async () => {
     queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
     const res = await request(app).post("/encounters/enc-1").send({ chiefComplaint: "Update" });

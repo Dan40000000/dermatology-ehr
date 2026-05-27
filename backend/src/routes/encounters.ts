@@ -263,6 +263,48 @@ encountersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]
   const id = crypto.randomUUID();
   const tenantId = req.user!.tenantId;
   const payload = parsed.data;
+
+  if (payload.appointmentId) {
+    const existing = await pool.query(
+      `select id, status
+       from encounters
+       where tenant_id = $1 and appointment_id = $2
+       order by created_at asc
+       limit 1`,
+      [tenantId, payload.appointmentId],
+    );
+
+    if (existing.rowCount && existing.rows[0]?.id) {
+      const existingId = String(existing.rows[0].id);
+      const existingStatus = existing.rows[0].status;
+
+      if (!isImmutableEncounterStatus(existingStatus)) {
+        await pool.query(
+          `update encounters
+           set chief_complaint = coalesce($1, chief_complaint),
+               hpi = coalesce($2, hpi),
+               ros = coalesce($3, ros),
+               exam = coalesce($4, exam),
+               assessment_plan = coalesce($5, assessment_plan),
+               updated_at = now()
+           where id = $6 and tenant_id = $7`,
+          [
+            payload.chiefComplaint || null,
+            payload.hpi || null,
+            payload.ros || null,
+            payload.exam || null,
+            payload.assessmentPlan || null,
+            existingId,
+            tenantId,
+          ],
+        );
+      }
+
+      await auditLog(tenantId, req.user!.id, "encounter_reuse", "encounter", existingId);
+      return res.status(200).json({ id: existingId, existing: true });
+    }
+  }
+
   await pool.query(
     `insert into encounters(id, tenant_id, appointment_id, patient_id, provider_id, status, chief_complaint, hpi, ros, exam, assessment_plan)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,

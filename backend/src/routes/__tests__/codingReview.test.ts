@@ -137,6 +137,73 @@ describe("Coding review routes", () => {
     expect(includeRes.body.items[0].issues).toEqual([]);
   });
 
+  it("excludes cancelled and no-show appointments from post-visit coding work", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          encounterId: "enc-levi-cancelled",
+          appointmentId: "appt-levi-cancelled",
+          patientId: "patient-levi",
+          patientName: "Levi Ortiz",
+          providerId: "provider-1",
+          providerName: "Dr Demo",
+          serviceAt: "2026-05-24T17:00:00.000Z",
+          appointmentStatus: "cancelled",
+          encounterStatus: "draft",
+          chiefComplaint: "Follow-up",
+          diagnosisCount: 0,
+          primaryDiagnosisCount: 0,
+          diagnosisCodes: [],
+          chargeCount: 0,
+          missingCptCount: 0,
+          unlinkedChargeCount: 0,
+          totalChargeCents: 0,
+          cptCodes: [],
+          superbillId: null,
+          superbillStatus: null,
+          claimId: null,
+          claimStatus: null,
+        },
+        {
+          encounterId: "enc-noshow",
+          appointmentId: "appt-noshow",
+          patientId: "patient-noshow",
+          patientName: "No Show Patient",
+          providerId: "provider-1",
+          providerName: "Dr Demo",
+          serviceAt: "2026-05-24T18:00:00.000Z",
+          appointmentStatus: "no_show",
+          encounterStatus: "draft",
+          chiefComplaint: "Acne",
+          diagnosisCount: 0,
+          primaryDiagnosisCount: 0,
+          diagnosisCodes: [],
+          chargeCount: 0,
+          missingCptCount: 0,
+          unlinkedChargeCount: 0,
+          totalChargeCents: 0,
+          cptCodes: [],
+          superbillId: null,
+          superbillStatus: null,
+          claimId: null,
+          claimStatus: null,
+        },
+      ],
+    });
+
+    const res = await request(app).get(
+      "/coding-review/post-visit?startDate=2026-05-20&endDate=2026-05-24&includeCleared=true",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(0);
+    expect(res.body.summary.total).toBe(0);
+    expect(JSON.stringify(res.body)).not.toContain("Levi Ortiz");
+    expect(String(queryMock.mock.calls[0][0])).toContain(
+      "coalesce(lower(a.status), '') not in ('cancelled', 'canceled', 'no_show', 'no-show', 'no show')",
+    );
+  });
+
   it("does not flag missing superbills as open superbills", async () => {
     queryMock.mockResolvedValueOnce({
       rows: [

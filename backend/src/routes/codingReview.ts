@@ -22,6 +22,7 @@ const CODING_REVIEW_ROLES: Role[] = [
 
 const closedEncounterStatuses = new Set(["signed", "locked", "finalized", "completed", "closed"]);
 const closedSuperbillStatuses = new Set(["approved", "submitted", "posted", "finalized", "void"]);
+const nonCodableAppointmentStatuses = new Set(["cancelled", "canceled", "no_show", "no-show", "no show"]);
 
 const querySchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -85,6 +86,15 @@ function numberFrom(value: unknown): number {
 function stringArrayFrom(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function normalizedAppointmentStatus(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isCodableAppointmentStatus(value: string | null | undefined): boolean {
+  const status = normalizedAppointmentStatus(value);
+  return !status || !nonCodableAppointmentStatuses.has(status);
 }
 
 function mapReviewRow(row: Record<string, any>): CodingReviewRow {
@@ -318,13 +328,15 @@ codingReviewRouter.get(
          left join latest_claim cl on cl.tenant_id = e.tenant_id and cl.encounter_id = e.id
          where e.tenant_id = $1
            and coalesce(a.scheduled_start, e.created_at)::date between $2::date and $3::date
+           and coalesce(lower(a.status), '') not in ('cancelled', 'canceled', 'no_show', 'no-show', 'no show')
            ${providerFilter}
          order by coalesce(a.scheduled_start, e.created_at) desc, e.updated_at desc
          limit $${limitParam}`,
         params,
       );
 
-      const mappedItems = result.rows.map(mapReviewRow).map((item) => {
+      const codableRows = result.rows.map(mapReviewRow).filter((item) => isCodableAppointmentStatus(item.appointmentStatus));
+      const mappedItems = codableRows.map((item) => {
         const issues = getIssues(item);
         return {
           ...item,

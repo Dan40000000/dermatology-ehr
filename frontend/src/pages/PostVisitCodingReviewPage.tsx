@@ -14,37 +14,34 @@ import type { Provider } from '../types';
 const issueLabels: Record<PostVisitCodingIssue, string> = {
   missing_diagnosis: 'Missing diagnosis',
   missing_primary_diagnosis: 'No primary diagnosis',
-  missing_charge: 'Missing CPT',
-  missing_cpt_code: 'Blank CPT',
+  missing_charge: 'No billing code entered',
+  missing_cpt_code: 'Charge missing CPT/HCPCS',
   diagnosis_link_needed: 'Needs Dx link',
   note_unsigned: 'Unsigned note',
-  superbill_open: 'Superbill open',
-  claim_not_created: 'Claim not created',
-  claim_coding_review: 'Claim in coding review',
+  superbill_open: 'Superbill needs review',
+  claim_not_created: 'Claim not created yet',
+  claim_coding_review: 'Claim awaiting review',
 };
 
 const issueDescriptions: Record<PostVisitCodingIssue, string> = {
   missing_diagnosis: 'The visit cannot support billing until a clinician confirms at least one diagnosis.',
   missing_primary_diagnosis: 'The visit has diagnoses, but no primary diagnosis is marked.',
-  missing_charge: 'No procedure or E/M charge has been added yet.',
-  missing_cpt_code: 'A charge exists but is missing a CPT code.',
+  missing_charge: 'No CPT/HCPCS billing code has been entered for the visit.',
+  missing_cpt_code: 'A charge line exists, but its CPT/HCPCS billing code is blank.',
   diagnosis_link_needed: 'Charges should be linked to supporting diagnosis codes before claim release.',
   note_unsigned: 'The clinical note still needs provider signature or lock.',
-  superbill_open: 'A generated superbill is still draft or pending review and needs billing review.',
+  superbill_open: 'A generated superbill is still draft or pending billing review.',
   claim_not_created: 'Charges exist but the claim has not been created yet.',
-  claim_coding_review: 'A claim exists but is still being reviewed before release.',
+  claim_coding_review: 'The visit has billing codes, but the claim is still held for review before release.',
 };
 
-const issueOrder: PostVisitCodingIssue[] = [
-  'missing_diagnosis',
-  'missing_primary_diagnosis',
-  'missing_charge',
-  'missing_cpt_code',
-  'diagnosis_link_needed',
-  'note_unsigned',
-  'superbill_open',
-  'claim_not_created',
-  'claim_coding_review',
+const trueCodingGapIssues = new Set<PostVisitCodingIssue>(['missing_charge', 'missing_cpt_code']);
+const claimWorkflowIssues = new Set<PostVisitCodingIssue>(['superbill_open', 'claim_not_created', 'claim_coding_review']);
+
+const issueGroups: Array<{ label: string; issues: PostVisitCodingIssue[] }> = [
+  { label: 'True coding gaps', issues: ['missing_charge', 'missing_cpt_code'] },
+  { label: 'Clinical documentation', issues: ['missing_diagnosis', 'missing_primary_diagnosis', 'diagnosis_link_needed', 'note_unsigned'] },
+  { label: 'Claim workflow', issues: ['superbill_open', 'claim_not_created', 'claim_coding_review'] },
 ];
 
 function todayIsoDate() {
@@ -94,6 +91,10 @@ function severityStyles(severity: PostVisitCodingReviewItem['severity']) {
 
 function getProviderName(provider: Provider) {
   return provider.fullName || provider.name || provider.id;
+}
+
+function countItemsWithIssues(items: PostVisitCodingReviewItem[], issues: Set<PostVisitCodingIssue>) {
+  return items.filter((item) => item.issues.some((issue) => issues.has(issue))).length;
 }
 
 export function PostVisitCodingReviewPage() {
@@ -176,15 +177,15 @@ export function PostVisitCodingReviewPage() {
     [filteredItems],
   );
 
-  const ownerCounts = useMemo(() => {
-    return filteredItems.reduce(
-      (acc, item) => {
-        acc[item.recommendedOwner] += 1;
-        return acc;
-      },
-      { provider: 0, clinical_coding: 0, billing: 0 },
-    );
-  }, [filteredItems]);
+  const trueCodingGapCount = useMemo(
+    () => countItemsWithIssues(data?.items || [], trueCodingGapIssues),
+    [data?.items],
+  );
+
+  const claimWorkflowCount = useMemo(
+    () => countItemsWithIssues(data?.items || [], claimWorkflowIssues),
+    [data?.items],
+  );
 
   const selectIssue = (issue: PostVisitCodingIssue | 'all') => {
     setSelectedIssue(issue);
@@ -226,7 +227,7 @@ export function PostVisitCodingReviewPage() {
         <div>
           <h1 style={{ fontSize: '1.75rem', margin: 0, color: '#111827' }}>Post-Visit Coding Review</h1>
           <p style={{ margin: '0.35rem 0 0', color: '#4b5563', maxWidth: '760px' }}>
-            Daily safety queue for visits that need provider, clinical coding, or billing cleanup before claim release.
+            Daily safety queue for visits that need true coding fixes, documentation cleanup, or claim release review.
           </p>
         </div>
         <button
@@ -323,48 +324,57 @@ export function PostVisitCodingReviewPage() {
         }}
       >
         <button type="button" onClick={() => selectIssue('all')} aria-pressed={selectedIssue === 'all'} style={summaryButtonStyle(selectedIssue === 'all')}>
-          <span style={summaryLabelStyle}>Open coding items</span>
+          <span style={summaryLabelStyle}>Open review items</span>
           <strong style={summaryValueStyle}>{data?.summary.total ?? 0}</strong>
         </button>
+        <div style={summaryCardStyle}>
+          <span style={summaryLabelStyle}>True coding gaps</span>
+          <strong style={summaryValueStyle}>{trueCodingGapCount}</strong>
+        </div>
+        <div style={summaryCardStyle}>
+          <span style={summaryLabelStyle}>Claim workflow</span>
+          <strong style={summaryValueStyle}>{claimWorkflowCount}</strong>
+        </div>
         <div style={summaryCardStyle}>
           <span style={summaryLabelStyle}>Filtered charges</span>
           <strong style={summaryValueStyle}>{formatDollars(totalChargeCents)}</strong>
         </div>
-        <div style={summaryCardStyle}>
-          <span style={summaryLabelStyle}>Provider-owned</span>
-          <strong style={summaryValueStyle}>{ownerCounts.provider}</strong>
-        </div>
-        <div style={summaryCardStyle}>
-          <span style={summaryLabelStyle}>Billing-owned</span>
-          <strong style={summaryValueStyle}>{ownerCounts.billing}</strong>
-        </div>
       </section>
 
-      <section aria-label="Coding issue filters" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
-        {issueOrder.map((issue) => {
-          const count = data?.summary.issueCounts[issue] || 0;
-          const active = selectedIssue === issue;
-          return (
-            <button
-              key={issue}
-              type="button"
-              onClick={() => selectIssue(issue)}
-              aria-pressed={active}
-              title={issueDescriptions[issue]}
-              style={{
-                padding: '0.55rem 0.75rem',
-                borderRadius: '999px',
-                border: active ? '1px solid #3730a3' : '1px solid #d1d5db',
-                background: active ? '#eef2ff' : '#ffffff',
-                color: active ? '#3730a3' : '#374151',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              {issueLabels[issue]} ({count})
-            </button>
-          );
-        })}
+      <section aria-label="Coding issue filters" style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
+        {issueGroups.map((group) => (
+          <div key={group.label} style={{ display: 'grid', gap: '0.4rem' }}>
+            <span style={{ color: '#6b7280', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase' }}>
+              {group.label}
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+              {group.issues.map((issue) => {
+                const count = data?.summary.issueCounts[issue] || 0;
+                const active = selectedIssue === issue;
+                return (
+                  <button
+                    key={issue}
+                    type="button"
+                    onClick={() => selectIssue(issue)}
+                    aria-pressed={active}
+                    title={issueDescriptions[issue]}
+                    style={{
+                      padding: '0.55rem 0.75rem',
+                      borderRadius: '999px',
+                      border: active ? '1px solid #3730a3' : '1px solid #d1d5db',
+                      background: active ? '#eef2ff' : '#ffffff',
+                      color: active ? '#3730a3' : '#374151',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {issueLabels[issue]} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </section>
 
       <section

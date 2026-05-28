@@ -60,13 +60,14 @@ describe('PostVisitCodingReviewPage', () => {
       endDate: '2026-05-24',
       includeCleared: false,
       summary: {
-        total: 2,
+        total: 3,
         cleared: 0,
         issueCounts: {
           missing_diagnosis: 1,
           missing_charge: 1,
           diagnosis_link_needed: 1,
           note_unsigned: 2,
+          claim_coding_review: 1,
         },
       },
       items: [
@@ -128,6 +129,35 @@ describe('PostVisitCodingReviewPage', () => {
           reviewRoute: '/patients/patient-2/encounter/enc-2',
           claimRoute: null,
         },
+        {
+          encounterId: 'enc-3',
+          appointmentId: 'appt-3',
+          patientId: 'patient-3',
+          patientName: 'James Simmons',
+          providerId: 'provider-1',
+          providerName: 'Dr Demo',
+          serviceAt: '2026-05-24T17:00:00.000Z',
+          appointmentStatus: 'completed',
+          encounterStatus: 'signed',
+          chiefComplaint: 'New patient visit',
+          diagnosisCount: 1,
+          primaryDiagnosisCount: 1,
+          diagnosisCodes: ['L20.9'],
+          chargeCount: 1,
+          missingCptCount: 0,
+          unlinkedChargeCount: 0,
+          totalChargeCents: 18000,
+          cptCodes: ['99203'],
+          superbillId: null,
+          superbillStatus: null,
+          claimId: 'claim-3',
+          claimStatus: 'coding_review',
+          issues: ['claim_coding_review'],
+          recommendedOwner: 'billing',
+          severity: 'low',
+          reviewRoute: '/patients/patient-3/encounter/enc-3',
+          claimRoute: '/claims/claim-3',
+        },
       ],
     });
   });
@@ -149,7 +179,9 @@ describe('PostVisitCodingReviewPage', () => {
     );
     expect(screen.getByText('Ava Jones')).toBeInTheDocument();
     expect(screen.getByText('Ben Skin')).toBeInTheDocument();
-    expect(screen.getAllByText('$175')).toHaveLength(2);
+    expect(screen.getByText('James Simmons')).toBeInTheDocument();
+    expect(screen.getByText('$355')).toBeInTheDocument();
+    expect(screen.getByText('$175')).toBeInTheDocument();
   });
 
   it('filters by issue buttons and opens encounter and claim routes', async () => {
@@ -158,7 +190,7 @@ describe('PostVisitCodingReviewPage', () => {
     expect(await screen.findByText('Ben Skin')).toBeInTheDocument();
     expect(screen.queryByText('Ava Jones')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /open coding items/i }));
+    fireEvent.click(screen.getByRole('button', { name: /open review items/i }));
     expect(await screen.findByText('Ava Jones')).toBeInTheDocument();
 
     const avaRow = screen.getByText('Ava Jones').closest('tr');
@@ -167,6 +199,20 @@ describe('PostVisitCodingReviewPage', () => {
     expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1/encounter/enc-1');
     fireEvent.click(within(avaRow as HTMLTableRowElement).getByRole('button', { name: /^claim$/i }));
     expect(navigateMock).toHaveBeenCalledWith('/claims/claim-1');
+  });
+
+  it('separates true missing-code gaps from claim review workflow items', async () => {
+    renderPage();
+
+    const jamesRow = (await screen.findByText('James Simmons')).closest('tr');
+    expect(jamesRow).toBeTruthy();
+    expect(screen.getAllByText('True coding gaps').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Claim workflow').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /no billing code entered/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /claim awaiting review/i })).toBeInTheDocument();
+    expect(within(jamesRow as HTMLTableRowElement).getByText(/99203/)).toBeInTheDocument();
+    expect(within(jamesRow as HTMLTableRowElement).getByText('Claim awaiting review')).toBeInTheDocument();
+    expect(within(jamesRow as HTMLTableRowElement).queryByText('No billing code entered')).not.toBeInTheDocument();
   });
 
   it('reloads when filters change', async () => {

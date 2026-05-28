@@ -135,6 +135,30 @@ const demoOrder: StoreOrder = {
   ],
 };
 
+const staleOrder: StoreOrder = {
+  ...demoOrder,
+  id: '44444444-4444-4444-8444-444444444444',
+  saleDate: '2026-01-15T16:00:00Z',
+  subtotal: 5200,
+  tax: 429,
+  discount: 0,
+  total: 5629,
+  paymentReference: 'pi_slow_serum',
+  items: [
+    {
+      id: 'item-2',
+      saleId: '44444444-4444-4444-8444-444444444444',
+      productId: staleProduct.id,
+      quantity: 1,
+      unitPrice: 5200,
+      discountAmount: 0,
+      lineTotal: 5200,
+      productName: staleProduct.name,
+      productSku: staleProduct.sku,
+    },
+  ],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   authMocks.session = {
@@ -207,8 +231,11 @@ describe('Store flows', () => {
     );
   });
 
-  it('shows order dates on payments and highlights products without sales', async () => {
+  it('shows order dates on payments and drills into slow-moving products', async () => {
     apiMocks.fetchProducts.mockResolvedValue({ products: [demoProduct, staleProduct] });
+    apiMocks.fetchProductSales
+      .mockResolvedValueOnce({ orders: [demoOrder] })
+      .mockResolvedValueOnce({ orders: [demoOrder, staleOrder] });
 
     render(
       <MemoryRouter initialEntries={['/store-ops?tab=payments']}>
@@ -218,8 +245,18 @@ describe('Store flows', () => {
 
     expect(await screen.findByText('Stripe Payment Queue')).toBeInTheDocument();
     expect(screen.getByText(/May 17.*\$83\.89.*pi_demo/)).toBeInTheDocument();
-    expect(screen.getByText('No sales in 60+ days')).toBeInTheDocument();
-    expect(screen.getByText('Slow Moving Serum')).toBeInTheDocument();
+    expect(screen.queryByText('No sales in 60+ days')).not.toBeInTheDocument();
+
+    const drilldown = screen.getByRole('button', { name: /1 item not sold in 90\+ days/i });
+    expect(drilldown).toHaveTextContent('$52.00 sold in the last 12 months across 1 unit');
+    expect(screen.queryByText('Slow Moving Serum')).not.toBeInTheDocument();
+
+    fireEvent.click(drilldown);
+
+    expect(await screen.findByText('Slow Moving Serum')).toBeInTheDocument();
+    expect(screen.getByText('Last sold')).toBeInTheDocument();
+    expect(screen.getByText('12M sold')).toBeInTheDocument();
+    expect(screen.getByText('$52.00')).toBeInTheDocument();
   });
 
   it('lets a portal patient add a product and place a shipped store order', async () => {

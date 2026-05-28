@@ -5,6 +5,7 @@ import {
   Bell,
   Boxes,
   CalendarDays,
+  ChevronDown,
   CreditCard,
   DollarSign,
   Percent,
@@ -72,6 +73,8 @@ interface StaleProductAlert {
   daysSinceSale: number;
   lastSoldAt?: string;
   severity: 'warning' | 'critical';
+  trailingTwelveMonthUnits: number;
+  trailingTwelveMonthRevenue: number;
 }
 
 interface ProductForm {
@@ -159,6 +162,7 @@ const ORDER_RANGE_OPTIONS: StoreOrderRangeOption[] = [
   { value: 'month', label: 'This Month', metricLabel: 'Month' },
   { value: 'all', label: 'All Time', metricLabel: 'All-Time' },
 ];
+const TWELVE_MONTH_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
 
 const FULFILLMENT_LABELS: Record<StoreFulfillmentStatus, string> = {
   awaiting_payment: 'Awaiting Payment',
@@ -338,6 +342,14 @@ function daysSince(value?: string, now = Date.now()): number | null {
   return Math.max(0, Math.floor((now - timestamp) / (24 * 60 * 60 * 1000)));
 }
 
+function saleItemRevenue(item: NonNullable<StoreOrder['items']>[number]): number {
+  const explicitTotal = Number(item.lineTotal);
+  if (Number.isFinite(explicitTotal)) return explicitTotal;
+  const unitPrice = Number(item.unitPrice) || 0;
+  const discountAmount = Number(item.discountAmount) || 0;
+  return Math.max(0, unitPrice * item.quantity - discountAmount);
+}
+
 function patientName(order: StoreOrder): string {
   return [order.patientFirstName, order.patientLastName].filter(Boolean).join(' ') || 'Portal patient';
 }
@@ -413,6 +425,7 @@ export function StoreOperationsPage() {
   const [adjustProductId, setAdjustProductId] = useState('');
   const [adjustQuantity, setAdjustQuantity] = useState('0');
   const [adjustNotes, setAdjustNotes] = useState('');
+  const [showStaleDetails, setShowStaleDetails] = useState(false);
 
   const loadStore = useCallback(async () => {
     if (!session) {
@@ -440,7 +453,7 @@ export function StoreOperationsPage() {
       const [productRes, orderRes, orderHistoryRes, inventoryRes, lowStockRes, reportRes, promotionRes] = await Promise.all([
         fetchProducts(session.tenantId, session.accessToken),
         fetchProductSales(session.tenantId, session.accessToken, orderFilters),
-        fetchProductSales(session.tenantId, session.accessToken, { limit: 500 }),
+        fetchProductSales(session.tenantId, session.accessToken, { limit: 1000 }),
         fetchInventoryStatus(session.tenantId, session.accessToken),
         fetchLowStockProducts(session.tenantId, session.accessToken),
         fetchSalesReport(session.tenantId, session.accessToken, reportFilters),
@@ -581,6 +594,22 @@ export function StoreOperationsPage() {
     }
     return lastSale;
   }, [orderHistory]);
+  const trailingTwelveMonthSalesByProductId = useMemo(() => {
+    const totals = new Map<string, { units: number; revenue: number }>();
+    const cutoff = Date.now() - TWELVE_MONTH_WINDOW_MS;
+    for (const order of orderHistory) {
+      if (order.status === 'cancelled' || order.status === 'refunded') continue;
+      const saleTimestamp = new Date(order.saleDate).getTime();
+      if (!Number.isFinite(saleTimestamp) || saleTimestamp < cutoff) continue;
+      for (const item of order.items || []) {
+        const current = totals.get(item.productId) || { units: 0, revenue: 0 };
+        current.units += item.quantity;
+        current.revenue += saleItemRevenue(item);
+        totals.set(item.productId, current);
+      }
+    }
+    return totals;
+  }, [orderHistory]);
   const staleProductAlerts = useMemo<StaleProductAlert[]>(() => {
     const now = Date.now();
     return products
@@ -596,7 +625,9 @@ export function StoreOperationsPage() {
           product,
           daysSinceSale,
           lastSoldAt,
-          severity: daysSinceSale >= 60 ? 'critical' : 'warning',
+          severity: daysSinceSale >= 90 ? 'critical' : 'warning',
+          trailingTwelveMonthUnits: trailingTwelveMonthSalesByProductId.get(product.id)?.units || 0,
+          trailingTwelveMonthRevenue: trailingTwelveMonthSalesByProductId.get(product.id)?.revenue || 0,
         } satisfies StaleProductAlert;
       })
       .filter((alert): alert is StaleProductAlert => Boolean(alert))
@@ -604,8 +635,22 @@ export function StoreOperationsPage() {
         if (a.severity !== b.severity) return a.severity === 'critical' ? -1 : 1;
         return b.daysSinceSale - a.daysSinceSale;
       });
-  }, [lastSaleByProductId, products]);
-  const stale60Count = staleProductAlerts.filter((alert) => alert.severity === 'critical').length;
+  }, [lastSaleByProductId, products, trailingTwelveMonthSalesByProductId]);
+  const stale90Count = staleProductAlerts.filter((alert) => alert.severity === 'critical').length;
+  const staleDrilldownThreshold = stale90Count > 0 ? 90 : 30;
+  const staleDrilldownItems = useMemo(
+    () => staleProductAlerts.filter((alert) => alert.daysSinceSale >= staleDrilldownThreshold),
+    [staleDrilldownThreshold, staleProductAlerts]
+  );
+  const staleDrilldownRevenue = useMemo(
+    () => staleDrilldownItems.reduce((sum, alert) => sum + alert.trailingTwelveMonthRevenue, 0),
+    [staleDrilldownItems]
+  );
+  const staleDrilldownUnits = useMemo(
+    () => staleDrilldownItems.reduce((sum, alert) => sum + alert.trailingTwelveMonthUnits, 0),
+    [staleDrilldownItems]
+  );
+  const staleDrilldownLabel = `${staleDrilldownItems.length} item${staleDrilldownItems.length === 1 ? '' : 's'} not sold in ${staleDrilldownThreshold}+ days`;
 
   const updateOrderDraft = (orderId: string, patch: Partial<OrderDraft>) => {
     setOrderDrafts((current) => ({
@@ -880,19 +925,64 @@ export function StoreOperationsPage() {
       </section>
 
       {staleProductAlerts.length > 0 && (
-        <section className="store-ops-stale-alerts" aria-label="Slow-moving product alerts">
-          {staleProductAlerts.slice(0, 4).map((alert) => (
-            <article key={alert.product.id} className={`store-ops-stale-card ${alert.severity}`}>
+        <section className="store-ops-stale-drilldown" aria-label="Slow-moving product alerts">
+          <button
+            type="button"
+            className={`store-ops-stale-summary ${staleDrilldownThreshold === 90 ? 'critical' : 'warning'}`}
+            aria-expanded={showStaleDetails}
+            aria-controls="store-ops-stale-details"
+            onClick={() => setShowStaleDetails((value) => !value)}
+          >
+            <span className="store-ops-stale-summary-icon">
               <AlertTriangle size={18} />
-              <ProductThumb product={alert.product} compact />
-              <div>
-                <strong>{alert.severity === 'critical' ? 'No sales in 60+ days' : 'No sales in 30+ days'}</strong>
-                <span>{alert.product.name}</span>
-                <p>{alert.lastSoldAt ? `Last sold ${formatDate(alert.lastSoldAt)}` : `No recorded sale since added ${formatDate(alert.product.createdAt)}`}</p>
+            </span>
+            <span className="store-ops-stale-summary-copy">
+              <strong>{staleDrilldownLabel}</strong>
+              <span>
+                {formatCurrency(staleDrilldownRevenue)} sold in the last 12 months across {staleDrilldownUnits} unit{staleDrilldownUnits === 1 ? '' : 's'}
+              </span>
+            </span>
+            <ChevronDown className={showStaleDetails ? 'open' : ''} size={18} />
+          </button>
+
+          {showStaleDetails && (
+            <div id="store-ops-stale-details" className="store-ops-stale-details">
+              <header>
+                <div>
+                  <h2>Slow-Moving Product Detail</h2>
+                  <p>Products over the current {staleDrilldownThreshold}+ day threshold with trailing 12-month sales.</p>
+                </div>
+                <strong>{staleDrilldownItems.length}</strong>
+              </header>
+              <div className="store-ops-stale-detail-list">
+                {staleDrilldownItems.map((alert) => (
+                  <article key={alert.product.id} className={alert.severity}>
+                    <ProductThumb product={alert.product} compact />
+                    <div className="store-ops-stale-product">
+                      <strong>{alert.product.name}</strong>
+                      <span>{alert.product.sku} · {alert.product.inventoryCount} in stock</span>
+                    </div>
+                    <div className="store-ops-stale-detail-metric">
+                      <span>Last sold</span>
+                      <strong>{alert.lastSoldAt ? formatDate(alert.lastSoldAt) : 'No recorded sale'}</strong>
+                    </div>
+                    <div className="store-ops-stale-detail-metric">
+                      <span>12M units</span>
+                      <strong>{alert.trailingTwelveMonthUnits}</strong>
+                    </div>
+                    <div className="store-ops-stale-detail-metric">
+                      <span>12M sold</span>
+                      <strong>{formatCurrency(alert.trailingTwelveMonthRevenue)}</strong>
+                    </div>
+                    <div className="store-ops-stale-detail-metric age">
+                      <span>Age</span>
+                      <strong>{alert.daysSinceSale}d</strong>
+                    </div>
+                  </article>
+                ))}
               </div>
-              <b>{alert.daysSinceSale}d</b>
-            </article>
-          ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -1058,8 +1148,8 @@ export function StoreOperationsPage() {
                   <div>
                     <dt>Risk</dt>
                     <dd>
-                      {stale60Count > 0
-                        ? `${stale60Count} item${stale60Count === 1 ? '' : 's'} stalled 60+ days`
+                      {stale90Count > 0
+                        ? `${stale90Count} item${stale90Count === 1 ? '' : 's'} stalled 90+ days`
                         : staleProductAlerts.length > 0
                           ? `${staleProductAlerts.length} slow mover${staleProductAlerts.length === 1 ? '' : 's'}`
                           : lowStockProducts.length > 0

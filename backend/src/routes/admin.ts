@@ -9,6 +9,7 @@ import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
 import { mapDowntimeSettings, parseDowntimeSettingsInput } from "../lib/downtimeSettings";
 import { mapDowntimePrimaryDevice } from "../lib/downtimePrimaryDevice";
 import { invalidateCache } from "../services/redisCache";
+import { revokeRefreshTokensForUser } from "../services/authService";
 
 const router = Router();
 
@@ -402,6 +403,7 @@ router.get("/users", async (req: AuthedRequest, res) => {
   const result = await pool.query(
     `SELECT id, email, full_name as "fullName", role,
             coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles",
+            coalesce(force_password_reset, false) as "passwordResetRequired",
             created_at as "createdAt"
      FROM users
      WHERE tenant_id = $1
@@ -455,8 +457,8 @@ router.post("/users", async (req: AuthedRequest, res) => {
   const passwordHash = bcrypt.hashSync(password, 12); // Increased to 12 rounds for better security
 
   await pool.query(
-    `INSERT INTO users (id, tenant_id, email, full_name, role, secondary_roles, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    `INSERT INTO users (id, tenant_id, email, full_name, role, secondary_roles, password_hash, force_password_reset, password_changed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, CURRENT_TIMESTAMP)`,
     [id, tenantId, email.toLowerCase(), fullName, primaryRole, normalizedSecondaryRoles, passwordHash]
   );
 
@@ -467,6 +469,7 @@ router.post("/users", async (req: AuthedRequest, res) => {
     role: primaryRole,
     secondaryRoles: normalizedSecondaryRoles,
     roles: buildEffectiveRoles(primaryRole, normalizedSecondaryRoles),
+    passwordResetRequired: true,
   });
 });
 
@@ -474,6 +477,7 @@ router.post("/users", async (req: AuthedRequest, res) => {
 router.put("/users/:id", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
+  if (!id) return res.status(400).json({ error: "Missing user id" });
   const { email, fullName, role, password, secondaryRoles } = req.body;
 
   if (!email && !fullName && !role && !password && secondaryRoles === undefined) {
@@ -527,6 +531,8 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
     }
     updates.push(`password_hash = $${paramIndex++}`);
     values.push(bcrypt.hashSync(password, 12)); // Increased to 12 rounds for better security
+    updates.push(`force_password_reset = true`);
+    updates.push(`password_changed_at = CURRENT_TIMESTAMP`);
   }
 
   if (updates.length === 0) {
@@ -538,6 +544,10 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
     `UPDATE users SET ${updates.join(", ")} WHERE id = $${paramIndex++} AND tenant_id = $${paramIndex}`,
     values
   );
+
+  if (password) {
+    await revokeRefreshTokensForUser(id, tenantId);
+  }
 
   res.json({ success: true });
 });

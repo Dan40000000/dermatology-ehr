@@ -1,4 +1,4 @@
-import { Server, Socket } from "socket.io";
+import { Server } from "socket.io";
 import { logger } from "../../lib/logger";
 import { AuthenticatedSocket } from "../auth";
 
@@ -25,6 +25,14 @@ export interface PatientViewingData {
 const userPresence = new Map<string, UserPresenceData>();
 const patientViewers = new Map<string, Set<string>>(); // patientId -> Set of userIds
 
+function tenantHomeRoom(tenantId: string) {
+  return `tenant:${tenantId}:module:home`;
+}
+
+function patientRoom(patientId: string) {
+  return `patient:${patientId}`;
+}
+
 /**
  * Register presence-related event listeners on a socket
  */
@@ -45,7 +53,7 @@ export function registerPresenceHandlers(io: Server, socket: AuthenticatedSocket
   userPresence.set(userId, presenceData);
 
   // Broadcast user online status
-  socket.to(`tenant:${tenantId}`).emit("user:online", presenceData);
+  socket.to(tenantHomeRoom(tenantId)).emit("user:online", presenceData);
 
   // Handle status change
   socket.on("user:status", (status: "online" | "away") => {
@@ -55,7 +63,7 @@ export function registerPresenceHandlers(io: Server, socket: AuthenticatedSocket
       lastSeen: new Date().toISOString(),
     };
     userPresence.set(userId, updated);
-    socket.to(`tenant:${tenantId}`).emit("user:status", updated);
+    socket.to(tenantHomeRoom(tenantId)).emit("user:status", updated);
 
     logger.debug("User status updated", {
       userId,
@@ -81,7 +89,7 @@ export function registerPresenceHandlers(io: Server, socket: AuthenticatedSocket
       patientViewers.get(data.patientId)!.add(userId);
 
       // Join patient room
-      socket.join(`patient:${data.patientId}`);
+      socket.join(patientRoom(data.patientId));
     } else {
       // Remove from viewers set
       patientViewers.get(data.patientId)?.delete(userId);
@@ -90,11 +98,11 @@ export function registerPresenceHandlers(io: Server, socket: AuthenticatedSocket
       }
 
       // Leave patient room
-      socket.leave(`patient:${data.patientId}`);
+      socket.leave(patientRoom(data.patientId));
     }
 
-    // Broadcast to tenant
-    socket.to(`tenant:${tenantId}`).emit("patient:viewing", viewingData);
+    // Broadcast only to users already viewing this patient.
+    socket.to(patientRoom(data.patientId)).emit("patient:viewing", viewingData);
 
     logger.debug("Patient viewing status updated", {
       userId,
@@ -114,7 +122,7 @@ export function registerPresenceHandlers(io: Server, socket: AuthenticatedSocket
     };
 
     userPresence.set(userId, offlineData);
-    io.to(`tenant:${tenantId}`).emit("user:offline", offlineData);
+    io.to(tenantHomeRoom(tenantId)).emit("user:offline", offlineData);
 
     // Clean up patient viewing
     for (const [patientId, viewers] of patientViewers.entries()) {
@@ -126,7 +134,7 @@ export function registerPresenceHandlers(io: Server, socket: AuthenticatedSocket
           patientId,
           isViewing: false,
         };
-        io.to(`tenant:${tenantId}`).emit("patient:viewing", viewingData);
+        io.to(patientRoom(patientId)).emit("patient:viewing", viewingData);
 
         if (viewers.size === 0) {
           patientViewers.delete(patientId);
@@ -144,7 +152,7 @@ export function registerPresenceHandlers(io: Server, socket: AuthenticatedSocket
 /**
  * Get currently online users for a tenant
  */
-export function getOnlineUsers(tenantId: string): UserPresenceData[] {
+export function getOnlineUsers(_tenantId: string): UserPresenceData[] {
   return Array.from(userPresence.values()).filter((p) => p.status !== "offline");
 }
 
@@ -170,7 +178,7 @@ export function broadcastToPatientViewers(
     viewerCount: patientViewers.get(patientId)?.size || 0,
   });
 
-  io.to(`patient:${patientId}`).emit(event, {
+  io.to(patientRoom(patientId)).emit(event, {
     ...data,
     timestamp: new Date().toISOString(),
   });

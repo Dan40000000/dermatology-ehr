@@ -60,6 +60,7 @@ describe("Documents routes", () => {
   });
 
   it("POST /documents creates document", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "p1" }] });
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] });
     const res = await request(app).post("/documents").send({

@@ -22,6 +22,7 @@ export interface TenantUser {
   secondaryRoles?: Role[];
   roles?: Role[];
   fullName: string;
+  forcePasswordReset?: boolean;
 }
 
 export interface AuthTokens {
@@ -38,4 +39,5 @@ export interface AuthenticatedRequestUser {
   roles?: Role[];
   email: string;
   fullName: string;
+  passwordResetRequired?: boolean;
 }

@@ -13,6 +13,26 @@ import {
 
 export const financialMetricsRouter = Router();
 const LATE_FEE_NOTE_PREFIX = "[LATE_FEE]";
+const PAID_STORE_ORDER_PREDICATE =
+  "coalesce(sof.stripe_payment_status, case when ps.status = 'completed' then 'paid' else ps.status end) in ('paid', 'succeeded')";
+const REPORTABLE_BILL_REVENUE_PREDICATE = `(
+  b.encounter_id is null
+  or position('${LATE_FEE_NOTE_PREFIX}' in upper(coalesce(b.notes, ''))) > 0
+  or position('[NO_SHOW_FEE]' in upper(coalesce(b.notes, ''))) > 0
+  or exists (
+    select 1
+    from bill_line_items fee_bli
+    where fee_bli.bill_id = b.id
+      and fee_bli.tenant_id = b.tenant_id
+      and (
+        upper(coalesce(fee_bli.cpt_code, '')) like '%LATEFEE%'
+        or upper(coalesce(fee_bli.cpt_code, '')) like '%NOSHOW%'
+        or upper(coalesce(fee_bli.description, '')) like '%LATE%FEE%'
+        or upper(coalesce(fee_bli.description, '')) like '%NO-SHOW%FEE%'
+        or upper(coalesce(fee_bli.description, '')) like '%NO SHOW%FEE%'
+      )
+  )
+)`;
 type TrendGranularity = "day" | "week" | "month";
 
 type TrendPoint = {
@@ -449,8 +469,7 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            on sof.sale_id::text = ps.id::text
           and sof.tenant_id = ps.tenant_id
          where ps.tenant_id = $1
-           and ps.status = 'completed'
-           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+           and ${PAID_STORE_ORDER_PREDICATE}
            and ps.sale_date::date >= $2::date
            and ps.sale_date::date <= $3::date
          group by ps.sale_date::date
@@ -479,13 +498,13 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
        ),
        standalone_bill_revenue as (
          select
-           bill_date::date as day,
-           coalesce(total_charges_cents, 0) as revenue_earned_cents
-         from bills
-         where tenant_id = $1
-           and encounter_id is null
-           and bill_date >= $2
-           and bill_date <= $3
+           b.bill_date::date as day,
+           coalesce(b.total_charges_cents, 0) as revenue_earned_cents
+         from bills b
+         where b.tenant_id = $1
+           and ${REPORTABLE_BILL_REVENUE_PREDICATE}
+           and b.bill_date >= $2
+           and b.bill_date <= $3
        ),
        store_revenue as (
          select
@@ -496,8 +515,7 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            on sof.sale_id::text = ps.id::text
           and sof.tenant_id = ps.tenant_id
          where ps.tenant_id = $1
-           and ps.status = 'completed'
-           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+           and ${PAID_STORE_ORDER_PREDICATE}
            and ps.sale_date::date >= $2::date
            and ps.sale_date::date <= $3::date
        ),
@@ -593,7 +611,7 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            left join appointment_types at
              on at.id = a.appointment_type_id
            where b.tenant_id = $1
-             and b.encounter_id is null
+             and ${REPORTABLE_BILL_REVENUE_PREDICATE}
              and b.bill_date >= $2
              and b.bill_date <= $3
            group by b.id, b.bill_date, b.total_charges_cents, b.notes, b.encounter_id
@@ -615,8 +633,7 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            left join product_sale_items psi
              on psi.sale_id::text = ps.id::text
            where ps.tenant_id = $1
-             and ps.status = 'completed'
-             and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+             and ${PAID_STORE_ORDER_PREDICATE}
              and ps.sale_date::date >= $2::date
              and ps.sale_date::date <= $3::date
            group by ps.id, ps.sale_date, ps.total, sof.shipping_fee
@@ -998,7 +1015,7 @@ financialMetricsRouter.get("/revenue-details", requireAuth, async (req: AuthedRe
          left join appointment_types at
            on at.id = a.appointment_type_id
          where b.tenant_id = $1
-           and b.encounter_id is null
+           and ${REPORTABLE_BILL_REVENUE_PREDICATE}
            and b.bill_date >= $2::date
            and b.bill_date <= $3::date
            and coalesce(b.total_charges_cents, 0) > 0
@@ -1033,8 +1050,7 @@ financialMetricsRouter.get("/revenue-details", requireAuth, async (req: AuthedRe
          left join product_sale_items psi
            on psi.sale_id::text = ps.id::text
          where ps.tenant_id = $1
-           and ps.status = 'completed'
-           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+           and ${PAID_STORE_ORDER_PREDICATE}
            and ps.sale_date::date >= $2::date
            and ps.sale_date::date <= $3::date
            and (coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0)) > 0

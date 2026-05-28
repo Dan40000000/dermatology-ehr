@@ -14,6 +14,10 @@ export interface StoredFile {
 let warnedLocalFallback = false;
 let warnedS3UploadFallback = false;
 
+function allowLocalStorage(): boolean {
+  return config.isDevelopment || config.isTest;
+}
+
 function sanitizeFileName(originalName: string): string {
   const baseName = path.basename(originalName || "file");
   const cleaned = baseName
@@ -33,6 +37,10 @@ async function ensureBuffer(file: Express.Multer.File): Promise<Buffer> {
 }
 
 export async function saveFileLocal(file: Express.Multer.File, buffer?: Buffer): Promise<StoredFile> {
+  if (!allowLocalStorage()) {
+    throw new Error("Local PHI file storage is disabled outside development and tests");
+  }
+
   const uploadDir = path.join(process.cwd(), "uploads");
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -56,8 +64,7 @@ export async function saveFile(file: Express.Multer.File): Promise<StoredFile> {
       const { key, signedUrl } = await putObject(buffer, file.mimetype || "application/octet-stream", safeOriginalName);
       return { url: signedUrl, storage: "s3", objectKey: key };
     } catch (error: any) {
-      const allowLocalFallback = config.isDevelopment || config.isTest;
-      if (!allowLocalFallback) {
+      if (!allowLocalStorage()) {
         throw error;
       }
       if (!warnedS3UploadFallback) {
@@ -68,6 +75,10 @@ export async function saveFile(file: Express.Multer.File): Promise<StoredFile> {
       return saveFileLocal(file, buffer);
     }
   }
+  if (!allowLocalStorage()) {
+    throw new Error("S3 storage must be configured before accepting uploads in this environment");
+  }
+
   if (env.storageProvider === "s3" && !warnedLocalFallback) {
     warnedLocalFallback = true;
     // eslint-disable-next-line no-console

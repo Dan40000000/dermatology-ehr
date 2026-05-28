@@ -20,8 +20,25 @@ export interface AppointmentEventData {
   appointmentTypeName?: string;
 }
 
+const APPOINTMENT_MODULES = ["home", "schedule", "office_flow", "appt_flow", "waitlist"] as const;
+
+function tenantModuleRoom(tenantId: string, moduleKey: (typeof APPOINTMENT_MODULES)[number]) {
+  return `tenant:${tenantId}:module:${moduleKey}`;
+}
+
+function emitToAppointmentModules(io: Server, tenantId: string, event: string, payload: unknown) {
+  APPOINTMENT_MODULES.forEach((moduleKey) => {
+    io.to(tenantModuleRoom(tenantId, moduleKey)).emit(event, payload);
+  });
+}
+
+function sanitizeAppointment(appointment: AppointmentEventData) {
+  const { patientName, ...safeAppointment } = appointment;
+  return safeAppointment;
+}
+
 /**
- * Broadcast appointment created event to tenant room
+ * Broadcast appointment created event to appointment-scoped module rooms
  */
 export function broadcastAppointmentCreated(
   io: Server,
@@ -33,14 +50,14 @@ export function broadcastAppointmentCreated(
     appointmentId: appointment.id,
   });
 
-  io.to(`tenant:${tenantId}`).emit("appointment:created", {
-    appointment,
+  emitToAppointmentModules(io, tenantId, "appointment:created", {
+    appointment: sanitizeAppointment(appointment),
     timestamp: new Date().toISOString(),
   });
 }
 
 /**
- * Broadcast appointment updated event to tenant room
+ * Broadcast appointment updated event to appointment-scoped module rooms
  */
 export function broadcastAppointmentUpdated(
   io: Server,
@@ -52,14 +69,14 @@ export function broadcastAppointmentUpdated(
     appointmentId: appointment.id,
   });
 
-  io.to(`tenant:${tenantId}`).emit("appointment:updated", {
-    appointment,
+  emitToAppointmentModules(io, tenantId, "appointment:updated", {
+    appointment: sanitizeAppointment(appointment),
     timestamp: new Date().toISOString(),
   });
 }
 
 /**
- * Broadcast appointment cancelled event to tenant room
+ * Broadcast appointment cancelled event to appointment-scoped module rooms
  */
 export function broadcastAppointmentCancelled(
   io: Server,
@@ -72,7 +89,7 @@ export function broadcastAppointmentCancelled(
     appointmentId,
   });
 
-  io.to(`tenant:${tenantId}`).emit("appointment:cancelled", {
+  emitToAppointmentModules(io, tenantId, "appointment:cancelled", {
     appointmentId,
     reason,
     timestamp: new Date().toISOString(),
@@ -80,14 +97,14 @@ export function broadcastAppointmentCancelled(
 }
 
 /**
- * Broadcast patient check-in event to tenant room
+ * Broadcast patient check-in event to appointment-scoped module rooms
  */
 export function broadcastPatientCheckIn(
   io: Server,
   tenantId: string,
   appointmentId: string,
   patientId: string,
-  patientName?: string
+  _patientName?: string
 ) {
   logger.info("Broadcasting patient:checkin", {
     tenantId,
@@ -95,10 +112,9 @@ export function broadcastPatientCheckIn(
     patientId,
   });
 
-  io.to(`tenant:${tenantId}`).emit("patient:checkin", {
+  emitToAppointmentModules(io, tenantId, "patient:checkin", {
     appointmentId,
     patientId,
-    patientName,
     timestamp: new Date().toISOString(),
   });
 }

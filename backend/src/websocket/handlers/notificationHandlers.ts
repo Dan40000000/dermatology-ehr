@@ -27,6 +27,10 @@ export interface NotificationEventData {
   createdAt: string;
 }
 
+function tenantHomeRoom(tenantId: string) {
+  return `tenant:${tenantId}:module:home`;
+}
+
 /**
  * Send notification to specific user
  */
@@ -50,7 +54,7 @@ export function sendUserNotification(
 }
 
 /**
- * Broadcast notification to entire tenant
+ * Broadcast notification to the tenant home module
  */
 export function broadcastTenantNotification(
   io: Server,
@@ -63,7 +67,7 @@ export function broadcastTenantNotification(
     type: notification.type,
   });
 
-  io.to(`tenant:${tenantId}`).emit("notification:new", {
+  io.to(tenantHomeRoom(tenantId)).emit("notification:new", {
     notification,
     timestamp: new Date().toISOString(),
   });

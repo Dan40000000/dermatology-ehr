@@ -81,7 +81,7 @@ export function useBiopsyUpdates(options: UseBiopsyUpdatesOptions = {}) {
     const handleBiopsyResultReceived = (data: {
       biopsyId: string;
       patientId: string;
-      diagnosis: string;
+      diagnosis?: string;
       timestamp: string;
     }) => {
       if (patientId && data.patientId !== patientId) return;
@@ -90,8 +90,7 @@ export function useBiopsyUpdates(options: UseBiopsyUpdatesOptions = {}) {
       setPendingResults((prev) => prev.filter((id) => id !== data.biopsyId));
 
       // Check for concerning diagnoses (melanoma, carcinoma, etc.)
-      const isConcerning =
-        /melanoma|carcinoma|malignant|cancer/i.test(data.diagnosis);
+      const isConcerning = Boolean(data.diagnosis && /melanoma|carcinoma|malignant|cancer/i.test(data.diagnosis));
 
       if (showCriticalAlerts && isConcerning) {
         // Show prominent alert for concerning results
@@ -106,13 +105,15 @@ export function useBiopsyUpdates(options: UseBiopsyUpdatesOptions = {}) {
           },
         });
       } else if (showToasts) {
-        toast.success(`Biopsy result received: ${data.diagnosis}`, {
+        toast.success('Biopsy result received', {
           duration: 6000,
           icon: '📋',
         });
       }
 
-      onBiopsyResultReceived?.(data.biopsyId, data.patientId, data.diagnosis);
+      if (data.diagnosis) {
+        onBiopsyResultReceived?.(data.biopsyId, data.patientId, data.diagnosis);
+      }
     };
 
     // Handler for biopsy reviewed

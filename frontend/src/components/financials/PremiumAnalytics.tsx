@@ -11,6 +11,7 @@ interface AnalyticsCategory {
 }
 
 interface ChartData {
+  key?: string;
   label: string;
   value: number;
   change?: number;
@@ -133,7 +134,10 @@ export function PremiumAnalytics({ onExportReport }: Props) {
     if (range === 'custom') {
       return;
     }
-    setAppliedRange(getPremiumRange(range, customStartDate, customEndDate));
+    const nextRange = getPremiumRange(range, customStartDate, customEndDate);
+    setCustomStartDate(nextRange.startDate);
+    setCustomEndDate(nextRange.endDate);
+    setAppliedRange(nextRange);
   };
 
   const applyCustomRange = () => {
@@ -144,6 +148,16 @@ export function PremiumAnalytics({ onExportReport }: Props) {
     }
     setDateRange('custom');
     setAppliedRange(nextRange);
+  };
+
+  const handleCustomStartDateChange = (value: string) => {
+    setDateRange('custom');
+    setCustomStartDate(value);
+  };
+
+  const handleCustomEndDateChange = (value: string) => {
+    setDateRange('custom');
+    setCustomEndDate(value);
   };
 
   const loadAnalytics = useCallback(async () => {
@@ -179,20 +193,22 @@ export function PremiumAnalytics({ onExportReport }: Props) {
 
   const totalCharges = Number(trendSummary?.totalRevenueEarnedCents || 0);
   const totalPayments = Number(trendSummary?.totalPaymentsCollectedCents || 0);
+  const storeRevenue = Number(trendSummary?.totalStorePaymentsCents || 0);
   const totalAdjustments = Number(trendSummary?.totalBadDebtCents || 0);
   const netCollectionRate = totalCharges > 0 ? (totalPayments / totalCharges) * 100 : Number(trendSummary?.collectionRate || 0);
   const revenueGap = Math.max(0, totalCharges - totalPayments - totalAdjustments);
 
   const collectionSourceRows: ChartData[] = useMemo(() => ([
-    { label: 'Payer Payments', value: Number(trendSummary?.totalPayerPaymentsCents || 0) },
-    { label: 'Patient Payments', value: Number(trendSummary?.totalPatientPaymentsCents || 0) },
-    { label: 'Store Payments', value: Number(trendSummary?.totalStorePaymentsCents || 0) },
-    { label: 'Open Revenue Gap', value: revenueGap },
+    { key: 'payer', label: 'Payer Payments', value: Number(trendSummary?.totalPayerPaymentsCents || 0) },
+    { key: 'patient', label: 'Patient Payments', value: Number(trendSummary?.totalPatientPaymentsCents || 0) },
+    { key: 'store', label: 'Store Revenue', value: Number(trendSummary?.totalStorePaymentsCents || 0) },
+    { key: 'gap', label: 'Open Revenue Gap', value: revenueGap },
   ].filter((row) => row.value > 0)), [revenueGap, trendSummary]);
 
   const revenueCategoryRows: ChartData[] = useMemo(() => (
     (trendSummary?.revenueCategories || []).map((category) => ({
-      label: category.label,
+      key: category.key,
+      label: category.key === 'product_sale' ? 'Store Revenue' : category.label,
       value: Number(category.revenueCents || 0),
     })).filter((row) => row.value > 0)
   ), [trendSummary]);
@@ -267,7 +283,7 @@ export function PremiumAnalytics({ onExportReport }: Props) {
         flexWrap: 'wrap',
       }}>
         {/* Date Range */}
-        <div>
+        <div style={{ minWidth: 0, flex: '1 1 420px', maxWidth: '560px' }}>
           <label style={{ display: 'block', fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.5rem', fontWeight: '600' }}>
             Date Range
           </label>
@@ -300,39 +316,37 @@ export function PremiumAnalytics({ onExportReport }: Props) {
           <div style={{ marginTop: '0.45rem', color: '#6b7280', fontSize: '0.78rem', fontWeight: 600 }}>
             {rangeLabel(appliedRange.startDate, appliedRange.endDate)}
           </div>
-          {dateRange === 'custom' && (
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.6rem', alignItems: 'center' }}>
-              <input
-                aria-label="Premium analytics start date"
-                type="date"
-                value={customStartDate}
-                onChange={(event) => setCustomStartDate(event.target.value)}
-                style={{ padding: '0.45rem 0.6rem', border: '2px solid #e5e7eb', borderRadius: '8px', fontWeight: 600 }}
-              />
-              <input
-                aria-label="Premium analytics end date"
-                type="date"
-                value={customEndDate}
-                onChange={(event) => setCustomEndDate(event.target.value)}
-                style={{ padding: '0.45rem 0.6rem', border: '2px solid #e5e7eb', borderRadius: '8px', fontWeight: 600 }}
-              />
-              <button
-                type="button"
-                onClick={applyCustomRange}
-                style={{
-                  padding: '0.48rem 0.8rem',
-                  border: 'none',
-                  background: '#059669',
-                  color: '#ffffff',
-                  borderRadius: '8px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                Apply Range
-              </button>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.6rem', alignItems: 'center' }}>
+            <input
+              aria-label="Premium analytics start date"
+              type="date"
+              value={customStartDate}
+              onChange={(event) => handleCustomStartDateChange(event.target.value)}
+              style={{ padding: '0.45rem 0.6rem', border: '2px solid #e5e7eb', borderRadius: '8px', fontWeight: 600 }}
+            />
+            <input
+              aria-label="Premium analytics end date"
+              type="date"
+              value={customEndDate}
+              onChange={(event) => handleCustomEndDateChange(event.target.value)}
+              style={{ padding: '0.45rem 0.6rem', border: '2px solid #e5e7eb', borderRadius: '8px', fontWeight: 600 }}
+            />
+            <button
+              type="button"
+              onClick={applyCustomRange}
+              style={{
+                padding: '0.48rem 0.8rem',
+                border: 'none',
+                background: '#059669',
+                color: '#ffffff',
+                borderRadius: '8px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Apply Dates
+            </button>
+          </div>
         </div>
 
         {/* Provider Filter */}
@@ -443,7 +457,7 @@ export function PremiumAnalytics({ onExportReport }: Props) {
           {/* Summary Cards */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
             gap: '1.5rem',
             marginBottom: '2rem',
           }}>
@@ -469,6 +483,18 @@ export function PremiumAnalytics({ onExportReport }: Props) {
               <div style={{ fontSize: '2rem', fontWeight: '800', color: '#059669' }}>{formatCurrency(totalPayments)}</div>
               <div style={{ fontSize: '0.85rem', color: '#059669', marginTop: '0.5rem' }}>
                 Patient, payer, and store cash
+              </div>
+            </div>
+            <div style={{
+              background: 'white',
+              borderRadius: '16px',
+              padding: '1.5rem',
+              border: '2px solid #e5e7eb',
+            }}>
+              <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.5rem' }}>Store Revenue</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800', color: '#0f766e' }}>{formatCurrency(storeRevenue)}</div>
+              <div style={{ fontSize: '0.85rem', color: '#0f766e', marginTop: '0.5rem' }}>
+                Paid store orders and shipping
               </div>
             </div>
             <div style={{

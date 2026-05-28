@@ -15,8 +15,8 @@ describe('rateLimiter presets', () => {
     expect(apiLimiter.legacyHeaders).toBe(false);
   });
 
-  it('configures auth limiter with increased limits for multiple staff', () => {
-    expect(authLimiter.max).toBe(100); // 100 login attempts per 15 min
+  it('configures auth limiter with tight failed-login limits', () => {
+    expect(authLimiter.max).toBe(8); // 8 failed login attempts per 15 min
     expect(authLimiter.skipSuccessfulRequests).toBe(true);
     expect(authLimiter.message).toContain('login attempts');
   });

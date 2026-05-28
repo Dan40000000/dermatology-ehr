@@ -27,11 +27,15 @@ const mockMeResponse = {
 };
 
 const apiMocks = vi.hoisted(() => ({
+  COOKIE_AUTH_TOKEN_PLACEHOLDER: '__http_only_cookie__',
+  changeStaffPassword: vi.fn(),
   login: vi.fn(),
   fetchMe: vi.fn(),
 }));
 
 vi.mock('../../api', () => apiMocks);
+
+const COOKIE_AUTH_TOKEN_PLACEHOLDER = '__http_only_cookie__';
 
 const providerUserWithRoles = {
   id: 'user-1',
@@ -40,6 +44,7 @@ const providerUserWithRoles = {
   role: 'provider',
   secondaryRoles: [] as string[],
   roles: ['provider'] as string[],
+  passwordResetRequired: false,
 };
 
 const SESSION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -51,6 +56,7 @@ describe('AuthContext', () => {
     sessionStorage.clear();
     apiMocks.login.mockResolvedValue(mockLoginResponse);
     apiMocks.fetchMe.mockResolvedValue(mockMeResponse);
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
   });
 
   afterEach(() => {
@@ -86,8 +92,8 @@ describe('AuthContext', () => {
   it('should restore session from localStorage', () => {
     const storedSession = {
       tenantId: 'tenant-1',
-      accessToken: 'stored-token',
-      refreshToken: 'stored-refresh',
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
       user: {
         id: 'user-1',
         email: 'stored@example.com',
@@ -110,12 +116,14 @@ describe('AuthContext', () => {
         ...storedSession.user,
         secondaryRoles: [],
         roles: ['provider'],
+        passwordResetRequired: false,
       },
     });
     expect(result.current.user).toEqual({
       ...storedSession.user,
       secondaryRoles: [],
       roles: ['provider'],
+      passwordResetRequired: false,
     });
     expect(result.current.isAuthenticated).toBe(true);
   });
@@ -126,8 +134,8 @@ describe('AuthContext', () => {
 
     const storedSession = {
       tenantId: 'tenant-1',
-      accessToken: 'stored-token',
-      refreshToken: 'stored-refresh',
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
       lastActivityAt: Date.now() - SESSION_IDLE_TIMEOUT_MS - 1,
       sessionStartedAt: Date.now() - SESSION_IDLE_TIMEOUT_MS - 60_000,
       user: {
@@ -158,8 +166,8 @@ describe('AuthContext', () => {
 
     const storedSession = {
       tenantId: 'tenant-1',
-      accessToken: 'stored-token',
-      refreshToken: 'stored-refresh',
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
       lastActivityAt: Date.now(),
       sessionStartedAt: Date.now(),
       user: {
@@ -196,8 +204,8 @@ describe('AuthContext', () => {
 
     const storedSession = {
       tenantId: 'tenant-1',
-      accessToken: 'stored-token',
-      refreshToken: 'stored-refresh',
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
       lastActivityAt: Date.now(),
       sessionStartedAt: Date.now(),
       user: {
@@ -264,7 +272,7 @@ describe('AuthContext', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.session?.accessToken).toBe('real-provider-token');
+      expect(result.current.session?.accessToken).toBe(COOKIE_AUTH_TOKEN_PLACEHOLDER);
     });
 
     expect(apiMocks.login).toHaveBeenCalledWith('tenant-demo', 'provider@demo.practice', 'Password123!');
@@ -343,8 +351,8 @@ describe('AuthContext', () => {
 
     expect(result.current.session).toEqual({
       tenantId: 'tenant-1',
-      accessToken: 'access-token-123',
-      refreshToken: 'refresh-token-123',
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
       user: providerUserWithRoles,
     });
 
@@ -381,8 +389,8 @@ describe('AuthContext', () => {
     });
 
     expect(apiMocks.login).toHaveBeenCalledWith('tenant-demo', 'provider@demo.practice', 'Password123!');
-    expect(result.current.session?.accessToken).toBe('real-provider-token');
-    expect(result.current.session?.refreshToken).toBe('real-provider-refresh');
+    expect(result.current.session?.accessToken).toBe(COOKIE_AUTH_TOKEN_PLACEHOLDER);
+    expect(result.current.session?.refreshToken).toBe(COOKIE_AUTH_TOKEN_PLACEHOLDER);
     expect(result.current.user).toMatchObject({
       id: 'u-provider',
       email: 'provider@demo.practice',
@@ -430,8 +438,8 @@ describe('AuthContext', () => {
 
     expect(storedSession).toMatchObject({
       tenantId: 'tenant-1',
-      accessToken: 'access-token-123',
-      refreshToken: 'refresh-token-123',
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
       user: providerUserWithRoles,
     });
     expect(typeof storedSession.lastActivityAt).toBe('number');
@@ -530,7 +538,7 @@ describe('AuthContext', () => {
       await result.current.refreshUser();
     });
 
-    expect(apiMocks.fetchMe).toHaveBeenCalledWith('tenant-1', 'access-token-123');
+    expect(apiMocks.fetchMe).toHaveBeenCalledWith('tenant-1', COOKIE_AUTH_TOKEN_PLACEHOLDER);
     expect(result.current.user?.fullName).toBe('Updated Name');
   });
 

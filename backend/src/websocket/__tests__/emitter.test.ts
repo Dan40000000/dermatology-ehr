@@ -163,7 +163,8 @@ describe("websocket emitter", () => {
         "notification:new",
       ])
     );
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:schedule");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:home");
     expect(io.to).toHaveBeenCalledWith("user:user-1");
   });
 

@@ -859,7 +859,7 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
     existing.storePaymentsCents += amount;
     existing.paymentCount += 1;
     const categories = new Map<string, DemoItem>(existing.revenueCategories.map((item: DemoItem) => [item.key, item]));
-    const current = categories.get('product_sale') || { key: 'product_sale', label: 'Product Sales', revenueCents: 0, itemCount: 0 };
+    const current = categories.get('product_sale') || { key: 'product_sale', label: 'Store Revenue', revenueCents: 0, itemCount: 0 };
     current.revenueCents += amount;
     current.itemCount += 1;
     categories.set('product_sale', current);
@@ -964,7 +964,7 @@ function buildDashboardSnapshot(state: DemoRevenueCycleState, startDate: string,
   if (storeRevenueCents > 0) {
     categoryMap.set('product_sale', {
       key: 'product_sale',
-      label: 'Product Sales',
+      label: 'Store Revenue',
       revenueCents: storeRevenueCents,
       itemCount: getCompletedDemoStoreOrdersForFinancials().filter((order) => inRange(String(order.saleDate || order.createdAt || '').slice(0, 10), startDate, endDate)).length,
     });

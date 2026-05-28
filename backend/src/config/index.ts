@@ -313,6 +313,10 @@ function validateConfig(): void {
       console.warn('WARNING: SENTRY_DSN is not set in production; error forensics will be limited.');
     }
 
+    if (!config.isTest && config.storage.provider !== 's3') {
+      errors.push('STORAGE_PROVIDER must be s3 in production-like environments');
+    }
+
     if (config.storage.provider === 's3' && !config.storage.aws.bucket) {
       errors.push('AWS_S3_BUCKET is required when STORAGE_PROVIDER is s3');
     }

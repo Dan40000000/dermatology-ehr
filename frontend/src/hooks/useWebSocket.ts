@@ -44,7 +44,7 @@ export function useAppointmentEvents(callbacks: {
   onPatientCheckIn?: (data: any) => void;
 }) {
   useWebSocketEvent('appointment:created', (data) => {
-    toast.success(`New appointment: ${data.appointment.patientName || 'Unknown'}`, {
+    toast.success('New appointment', {
       duration: 3000,
       icon: '📅',
     });
@@ -52,7 +52,7 @@ export function useAppointmentEvents(callbacks: {
   });
 
   useWebSocketEvent('appointment:updated', (data) => {
-    toast(`Appointment updated: ${data.appointment.patientName || 'Unknown'}`, {
+    toast('Appointment updated', {
       duration: 2000,
       icon: '📝',
     });
@@ -68,7 +68,7 @@ export function useAppointmentEvents(callbacks: {
   });
 
   useWebSocketEvent('patient:checkin', (data) => {
-    toast.success(`Patient checked in: ${data.patientName || 'Unknown'}`, {
+    toast.success('Patient checked in', {
       duration: 3000,
       icon: '✅',
     });

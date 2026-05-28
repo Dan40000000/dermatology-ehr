@@ -9,6 +9,11 @@ import { rateLimit } from "../middleware/rateLimit";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import { validatePasswordPolicy } from "../middleware/security";
 import { logger } from "../lib/logger";
+import {
+  COOKIE_AUTH_TOKEN_PLACEHOLDER,
+  clearPatientPortalSessionCookie,
+  setPatientPortalSessionCookie,
+} from "../auth/cookies";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -552,8 +557,9 @@ patientPortalRouter.post(
         console.warn('Failed to log portal login audit:', auditError);
       }
 
+      setPatientPortalSessionCookie(res, sessionToken);
       return res.json({
-        sessionToken,
+        sessionToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
         expiresAt,
         patient: {
           id: account.patient_id,
@@ -576,14 +582,16 @@ patientPortalRouter.post(
  * Logout and invalidate session
  */
 patientPortalRouter.post("/logout", requirePatientAuth, async (req: PatientPortalRequest, res) => {
-  const token = req.headers.authorization?.replace("Bearer ", "").trim();
+  const token = req.patientSessionToken;
 
   try {
     // Delete session
-    await pool.query(
-      `DELETE FROM patient_portal_sessions WHERE session_token = $1`,
-      [token]
-    );
+    if (token) {
+      await pool.query(
+        `DELETE FROM patient_portal_sessions WHERE session_token = $1`,
+        [token]
+      );
+    }
 
     // Log logout
     await pool.query(
@@ -600,6 +608,7 @@ patientPortalRouter.post("/logout", requirePatientAuth, async (req: PatientPorta
       ]
     );
 
+    clearPatientPortalSessionCookie(res);
     return res.json({ message: "Logged out successfully" });
   } catch (error) {
     logPatientPortalError("Logout error", error);

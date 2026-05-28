@@ -36,6 +36,7 @@ type RefreshResponse = {
 
 const STORAGE_KEY = 'derm_session';
 const TENANT_HEADER = 'x-tenant-id';
+const COOKIE_AUTH_TOKEN_PLACEHOLDER = '__http_only_cookie__';
 const API_BASE = API_BASE_URL || '';
 let originalFetchRef: typeof window.fetch | null = null;
 
@@ -51,7 +52,11 @@ function isApiRequest(url: string) {
 }
 
 function isAuthEndpoint(url: string) {
-  return url.includes('/api/auth/login') || url.includes('/api/auth/refresh');
+  return url.includes('/api/auth/login') || url.includes('/api/auth/refresh') || url.includes('/api/auth/logout');
+}
+
+function isCookiePlaceholder(value: unknown) {
+  return value === COOKIE_AUTH_TOKEN_PLACEHOLDER || value === '__cookie__' || value === 'cookie';
 }
 
 function readSession(): StoredSession | null {
@@ -89,7 +94,7 @@ async function refreshSession(originalFetch: typeof window.fetch): Promise<Store
         [TENANT_HEADER]: current.tenantId,
       },
       credentials: 'include',
-      body: JSON.stringify({ refreshToken: current.refreshToken }),
+      body: JSON.stringify({ refreshToken: isCookiePlaceholder(current.refreshToken) ? COOKIE_AUTH_TOKEN_PLACEHOLDER : current.refreshToken }),
     });
 
     if (!res.ok) {
@@ -104,8 +109,8 @@ async function refreshSession(originalFetch: typeof window.fetch): Promise<Store
 
     const nextSession: StoredSession = {
       tenantId: data.user?.tenantId || current.tenantId,
-      accessToken: data.tokens.accessToken,
-      refreshToken: data.tokens.refreshToken,
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
       lastActivityAt: current.lastActivityAt,
       sessionStartedAt: current.sessionStartedAt,
       user: {
@@ -144,7 +149,18 @@ export function installAuthFetch() {
   originalFetchRef = originalFetch;
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(input, init);
+    let request = new Request(input, init);
+    if (isApiRequest(request.url)) {
+      const headers = new Headers(request.headers);
+      const authorization = headers.get('Authorization');
+      if (authorization && isCookiePlaceholder(authorization.replace(/^Bearer\s+/i, '').trim())) {
+        headers.delete('Authorization');
+      }
+      request = new Request(request, {
+        headers,
+        credentials: 'include',
+      });
+    }
     let retryRequest: Request | null = null;
 
     if (isApiRequest(request.url) && !isAuthEndpoint(request.url)) {
@@ -170,10 +186,10 @@ export function installAuthFetch() {
     }
 
     const headers = new Headers(retryRequest.headers);
-    headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
+    headers.delete('Authorization');
     headers.set(TENANT_HEADER, refreshed.tenantId);
 
-    const finalRequest = new Request(retryRequest, { headers });
+    const finalRequest = new Request(retryRequest, { headers, credentials: 'include' });
     return originalFetch(finalRequest);
   };
 }

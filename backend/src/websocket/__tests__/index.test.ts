@@ -88,7 +88,8 @@ describe("websocket index", () => {
 
       connectionHandler(socket as any);
 
-      expect(socket.join).toHaveBeenCalledWith("tenant:tenant-1");
+      expect(socket.join).toHaveBeenCalledWith("tenant:tenant-1:module:home");
+      expect(socket.join).toHaveBeenCalledWith("tenant:tenant-1:module:schedule");
       expect(socket.join).toHaveBeenCalledWith("user:user-1");
       expect(registerMessageHandlers).toHaveBeenCalledWith(io, socket);
       expect(registerPresenceHandlers).toHaveBeenCalledWith(io, socket);

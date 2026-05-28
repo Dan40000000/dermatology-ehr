@@ -151,12 +151,12 @@ export function useBillingUpdates(options: UseBillingUpdatesOptions = {}) {
     };
 
     // Handler for claim denied
-    const handleClaimDenied = (data: { claimId: string; reason: string; timestamp: string }) => {
+    const handleClaimDenied = (data: { claimId: string; reason?: string; timestamp: string }) => {
       setLastUpdate(new Date(data.timestamp));
       highlightClaim(data.claimId);
 
       if (showDenialAlerts) {
-        toast.error(`Claim DENIED: ${data.reason}`, {
+        toast.error(data.reason ? `Claim DENIED: ${data.reason}` : 'Claim denied', {
           duration: 8000,
           icon: '❌',
           style: {
@@ -166,7 +166,7 @@ export function useBillingUpdates(options: UseBillingUpdatesOptions = {}) {
         });
       }
 
-      onClaimDenied?.(data.claimId, data.reason);
+      onClaimDenied?.(data.claimId, data.reason || 'Denied');
     };
 
     // Handler for claim paid
@@ -192,7 +192,7 @@ export function useBillingUpdates(options: UseBillingUpdatesOptions = {}) {
 
       if (showToasts) {
         toast.success(
-          `Payment received: $${(data.payment.amount / 100).toFixed(2)} from ${data.payment.payer || data.payment.patientName || 'patient'}`,
+          `Payment received: $${(data.payment.amount / 100).toFixed(2)}`,
           {
             duration: 4000,
             icon: '💰',

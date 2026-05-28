@@ -29,6 +29,7 @@ function signAccessToken(user: TenantUser): string {
     roles,
     email: user.email,
     fullName: user.fullName,
+    passwordResetRequired: Boolean(user.forcePasswordReset),
   };
 
   return jwt.sign(payload, env.jwtSecret, {
@@ -67,14 +68,15 @@ async function signRefreshToken(user: TenantUser): Promise<string> {
       [token, user.id, user.tenantId, expiresAt.toISOString()],
     );
   } catch (error) {
-    if (!isMissingRefreshTokensTable(error)) {
-      throw error;
+    if (isMissingRefreshTokensTable(error)) {
+      logger.error("refresh_tokens table missing; refusing to issue refresh token", {
+        userId: user.id,
+        tenantId: user.tenantId,
+      });
+      throw new Error("Refresh token store is unavailable");
     }
 
-    logger.warn("refresh_tokens table missing; issuing stateless refresh token", {
-      userId: user.id,
-      tenantId: user.tenantId,
-    });
+    throw error;
   }
 
   return token;
@@ -90,8 +92,12 @@ export async function issueTokens(user: TenantUser): Promise<AuthTokens> {
   };
 }
 
-async function revokeRefreshToken(token: string) {
+export async function revokeRefreshToken(token: string) {
   await pool.query(`update refresh_tokens set revoked = true where token = $1`, [token]);
+}
+
+export async function revokeRefreshTokensForUser(userId: string, tenantId: string) {
+  await pool.query(`update refresh_tokens set revoked = true where user_id = $1 and tenant_id = $2`, [userId, tenantId]);
 }
 
 export async function rotateRefreshToken(
@@ -115,24 +121,11 @@ export async function rotateRefreshToken(
         return null;
       }
 
-      const user = await userStore.findById(decoded.sub as string);
-      if (!user || user.tenantId !== decoded.tenantId) return null;
-
-      const accessToken = signAccessToken(user);
-      const refreshToken = await signRefreshToken(user);
-
-      return {
-        tokens: { accessToken, refreshToken, expiresIn: env.accessTokenTtlSec },
-        user: {
-          id: user.id,
-          tenantId: user.tenantId,
-          role: user.role,
-          secondaryRoles: normalizeRoleArray(user.secondaryRoles),
-          roles: buildEffectiveRoles(user.role, user.roles || user.secondaryRoles),
-          email: user.email,
-          fullName: user.fullName,
-        },
-      };
+      logger.error("refresh_tokens table missing; refusing refresh rotation", {
+        userId: decoded.sub,
+        tenantId: decoded.tenantId,
+      });
+      return null;
     }
 
     if (!stored || stored.revoked) return null;
@@ -156,6 +149,7 @@ export async function rotateRefreshToken(
         roles: buildEffectiveRoles(user.role, user.roles || user.secondaryRoles),
         email: user.email,
         fullName: user.fullName,
+        passwordResetRequired: Boolean(user.forcePasswordReset),
       },
     };
   } catch (err) {

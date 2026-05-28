@@ -16,6 +16,27 @@ import {
 } from '../lib/practiceTimeZone';
 import { ensureStoreSchemaAndCatalog } from './productSalesService';
 
+const PAID_STORE_ORDER_PREDICATE =
+  "COALESCE(sof.stripe_payment_status, CASE WHEN ps.status = 'completed' THEN 'paid' ELSE ps.status END) IN ('paid', 'succeeded')";
+const REPORTABLE_BILL_REVENUE_PREDICATE = `(
+  b.encounter_id IS NULL
+  OR POSITION('[LATE_FEE]' IN UPPER(COALESCE(b.notes, ''))) > 0
+  OR POSITION('[NO_SHOW_FEE]' IN UPPER(COALESCE(b.notes, ''))) > 0
+  OR EXISTS (
+    SELECT 1
+    FROM bill_line_items fee_bli
+    WHERE fee_bli.bill_id = b.id
+      AND fee_bli.tenant_id = b.tenant_id
+      AND (
+        UPPER(COALESCE(fee_bli.cpt_code, '')) LIKE '%LATEFEE%'
+        OR UPPER(COALESCE(fee_bli.cpt_code, '')) LIKE '%NOSHOW%'
+        OR UPPER(COALESCE(fee_bli.description, '')) LIKE '%LATE%FEE%'
+        OR UPPER(COALESCE(fee_bli.description, '')) LIKE '%NO-SHOW%FEE%'
+        OR UPPER(COALESCE(fee_bli.description, '')) LIKE '%NO SHOW%FEE%'
+      )
+  )
+)`;
+
 export interface FinancialSnapshotPeriod {
   key: 'daily' | 'weekly' | 'monthly';
   label: string;
@@ -298,7 +319,7 @@ export async function getFinancialSnapshots(
        LEFT JOIN appointment_types at
          ON at.id = a.appointment_type_id
        WHERE b.tenant_id = $1
-         AND b.encounter_id IS NULL
+         AND ${REPORTABLE_BILL_REVENUE_PREDICATE}
          AND b.bill_date >= $2::date
          AND b.bill_date <= $3::date
        GROUP BY b.id, b.bill_date, b.total_charges_cents, b.notes`,
@@ -314,8 +335,7 @@ export async function getFinancialSnapshots(
          ON sof.sale_id::text = ps.id::text
         AND sof.tenant_id = ps.tenant_id
        WHERE ps.tenant_id = $1
-         AND ps.status = 'completed'
-         AND COALESCE(sof.stripe_payment_status, 'paid') IN ('paid', 'succeeded')
+         AND ${PAID_STORE_ORDER_PREDICATE}
          AND ps.sale_date >= $2
          AND ps.sale_date < $3`,
       [tenantId, maxStart.toISOString(), periodEnd.toISOString()]

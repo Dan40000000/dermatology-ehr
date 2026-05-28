@@ -202,7 +202,7 @@ describe("Photos routes", () => {
     };
 
     it("creates a new photo", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app).post("/photos").send(validPayload);
 
@@ -239,7 +239,7 @@ describe("Photos routes", () => {
         url: "/uploads/photo.jpg",
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app).post("/photos").send(minimalPayload);
 
@@ -248,7 +248,7 @@ describe("Photos routes", () => {
     });
 
     it("accepts app-relative URLs", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app).post("/photos").send({
         patientId: "patient-1",
@@ -259,7 +259,7 @@ describe("Photos routes", () => {
     });
 
     it("accepts https URLs", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app).post("/photos").send({
         patientId: "patient-1",
@@ -270,7 +270,7 @@ describe("Photos routes", () => {
     });
 
     it("accepts http URLs", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app).post("/photos").send({
         patientId: "patient-1",
@@ -311,7 +311,7 @@ describe("Photos routes", () => {
       const validTypes = ["clinical", "before", "after", "dermoscopy", "baseline"];
 
       for (const type of validTypes) {
-        queryMock.mockResolvedValueOnce({ rows: [] });
+        queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
         const res = await request(app).post("/photos").send({
           patientId: "patient-1",
@@ -324,7 +324,7 @@ describe("Photos routes", () => {
     });
 
     it("accepts valid storage enum values", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app).post("/photos").send({
         patientId: "patient-1",
@@ -366,7 +366,8 @@ describe("Photos routes", () => {
         sequenceNumber: 1,
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "encounter-1" }] });
 
       const res = await request(app).post("/photos").send(fullPayload);
 
@@ -611,7 +612,7 @@ describe("Photos routes", () => {
     };
 
     it("creates a comparison group", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app)
         .post("/photos/comparison-group")
@@ -632,7 +633,7 @@ describe("Photos routes", () => {
     });
 
     it("creates group without description", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
 
       const res = await request(app).post("/photos/comparison-group").send({
         patientId: "patient-1",

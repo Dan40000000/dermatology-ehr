@@ -4,10 +4,23 @@ import { env } from "../config/env";
 import { AuthenticatedRequestUser } from "../types";
 import { logger } from "../lib/logger";
 import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
+import { isCookieAuthPlaceholder, STAFF_ACCESS_COOKIE } from "../auth/cookies";
 
 export interface AuthenticatedSocket extends Socket {
   user?: AuthenticatedRequestUser;
   tenantId?: string;
+}
+
+function parseCookieHeader(header: string | string[] | undefined): Record<string, string> {
+  const raw = Array.isArray(header) ? header.join(";") : header || "";
+  return raw.split(";").reduce<Record<string, string>>((acc, part) => {
+    const index = part.indexOf("=");
+    if (index === -1) return acc;
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (key) acc[key] = decodeURIComponent(value);
+    return acc;
+  }, {});
 }
 
 /**
@@ -17,7 +30,9 @@ export interface AuthenticatedSocket extends Socket {
  */
 export function authenticateSocket(socket: AuthenticatedSocket, next: (err?: Error) => void) {
   try {
-    const token = socket.handshake.auth.token;
+    const authToken = typeof socket.handshake.auth.token === "string" ? socket.handshake.auth.token : "";
+    const cookies = parseCookieHeader(socket.handshake.headers?.cookie);
+    const token = authToken && !isCookieAuthPlaceholder(authToken) ? authToken : cookies[STAFF_ACCESS_COOKIE];
     const tenantId = socket.handshake.auth.tenantId;
 
     if (!token) {
@@ -45,6 +60,15 @@ export function authenticateSocket(socket: AuthenticatedSocket, next: (err?: Err
         providedTenantId: tenantId,
       });
       return next(new Error("Invalid tenant ID"));
+    }
+
+    if (decoded.passwordResetRequired) {
+      logger.warn("WebSocket connection blocked until password reset", {
+        socketId: socket.id,
+        userId: decoded.id,
+        tenantId: decoded.tenantId,
+      });
+      return next(new Error("Password reset required"));
     }
 
     // Attach user info to socket

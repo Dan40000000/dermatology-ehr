@@ -12,6 +12,7 @@ const DEMO_PORTAL_CREDS: Record<string, { firstName: string; lastName: string; i
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEMO_PORTAL_PASSWORD = 'Portal123!';
+const PORTAL_COOKIE_TOKEN_PLACEHOLDER = '__http_only_cookie__';
 
 function isLocalDemoEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
@@ -68,7 +69,7 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load session from localStorage on mount
+  // Load non-secret session metadata from localStorage on mount
   useEffect(() => {
     const storedToken = localStorage.getItem('patientPortalToken');
     const storedTenantId = localStorage.getItem('patientPortalTenantId');
@@ -76,6 +77,14 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
 
     if (storedToken && storedTenantId && storedPatient) {
       if (storedToken === 'demo-portal-token' && !isLocalDemoEnabled()) {
+        localStorage.removeItem('patientPortalToken');
+        localStorage.removeItem('patientPortalTenantId');
+        localStorage.removeItem('patientPortalPatient');
+        setIsLoading(false);
+        return;
+      }
+
+      if (storedToken !== PORTAL_COOKIE_TOKEN_PLACEHOLDER && storedToken !== 'demo-portal-token') {
         localStorage.removeItem('patientPortalToken');
         localStorage.removeItem('patientPortalTenantId');
         localStorage.removeItem('patientPortalPatient');
@@ -115,6 +124,7 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
           'Content-Type': 'application/json',
           'X-Tenant-ID': tenantId,
         },
+        credentials: 'include',
         body: JSON.stringify({ email, password }),
       });
 
@@ -126,12 +136,13 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
 
       const data = await response.json();
 
-      // Store in state and localStorage
-      setSessionToken(data.sessionToken);
+      // Store only non-secret session metadata in state and localStorage.
+      const sessionToken = data.sessionToken === 'demo-portal-token' ? data.sessionToken : PORTAL_COOKIE_TOKEN_PLACEHOLDER;
+      setSessionToken(sessionToken);
       setTenantId(tenantId);
       setPatient(data.patient);
 
-      localStorage.setItem('patientPortalToken', data.sessionToken);
+      localStorage.setItem('patientPortalToken', sessionToken);
       localStorage.setItem('patientPortalTenantId', tenantId);
       localStorage.setItem('patientPortalPatient', JSON.stringify(data.patient));
     } catch (error) {
@@ -148,9 +159,10 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
         await fetch(`${API_BASE_URL}/api/patient-portal/logout`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${sessionToken}`,
+            ...(sessionToken === PORTAL_COOKIE_TOKEN_PLACEHOLDER ? {} : { 'Authorization': `Bearer ${sessionToken}` }),
             'X-Tenant-ID': tenantId,
           },
+          credentials: 'include',
         });
       } catch (error) {
         console.error('Logout error:', error);
@@ -247,9 +259,10 @@ export async function patientPortalFetch(endpoint: string, options: RequestInit 
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
+      ...(token === PORTAL_COOKIE_TOKEN_PLACEHOLDER ? {} : { 'Authorization': `Bearer ${token}` }),
       'X-Tenant-ID': tenantId,
       ...options.headers,
     },

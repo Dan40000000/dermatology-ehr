@@ -28,7 +28,7 @@ const CATEGORY_LABELS: Record<RevenueCategoryKey, string> = {
   cosmetic: "Cosmetic",
   late_fee: "Late Fees",
   no_show_fee: "No-Show Fees",
-  product_sale: "Product Sales",
+  product_sale: "Store Revenue",
   other: "Other",
 };
 

@@ -36,7 +36,7 @@ describe("appointmentHandlers", () => {
 
     broadcastAppointmentCreated(io as any, "tenant-1", appointment);
 
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:schedule");
     expect(emitMock).toHaveBeenCalledWith(
       "appointment:created",
       expect.objectContaining({ appointment: expect.objectContaining({ id: "appt-1" }) })
@@ -48,7 +48,7 @@ describe("appointmentHandlers", () => {
 
     broadcastAppointmentUpdated(io as any, "tenant-1", appointment);
 
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:schedule");
     expect(emitMock).toHaveBeenCalledWith(
       "appointment:updated",
       expect.objectContaining({ appointment: expect.objectContaining({ id: "appt-1" }) })
@@ -60,7 +60,7 @@ describe("appointmentHandlers", () => {
 
     broadcastAppointmentCancelled(io as any, "tenant-1", "appt-1", "no show");
 
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:schedule");
     expect(emitMock).toHaveBeenCalledWith(
       "appointment:cancelled",
       expect.objectContaining({ appointmentId: "appt-1", reason: "no show" })
@@ -72,7 +72,7 @@ describe("appointmentHandlers", () => {
 
     broadcastPatientCheckIn(io as any, "tenant-1", "appt-1", "patient-1", "Pat Patient");
 
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:schedule");
     expect(emitMock).toHaveBeenCalledWith(
       "patient:checkin",
       expect.objectContaining({ appointmentId: "appt-1", patientId: "patient-1" })

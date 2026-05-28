@@ -3,6 +3,7 @@ import type { AccessSettingsPayload } from "./config/moduleAccess";
 
 const API_BASE = API_BASE_URL;
 const TENANT_HEADER = "x-tenant-id";
+export const COOKIE_AUTH_TOKEN_PLACEHOLDER = "__http_only_cookie__";
 
 export type StoredFileResponse = { url: string; storage: "local" | "s3"; objectKey?: string };
 export const TENANT_HEADER_NAME = TENANT_HEADER;
@@ -17,6 +18,7 @@ export interface LoginResponse {
     roles?: string[];
     fullName: string;
     tenantId: string;
+    passwordResetRequired?: boolean;
   };
   tokens: {
     accessToken: string;
@@ -33,11 +35,34 @@ export async function login(tenantId: string, email: string, password: string): 
       "Content-Type": "application/json",
       [TENANT_HEADER]: tenantId,
     },
+    credentials: "include",
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "Login failed");
+  }
+  return res.json();
+}
+
+export async function changeStaffPassword(
+  tenantId: string,
+  accessToken: string,
+  payload: { currentPassword: string; newPassword: string },
+): Promise<LoginResponse> {
+  const res = await fetch(`${API_BASE}/api/auth/change-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Password change failed");
   }
   return res.json();
 }

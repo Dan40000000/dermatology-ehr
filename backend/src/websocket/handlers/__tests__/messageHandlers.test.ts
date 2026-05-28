@@ -39,7 +39,7 @@ describe("messageHandlers", () => {
 
     handlers["message:typing"]({ threadId: "thread-1", isTyping: true });
 
-    expect(socket.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(socket.to).toHaveBeenCalledWith("thread:thread-1");
     expect(emitMock).toHaveBeenCalledWith(
       "message:typing",
       expect.objectContaining({
@@ -78,7 +78,7 @@ describe("messageHandlers", () => {
     });
 
     expect(io.to).toHaveBeenCalledWith("thread:thread-1");
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:mail");
     expect(emitMock.mock.calls.map((call) => call[0])).toEqual(
       expect.arrayContaining(["message:new", "message:notification"])
     );

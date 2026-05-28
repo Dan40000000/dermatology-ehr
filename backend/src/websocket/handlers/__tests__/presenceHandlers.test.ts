@@ -104,7 +104,8 @@ describe("presenceHandlers", () => {
     handlers["patient:viewing"]({ patientId: "patient-1", isViewing: true });
     handlers["disconnect"]();
 
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:home");
+    expect(io.to).toHaveBeenCalledWith("patient:patient-1");
     expect(getOnlineUsers("tenant-1")).toEqual([]);
     expect(getPatientViewers("patient-1")).toEqual([]);
     expect(ioEmitMock.mock.calls.map((call) => call[0])).toEqual(

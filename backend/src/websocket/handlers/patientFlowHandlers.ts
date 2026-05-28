@@ -2,6 +2,19 @@ import type { Server } from 'socket.io';
 import type { AuthenticatedSocket } from '../auth';
 import { logger } from '../../lib/logger';
 
+const PATIENT_FLOW_MODULES = ['home', 'office_flow', 'appt_flow', 'schedule'] as const;
+
+function emitToPatientFlowModules(
+  io: Server,
+  tenantId: string,
+  event: string,
+  payload: unknown
+): void {
+  PATIENT_FLOW_MODULES.forEach((moduleKey) => {
+    io.to(`tenant:${tenantId}:module:${moduleKey}`).emit(event, payload);
+  });
+}
+
 /**
  * Register WebSocket handlers for patient flow events
  */
@@ -118,12 +131,20 @@ export function emitPatientFlowUpdate(
   }
 ): void {
   const eventData = {
-    ...data,
+    flowId: data.flowId,
+    appointmentId: data.appointmentId,
+    patientId: data.patientId,
+    roomId: data.roomId,
+    locationId: data.locationId,
+    providerId: data.providerId,
+    status: data.status,
+    previousStatus: data.previousStatus,
+    roomNumber: data.roomNumber,
     timestamp: new Date().toISOString(),
   };
 
-  // Emit to tenant-wide patient flow subscribers
-  io.to(`tenant:${tenantId}`).emit('patient-flow:updated', eventData);
+  // Emit to module-scoped patient flow subscribers
+  emitToPatientFlowModules(io, tenantId, 'patient-flow:updated', eventData);
 
   // Emit to location-specific room board subscribers
   if (data.locationId) {

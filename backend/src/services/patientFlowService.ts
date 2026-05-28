@@ -950,7 +950,7 @@ export class PatientFlowService {
   ): void {
     try {
       const io = getIO();
-      io.to(`tenant:${tenantId}`).emit('patient-flow:updated', {
+      const payload = {
         flowId: flow.id,
         appointmentId: flow.appointment_id,
         patientId: flow.patient_id,
@@ -959,6 +959,10 @@ export class PatientFlowService {
         previousStatus,
         statusChangedAt: flow.status_changed_at,
         timestamp: new Date().toISOString(),
+      };
+
+      ['home', 'office_flow', 'appt_flow', 'schedule'].forEach((moduleKey) => {
+        io.to(`tenant:${tenantId}:module:${moduleKey}`).emit('patient-flow:updated', payload);
       });
     } catch (error) {
       // WebSocket not initialized, skip emission

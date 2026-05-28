@@ -34,6 +34,8 @@ jest.mock("../../services/userStore", () => ({
 
 jest.mock("../../services/authService", () => ({
   issueTokens: jest.fn(),
+  revokeRefreshToken: jest.fn(),
+  revokeRefreshTokensForUser: jest.fn(),
   rotateRefreshToken: jest.fn(),
 }));
 
@@ -120,7 +122,9 @@ describe("Auth routes", () => {
       .set("x-tenant-id", "tenant-1")
       .send({ email: "a@b.com", password: "Password123!" });
     expect(res.status).toBe(200);
-    expect(res.body.tokens.accessToken).toBe("access");
+    expect(res.body.tokens.accessToken).toBe("__http_only_cookie__");
+    expect(res.body.tokens.refreshToken).toBe("__http_only_cookie__");
+    expect(res.headers["set-cookie"]?.join(";")).toContain("derm_staff_access=");
     expect(res.body.user.roles).toEqual(["provider", "admin"]);
   });
 
@@ -153,7 +157,7 @@ describe("Auth routes", () => {
     });
   });
 
-  it("POST /auth/refresh rejects invalid payload", async () => {
+  it("POST /auth/refresh rejects missing refresh token", async () => {
     const res = await request(app).post("/auth/refresh").send({});
     expect(res.status).toBe(400);
   });
@@ -171,7 +175,9 @@ describe("Auth routes", () => {
     });
     const res = await request(app).post("/auth/refresh").send({ refreshToken: "good-token-123456" });
     expect(res.status).toBe(200);
-    expect(res.body.tokens.accessToken).toBe("new-access");
+    expect(res.body.tokens.accessToken).toBe("__http_only_cookie__");
+    expect(res.body.tokens.refreshToken).toBe("__http_only_cookie__");
+    expect(res.headers["set-cookie"]?.join(";")).toContain("derm_staff_access=");
   });
 
   it("GET /auth/me returns current user", async () => {

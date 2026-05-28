@@ -10,9 +10,10 @@ import { fetchPatients } from '../../api';
 import type { Patient } from '../../types';
 import { getModuleForPath } from '../../config/moduleAccess';
 import { getEffectiveRoles } from '../../utils/roles';
+import { ForcedPasswordReset } from '../auth/ForcedPasswordReset';
 
 export function AppLayout() {
-  const { isAuthenticated, session, user } = useAuth();
+  const { isAuthenticated, passwordResetRequired, session, user } = useAuth();
   const accessControl = useAccessControl();
   const location = useLocation();
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -40,6 +41,10 @@ export function AppLayout() {
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (passwordResetRequired) {
+    return <ForcedPasswordReset />;
   }
 
   // Keep the browser tab locked to kiosk routes while a patient intake is active.

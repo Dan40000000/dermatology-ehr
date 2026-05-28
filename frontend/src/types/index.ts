@@ -23,6 +23,7 @@ export interface User {
   role: UserRole;
   secondaryRoles?: UserRole[];
   roles?: UserRole[];
+  passwordResetRequired?: boolean;
 }
 
 export interface Session {

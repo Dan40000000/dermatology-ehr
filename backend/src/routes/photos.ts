@@ -69,6 +69,32 @@ function logPhotosError(message: string, error: unknown): void {
   });
 }
 
+async function verifyPatientAndEncounterOwnership(
+  tenantId: string,
+  patientId: string,
+  encounterId?: string | null,
+): Promise<string | null> {
+  const patient = await pool.query(
+    'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
+    [patientId, tenantId],
+  );
+  if (patient.rows.length === 0) {
+    return 'Patient not found';
+  }
+
+  if (encounterId) {
+    const encounter = await pool.query(
+      'SELECT id FROM encounters WHERE id = $1 AND patient_id = $2 AND tenant_id = $3',
+      [encounterId, patientId, tenantId],
+    );
+    if (encounter.rows.length === 0) {
+      return 'Encounter not found';
+    }
+  }
+
+  return null;
+}
+
 // Validation schemas
 const uploadPhotoSchema = z.object({
   patientId: z.string().uuid(),
@@ -351,6 +377,14 @@ photosRouter.post('/', requireAuth, async (req: AuthedRequest, res) => {
     const tenantId = req.user!.tenantId;
     const photoId = crypto.randomUUID();
     const data = parsed.data;
+    const ownershipError = await verifyPatientAndEncounterOwnership(
+      tenantId,
+      data.patientId,
+      data.encounterId,
+    );
+    if (ownershipError) {
+      return res.status(404).json({ error: ownershipError });
+    }
 
     await pool.query(
       `insert into photos (
@@ -529,6 +563,10 @@ photosRouter.post('/comparison-group', requireAuth, async (req: AuthedRequest, r
     const tenantId = req.user!.tenantId;
     const groupId = crypto.randomUUID();
     const { patientId, name, description } = parsed.data;
+    const ownershipError = await verifyPatientAndEncounterOwnership(tenantId, patientId);
+    if (ownershipError) {
+      return res.status(404).json({ error: ownershipError });
+    }
 
     await pool.query(
       `insert into photo_comparison_groups (id, tenant_id, patient_id, name, description)
@@ -652,6 +690,17 @@ photosRouter.post(
 
       if (patientCheck.rows.length === 0) {
         return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      if (metadata.encounterId) {
+        const encounterCheck = await pool.query(
+          'SELECT id FROM encounters WHERE id = $1 AND patient_id = $2 AND tenant_id = $3',
+          [metadata.encounterId, patientId, tenantId],
+        );
+
+        if (encounterCheck.rows.length === 0) {
+          return res.status(404).json({ error: 'Encounter not found' });
+        }
       }
 
       // Process each photo

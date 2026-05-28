@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import type { Session, User } from '../types';
-import { login as apiLogin, fetchMe } from '../api';
+import { COOKIE_AUTH_TOKEN_PLACEHOLDER, changeStaffPassword, login as apiLogin, fetchMe } from '../api';
 import { API_BASE_URL } from '../utils/apiBase';
 import { buildEffectiveRoles, normalizeRoleArray } from '../utils/roles';
 
@@ -69,8 +69,10 @@ interface AuthContextValue {
   headers: Record<string, string>;
   isAuthenticated: boolean;
   isLoading: boolean;
+  passwordResetRequired: boolean;
   login: (tenantId: string, email: string, password: string) => Promise<void>;
   logout: () => void;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -91,6 +93,10 @@ const SESSION_IDLE_CHECK_INTERVAL_MS = 15_000;
 const ACTIVITY_WRITE_THROTTLE_MS = 30_000;
 const SESSION_TIMEOUT_REASON_KEY = 'derm_session_timeout_reason';
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll'] as const;
+
+function isCookieAuthPlaceholder(value: unknown): boolean {
+  return value === COOKIE_AUTH_TOKEN_PLACEHOLDER || value === '__cookie__' || value === 'cookie';
+}
 
 type SessionUserLike = Partial<User> & {
   secondaryRoles?: unknown;
@@ -126,6 +132,7 @@ function normalizeUser(userData: SessionUserLike | null | undefined, fallback?: 
     role,
     secondaryRoles,
     roles,
+    passwordResetRequired: Boolean(userData?.passwordResetRequired ?? fallback?.passwordResetRequired),
   };
 }
 
@@ -136,6 +143,11 @@ function readPersistedSession(): RestoredSession | null {
 
     const parsed = JSON.parse(stored) as PersistedSession;
     if (isLocalDemoTokenShape(parsed.accessToken) && !isLocalDemoEnabled()) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+
+    if (!isCookieAuthPlaceholder(parsed.accessToken) && !isLocalDemoAccessToken(parsed.accessToken)) {
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -161,8 +173,8 @@ function readPersistedSession(): RestoredSession | null {
     const sessionStartedAt = typeof parsed.sessionStartedAt === 'number' ? parsed.sessionStartedAt : now;
     const session: Session = {
       tenantId: parsed.tenantId,
-      accessToken: parsed.accessToken,
-      refreshToken: parsed.refreshToken,
+      accessToken: isLocalDemoAccessToken(parsed.accessToken) ? parsed.accessToken : COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: parsed.refreshToken === 'demo-refresh' ? parsed.refreshToken : COOKIE_AUTH_TOKEN_PLACEHOLDER,
       user,
     };
 
@@ -334,8 +346,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const upgradedSession: Session = {
           tenantId: resp.tenantId,
-          accessToken: resp.tokens.accessToken,
-          refreshToken: resp.tokens.refreshToken,
+          accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+          refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
           user: normalizedUser,
         };
 
@@ -377,8 +389,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const newSession: Session = {
         tenantId: resp.tenantId,
-        accessToken: resp.tokens.accessToken,
-        refreshToken: resp.tokens.refreshToken,
+        accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+        refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
         user: normalizedUser,
       };
       startSession(newSession);
@@ -398,7 +410,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           [TENANT_HEADER]: session.tenantId,
         },
         credentials: 'include',
-        body: JSON.stringify({ refreshToken: session.refreshToken }),
+        body: JSON.stringify({
+          refreshToken: isCookieAuthPlaceholder(session.refreshToken) ? COOKIE_AUTH_TOKEN_PLACEHOLDER : session.refreshToken,
+        }),
       });
       if (!res.ok) {
         throw new Error('Refresh failed');
@@ -410,8 +424,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const updated: Session = {
         tenantId: data.user?.tenantId || session.tenantId,
-        accessToken: data.tokens.accessToken,
-        refreshToken: data.tokens.refreshToken,
+        accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+        refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
         user: normalizedUser,
       };
       setSession(updated);
@@ -424,7 +438,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSession, session]);
 
   useEffect(() => {
-    if (!session?.accessToken || refreshing) return;
+    if (!session?.accessToken || isCookieAuthPlaceholder(session.accessToken) || refreshing) return;
     const parts = session.accessToken.split('.');
     if (parts.length !== 3) return;
     try {
@@ -440,8 +454,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [session?.accessToken, refreshSession, refreshing]);
 
   const logout = useCallback(() => {
+    if (session?.tenantId) {
+      fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        headers: {
+          [TENANT_HEADER]: session.tenantId,
+        },
+        credentials: 'include',
+      }).catch(() => {
+        // Local session cleanup should not depend on the network.
+      });
+    }
     clearSession();
-  }, [clearSession]);
+  }, [clearSession, session]);
+
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    if (!session) return;
+    const resp = await changeStaffPassword(session.tenantId, session.accessToken, {
+      currentPassword,
+      newPassword,
+    });
+    const normalizedUser = normalizeUser(resp.user, session.user);
+    if (!normalizedUser) {
+      throw new Error('Invalid user payload');
+    }
+    const updated: Session = {
+      tenantId: resp.tenantId,
+      accessToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      refreshToken: COOKIE_AUTH_TOKEN_PLACEHOLDER,
+      user: normalizedUser,
+    };
+    setSession(updated);
+    setUser(updated.user);
+  }, [session]);
 
   const refreshUser = useCallback(async () => {
     if (!session) return;
@@ -462,8 +507,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const headers = session
     ? {
-        Authorization: `Bearer ${session.accessToken}`,
         [TENANT_HEADER]: session.tenantId,
+        ...(isCookieAuthPlaceholder(session.accessToken) ? {} : { Authorization: `Bearer ${session.accessToken}` }),
       }
     : {};
 
@@ -475,8 +520,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         headers,
         isAuthenticated: !!session,
         isLoading,
+        passwordResetRequired: Boolean(user?.passwordResetRequired || session?.user.passwordResetRequired),
         login,
         logout,
+        changePassword,
         refreshUser,
       }}
     >

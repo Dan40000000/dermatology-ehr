@@ -80,6 +80,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         token: activeAuth.accessToken,
         tenantId: activeAuth.tenantId,
       },
+      withCredentials: true,
       transports: ['polling', 'websocket'],
       reconnection: true,
       reconnectionDelay: RECONNECTION_DELAY,

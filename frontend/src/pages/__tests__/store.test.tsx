@@ -9,12 +9,15 @@ import type { Product, StoreOrder } from '../../types';
 const apiMocks = vi.hoisted(() => ({
   adjustProductInventory: vi.fn(),
   createProduct: vi.fn(),
+  createStorePromotion: vi.fn(),
   fetchInventoryStatus: vi.fn(),
   fetchLowStockProducts: vi.fn(),
   fetchProductSales: vi.fn(),
   fetchProducts: vi.fn(),
+  fetchStorePromotions: vi.fn(),
   fetchSalesReport: vi.fn(),
   updateProduct: vi.fn(),
+  updateStorePromotion: vi.fn(),
   updateStoreOrderFulfillment: vi.fn(),
 }));
 
@@ -140,6 +143,7 @@ beforeEach(() => {
   };
 
   apiMocks.fetchProducts.mockResolvedValue({ products: [demoProduct] });
+  apiMocks.fetchStorePromotions.mockResolvedValue({ promotions: [] });
   apiMocks.fetchProductSales.mockResolvedValue({ orders: [demoOrder] });
   apiMocks.fetchInventoryStatus.mockResolvedValue({
     status: {
@@ -221,7 +225,20 @@ describe('Store flows', () => {
   it('lets a portal patient add a product and place a shipped store order', async () => {
     patientPortalFetchMock.mockImplementation((endpoint: string, options?: RequestInit) => {
       if (endpoint === '/api/patient-portal-data/store/products') {
-        return Promise.resolve({ products: [demoProduct] });
+        return Promise.resolve({ products: [demoProduct], promotions: [] });
+      }
+      if (endpoint === '/api/patient-portal-data/store/quote' && options?.method === 'POST') {
+        return Promise.resolve({
+          quote: {
+            subtotal: 3600,
+            itemDiscount: 0,
+            shippingDiscount: 0,
+            tax: 297,
+            shippingFee: 595,
+            total: 4492,
+            appliedPromotions: [],
+          },
+        });
       }
       if (endpoint === '/api/patient-portal-data/store/checkout-session' && options?.method === 'POST') {
         return Promise.resolve({
@@ -252,6 +269,7 @@ describe('Store flows', () => {
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Denver' } });
     fireEvent.change(screen.getByLabelText('State'), { target: { value: 'CO' } });
     fireEvent.change(screen.getByLabelText('ZIP'), { target: { value: '80202' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: /Place Order/i })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: /Place Order/i }));
 
     await waitFor(() =>

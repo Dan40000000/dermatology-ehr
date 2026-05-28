@@ -33,6 +33,9 @@ const app = express();
 app.use(express.json());
 app.use('/upload', uploadRouter);
 
+const pdfBuffer = Buffer.from('%PDF-1.4\nmock pdf content');
+const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+
 describe('Upload Routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -51,7 +54,7 @@ describe('Upload Routes', () => {
 
       const response = await request(app)
         .post('/upload/document')
-        .attach('file', Buffer.from('test content'), 'test.pdf');
+        .attach('file', pdfBuffer, 'test.pdf');
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual(mockStoredFile);
@@ -70,7 +73,7 @@ describe('Upload Routes', () => {
 
       const response = await request(app)
         .post('/upload/document')
-        .attach('file', Buffer.from('test content'), 'test.pdf');
+        .attach('file', pdfBuffer, 'test.pdf');
 
       expect(response.status).toBe(500);
       expect(response.body.error).toContain('Storage error');
@@ -81,7 +84,7 @@ describe('Upload Routes', () => {
 
       const response = await request(app)
         .post('/upload/document')
-        .attach('file', Buffer.from('test content'), 'test.pdf');
+        .attach('file', pdfBuffer, 'test.pdf');
 
       expect(response.status).toBe(500);
       expect(response.body.error).toBe('Upload failed');
@@ -95,7 +98,7 @@ describe('Upload Routes', () => {
 
       await request(app)
         .post('/upload/document')
-        .attach('file', Buffer.from('test content'), 'document.pdf');
+        .attach('file', pdfBuffer, 'document.pdf');
 
       expect(saveFile).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -119,7 +122,7 @@ describe('Upload Routes', () => {
 
       const response = await request(app)
         .post('/upload/photo')
-        .attach('file', Buffer.from('test image content'), 'test.jpg');
+        .attach('file', jpegBuffer, 'test.jpg');
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual(mockStoredFile);
@@ -138,7 +141,7 @@ describe('Upload Routes', () => {
 
       const response = await request(app)
         .post('/upload/photo')
-        .attach('file', Buffer.from('test image'), 'test.jpg');
+        .attach('file', jpegBuffer, 'test.jpg');
 
       expect(response.status).toBe(500);
       expect(response.body.error).toContain('Storage error');
@@ -152,7 +155,7 @@ describe('Upload Routes', () => {
 
       await request(app)
         .post('/upload/photo')
-        .attach('file', Buffer.from('test image'), 'photo.jpg');
+        .attach('file', jpegBuffer, 'photo.jpg');
 
       expect(saveFile).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -171,7 +174,7 @@ describe('Upload Routes', () => {
       for (let i = 0; i < 5; i++) {
         await request(app)
           .post('/upload/document')
-          .attach('file', Buffer.from('content'), 'test.pdf');
+          .attach('file', pdfBuffer, 'test.pdf');
       }
 
       // Rate limit mock should have been called
@@ -185,7 +188,7 @@ describe('Upload Routes', () => {
       for (let i = 0; i < 5; i++) {
         await request(app)
           .post('/upload/photo')
-          .attach('file', Buffer.from('content'), 'test.jpg');
+          .attach('file', jpegBuffer, 'test.jpg');
       }
 
       // Rate limit mock should have been called

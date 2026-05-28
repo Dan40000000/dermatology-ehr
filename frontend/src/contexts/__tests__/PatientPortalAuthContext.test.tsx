@@ -10,6 +10,8 @@ const mockPatient = {
   email: 'john@example.com',
 };
 
+const PORTAL_COOKIE_TOKEN_PLACEHOLDER = '__http_only_cookie__';
+
 describe('PatientPortalAuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,7 +53,7 @@ describe('PatientPortalAuthContext', () => {
   });
 
   it('should restore session from localStorage', async () => {
-    localStorage.setItem('patientPortalToken', 'stored-token');
+    localStorage.setItem('patientPortalToken', PORTAL_COOKIE_TOKEN_PLACEHOLDER);
     localStorage.setItem('patientPortalTenantId', 'tenant-1');
     localStorage.setItem('patientPortalPatient', JSON.stringify(mockPatient));
 
@@ -65,7 +67,7 @@ describe('PatientPortalAuthContext', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    expect(result.current.sessionToken).toBe('stored-token');
+    expect(result.current.sessionToken).toBe(PORTAL_COOKIE_TOKEN_PLACEHOLDER);
     expect(result.current.tenantId).toBe('tenant-1');
     expect(result.current.patient).toEqual(mockPatient);
     expect(result.current.isAuthenticated).toBe(true);
@@ -94,12 +96,12 @@ describe('PatientPortalAuthContext', () => {
       await result.current.login('tenant-1', 'john@example.com', 'password123');
     });
 
-    expect(result.current.sessionToken).toBe('new-token');
+    expect(result.current.sessionToken).toBe(PORTAL_COOKIE_TOKEN_PLACEHOLDER);
     expect(result.current.tenantId).toBe('tenant-1');
     expect(result.current.patient).toEqual(mockPatient);
     expect(result.current.isAuthenticated).toBe(true);
 
-    expect(localStorage.getItem('patientPortalToken')).toBe('new-token');
+    expect(localStorage.getItem('patientPortalToken')).toBe(PORTAL_COOKIE_TOKEN_PLACEHOLDER);
     expect(localStorage.getItem('patientPortalTenantId')).toBe('tenant-1');
     expect(localStorage.getItem('patientPortalPatient')).toBe(JSON.stringify(mockPatient));
   });
@@ -138,8 +140,8 @@ describe('PatientPortalAuthContext', () => {
       expect.stringContaining('/api/patient-portal/login'),
       expect.any(Object)
     );
-    expect(result.current.sessionToken).toBe('real-backend-token');
-    expect(localStorage.getItem('patientPortalToken')).toBe('real-backend-token');
+    expect(result.current.sessionToken).toBe(PORTAL_COOKIE_TOKEN_PLACEHOLDER);
+    expect(localStorage.getItem('patientPortalToken')).toBe(PORTAL_COOKIE_TOKEN_PLACEHOLDER);
   });
 
   it('should fall back to local demo portal session only when backend is unavailable', async () => {
@@ -193,7 +195,7 @@ describe('PatientPortalAuthContext', () => {
   });
 
   it('should logout successfully', async () => {
-    localStorage.setItem('patientPortalToken', 'stored-token');
+    localStorage.setItem('patientPortalToken', PORTAL_COOKIE_TOKEN_PLACEHOLDER);
     localStorage.setItem('patientPortalTenantId', 'tenant-1');
     localStorage.setItem('patientPortalPatient', JSON.stringify(mockPatient));
 
@@ -229,7 +231,7 @@ describe('PatientPortalAuthContext', () => {
   it('should handle logout errors gracefully', async () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    localStorage.setItem('patientPortalToken', 'stored-token');
+    localStorage.setItem('patientPortalToken', PORTAL_COOKIE_TOKEN_PLACEHOLDER);
     localStorage.setItem('patientPortalTenantId', 'tenant-1');
     localStorage.setItem('patientPortalPatient', JSON.stringify(mockPatient));
 

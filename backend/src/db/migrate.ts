@@ -13663,6 +13663,22 @@ Consider age-appropriate treatments and include family counseling points.',
       WHERE abnormal_flag IS NOT NULL;
     `,
   },
+  {
+    name: "196_user_forced_password_reset",
+    sql: `
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS force_password_reset BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+
+    UPDATE users
+    SET password_changed_at = COALESCE(password_changed_at, created_at, NOW())
+    WHERE password_changed_at IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_users_tenant_force_password_reset
+      ON users(tenant_id, force_password_reset)
+      WHERE force_password_reset = TRUE;
+    `,
+  },
 
 ];
 

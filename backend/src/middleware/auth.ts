@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { AuthenticatedRequestUser } from "../types";
 import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
+import { isCookieAuthPlaceholder, STAFF_ACCESS_COOKIE } from "../auth/cookies";
 
 export interface AuthedRequest extends Request {
   user?: AuthenticatedRequestUser;
@@ -11,10 +12,14 @@ export interface AuthedRequest extends Request {
 
 export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
+  const bearerToken = header?.startsWith("Bearer ") ? header.replace("Bearer ", "").trim() : "";
+  const cookieToken = req.cookies?.[STAFF_ACCESS_COOKIE];
+  const token = bearerToken && !isCookieAuthPlaceholder(bearerToken) ? bearerToken : cookieToken;
+
+  if (!token) {
     return res.status(401).json({ error: "Missing token" });
   }
-  const token = header.replace("Bearer ", "").trim();
+
   try {
     const decoded = jwt.verify(token, env.jwtSecret) as AuthenticatedRequestUser;
     const tenantId = req.header(env.tenantHeader);
@@ -29,8 +34,23 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
       ...decoded,
       secondaryRoles,
       roles,
+      passwordResetRequired: Boolean(decoded.passwordResetRequired),
     };
     req.tenantId = tenantId;
+
+    const originalUrl = req.originalUrl || req.path;
+    const passwordResetAllowed =
+      originalUrl.includes("/api/auth/me") ||
+      originalUrl.includes("/api/auth/refresh") ||
+      originalUrl.includes("/api/auth/logout") ||
+      originalUrl.includes("/api/auth/change-password");
+    if (req.user.passwordResetRequired && !passwordResetAllowed) {
+      return res.status(403).json({
+        error: "Password reset required",
+        passwordResetRequired: true,
+      });
+    }
+
     return next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid token" });

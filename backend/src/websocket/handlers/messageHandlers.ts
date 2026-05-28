@@ -1,4 +1,4 @@
-import { Server, Socket } from "socket.io";
+import { Server } from "socket.io";
 import { logger } from "../../lib/logger";
 import { AuthenticatedSocket } from "../auth";
 
@@ -30,10 +30,14 @@ export interface TypingEventData {
   isTyping: boolean;
 }
 
+function tenantMailRoom(tenantId: string) {
+  return `tenant:${tenantId}:module:mail`;
+}
+
 /**
  * Register message-related event listeners on a socket
  */
-export function registerMessageHandlers(io: Server, socket: AuthenticatedSocket) {
+export function registerMessageHandlers(_io: Server, socket: AuthenticatedSocket) {
   // Handle typing indicator
   socket.on("message:typing", (data: { threadId: string; isTyping: boolean }) => {
     if (!socket.user || !socket.tenantId) return;
@@ -45,8 +49,8 @@ export function registerMessageHandlers(io: Server, socket: AuthenticatedSocket)
       isTyping: data.isTyping,
     };
 
-    // Broadcast to all other users in the tenant room
-    socket.to(`tenant:${socket.tenantId}`).emit("message:typing", typingData);
+    // Broadcast only to users already authorized into this message thread room.
+    socket.to(`thread:${data.threadId}`).emit("message:typing", typingData);
 
     logger.debug("User typing status updated", {
       userId: socket.user.id,
@@ -97,12 +101,10 @@ export function broadcastNewMessage(
     timestamp: new Date().toISOString(),
   });
 
-  // Also send to tenant room for unread count updates
-  io.to(`tenant:${tenantId}`).emit("message:notification", {
+  // Also send a minimal module-scoped notification for unread count refreshes.
+  io.to(tenantMailRoom(tenantId)).emit("message:notification", {
     threadId,
     messageId: message.id,
-    sender: message.sender,
-    preview: message.body.substring(0, 100),
     timestamp: new Date().toISOString(),
   });
 }

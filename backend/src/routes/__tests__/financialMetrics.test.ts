@@ -238,7 +238,10 @@ describe("Financial metrics routes", () => {
     expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("appointment_revenue"));
     expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("left join charges c"));
     expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("encounter_id is null"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("case when ps.status = 'completed'"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("fee_bli"));
     expect(queryMock.mock.calls[1][0]).toEqual(expect.stringContaining("from appointment_revenue"));
+    expect(queryMock.mock.calls[1][0]).toEqual(expect.stringContaining("fee_bli"));
   });
 
   it("GET /financial-metrics/collections-trend rejects invalid date range", async () => {
@@ -322,6 +325,8 @@ describe("Financial metrics routes", () => {
     );
     expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("appointment_revenue"));
     expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("store_revenue"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("case when ps.status = 'completed'"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("fee_bli"));
   });
 
   it("GET /financial-metrics/revenue-details rejects unknown categories", async () => {

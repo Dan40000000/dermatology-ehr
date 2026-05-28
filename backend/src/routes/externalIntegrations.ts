@@ -1148,31 +1148,8 @@ router.post('/payments/stripe/subscription/refresh', requireAuth, requireRoles([
  *     summary: Stripe webhook handler
  *     tags: [Payments]
  */
-router.post('/payments/webhook', async (req, res) => {
-  try {
-    // In production, verify Stripe signature
-    const event = req.body;
-
-    logger.info('Received Stripe webhook', { type: event.type });
-
-    // Handle different event types
-    switch (event.type) {
-      case 'payment_intent.succeeded':
-        // Update payment status
-        break;
-      case 'payment_intent.payment_failed':
-        // Handle failed payment
-        break;
-      case 'charge.refunded':
-        // Handle refund
-        break;
-    }
-
-    res.json({ received: true });
-  } catch (error: any) {
-    logger.error('Webhook error', { error: error.message });
-    res.status(400).json({ error: error.message });
-  }
+router.post('/payments/webhook', async (_req, res) => {
+  return res.status(410).json({ error: 'Use /api/stripe/webhook for signed Stripe webhooks' });
 });
 
 // ============================================================================

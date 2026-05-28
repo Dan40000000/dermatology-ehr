@@ -117,6 +117,32 @@ function buildPrintedDocumentHtml(title: string, html: string): string {
 </html>`;
 }
 
+async function verifyPatientAndEncounterOwnership(
+  tenantId: string,
+  patientId: string,
+  encounterId?: string | null,
+) {
+  const patient = await pool.query(
+    `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2`,
+    [patientId, tenantId],
+  );
+  if (patient.rows.length === 0) {
+    return "Patient not found";
+  }
+
+  if (encounterId) {
+    const encounter = await pool.query(
+      `SELECT id FROM encounters WHERE id = $1 AND patient_id = $2 AND tenant_id = $3`,
+      [encounterId, patientId, tenantId],
+    );
+    if (encounter.rows.length === 0) {
+      return "Encounter not found";
+    }
+  }
+
+  return null;
+}
+
 // GET /api/documents - List documents with filtering
 documentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
@@ -219,6 +245,14 @@ documentsRouter.post("/", requireAuth, requireRoles(["admin", "provider", "ma"])
 
   // Auto-suggest category if not provided
   const category = payload.category || suggestCategory(payload.title);
+  const ownershipError = await verifyPatientAndEncounterOwnership(
+    tenantId,
+    payload.patientId,
+    payload.encounterId,
+  );
+  if (ownershipError) {
+    return res.status(404).json({ error: ownershipError });
+  }
 
   await pool.query(
     `INSERT INTO documents(
@@ -264,12 +298,13 @@ documentsRouter.post(
     const userId = req.user!.id;
     const payload = parsed.data;
 
-    const patient = await pool.query(
-      `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2`,
-      [payload.patientId, tenantId],
+    const ownershipError = await verifyPatientAndEncounterOwnership(
+      tenantId,
+      payload.patientId,
+      payload.encounterId,
     );
-    if (patient.rows.length === 0) {
-      return res.status(404).json({ error: "Patient not found" });
+    if (ownershipError) {
+      return res.status(404).json({ error: ownershipError });
     }
 
     const id = crypto.randomUUID();

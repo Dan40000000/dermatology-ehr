@@ -7,6 +7,7 @@ import { registerPresenceHandlers } from "./handlers/presenceHandlers";
 import { registerAmbientScribeHandlers } from "./handlers/ambientScribeHandlers";
 import { registerPatientFlowHandlers } from "./handlers/patientFlowHandlers";
 import { config } from "../config";
+import { canAccessModule, moduleAccess, type ModuleKey } from "../config/moduleAccess";
 
 // Export the io instance for use in other parts of the application
 let io: Server | null = null;
@@ -56,11 +57,15 @@ export function initializeWebSocket(httpServer: HTTPServer): Server {
       role: socket.user.role,
     });
 
-    // Join tenant room (for tenant-wide broadcasts)
-    socket.join(`tenant:${socket.tenantId}`);
-    logger.debug("Socket joined tenant room", {
+    const moduleRooms = (Object.keys(moduleAccess) as ModuleKey[])
+      .filter((moduleKey) => canAccessModule(socket.user?.roles || socket.user?.role, moduleKey))
+      .map((moduleKey) => `tenant:${socket.tenantId}:module:${moduleKey}`);
+
+    moduleRooms.forEach((room) => socket.join(room));
+    logger.debug("Socket joined module rooms", {
       socketId: socket.id,
       tenantId: socket.tenantId,
+      rooms: moduleRooms,
     });
 
     // Join user room (for user-specific messages)

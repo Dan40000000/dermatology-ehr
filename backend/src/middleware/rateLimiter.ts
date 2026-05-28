@@ -39,11 +39,12 @@ export const apiLimiter = createLimiter({
   skip: (req) => req.headers.authorization !== undefined,
 });
 
-// Auth rate limit - Still protective against brute force but allows legitimate use
-// 100 login attempts per 15 minutes (supports many staff logging in at shift change)
+// Auth rate limit - protects staff accounts from credential stuffing.
+// Admin password resets now require users to set a private password on first login,
+// so a stricter failed-attempt limit is acceptable.
 export const authLimiter = createLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '100', 10),
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '8', 10),
   skipSuccessfulRequests: true, // Only count failed attempts
   message: 'Too many login attempts, please try again later.',
   standardHeaders: true,

@@ -262,8 +262,7 @@ async function loadFinancialSummary(tenantId: string, dateKey: string): Promise<
            on sof.sale_id::text = ps.id::text
           and sof.tenant_id = ps.tenant_id
          where ps.tenant_id = $1
-           and ps.status = 'completed'
-           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+           and coalesce(sof.stripe_payment_status, case when ps.status = 'completed' then 'paid' else ps.status end) in ('paid', 'succeeded')
            and ps.sale_date::date = $2::date
        )
        select

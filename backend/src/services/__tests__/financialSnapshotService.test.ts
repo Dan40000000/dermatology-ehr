@@ -123,6 +123,8 @@ describe("financialSnapshotService", () => {
 
     expect(queryMock.mock.calls[1][0]).toContain("payment_date::date::text AS collected_on");
     expect(queryMock.mock.calls[2][0]).toContain("payment_date::date::text AS collected_on");
+    expect(queryMock.mock.calls[3][0]).toContain("fee_bli");
+    expect(queryMock.mock.calls[4][0]).toContain("CASE WHEN ps.status = 'completed'");
     expect(snapshots.daily.totalRevenueCents).toBe(44610);
     expect(snapshots.daily.benchmarkRevenueCents).toBe(13360);
     expect(snapshots.daily.standaloneRevenueCents).toBe(5000);

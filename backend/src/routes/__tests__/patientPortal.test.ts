@@ -418,7 +418,8 @@ describe("Patient portal routes", () => {
       .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(200);
-    expect(res.body.sessionToken).toBe("jwt-token");
+    expect(res.body.sessionToken).toBe("__http_only_cookie__");
+    expect(res.headers["set-cookie"]?.join(";")).toContain("derm_patient_portal_session=");
   });
 
   it("POST /patient-portal/login logs Error instances safely", async () => {

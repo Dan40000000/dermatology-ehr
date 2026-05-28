@@ -53,7 +53,7 @@ describe("notificationHandlers", () => {
       createdAt: new Date().toISOString(),
     });
 
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:home");
     expect(emitMock).toHaveBeenCalledWith(
       "notification:new",
       expect.objectContaining({ notification: expect.objectContaining({ id: "notif-2" }) })
@@ -135,7 +135,7 @@ describe("notificationHandlers", () => {
       actionUrl: "/patients/patient-1",
     });
 
-    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1");
+    expect(io.to).toHaveBeenCalledWith("tenant:tenant-1:module:home");
     expect(emitMock).toHaveBeenCalledWith(
       "notification:new",
       expect.objectContaining({

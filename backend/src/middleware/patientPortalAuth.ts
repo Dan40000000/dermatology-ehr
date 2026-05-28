@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { pool } from "../db/pool";
 import crypto from "crypto";
+import { isCookieAuthPlaceholder, PATIENT_PORTAL_SESSION_COOKIE } from "../auth/cookies";
 
 export interface PatientPortalUser {
   accountId: string;
@@ -15,6 +16,7 @@ export interface PatientPortalUser {
 
 export interface PatientPortalRequest extends Request {
   patient?: PatientPortalUser;
+  patientSessionToken?: string;
 }
 
 /**
@@ -28,11 +30,14 @@ export async function requirePatientAuth(
   next: NextFunction
 ) {
   const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
+  const bearerToken = header?.startsWith("Bearer ") ? header.replace("Bearer ", "").trim() : "";
+  const cookieToken = req.cookies?.[PATIENT_PORTAL_SESSION_COOKIE];
+  const token = bearerToken && !isCookieAuthPlaceholder(bearerToken) ? bearerToken : cookieToken;
+
+  if (!token) {
     return res.status(401).json({ error: "Missing authentication token" });
   }
 
-  const token = header.replace("Bearer ", "").trim();
   const tenantId = req.header(env.tenantHeader);
 
   if (!tenantId) {
@@ -127,6 +132,7 @@ export async function requirePatientAuth(
       firstName: session.first_name,
       lastName: session.last_name
     };
+    req.patientSessionToken = token;
 
     // Log access for HIPAA audit
     await logPatientAccess(

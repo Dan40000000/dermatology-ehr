@@ -9,8 +9,8 @@ import toast from 'react-hot-toast';
 
 export interface PatientData {
   id: string;
-  firstName: string;
-  lastName: string;
+  firstName?: string;
+  lastName?: string;
   dob?: string;
   phone?: string;
   email?: string;
@@ -53,7 +53,8 @@ export function usePatientUpdates(options: UsePatientUpdatesOptions = {}) {
       setTimeout(() => setIsUpdating(false), 2000);
 
       if (showToasts) {
-        toast(`Patient record updated: ${data.patient.firstName} ${data.patient.lastName}`, {
+        const patientLabel = [data.patient.firstName, data.patient.lastName].filter(Boolean).join(' ') || 'Patient record';
+        toast(`${patientLabel} updated`, {
           duration: 3000,
           icon: '📋',
         });
@@ -81,8 +82,8 @@ export function usePatientUpdates(options: UsePatientUpdatesOptions = {}) {
     // Handler for balance changed
     const handleBalanceChanged = (data: {
       patientId: string;
-      oldBalance: number;
-      newBalance: number;
+      oldBalance?: number;
+      newBalance?: number;
       timestamp: string;
     }) => {
       if (patientId && data.patientId !== patientId) return;
@@ -90,15 +91,22 @@ export function usePatientUpdates(options: UsePatientUpdatesOptions = {}) {
       setLastUpdate(new Date(data.timestamp));
 
       if (showToasts) {
-        const diff = data.newBalance - data.oldBalance;
-        const message = diff > 0 ? `Balance increased by $${(diff / 100).toFixed(2)}` : `Balance decreased by $${Math.abs(diff / 100).toFixed(2)}`;
+        const hasBalances = typeof data.newBalance === 'number' && typeof data.oldBalance === 'number';
+        const diff = hasBalances ? data.newBalance - data.oldBalance : 0;
+        const message = hasBalances
+          ? diff > 0
+            ? `Balance increased by $${(diff / 100).toFixed(2)}`
+            : `Balance decreased by $${Math.abs(diff / 100).toFixed(2)}`
+          : 'Patient balance updated';
         toast(message, {
           duration: 3000,
           icon: '💰',
         });
       }
 
-      onBalanceChanged?.(data.patientId, data.oldBalance, data.newBalance);
+      if (typeof data.oldBalance === 'number' && typeof data.newBalance === 'number') {
+        onBalanceChanged?.(data.patientId, data.oldBalance, data.newBalance);
+      }
     };
 
     // Subscribe to events

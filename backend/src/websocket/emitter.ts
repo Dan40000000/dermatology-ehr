@@ -6,6 +6,7 @@
 
 import { getIO } from './index';
 import { logger } from '../lib/logger';
+import type { ModuleKey } from '../config/moduleAccess';
 import {
   AppointmentEventData,
   PatientEventData,
@@ -19,18 +20,18 @@ import {
 } from './types';
 
 /**
- * Base emitter function with tenant isolation
+ * Base emitter function with tenant isolation and module scoping.
  */
-function emitToTenant(tenantId: string, event: string, data: any) {
+function emitToModules(tenantId: string, event: string, data: any, modules: ModuleKey[]) {
   try {
     const io = getIO();
-    const room = `tenant:${tenantId}`;
-    io.to(room).emit(event, data);
+    const rooms = [...new Set(modules)].map((moduleKey) => `tenant:${tenantId}:module:${moduleKey}`);
+    rooms.forEach((room) => io.to(room).emit(event, data));
 
     logger.debug('WebSocket event emitted', {
       event,
       tenantId,
-      room,
+      rooms,
       dataKeys: Object.keys(data),
     });
   } catch (error) {
@@ -40,6 +41,56 @@ function emitToTenant(tenantId: string, event: string, data: any) {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+}
+
+const appointmentModules: ModuleKey[] = ['home', 'schedule', 'office_flow', 'appt_flow', 'waitlist'];
+const patientModules: ModuleKey[] = ['home', 'patients'];
+const clinicalModules: ModuleKey[] = ['home', 'notes', 'clinical_inbox'];
+const orderModules: ModuleKey[] = ['home', 'orders', 'labs', 'radiology', 'clinical_inbox'];
+const rxModules: ModuleKey[] = ['home', 'rx', 'epa', 'clinical_inbox'];
+const billingModules: ModuleKey[] = ['home', 'financials', 'claims', 'clearinghouse'];
+const notificationModules: ModuleKey[] = ['home'];
+
+function sanitizeAppointment(appointment: AppointmentEventData) {
+  const { patientName, ...safeAppointment } = appointment;
+  return safeAppointment;
+}
+
+function sanitizePatient(patient: PatientEventData) {
+  return {
+    id: patient.id,
+    lastUpdated: patient.lastUpdated,
+  };
+}
+
+function sanitizeEncounter(encounter: EncounterEventData) {
+  const { patientName, chiefComplaint, ...safeEncounter } = encounter;
+  return safeEncounter;
+}
+
+function sanitizeBiopsy(biopsy: BiopsyEventData) {
+  const { patientName, diagnosis, pathLabCaseNumber, ...safeBiopsy } = biopsy;
+  return safeBiopsy;
+}
+
+function sanitizePrescription(prescription: PrescriptionEventData) {
+  const { patientName, medication, ...safePrescription } = prescription;
+  return safePrescription;
+}
+
+function sanitizeClaim(claim: ClaimEventData) {
+  const { patientName, payer, payerName, denialReason, ...safeClaim } = claim;
+  return safeClaim;
+}
+
+function sanitizePayment(payment: PaymentEventData) {
+  const { patientName, paymentMethod, payer, ...safePayment } = payment;
+  return safePayment;
+}
+
+function sanitizePriorAuth(priorAuth: PriorAuthEventData) {
+  const { patientName, insurancePlan, authNumber, ...safePriorAuth } = priorAuth;
+  return safePriorAuth;
 }
 
 /**
@@ -70,39 +121,38 @@ function emitToUser(userId: string, event: string, data: any) {
 // ============================================
 
 export function emitAppointmentCreated(tenantId: string, appointment: AppointmentEventData) {
-  emitToTenant(tenantId, 'appointment:created', {
-    appointment,
+  emitToModules(tenantId, 'appointment:created', {
+    appointment: sanitizeAppointment(appointment),
     timestamp: new Date().toISOString(),
-  });
+  }, appointmentModules);
 }
 
 export function emitAppointmentUpdated(tenantId: string, appointment: AppointmentEventData) {
-  emitToTenant(tenantId, 'appointment:updated', {
-    appointment,
+  emitToModules(tenantId, 'appointment:updated', {
+    appointment: sanitizeAppointment(appointment),
     timestamp: new Date().toISOString(),
-  });
+  }, appointmentModules);
 }
 
 export function emitAppointmentCancelled(tenantId: string, appointmentId: string, reason?: string) {
-  emitToTenant(tenantId, 'appointment:cancelled', {
+  emitToModules(tenantId, 'appointment:cancelled', {
     appointmentId,
     reason,
     timestamp: new Date().toISOString(),
-  });
+  }, appointmentModules);
 }
 
 export function emitAppointmentCheckedIn(
   tenantId: string,
   appointmentId: string,
   patientId: string,
-  patientName?: string
+  _patientName?: string
 ) {
-  emitToTenant(tenantId, 'appointment:checkedin', {
+  emitToModules(tenantId, 'appointment:checkedin', {
     appointmentId,
     patientId,
-    patientName,
     timestamp: new Date().toISOString(),
-  });
+  }, appointmentModules);
 }
 
 // ============================================
@@ -110,36 +160,35 @@ export function emitAppointmentCheckedIn(
 // ============================================
 
 export function emitPatientUpdated(tenantId: string, patient: PatientEventData) {
-  emitToTenant(tenantId, 'patient:updated', {
-    patient,
+  emitToModules(tenantId, 'patient:updated', {
+    patient: sanitizePatient(patient),
     timestamp: new Date().toISOString(),
-  });
+  }, patientModules);
 }
 
 export function emitPatientInsuranceVerified(
   tenantId: string,
   patientId: string,
-  insuranceInfo: any
+  _insuranceInfo: any
 ) {
-  emitToTenant(tenantId, 'patient:insurance_verified', {
+  emitToModules(tenantId, 'patient:insurance_verified', {
     patientId,
-    insuranceInfo,
+    insuranceInfo: { verified: true },
     timestamp: new Date().toISOString(),
-  });
+  }, patientModules);
 }
 
 export function emitPatientBalanceChanged(
   tenantId: string,
   patientId: string,
-  oldBalance: number,
-  newBalance: number
+  _oldBalance: number,
+  _newBalance: number
 ) {
-  emitToTenant(tenantId, 'patient:balance_changed', {
+  emitToModules(tenantId, 'patient:balance_changed', {
     patientId,
-    oldBalance,
-    newBalance,
+    balanceChanged: true,
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 // ============================================
@@ -147,17 +196,17 @@ export function emitPatientBalanceChanged(
 // ============================================
 
 export function emitEncounterCreated(tenantId: string, encounter: EncounterEventData) {
-  emitToTenant(tenantId, 'encounter:created', {
-    encounter,
+  emitToModules(tenantId, 'encounter:created', {
+    encounter: sanitizeEncounter(encounter),
     timestamp: new Date().toISOString(),
-  });
+  }, clinicalModules);
 }
 
 export function emitEncounterUpdated(tenantId: string, encounter: EncounterEventData) {
-  emitToTenant(tenantId, 'encounter:updated', {
-    encounter,
+  emitToModules(tenantId, 'encounter:updated', {
+    encounter: sanitizeEncounter(encounter),
     timestamp: new Date().toISOString(),
-  });
+  }, clinicalModules);
 }
 
 export function emitEncounterCompleted(
@@ -165,11 +214,11 @@ export function emitEncounterCompleted(
   encounterId: string,
   providerId: string
 ) {
-  emitToTenant(tenantId, 'encounter:completed', {
+  emitToModules(tenantId, 'encounter:completed', {
     encounterId,
     providerId,
     timestamp: new Date().toISOString(),
-  });
+  }, clinicalModules);
 }
 
 export function emitEncounterSigned(
@@ -177,11 +226,11 @@ export function emitEncounterSigned(
   encounterId: string,
   providerId: string
 ) {
-  emitToTenant(tenantId, 'encounter:signed', {
+  emitToModules(tenantId, 'encounter:signed', {
     encounterId,
     providerId,
     timestamp: new Date().toISOString(),
-  });
+  }, clinicalModules);
 }
 
 // ============================================
@@ -189,31 +238,31 @@ export function emitEncounterSigned(
 // ============================================
 
 export function emitBiopsyCreated(tenantId: string, biopsy: BiopsyEventData) {
-  emitToTenant(tenantId, 'biopsy:created', {
-    biopsy,
+  emitToModules(tenantId, 'biopsy:created', {
+    biopsy: sanitizeBiopsy(biopsy),
     timestamp: new Date().toISOString(),
-  });
+  }, orderModules);
 }
 
 export function emitBiopsyUpdated(tenantId: string, biopsy: BiopsyEventData) {
-  emitToTenant(tenantId, 'biopsy:updated', {
-    biopsy,
+  emitToModules(tenantId, 'biopsy:updated', {
+    biopsy: sanitizeBiopsy(biopsy),
     timestamp: new Date().toISOString(),
-  });
+  }, orderModules);
 }
 
 export function emitBiopsyResultReceived(
   tenantId: string,
   biopsyId: string,
   patientId: string,
-  diagnosis: string
+  _diagnosis: string
 ) {
-  emitToTenant(tenantId, 'biopsy:result_received', {
+  emitToModules(tenantId, 'biopsy:result_received', {
     biopsyId,
     patientId,
-    diagnosis,
+    resultReceived: true,
     timestamp: new Date().toISOString(),
-  });
+  }, orderModules);
 }
 
 export function emitBiopsyReviewed(
@@ -222,12 +271,12 @@ export function emitBiopsyReviewed(
   patientId: string,
   reviewedBy: string
 ) {
-  emitToTenant(tenantId, 'biopsy:reviewed', {
+  emitToModules(tenantId, 'biopsy:reviewed', {
     biopsyId,
     patientId,
     reviewedBy,
     timestamp: new Date().toISOString(),
-  });
+  }, orderModules);
 }
 
 // ============================================
@@ -235,24 +284,23 @@ export function emitBiopsyReviewed(
 // ============================================
 
 export function emitPrescriptionCreated(tenantId: string, prescription: PrescriptionEventData) {
-  emitToTenant(tenantId, 'prescription:created', {
-    prescription,
+  emitToModules(tenantId, 'prescription:created', {
+    prescription: sanitizePrescription(prescription),
     timestamp: new Date().toISOString(),
-  });
+  }, rxModules);
 }
 
 export function emitPrescriptionSent(
   tenantId: string,
   prescriptionId: string,
   patientId: string,
-  medication: string
+  _medication: string
 ) {
-  emitToTenant(tenantId, 'prescription:sent', {
+  emitToModules(tenantId, 'prescription:sent', {
     prescriptionId,
     patientId,
-    medication,
     timestamp: new Date().toISOString(),
-  });
+  }, rxModules);
 }
 
 export function emitPrescriptionStatusChanged(
@@ -260,11 +308,11 @@ export function emitPrescriptionStatusChanged(
   prescriptionId: string,
   status: string
 ) {
-  emitToTenant(tenantId, 'prescription:status_changed', {
+  emitToModules(tenantId, 'prescription:status_changed', {
     prescriptionId,
     status,
     timestamp: new Date().toISOString(),
-  });
+  }, rxModules);
 }
 
 // ============================================
@@ -272,17 +320,17 @@ export function emitPrescriptionStatusChanged(
 // ============================================
 
 export function emitClaimCreated(tenantId: string, claim: ClaimEventData) {
-  emitToTenant(tenantId, 'claim:created', {
-    claim,
+  emitToModules(tenantId, 'claim:created', {
+    claim: sanitizeClaim(claim),
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 export function emitClaimUpdated(tenantId: string, claim: ClaimEventData) {
-  emitToTenant(tenantId, 'claim:updated', {
-    claim,
+  emitToModules(tenantId, 'claim:updated', {
+    claim: sanitizeClaim(claim),
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 export function emitClaimStatusChanged(
@@ -291,12 +339,12 @@ export function emitClaimStatusChanged(
   oldStatus: string,
   newStatus: string
 ) {
-  emitToTenant(tenantId, 'claim:status_changed', {
+  emitToModules(tenantId, 'claim:status_changed', {
     claimId,
     oldStatus,
     newStatus,
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 export function emitClaimSubmitted(
@@ -304,23 +352,23 @@ export function emitClaimSubmitted(
   claimId: string,
   payer: string
 ) {
-  emitToTenant(tenantId, 'claim:submitted', {
+  emitToModules(tenantId, 'claim:submitted', {
     claimId,
     payer,
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 export function emitClaimDenied(
   tenantId: string,
   claimId: string,
-  reason: string
+  _reason: string
 ) {
-  emitToTenant(tenantId, 'claim:denied', {
+  emitToModules(tenantId, 'claim:denied', {
     claimId,
-    reason,
+    denied: true,
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 export function emitClaimPaid(
@@ -328,11 +376,11 @@ export function emitClaimPaid(
   claimId: string,
   amount: number
 ) {
-  emitToTenant(tenantId, 'claim:paid', {
+  emitToModules(tenantId, 'claim:paid', {
     claimId,
     amount,
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 // ============================================
@@ -340,10 +388,10 @@ export function emitClaimPaid(
 // ============================================
 
 export function emitPaymentReceived(tenantId: string, payment: PaymentEventData) {
-  emitToTenant(tenantId, 'payment:received', {
-    payment,
+  emitToModules(tenantId, 'payment:received', {
+    payment: sanitizePayment(payment),
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 export function emitPaymentPosted(
@@ -352,12 +400,12 @@ export function emitPaymentPosted(
   patientId: string,
   amount: number
 ) {
-  emitToTenant(tenantId, 'payment:posted', {
+  emitToModules(tenantId, 'payment:posted', {
     paymentId,
     patientId,
     amount,
     timestamp: new Date().toISOString(),
-  });
+  }, billingModules);
 }
 
 // ============================================
@@ -365,10 +413,10 @@ export function emitPaymentPosted(
 // ============================================
 
 export function emitPriorAuthCreated(tenantId: string, priorAuth: PriorAuthEventData) {
-  emitToTenant(tenantId, 'prior_auth:created', {
-    priorAuth,
+  emitToModules(tenantId, 'prior_auth:created', {
+    priorAuth: sanitizePriorAuth(priorAuth),
     timestamp: new Date().toISOString(),
-  });
+  }, rxModules);
 }
 
 export function emitPriorAuthStatusChanged(
@@ -377,36 +425,36 @@ export function emitPriorAuthStatusChanged(
   oldStatus: string,
   newStatus: string
 ) {
-  emitToTenant(tenantId, 'prior_auth:status_changed', {
+  emitToModules(tenantId, 'prior_auth:status_changed', {
     priorAuthId,
     oldStatus,
     newStatus,
     timestamp: new Date().toISOString(),
-  });
+  }, rxModules);
 }
 
 export function emitPriorAuthApproved(
   tenantId: string,
   priorAuthId: string,
-  authNumber: string
+  _authNumber: string
 ) {
-  emitToTenant(tenantId, 'prior_auth:approved', {
+  emitToModules(tenantId, 'prior_auth:approved', {
     priorAuthId,
-    authNumber,
+    approved: true,
     timestamp: new Date().toISOString(),
-  });
+  }, rxModules);
 }
 
 export function emitPriorAuthDenied(
   tenantId: string,
   priorAuthId: string,
-  reason: string
+  _reason: string
 ) {
-  emitToTenant(tenantId, 'prior_auth:denied', {
+  emitToModules(tenantId, 'prior_auth:denied', {
     priorAuthId,
-    reason,
+    denied: true,
     timestamp: new Date().toISOString(),
-  });
+  }, rxModules);
 }
 
 // ============================================
@@ -427,7 +475,6 @@ export function emitNotification(
     // Send to specific user
     emitToUser(targetUserId, 'notification:new', payload);
   } else {
-    // Send to entire tenant
-    emitToTenant(tenantId, 'notification:new', payload);
+    emitToModules(tenantId, 'notification:new', payload, notificationModules);
   }
 }

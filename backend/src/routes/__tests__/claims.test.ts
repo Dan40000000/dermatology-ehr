@@ -95,6 +95,9 @@ const readyClaimScrubRow = {
   payer_id: "payer-1",
   payer_name: "Payer",
   payer: "Payer",
+  primary_payer_id: null,
+  primary_payer_name: null,
+  primary_plan_name: null,
   is_cosmetic: false,
   patient_first_name: "Ava",
   patient_last_name: "Jones",
@@ -103,11 +106,13 @@ const readyClaimScrubRow = {
   patient_city: "Denver",
   patient_state: "CO",
   patient_zip: "80202",
-  insurance_member_id: "M123",
+  legacy_insurance_member_id: "M123",
+  primary_insurance_member_id: null,
   provider_id: "provider-1",
   provider_name: "Dr. Demo",
   provider_npi: "1234567890",
-  place_of_service: "11",
+  encounter_place_of_service: "11",
+  superbill_place_of_service: null,
 };
 
 const cleanScrubResult = {
@@ -314,6 +319,40 @@ describe("Claims routes", () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("SET payer = COALESCE"),
       expect.arrayContaining(["United Healthcare"]),
+    );
+  });
+
+  it("POST /claims/:id/release uses primary insurance member ID and office POS fallback for scrubbing", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: "claim-1", status: "coding_review", scrub_status: "clean", payer: "Payer" }],
+      })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          ...readyClaimScrubRow,
+          legacy_insurance_member_id: null,
+          primary_insurance_member_id: "PRIMARY-123",
+          encounter_place_of_service: null,
+          superbill_place_of_service: null,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    scrubMock.mockResolvedValueOnce(cleanScrubResult);
+
+    const res = await request(app).post("/claims/claim-1/release").send({ notes: "reviewed" });
+
+    expect(res.status).toBe(200);
+    expect(scrubMock).toHaveBeenCalledWith(expect.objectContaining({
+      patient: expect.objectContaining({ insuranceMemberId: "PRIMARY-123" }),
+      placeOfService: "11",
+    }));
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("patient_insurance"),
+      ["claim-1", "tenant-1"],
     );
   });
 

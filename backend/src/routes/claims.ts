@@ -261,6 +261,7 @@ function resolvePayerFromInsuranceRow(row: any, requested?: { payer?: string | n
   const payerId = firstNonEmpty(
     requested?.payerId,
     row?.payer_id,
+    row?.primary_payer_id,
     row?.insurance_payer_id,
     primary.payerId,
     primary.payer_id,
@@ -270,6 +271,8 @@ function resolvePayerFromInsuranceRow(row: any, requested?: { payer?: string | n
     requested?.payerName,
     requested?.payer,
     row?.payer_name,
+    row?.primary_payer_name,
+    row?.primary_plan_name,
     primary.planName,
     primary.plan_name,
     primary.payerName,
@@ -285,15 +288,28 @@ function resolvePayerFromInsuranceRow(row: any, requested?: { payer?: string | n
 async function resolvePatientPayer(tenantId: string, patientId: string, requested?: { payer?: string | null; payerId?: string | null; payerName?: string | null }) {
   const insuranceResult = await pool.query(
     `SELECT
-       p.insurance_payer_id,
-       p.insurance_plan_name,
-       p.insurance,
-       p.insurance_details,
-       iv.payer_name,
-       iv.payer_id
-     FROM patients p
-     LEFT JOIN insurance_verifications iv ON iv.id = p.latest_verification_id
-     WHERE p.id = $1 AND p.tenant_id = $2`,
+         p.insurance_payer_id,
+         p.insurance_plan_name,
+         p.insurance,
+         p.insurance_details,
+         pi.payer_id as primary_payer_id,
+         pi.payer_name as primary_payer_name,
+         pi.plan_name as primary_plan_name,
+         iv.payer_name,
+         iv.payer_id
+       FROM patients p
+       LEFT JOIN LATERAL (
+         SELECT payer_id, payer_name, plan_name, member_id
+         FROM patient_insurance pi
+         WHERE pi.tenant_id = p.tenant_id
+           AND pi.patient_id = p.id
+           AND (pi.is_primary = true OR pi.insurance_type = 'primary')
+           AND (pi.termination_date IS NULL OR pi.termination_date >= CURRENT_DATE)
+         ORDER BY pi.is_primary DESC, pi.updated_at DESC NULLS LAST, pi.created_at DESC NULLS LAST
+         LIMIT 1
+       ) pi ON true
+       LEFT JOIN insurance_verifications iv ON iv.id = p.latest_verification_id
+       WHERE p.id = $1 AND p.tenant_id = $2`,
     [patientId, tenantId]
   );
 
@@ -397,6 +413,9 @@ async function loadClaimForScrubbing(tenantId: string, claimId: string): Promise
        c.payer_id,
        c.payer_name,
        c.payer,
+       pi.payer_id as primary_payer_id,
+       pi.payer_name as primary_payer_name,
+       pi.plan_name as primary_plan_name,
        c.is_cosmetic,
        p.insurance as patient_insurance,
        p.insurance_plan_name as patient_insurance_plan_name,
@@ -407,16 +426,37 @@ async function loadClaimForScrubbing(tenantId: string, claimId: string): Promise
        p.city as patient_city,
        p.state as patient_state,
        p.zip as patient_zip,
-       p.insurance_member_id as insurance_member_id,
+       p.insurance_member_id as legacy_insurance_member_id,
+       pi.member_id as primary_insurance_member_id,
        e.provider_id,
        pr.full_name as provider_name,
        pr.npi as provider_npi,
-       nullif(to_jsonb(e)->>'place_of_service', '') as place_of_service
-     from claims c
-     join patients p on p.id = c.patient_id and p.tenant_id = c.tenant_id
-     left join encounters e on e.id = c.encounter_id and e.tenant_id = c.tenant_id
-     left join providers pr on pr.id = e.provider_id and pr.tenant_id = c.tenant_id
-     where c.id = $1 and c.tenant_id = $2`,
+       nullif(to_jsonb(e)->>'place_of_service', '') as encounter_place_of_service,
+       nullif(sb.place_of_service, '') as superbill_place_of_service
+       from claims c
+       join patients p on p.id = c.patient_id and p.tenant_id = c.tenant_id
+       left join lateral (
+         select payer_id, payer_name, plan_name, member_id
+         from patient_insurance pi
+         where pi.tenant_id = c.tenant_id
+           and pi.patient_id = c.patient_id
+           and (pi.is_primary = true or pi.insurance_type = 'primary')
+           and (pi.termination_date is null or pi.termination_date >= coalesce(c.service_date::date, current_date))
+         order by pi.is_primary desc, pi.updated_at desc nulls last, pi.created_at desc nulls last
+         limit 1
+       ) pi on true
+       left join encounters e on e.id = c.encounter_id and e.tenant_id = c.tenant_id
+       left join lateral (
+         select place_of_service
+         from superbills sb
+         where sb.tenant_id = c.tenant_id
+           and sb.patient_id = c.patient_id
+           and sb.encounter_id = c.encounter_id
+         order by sb.updated_at desc nulls last, sb.created_at desc nulls last
+         limit 1
+       ) sb on true
+       left join providers pr on pr.id = e.provider_id and pr.tenant_id = c.tenant_id
+       where c.id = $1 and c.tenant_id = $2`,
     [claimId, tenantId],
   );
 
@@ -440,8 +480,8 @@ async function loadClaimForScrubbing(tenantId: string, claimId: string): Promise
     patientId: row.patient_id,
     serviceDate: row.service_date,
     lineItems: mapLineItemsForScrubbing(row.line_items),
-    payerId: row.payer_id,
-    payerName: firstNonEmpty(row.payer_name, row.payer, row.patient_insurance_plan_name, row.patient_insurance) || undefined,
+    payerId: firstNonEmpty(row.payer_id, row.primary_payer_id) || undefined,
+    payerName: firstNonEmpty(row.payer_name, row.payer, row.primary_payer_name, row.primary_plan_name, row.patient_insurance_plan_name, row.patient_insurance) || undefined,
     isCosmetic: row.is_cosmetic,
     patient: {
       firstName: row.patient_first_name,
@@ -451,10 +491,10 @@ async function loadClaimForScrubbing(tenantId: string, claimId: string): Promise
       city: row.patient_city,
       state: row.patient_state,
       zip: row.patient_zip,
-      insuranceMemberId: row.insurance_member_id,
+      insuranceMemberId: firstNonEmpty(row.primary_insurance_member_id, row.legacy_insurance_member_id),
     },
     provider,
-    placeOfService: row.place_of_service,
+    placeOfService: firstNonEmpty(row.encounter_place_of_service, row.superbill_place_of_service, "11"),
   };
 }
 

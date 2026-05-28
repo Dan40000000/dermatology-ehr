@@ -137,6 +137,9 @@ async function loadClaimForSubmissionScrub(
        c.payer_id,
        c.payer_name,
        c.payer,
+       pi.payer_id as primary_payer_id,
+       pi.payer_name as primary_payer_name,
+       pi.plan_name as primary_plan_name,
        c.is_cosmetic,
        p.first_name as patient_first_name,
        p.last_name as patient_last_name,
@@ -145,16 +148,37 @@ async function loadClaimForSubmissionScrub(
        p.city as patient_city,
        p.state as patient_state,
        p.zip as patient_zip,
-       p.insurance_member_id,
+       p.insurance_member_id as legacy_insurance_member_id,
+       pi.member_id as primary_insurance_member_id,
        e.provider_id,
        pr.full_name as provider_name,
        pr.npi as provider_npi,
-       NULLIF(to_jsonb(e)->>'place_of_service', '') as place_of_service
-     FROM claims c
-     JOIN patients p ON p.id = c.patient_id AND p.tenant_id = c.tenant_id
-     LEFT JOIN encounters e ON e.id = c.encounter_id AND e.tenant_id = c.tenant_id
-     LEFT JOIN providers pr ON pr.id = e.provider_id AND pr.tenant_id = c.tenant_id
-     WHERE c.id = $1 AND c.tenant_id = $2`,
+       NULLIF(to_jsonb(e)->>'place_of_service', '') as encounter_place_of_service,
+       NULLIF(sb.place_of_service, '') as superbill_place_of_service
+       FROM claims c
+       JOIN patients p ON p.id = c.patient_id AND p.tenant_id = c.tenant_id
+       LEFT JOIN LATERAL (
+         SELECT payer_id, payer_name, plan_name, member_id
+         FROM patient_insurance pi
+         WHERE pi.tenant_id = c.tenant_id
+           AND pi.patient_id = c.patient_id
+           AND (pi.is_primary = true OR pi.insurance_type = 'primary')
+           AND (pi.termination_date IS NULL OR pi.termination_date >= COALESCE(c.service_date::date, CURRENT_DATE))
+         ORDER BY pi.is_primary DESC, pi.updated_at DESC NULLS LAST, pi.created_at DESC NULLS LAST
+         LIMIT 1
+       ) pi ON true
+       LEFT JOIN encounters e ON e.id = c.encounter_id AND e.tenant_id = c.tenant_id
+       LEFT JOIN LATERAL (
+         SELECT place_of_service
+         FROM superbills sb
+         WHERE sb.tenant_id = c.tenant_id
+           AND sb.patient_id = c.patient_id
+           AND sb.encounter_id = c.encounter_id
+         ORDER BY sb.updated_at DESC NULLS LAST, sb.created_at DESC NULLS LAST
+         LIMIT 1
+       ) sb ON true
+       LEFT JOIN providers pr ON pr.id = e.provider_id AND pr.tenant_id = c.tenant_id
+       WHERE c.id = $1 AND c.tenant_id = $2`,
     [claimId, tenantId],
   );
 
@@ -167,8 +191,8 @@ async function loadClaimForSubmissionScrub(
     patientId: row.patient_id,
     serviceDate: row.service_date,
     lineItems: normalizeClaimLineItemsForScrubbing(row.line_items),
-    payerId: row.payer_id,
-    payerName: row.payer_name || row.payer,
+    payerId: firstNonEmpty(row.payer_id, row.primary_payer_id),
+    payerName: firstNonEmpty(row.payer_name, row.payer, row.primary_payer_name, row.primary_plan_name),
     isCosmetic: row.is_cosmetic,
     patient: {
       firstName: row.patient_first_name,
@@ -178,14 +202,14 @@ async function loadClaimForSubmissionScrub(
       city: row.patient_city,
       state: row.patient_state,
       zip: row.patient_zip,
-      insuranceMemberId: row.insurance_member_id,
+      insuranceMemberId: firstNonEmpty(row.primary_insurance_member_id, row.legacy_insurance_member_id),
     },
     provider: {
       id: row.provider_id,
       name: row.provider_name,
       npi: row.provider_npi,
     },
-    placeOfService: row.place_of_service,
+    placeOfService: firstNonEmpty(row.encounter_place_of_service, row.superbill_place_of_service, '11'),
   };
 }
 

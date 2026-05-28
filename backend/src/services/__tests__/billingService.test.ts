@@ -292,11 +292,13 @@ describe("billingService", () => {
           patient_city: "Denver",
           patient_state: "CO",
           patient_zip: "80202",
-          insurance_member_id: "M123",
+          legacy_insurance_member_id: "M123",
+          primary_insurance_member_id: null,
           provider_id: "provider-1",
           provider_name: "Dr. Demo",
           provider_npi: "1234567890",
-          place_of_service: "11",
+          encounter_place_of_service: "11",
+          superbill_place_of_service: null,
         }],
       })
       .mockResolvedValueOnce({ rows: [] })
@@ -311,6 +313,64 @@ describe("billingService", () => {
     expect(client.query).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE claims"),
       ["claim-1", "tenant-1"]
+    );
+  });
+
+  it("submitClaim uses primary insurance member ID and office POS fallback for scrubbing", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: "claim-1", status: "ready", payer: "ACME", payer_id: "P1" }],
+      })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          id: "claim-1",
+          tenant_id: "tenant-1",
+          patient_id: "patient-1",
+          service_date: "2025-01-01",
+          line_items: [{ cpt: "99213", dx: ["L70.0"], units: 1, charge: 100 }],
+          payer_id: null,
+          payer_name: null,
+          payer: "ACME",
+          primary_payer_id: "P1",
+          primary_payer_name: "ACME Primary",
+          primary_plan_name: "ACME Gold",
+          is_cosmetic: false,
+          patient_first_name: "Ava",
+          patient_last_name: "Jones",
+          patient_dob: "1990-01-01",
+          patient_address: "1 Main",
+          patient_city: "Denver",
+          patient_state: "CO",
+          patient_zip: "80202",
+          legacy_insurance_member_id: null,
+          primary_insurance_member_id: "PRIMARY-123",
+          provider_id: "provider-1",
+          provider_name: "Dr. Demo",
+          provider_npi: "1234567890",
+          encounter_place_of_service: null,
+          superbill_place_of_service: null,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await billingService.submitClaim("tenant-1", "claim-1", "user-1");
+
+    expect(scrubMock).toHaveBeenCalledWith(expect.objectContaining({
+      payerId: "P1",
+      patient: expect.objectContaining({ insuranceMemberId: "PRIMARY-123" }),
+      placeOfService: "11",
+    }));
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("patient_insurance"),
+      ["claim-1", "tenant-1"],
     );
   });
 

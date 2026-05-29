@@ -125,11 +125,15 @@ describe('aiLesionAnalysisService', () => {
     });
 
     it('masks non-Error OpenAI failures and falls back to mock analysis', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
       (global.fetch as jest.Mock).mockRejectedValueOnce({ timeout: true });
 
       const result = await (aiLesionAnalysisService as any).analyzeWithOpenAI(
         'https://example.com/lesion.jpg',
-        'standard'
+        'standard',
+        tenantId,
+        userId,
+        'image-1'
       );
 
       expect(result).toEqual(

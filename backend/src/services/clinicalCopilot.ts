@@ -79,6 +79,10 @@ interface AskClinicalCopilotInput {
   question: string;
   history?: ClinicalCopilotMessage[];
   context: ClinicalCopilotContext;
+  tenantId?: string;
+  userId?: string;
+  resourceType?: string;
+  resourceId?: string;
 }
 
 function toSafeErrorMessage(error: unknown): string {
@@ -343,6 +347,10 @@ async function askOpenAI(input: AskClinicalCopilotInput): Promise<ClinicalCopilo
   }, {
     feature: 'clinical_copilot',
     model,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
   });
 
   if (!response.ok) {

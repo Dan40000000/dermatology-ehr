@@ -2385,6 +2385,10 @@ router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_R
       question: prompt,
       history,
       context,
+      tenantId,
+      userId,
+      resourceType: noteId ? 'ambient_note' : encounterId ? 'encounter' : patientId ? 'patient' : 'ambient_recording',
+      resourceId: noteId || encounterId || patientId || recordingId,
     });
 
     void Promise.resolve(
@@ -2461,6 +2465,10 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
       question: prompt || COPILOT_VISIT_SUMMARY_PROMPT,
       history,
       context,
+      tenantId,
+      userId,
+      resourceType: target.encounterId ? 'encounter' : 'patient',
+      resourceId: target.encounterId || target.patientId,
     });
     const saved = await upsertCopilotVisitSummary(tenantId, userId, target, result, context);
 
@@ -3467,7 +3475,11 @@ async function processTranscription(
 ): Promise<void> {
   try {
     // Call mock AI service
-    const result: TranscriptionResult = await transcribeAudio(filePath, durationSeconds, { tenantId });
+    const result: TranscriptionResult = await transcribeAudio(filePath, durationSeconds, {
+      tenantId,
+      resourceType: 'ambient_recording',
+      resourceId: recordingId,
+    });
 
     // Mask PHI
     const maskedText = maskPHI(result.text, result.phiEntities);
@@ -3586,7 +3598,12 @@ async function processNoteGeneration(
       transcriptText,
       segments,
       generationContext.agentConfig,
-      generationContext.patientContext
+      generationContext.patientContext,
+      {
+        tenantId,
+        resourceType: 'ambient_note',
+        resourceId: noteId,
+      }
     );
     const generationMetadata = result.generationMetadata;
 

@@ -83,7 +83,7 @@ export class VoiceTranscriptionService {
       }
 
       // Transcribe using OpenAI transcription API
-      const transcription = await this.transcribeWithOpenAI(request.audioFile, request.language);
+      const transcription = await this.transcribeWithOpenAI(request.audioFile, request);
 
       // Store transcription in database
       await pool.query(
@@ -124,14 +124,14 @@ export class VoiceTranscriptionService {
    */
   private async transcribeWithOpenAI(
     audioFilePath: string,
-    language: string = "en"
+    request: TranscriptionRequest
   ): Promise<{ text: string; confidence: number; duration: number; segments?: any[] }> {
     try {
       const formData = new FormData();
       formData.append("file", fs.createReadStream(audioFilePath));
       const model = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
       formData.append("model", model);
-      formData.append("language", language);
+      formData.append("language", request.language || "en");
 
       if (model === "whisper-1") {
         formData.append("response_format", "verbose_json");
@@ -159,6 +159,10 @@ export class VoiceTranscriptionService {
         feature: "voice_transcription",
         model,
         estimatedAudioSeconds: Number(process.env.VOICE_TRANSCRIPTION_ESTIMATED_SECONDS || 60),
+        tenantId: request.tenantId,
+        userId: request.userId,
+        resourceType: request.encounterId ? "encounter" : "voice_transcription",
+        resourceId: request.encounterId,
       });
 
       if (!response.ok) {

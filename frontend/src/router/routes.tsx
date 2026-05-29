@@ -96,6 +96,7 @@ const ClearinghousePage = lazy(() => import('../pages/ClearinghousePage').then(m
 const AdminPage = lazy(() => import('../pages/AdminPage').then(m => ({ default: m.AdminPage })));
 const IntegrationsSettingsPage = lazy(() => import('../pages/IntegrationsSettingsPage'));
 const AIAgentConfigsPage = lazy(() => import('../pages/AIAgentConfigsPage').then(m => ({ default: m.AIAgentConfigsPage })));
+const OpenAiAuditPage = lazy(() => import('../pages/OpenAiAuditPage').then(m => ({ default: m.OpenAiAuditPage })));
 const ProfessionalFeedbackPage = lazy(() => import('../pages/ProfessionalFeedbackPage').then(m => ({ default: m.ProfessionalFeedbackPage })));
 const ReferralsPage = lazy(() => import('../pages/ReferralsPage').then(m => ({ default: m.ReferralsPage })));
 const ProtocolsPage = lazy(() => import('../pages/ProtocolsPage').then(m => ({ default: m.ProtocolsPage })));
@@ -330,6 +331,7 @@ export const routes: RouteObject[] = [
       { path: 'admin/note-templates', element: lazyWithSuspense(NoteTemplatesPage) },
       { path: 'admin/audit-log', element: lazyWithSuspense(AuditLogPage) },
       { path: 'admin/ai-agents', element: lazyWithSuspense(AIAgentConfigsPage) },
+      { path: 'admin/openai-usage', element: lazyWithSuspense(OpenAiAuditPage) },
       { path: 'admin/feedback', element: lazyWithSuspense(ProfessionalFeedbackPage) },
     ],
   },

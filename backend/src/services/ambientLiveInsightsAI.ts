@@ -18,6 +18,10 @@ const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 
 type GenerateLiveInsightsOptions = {
   fallback?: AmbientLiveInsights;
+  tenantId?: string;
+  userId?: string;
+  resourceType?: string;
+  resourceId?: string;
 };
 
 function getOpenAIKey(): string | undefined {
@@ -426,6 +430,10 @@ export async function generateAmbientLiveInsightsWithAI(
     }, {
       feature: 'ambient_live_insights',
       model,
+      tenantId: options?.tenantId,
+      userId: options?.userId,
+      resourceType: options?.resourceType || 'ambient_recording',
+      resourceId: options?.resourceId,
     });
 
     if (!response.ok) {

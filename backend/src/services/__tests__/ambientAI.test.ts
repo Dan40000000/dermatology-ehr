@@ -831,6 +831,7 @@ describe('AmbientAI Service', () => {
     it('should fall back from Anthropic to OpenAI before using mock', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_NOTE_MODEL = 'gpt-4o';
 
       (global.fetch as jest.Mock)
         .mockRejectedValueOnce(new Error('Claude unavailable'))

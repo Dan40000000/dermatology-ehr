@@ -3,12 +3,18 @@ import {
   OpenAiSpendGuardError,
   resetOpenAiSpendGuardForTests,
 } from "../openAiSpendGuard";
+import { recordOpenAiUsageAudit } from "../../services/openAiUsageAuditService";
+
+jest.mock("../../services/openAiUsageAuditService", () => ({
+  recordOpenAiUsageAudit: jest.fn(),
+}));
 
 describe("openAiSpendGuard", () => {
   const originalEnv = process.env;
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    (recordOpenAiUsageAudit as jest.Mock).mockReset();
     process.env = {
       ...originalEnv,
       NODE_ENV: "test",
@@ -85,5 +91,30 @@ describe("openAiSpendGuard", () => {
       }),
     ).rejects.toBeInstanceOf(OpenAiSpendGuardError);
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("records usage metadata after a completed call", async () => {
+    await meteredOpenAiFetch("https://api.openai.com/v1/chat/completions", { method: "POST" }, {
+      feature: "clinical_copilot",
+      model: "gpt-4o-mini",
+      tenantId: "tenant-1",
+      userId: "user-1",
+      resourceType: "encounter",
+      resourceId: "enc-1",
+    });
+
+    expect(recordOpenAiUsageAudit).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "tenant-1",
+      userId: "user-1",
+      feature: "clinical_copilot",
+      model: "gpt-4o-mini",
+      endpoint: "/v1/chat/completions",
+      requestId: "req_test",
+      statusCode: 200,
+      ok: true,
+      usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+      resourceType: "encounter",
+      resourceId: "enc-1",
+    }));
   });
 });

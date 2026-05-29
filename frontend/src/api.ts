@@ -10813,4 +10813,172 @@ export async function applyProductSaleDiscount(
   return res.json();
 }
 
+export interface OpenAiUsageSettings {
+  monthlyBudgetCents: number | null;
+  startingBalanceCents: number | null;
+  balancePeriodStart: string;
+}
+
+export interface OpenAiUsageSummary {
+  range: {
+    startDate: string;
+    endDate: string;
+  };
+  settings: OpenAiUsageSettings;
+  summary: {
+    totalRequests: number;
+    successfulRequests: number;
+    failedRequests: number;
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+    totalTokens: number;
+    estimatedAudioSeconds: number;
+    estimatedCostCents: number;
+    monthlyBudgetCents: number | null;
+    startingBalanceCents: number | null;
+    balancePeriodUsageCents: number;
+    estimatedRemainingBudgetCents: number | null;
+    estimatedRemainingBalanceCents: number | null;
+  };
+  byFeature: Array<{
+    feature: string;
+    requests: number;
+    totalTokens: number;
+    estimatedAudioSeconds: number;
+    estimatedCostCents: number;
+    lastUsedAt: string | null;
+  }>;
+  byModel: Array<{
+    model: string;
+    requests: number;
+    totalTokens: number;
+    estimatedAudioSeconds: number;
+    estimatedCostCents: number;
+  }>;
+  daily: Array<{
+    date: string;
+    requests: number;
+    totalTokens: number;
+    estimatedCostCents: number;
+  }>;
+}
+
+export interface OpenAiUsageLog {
+  id: string;
+  feature: string;
+  model: string | null;
+  endpoint: string | null;
+  requestId: string | null;
+  statusCode: number | null;
+  ok: boolean | null;
+  durationMs: number | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  audioInputTokens: number;
+  audioOutputTokens: number;
+  estimatedAudioSeconds: number;
+  estimatedCostCents: number;
+  resourceType: string | null;
+  resourceId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string | null;
+}
+
+export interface OpenAiUsageLogsResponse {
+  logs: OpenAiUsageLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function fetchOpenAiUsageSummary(
+  tenantId: string,
+  accessToken: string,
+  options?: { startDate?: string; endDate?: string }
+): Promise<OpenAiUsageSummary> {
+  const params = new URLSearchParams();
+  if (options?.startDate) params.set('startDate', options.startDate);
+  if (options?.endDate) params.set('endDate', options.endDate);
+  const query = params.toString();
+  const res = await fetch(`${API_BASE}/api/openai-audit/summary${query ? `?${query}` : ''}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch OpenAI usage summary');
+  }
+  return res.json();
+}
+
+export async function fetchOpenAiUsageLogs(
+  tenantId: string,
+  accessToken: string,
+  options?: { startDate?: string; endDate?: string; feature?: string; model?: string; limit?: number; offset?: number }
+): Promise<OpenAiUsageLogsResponse> {
+  const params = new URLSearchParams();
+  if (options?.startDate) params.set('startDate', options.startDate);
+  if (options?.endDate) params.set('endDate', options.endDate);
+  if (options?.feature) params.set('feature', options.feature);
+  if (options?.model) params.set('model', options.model);
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.offset) params.set('offset', String(options.offset));
+  const query = params.toString();
+  const res = await fetch(`${API_BASE}/api/openai-audit/logs${query ? `?${query}` : ''}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch OpenAI usage logs');
+  }
+  return res.json();
+}
+
+export async function fetchOpenAiUsageSettings(
+  tenantId: string,
+  accessToken: string
+): Promise<{ settings: OpenAiUsageSettings }> {
+  const res = await fetch(`${API_BASE}/api/openai-audit/settings`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch OpenAI usage settings');
+  }
+  return res.json();
+}
+
+export async function updateOpenAiUsageSettings(
+  tenantId: string,
+  accessToken: string,
+  settings: Partial<Pick<OpenAiUsageSettings, 'monthlyBudgetCents' | 'startingBalanceCents' | 'balancePeriodStart'>>
+): Promise<{ settings: OpenAiUsageSettings }> {
+  const res = await fetch(`${API_BASE}/api/openai-audit/settings`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save OpenAI usage settings');
+  }
+  return res.json();
+}
+
 export default apiClient;

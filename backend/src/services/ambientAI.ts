@@ -301,6 +301,9 @@ export interface LiveTranscriptionResult {
 
 interface AmbientTranscriptionOptions {
   tenantId?: string;
+  userId?: string;
+  resourceType?: string;
+  resourceId?: string;
 }
 
 export interface DifferentialDiagnosis {
@@ -396,7 +399,7 @@ export async function transcribeAudio(
   if (openAIKey && canUseOpenAIForRawAudio()) {
     try {
       const model = getOpenAITranscribeModel();
-      return await transcribeWithOpenAI(audioFilePath, durationSeconds, openAIKey, model);
+      return await transcribeWithOpenAI(audioFilePath, durationSeconds, openAIKey, model, options);
     } catch (error) {
       logger.warn('OpenAI transcription failed, falling back to mock', {
         error: toSafeErrorMessage(error),
@@ -419,7 +422,8 @@ async function transcribeWithOpenAI(
   audioFilePath: string,
   durationSeconds: number,
   openAIKey: string,
-  model: string
+  model: string,
+  options?: AmbientTranscriptionOptions
 ): Promise<TranscriptionResult> {
   const resolvedModel = model || 'gpt-4o-transcribe-diarize';
   logger.info('Transcribing audio with OpenAI', { durationSeconds, model: resolvedModel });
@@ -479,6 +483,10 @@ async function transcribeWithOpenAI(
         feature: 'ambient_transcription',
         model: resolvedModel,
         estimatedAudioSeconds: durationSeconds,
+        tenantId: options?.tenantId,
+        userId: options?.userId,
+        resourceType: options?.resourceType || 'ambient_recording',
+        resourceId: options?.resourceId,
       });
 
       if (!response.ok) {
@@ -680,10 +688,14 @@ export async function transcribeLiveAudioChunk(
           },
           body: formData
         }, {
-          feature: 'ambient_live_transcription',
-          model,
-          estimatedAudioSeconds: Number(process.env.AMBIENT_LIVE_CHUNK_SECONDS || 10),
-        });
+        feature: 'ambient_live_transcription',
+        model,
+        estimatedAudioSeconds: Number(process.env.AMBIENT_LIVE_CHUNK_SECONDS || 10),
+        tenantId: options?.tenantId,
+        userId: options?.userId,
+        resourceType: options?.resourceType || 'ambient_recording',
+        resourceId: options?.resourceId,
+      });
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -1448,7 +1460,8 @@ export async function generateClinicalNote(
   transcriptText: string,
   segments: TranscriptionSegment[],
   agentConfig?: AgentConfiguration | null,
-  patientContext?: PatientContext
+  patientContext?: PatientContext,
+  options?: AmbientTranscriptionOptions
 ): Promise<ClinicalNoteGenerationResult> {
   // Use real AI if available
   const anthropicKey = getAnthropicKey();
@@ -1497,7 +1510,8 @@ export async function generateClinicalNote(
             sanitizedPayload.segments,
             agentConfig,
             safePatientContext,
-            openAIKey
+            openAIKey,
+            options
           );
         } catch (error) {
           const safeError = toSafeErrorMessage(error);
@@ -1619,7 +1633,8 @@ async function generateNoteWithGPT4(
   segments: TranscriptionSegment[],
   agentConfig: AgentConfiguration | null | undefined,
   patientContext: PatientContext | undefined,
-  openAIKey: string
+  openAIKey: string,
+  options?: AmbientTranscriptionOptions
 ): Promise<ClinicalNoteGenerationResult> {
   const model = resolveOpenAINoteModel(agentConfig);
   logger.info('Generating clinical note with OpenAI', {
@@ -1667,6 +1682,10 @@ async function generateNoteWithGPT4(
       }, {
         feature: 'ambient_note_generation',
         model,
+        tenantId: options?.tenantId,
+        userId: options?.userId,
+        resourceType: options?.resourceType || 'ambient_note',
+        resourceId: options?.resourceId,
       });
 
       if (!response.ok) {

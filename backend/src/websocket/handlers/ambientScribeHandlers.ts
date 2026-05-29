@@ -499,7 +499,12 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         audioBuffer,
         payload.mimeType || "audio/webm",
         payload.chunkIndex,
-        { tenantId: socket.tenantId }
+        {
+          tenantId: socket.tenantId,
+          userId: socket.user.id,
+          resourceType: "ambient_recording",
+          resourceId: recordingId,
+        }
       );
 
       sessionState.lastTranscriptAt = now;
@@ -564,6 +569,10 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
 
         generateAmbientLiveInsightsWithAI(transcriptTexts, {
           fallback: generateAmbientLiveInsights(transcriptTexts),
+          tenantId: socket.tenantId,
+          userId: socket.user.id,
+          resourceType: "ambient_recording",
+          resourceId: recordingId,
         })
           .then((insights) => {
             const aiPayload = buildAmbientInsightsEventFromInsights(recordingId, insights);

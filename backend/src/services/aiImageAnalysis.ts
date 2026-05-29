@@ -66,7 +66,7 @@ export class AIImageAnalysisService {
   ): Promise<string> {
     try {
       // Perform AI analysis
-      const analysis = await this.performAIAnalysis(imageUrl);
+      const analysis = await this.performAIAnalysis(imageUrl, tenantId, analyzedBy, photoId);
 
       // Store analysis results in database
       const analysisId = crypto.randomUUID();
@@ -145,10 +145,15 @@ export class AIImageAnalysisService {
   /**
    * Perform actual AI analysis (mock or real depending on API keys)
    */
-  private async performAIAnalysis(imageUrl: string): Promise<AIAnalysisResult> {
+  private async performAIAnalysis(
+    imageUrl: string,
+    tenantId: string,
+    analyzedBy: string,
+    photoId: string
+  ): Promise<AIAnalysisResult> {
     // Only send patient images to OpenAI when a HIPAA/BAA-covered mode is explicitly enabled.
     if (this.openaiApiKey && isHipaaClinicalAiEnabled()) {
-      return await this.analyzeWithOpenAI(imageUrl);
+      return await this.analyzeWithOpenAI(imageUrl, tenantId, analyzedBy, photoId);
     }
     if (this.openaiApiKey) {
       logger.warn("OpenAI image analysis skipped because HIPAA/BAA mode is not enabled");
@@ -161,7 +166,12 @@ export class AIImageAnalysisService {
   /**
    * Analyze image using OpenAI Vision API
    */
-  private async analyzeWithOpenAI(imageUrl: string): Promise<AIAnalysisResult> {
+  private async analyzeWithOpenAI(
+    imageUrl: string,
+    tenantId: string,
+    analyzedBy: string,
+    photoId: string
+  ): Promise<AIAnalysisResult> {
     try {
       const model = process.env.OPENAI_IMAGE_ANALYSIS_MODEL || "gpt-4o-mini";
       const response = await meteredOpenAiFetch("https://api.openai.com/v1/chat/completions", {
@@ -215,6 +225,10 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
       }, {
         feature: "ai_image_analysis",
         model,
+        tenantId,
+        userId: analyzedBy,
+        resourceType: "photo",
+        resourceId: photoId,
       });
 
       if (!response.ok) {

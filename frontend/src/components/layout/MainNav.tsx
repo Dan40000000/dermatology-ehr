@@ -394,6 +394,7 @@ const navItems: NavItem[] = [
       { label: 'Integrations', path: '/admin/integrations' },
       { label: 'Fee Schedules', path: '/admin/fee-schedules' },
       { label: 'AI Agents', path: '/admin/ai-agents' },
+      { label: 'OpenAI Usage', path: '/admin/openai-usage' },
       { label: 'Audit Log', path: '/admin/audit-log' },
       { label: 'Feedback Inbox', path: '/admin/feedback', requiresFeedbackAccess: true },
     ]

@@ -147,6 +147,7 @@ export class AINoteDraftingService {
       if (this.openaiApiKey) {
         return await this.generateWithOpenAI(
           request,
+          tenantId,
           patientContext,
           providerStyle,
           template,
@@ -257,6 +258,7 @@ export class AINoteDraftingService {
    */
   private async generateWithOpenAI(
     request: NoteDraftRequest,
+    tenantId: string,
     patientContext: any,
     providerStyle: any[],
     template: any,
@@ -284,6 +286,10 @@ export class AINoteDraftingService {
     }, {
       feature: "ai_note_drafting",
       model,
+      tenantId,
+      userId: request.providerId,
+      resourceType: "patient",
+      resourceId: request.patientId,
     });
 
     if (!response.ok) {

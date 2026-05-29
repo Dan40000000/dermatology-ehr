@@ -182,7 +182,7 @@ class AILesionAnalysisService {
       }
 
       // Perform AI analysis
-      const aiResult = await this.performAIAnalysis(image.url, analysisType);
+      const aiResult = await this.performAIAnalysis(image.url, analysisType, tenantId, userId, imageId);
 
       // Calculate processing time
       const processingTime = Date.now() - startTime;
@@ -615,7 +615,10 @@ class AILesionAnalysisService {
    */
   private async performAIAnalysis(
     imageUrl: string,
-    analysisType: string
+    analysisType: string,
+    tenantId: string,
+    userId: string,
+    imageId: string
   ): Promise<{
     confidenceScore: number;
     primaryClassification: "benign" | "suspicious" | "likely_malignant";
@@ -641,7 +644,7 @@ class AILesionAnalysisService {
 
     // Only send patient images to OpenAI when a HIPAA/BAA-covered mode is explicitly enabled.
     if (this.openaiApiKey && isHipaaClinicalAiEnabled()) {
-      return await this.analyzeWithOpenAI(imageUrl, analysisType);
+      return await this.analyzeWithOpenAI(imageUrl, analysisType, tenantId, userId, imageId);
     }
     if (this.openaiApiKey) {
       logger.warn("OpenAI lesion image analysis skipped because HIPAA/BAA mode is not enabled");
@@ -717,7 +720,10 @@ class AILesionAnalysisService {
    */
   private async analyzeWithOpenAI(
     imageUrl: string,
-    analysisType: string
+    analysisType: string,
+    tenantId: string,
+    userId: string,
+    imageId: string
   ): Promise<ReturnType<typeof this.performAIAnalysis> extends Promise<infer T> ? T : never> {
     try {
       const systemPrompt = this.getAnalysisPrompt(analysisType);
@@ -746,6 +752,10 @@ class AILesionAnalysisService {
       }, {
         feature: "ai_lesion_analysis",
         model,
+        tenantId,
+        userId,
+        resourceType: "lesion_image",
+        resourceId: imageId,
       });
 
       if (!response.ok) {

@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger";
+import { recordOpenAiUsageAudit } from "../services/openAiUsageAuditService";
 import { isOpenAiApiCallsEnabled } from "./externalAiGate";
 import { redactValue } from "./phiRedaction";
 
@@ -26,6 +27,11 @@ type OpenAiSpendGuardOptions = {
   feature: OpenAiFeature;
   model?: string;
   estimatedAudioSeconds?: number;
+  tenantId?: string;
+  userId?: string;
+  resourceType?: string;
+  resourceId?: string;
+  metadata?: Record<string, unknown>;
 };
 
 type RequestRecord = {
@@ -188,6 +194,22 @@ async function readUsageFromClone(response: Response): Promise<unknown> {
   }
 }
 
+function getEndpoint(input: Parameters<typeof fetch>[0]): string | undefined {
+  try {
+    const url =
+      typeof input === "string" || input instanceof URL
+        ? String(input)
+        : typeof (input as Request | undefined)?.url === "string"
+          ? (input as Request).url
+          : "";
+    if (!url) return undefined;
+    const parsed = new URL(url);
+    return parsed.pathname;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function meteredOpenAiFetch(
   input: Parameters<typeof fetch>[0],
   init: RequestInit,
@@ -211,6 +233,23 @@ export async function meteredOpenAiFetch(
     durationMs,
     requestId,
     usage: usage ? redactValue(usage) : undefined,
+  });
+
+  void recordOpenAiUsageAudit({
+    tenantId: options.tenantId,
+    userId: options.userId,
+    feature: options.feature,
+    model: options.model,
+    endpoint: getEndpoint(input),
+    requestId,
+    statusCode: response.status,
+    ok: response.ok,
+    durationMs,
+    usage,
+    estimatedAudioSeconds: options.estimatedAudioSeconds,
+    resourceType: options.resourceType,
+    resourceId: options.resourceId,
+    metadata: options.metadata,
   });
 
   return response;

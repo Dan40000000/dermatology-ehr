@@ -13679,6 +13679,55 @@ Consider age-appropriate treatments and include family counseling points.',
       WHERE force_password_reset = TRUE;
     `,
   },
+  {
+    name: "197_openai_usage_audit",
+    sql: `
+    CREATE TABLE IF NOT EXISTS openai_usage_audit (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      feature TEXT NOT NULL,
+      model TEXT,
+      endpoint TEXT,
+      request_id TEXT,
+      status_code INT,
+      ok BOOLEAN,
+      duration_ms INT,
+      prompt_tokens INT NOT NULL DEFAULT 0,
+      completion_tokens INT NOT NULL DEFAULT 0,
+      total_tokens INT NOT NULL DEFAULT 0,
+      input_tokens INT NOT NULL DEFAULT 0,
+      output_tokens INT NOT NULL DEFAULT 0,
+      cached_input_tokens INT NOT NULL DEFAULT 0,
+      audio_input_tokens INT NOT NULL DEFAULT 0,
+      audio_output_tokens INT NOT NULL DEFAULT 0,
+      estimated_audio_seconds NUMERIC(10, 2) NOT NULL DEFAULT 0,
+      estimated_cost_cents NUMERIC(12, 6) NOT NULL DEFAULT 0,
+      resource_type TEXT,
+      resource_id TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_openai_usage_audit_tenant_created
+      ON openai_usage_audit(tenant_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_openai_usage_audit_tenant_feature_created
+      ON openai_usage_audit(tenant_id, feature, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_openai_usage_audit_tenant_model_created
+      ON openai_usage_audit(tenant_id, model, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS openai_usage_settings (
+      tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+      monthly_budget_cents INT,
+      starting_balance_cents INT,
+      balance_period_start DATE NOT NULL DEFAULT date_trunc('month', NOW())::date,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    `,
+  },
 
 ];
 

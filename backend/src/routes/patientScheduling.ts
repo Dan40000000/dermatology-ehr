@@ -19,6 +19,7 @@ import { env } from "../config/env";
 import { notificationService } from "../services/integrations/notificationService";
 import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import { emitAppointmentCreated } from "../websocket/emitter";
+import { createLateFeeBillIfNeeded } from "../services/cancellationFeeService";
 
 // ============================================================================
 // PATIENT PORTAL ROUTES (Public-facing for patients)
@@ -1196,11 +1197,13 @@ patientSchedulingRouter.delete(
       const apptResult = await client.query(
         `SELECT scheduled_start as "scheduledStart",
                 scheduled_end as "scheduledEnd",
+                patient_id as "patientId",
                 status
          FROM appointments
          WHERE id = $1
            AND tenant_id = $2
-           AND patient_id = $3`,
+           AND patient_id = $3
+         FOR UPDATE`,
         [appointmentId, req.patient!.tenantId, req.patient!.patientId]
       );
 
@@ -1225,6 +1228,20 @@ patientSchedulingRouter.delete(
          WHERE id = $1 AND tenant_id = $2`,
         [appointmentId, req.patient!.tenantId]
       );
+
+      const cancellationFeeBillId =
+        appointment.status === "cancelled"
+          ? null
+          : await createLateFeeBillIfNeeded(client, {
+              tenantId: req.patient!.tenantId,
+              appointmentId: appointmentId!,
+              patientId: appointment.patientId,
+              referenceScheduledStart: appointment.scheduledStart,
+              trigger: "cancel",
+              assessedBy: req.patient!.accountId,
+              bypassWindow: true,
+              reason: reason || "Cancelled by patient",
+            });
 
       // Add status history
       await client.query(
@@ -1292,7 +1309,7 @@ patientSchedulingRouter.delete(
 
       // TODO: Send cancellation email
 
-      return res.json({ message: "Appointment cancelled successfully" });
+      return res.json({ message: "Appointment cancelled successfully", cancellationFeeBillId });
     } catch (error) {
       await client.query("ROLLBACK");
       logPatientSchedulingError("Cancel appointment error", error);

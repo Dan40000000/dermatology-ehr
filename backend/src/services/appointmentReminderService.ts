@@ -6,6 +6,7 @@
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
+import { createLateFeeBillIfNeeded } from './cancellationFeeService';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -602,12 +603,26 @@ export async function handleConfirmation(
         [appointmentId, tenantId]
       );
     } else if (response === 'cancelled') {
-      await pool.query(
+      const updateResult = await pool.query(
         `UPDATE appointments SET status = 'cancelled', cancelled_at = NOW(),
          cancellation_reason = 'Patient cancelled via reminder response', updated_at = NOW()
-         WHERE id = $1 AND tenant_id = $2`,
+         WHERE id = $1 AND tenant_id = $2
+         RETURNING patient_id, scheduled_start, status`,
         [appointmentId, tenantId]
       );
+      const appointment = updateResult.rows[0];
+      if (appointment) {
+        await createLateFeeBillIfNeeded(pool, {
+          tenantId,
+          appointmentId,
+          patientId: appointment.patient_id,
+          referenceScheduledStart: appointment.scheduled_start,
+          trigger: 'cancel',
+          assessedBy: 'appointment-reminder',
+          bypassWindow: true,
+          reason: 'Patient cancelled via reminder response',
+        });
+      }
     }
 
     // Mark response as processed

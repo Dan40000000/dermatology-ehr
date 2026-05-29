@@ -546,6 +546,7 @@ describe("Patient scheduling portal routes", () => {
           {
             scheduledStart: "2024-01-02T09:00:00.000Z",
             scheduledEnd: "2024-01-02T09:30:00.000Z",
+            patientId: "patient-1",
             status: "scheduled",
           },
         ],
@@ -587,6 +588,8 @@ describe("Patient scheduling portal routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe("Appointment cancelled successfully");
+    expect(res.body.cancellationFeeBillId).toBeTruthy();
+    expect(client.query.mock.calls.some((call) => String(call[0]).includes("insert into bills"))).toBe(true);
   });
 
   it("DELETE /patient-portal/scheduling/cancel uses default reasons when missing", async () => {
@@ -599,6 +602,7 @@ describe("Patient scheduling portal routes", () => {
           {
             scheduledStart: "2024-01-02T09:00:00.000Z",
             scheduledEnd: "2024-01-02T09:30:00.000Z",
+            patientId: "patient-1",
             status: "scheduled",
           },
         ],
@@ -615,7 +619,10 @@ describe("Patient scheduling portal routes", () => {
       .send({});
 
     expect(res.status).toBe(200);
-    expect(client.query.mock.calls[4][1][7]).toBe("Cancelled by patient");
+    const bookingHistoryCall = client.query.mock.calls.find((call) =>
+      String(call[0]).includes("appointment_booking_history")
+    );
+    expect(bookingHistoryCall?.[1][7]).toBe("Cancelled by patient");
   });
 
   it("POST /patient-portal/scheduling/book validates payload", async () => {

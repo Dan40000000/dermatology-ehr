@@ -386,6 +386,56 @@ describe("Appointments routes", () => {
     expect(insertBillCall).toBeTruthy();
   });
 
+  it("POST /appointments/:id/status creates cancellation fee even when staff cancels after start time", async () => {
+    const pastStart = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ patient_id: "patient-1", scheduled_start: pastStart, status: "scheduled" }],
+        rowCount: 1,
+      }) // select appointment
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // existing late fee lookup
+      .mockResolvedValueOnce({ rows: [] }) // insert bill
+      .mockResolvedValueOnce({ rows: [] }) // insert bill line item
+      .mockResolvedValueOnce({ rows: [] }) // update
+      .mockResolvedValueOnce({ rows: [] }) // insert history
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app)
+      .post("/appointments/appt-1/status")
+      .send({ status: "cancelled", reason: "Patient called after appointment time." });
+
+    expect(res.status).toBe(200);
+    expect(res.body.lateFeeBillId).toBeTruthy();
+    const insertBillCall = queryMock.mock.calls.find((call) => String(call[0]).includes("insert into bills"));
+    expect(insertBillCall).toBeTruthy();
+  });
+
+  it("POST /appointments/:id/status backfills cancellation fee for already-cancelled appointment", async () => {
+    const pastStart = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ patient_id: "patient-1", scheduled_start: pastStart, status: "cancelled" }],
+        rowCount: 1,
+      }) // select appointment
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // existing late fee lookup
+      .mockResolvedValueOnce({ rows: [] }) // insert bill
+      .mockResolvedValueOnce({ rows: [] }) // insert bill line item
+      .mockResolvedValueOnce({ rows: [] }) // update
+      .mockResolvedValueOnce({ rows: [] }) // insert history
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app)
+      .post("/appointments/appt-1/status")
+      .send({ status: "cancelled", reason: "Backfill missing cancellation fee." });
+
+    expect(res.status).toBe(200);
+    expect(res.body.lateFeeBillId).toBeTruthy();
+    const insertBillCall = queryMock.mock.calls.find((call) => String(call[0]).includes("insert into bills"));
+    expect(insertBillCall).toBeTruthy();
+  });
+
   it("POST /appointments/:id/status creates no-show fee bill for overdue appointment", async () => {
     const pastStart = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     queryMock

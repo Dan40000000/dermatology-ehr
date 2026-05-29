@@ -399,6 +399,25 @@ export class WorkflowOrchestrator {
       [appointmentId, tenantId]
     );
 
+    if (!encounterResult.rowCount) {
+      await createFinancialWorkQueueItem({
+        tenantId,
+        appointmentId,
+        issueType: 'checkout_missing_encounter',
+        severity: 'error',
+        message: 'Appointment was checked out or completed without a clinical encounter. Create or link the encounter before billing and claims can be generated.',
+        metadata: {
+          source: 'appointment_checkout',
+          missingEncounter: true,
+        },
+        createdBy: userId || null,
+      });
+      logger.warn('Appointment checked out without encounter', {
+        appointmentId,
+        tenantId,
+      });
+    }
+
     if (encounterResult.rowCount && encounterResult.rows[0].status === 'draft') {
       // Prompt to finalize encounter
       logger.warn('Encounter still in draft at checkout', {

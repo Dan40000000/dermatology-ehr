@@ -106,10 +106,13 @@ export async function createFinancialWorkQueueItem(
        where tenant_id = $1
          and issue_type = $2
          and status = 'open'
-         and encounter_id is not distinct from $3::text
+         and (
+           ($3::text is not null and encounter_id is not distinct from $3::text)
+           or ($3::text is null and appointment_id is not distinct from $4::text)
+         )
        order by created_at desc
        limit 1`,
-      [input.tenantId, input.issueType, input.encounterId || null],
+      [input.tenantId, input.issueType, input.encounterId || null, appointmentId],
     );
 
     const values = [

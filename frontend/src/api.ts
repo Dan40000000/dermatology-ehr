@@ -10834,6 +10834,8 @@ export interface OpenAiUsageSummary {
     totalTokens: number;
     estimatedAudioSeconds: number;
     estimatedCostCents: number;
+    openAiCostCents: number;
+    amazonVoiceCostCents: number;
     monthlyBudgetCents: number | null;
     startingBalanceCents: number | null;
     balancePeriodUsageCents: number;
@@ -10841,6 +10843,8 @@ export interface OpenAiUsageSummary {
     estimatedRemainingBalanceCents: number | null;
   };
   byFeature: Array<{
+    provider: string;
+    providerLabel: string;
     feature: string;
     requests: number;
     totalTokens: number;
@@ -10849,11 +10853,22 @@ export interface OpenAiUsageSummary {
     lastUsedAt: string | null;
   }>;
   byModel: Array<{
+    provider: string;
+    providerLabel: string;
     model: string;
     requests: number;
     totalTokens: number;
     estimatedAudioSeconds: number;
     estimatedCostCents: number;
+  }>;
+  byProvider: Array<{
+    provider: string;
+    providerLabel: string;
+    requests: number;
+    totalTokens: number;
+    estimatedAudioSeconds: number;
+    estimatedCostCents: number;
+    lastUsedAt: string | null;
   }>;
   daily: Array<{
     date: string;
@@ -10865,6 +10880,8 @@ export interface OpenAiUsageSummary {
 
 export interface OpenAiUsageLog {
   id: string;
+  provider: string;
+  providerLabel: string;
   feature: string;
   model: string | null;
   endpoint: string | null;

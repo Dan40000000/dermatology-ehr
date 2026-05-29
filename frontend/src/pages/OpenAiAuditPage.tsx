@@ -135,6 +135,7 @@ function UsageTable({ summary }: { summary: OpenAiUsageSummary }) {
           <thead>
             <tr style={{ textAlign: 'left', color: '#6b7280', fontSize: '0.78rem', textTransform: 'uppercase' }}>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Feature</th>
+              <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Provider</th>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Requests</th>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Tokens</th>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Audio</th>
@@ -144,7 +145,7 @@ function UsageTable({ summary }: { summary: OpenAiUsageSummary }) {
           </thead>
           <tbody>
             {summary.byFeature.map((item) => (
-              <tr key={item.feature}>
+              <tr key={`${item.provider}-${item.feature}`}>
                 <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6', fontWeight: 700 }}>
                   <div>{formatFeature(item.feature)}</div>
                   <div style={{ marginTop: '8px', height: '6px', background: '#e5e7eb', borderRadius: '999px', overflow: 'hidden' }}>
@@ -157,6 +158,7 @@ function UsageTable({ summary }: { summary: OpenAiUsageSummary }) {
                     />
                   </div>
                 </td>
+                <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6' }}>{item.providerLabel}</td>
                 <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6' }}>{formatNumber(item.requests)}</td>
                 <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6' }}>{formatNumber(item.totalTokens)}</td>
                 <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6' }}>
@@ -172,8 +174,8 @@ function UsageTable({ summary }: { summary: OpenAiUsageSummary }) {
             ))}
             {summary.byFeature.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ padding: '22px 8px', color: '#6b7280', textAlign: 'center' }}>
-                  No OpenAI usage in this date range.
+                <td colSpan={7} style={{ padding: '22px 8px', color: '#6b7280', textAlign: 'center' }}>
+                  No AI usage in this date range.
                 </td>
               </tr>
             )}
@@ -193,6 +195,7 @@ function LogsTable({ logs }: { logs: OpenAiUsageLog[] }) {
           <thead>
             <tr style={{ textAlign: 'left', color: '#6b7280', fontSize: '0.78rem', textTransform: 'uppercase' }}>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Time</th>
+              <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Provider</th>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Feature</th>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Model</th>
               <th style={{ padding: '10px 8px', borderBottom: '1px solid #e5e7eb' }}>Status</th>
@@ -207,6 +210,7 @@ function LogsTable({ logs }: { logs: OpenAiUsageLog[] }) {
                 <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6' }}>
                   {log.createdAt ? new Date(log.createdAt).toLocaleString() : '-'}
                 </td>
+                <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6' }}>{log.providerLabel}</td>
                 <td style={{ padding: '12px 8px', borderBottom: '1px solid #f3f4f6', fontWeight: 700 }}>
                   {formatFeature(log.feature)}
                 </td>
@@ -239,7 +243,7 @@ function LogsTable({ logs }: { logs: OpenAiUsageLog[] }) {
             ))}
             {logs.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ padding: '22px 8px', color: '#6b7280', textAlign: 'center' }}>
+                <td colSpan={8} style={{ padding: '22px 8px', color: '#6b7280', textAlign: 'center' }}>
                   No requests found.
                 </td>
               </tr>
@@ -251,7 +255,12 @@ function LogsTable({ logs }: { logs: OpenAiUsageLog[] }) {
   );
 }
 
-export function OpenAiAuditPage() {
+type OpenAiAuditPageProps = {
+  embedded?: boolean;
+  externalDateRange?: { startDate: string; endDate: string };
+};
+
+export function OpenAiAuditPage({ embedded = false, externalDateRange }: OpenAiAuditPageProps) {
   const { session } = useAuth();
   const [startDate, setStartDate] = useState(monthStart());
   const [endDate, setEndDate] = useState(today());
@@ -270,19 +279,25 @@ export function OpenAiAuditPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const limit = 25;
 
-  const featureOptions = useMemo(() => summary?.byFeature.map((item) => item.feature) || [], [summary]);
-  const modelOptions = useMemo(() => summary?.byModel.map((item) => item.model).filter(Boolean) || [], [summary]);
+  const featureOptions = useMemo(
+    () => Array.from(new Set(summary?.byFeature.map((item) => item.feature) || [])),
+    [summary],
+  );
+  const modelOptions = useMemo(
+    () => Array.from(new Set(summary?.byModel.map((item) => item.model).filter((value): value is string => Boolean(value)) || [])),
+    [summary],
+  );
 
   const load = useCallback(async (nextOffset = 0) => {
     if (!session) return;
     setLoading(true);
     setError(null);
     try {
+      const dateOptions = externalDateRange || { startDate, endDate };
       const [summaryPayload, logsPayload] = await Promise.all([
-        fetchOpenAiUsageSummary(session.tenantId, session.accessToken, { startDate, endDate }),
+        fetchOpenAiUsageSummary(session.tenantId, session.accessToken, dateOptions),
         fetchOpenAiUsageLogs(session.tenantId, session.accessToken, {
-          startDate,
-          endDate,
+          ...dateOptions,
           feature: feature || undefined,
           model: model || undefined,
           limit,
@@ -297,11 +312,11 @@ export function OpenAiAuditPage() {
       setStartingBalance(centsToDollarInput(summaryPayload.settings.startingBalanceCents));
       setBalancePeriodStart(summaryPayload.settings.balancePeriodStart);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load OpenAI usage');
+      setError(err instanceof Error ? err.message : 'Failed to load AI usage');
     } finally {
       setLoading(false);
     }
-  }, [endDate, feature, model, session, startDate]);
+  }, [endDate, externalDateRange, feature, model, session, startDate]);
 
   useEffect(() => {
     void load(0);
@@ -321,10 +336,10 @@ export function OpenAiAuditPage() {
       setMonthlyBudget(centsToDollarInput(payload.settings.monthlyBudgetCents));
       setStartingBalance(centsToDollarInput(payload.settings.startingBalanceCents));
       setBalancePeriodStart(payload.settings.balancePeriodStart);
-      setNotice('OpenAI balance settings saved.');
+      setNotice('AI usage settings saved.');
       await load(0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save OpenAI settings');
+      setError(err instanceof Error ? err.message : 'Failed to save AI usage settings');
     } finally {
       setSaving(false);
     }
@@ -345,44 +360,75 @@ export function OpenAiAuditPage() {
   };
 
   const summaryCards = summary ? [
+    (() => {
+      const openAiTokens = summary.byProvider.find((item) => item.provider === 'openai')?.totalTokens || 0;
+      return {
+        label: 'OpenAI Credits Used',
+        value: formatMoney(summary.summary.openAiCostCents),
+        detail: `${formatNumber(openAiTokens)} OpenAI tokens in range`,
+        icon: <Activity size={26} />,
+      };
+    })(),
     {
-      label: 'Estimated Cost',
+      label: 'Total AI Spend',
       value: formatMoney(summary.summary.estimatedCostCents),
-      detail: `${formatNumber(summary.summary.totalRequests)} requests in range`,
+      detail: `${formatNumber(summary.summary.totalRequests)} tracked AI requests`,
       icon: <DollarSign size={26} />,
     },
     {
-      label: 'Tracked Balance',
+      label: 'Amazon Voice Expense',
+      value: formatMoney(summary.summary.amazonVoiceCostCents),
+      detail: `${Math.round(summary.byProvider.find((item) => item.provider === 'aws_healthscribe')?.estimatedAudioSeconds || 0)}s AWS HealthScribe audio`,
+      icon: <DollarSign size={26} />,
+    },
+    {
+      label: 'OpenAI Balance',
       value: formatMoney(summary.summary.estimatedRemainingBalanceCents),
-      detail: `${formatMoney(summary.summary.balancePeriodUsageCents)} used since ${summary.settings.balancePeriodStart}`,
-      icon: <Activity size={26} />,
-    },
-    {
-      label: 'Monthly Budget',
-      value: formatMoney(summary.summary.estimatedRemainingBudgetCents),
-      detail: `${formatMoney(summary.summary.monthlyBudgetCents)} budget for selected range`,
-      icon: <DollarSign size={26} />,
-    },
-    {
-      label: 'Tokens',
-      value: formatNumber(summary.summary.totalTokens),
-      detail: `${formatNumber(summary.summary.totalPromptTokens)} prompt / ${formatNumber(summary.summary.totalCompletionTokens)} completion`,
+      detail: `${formatMoney(summary.summary.balancePeriodUsageCents)} OpenAI credits used since ${summary.settings.balancePeriodStart}`,
       icon: <Activity size={26} />,
     },
   ] : [];
 
+  const vendorRows = useMemo(() => {
+    if (!summary) return [];
+    const openAiRow = summary.byProvider.find((item) => item.provider === 'openai');
+    const amazonVoiceRow = summary.byProvider.find((item) => item.provider === 'aws_healthscribe');
+    return [
+      openAiRow || {
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        requests: 0,
+        totalTokens: 0,
+        estimatedAudioSeconds: 0,
+        estimatedCostCents: summary.summary.openAiCostCents,
+        lastUsedAt: null,
+      },
+      amazonVoiceRow || {
+        provider: 'aws_healthscribe',
+        providerLabel: 'Amazon Voice (AWS HealthScribe)',
+        requests: 0,
+        totalTokens: 0,
+        estimatedAudioSeconds: 0,
+        estimatedCostCents: summary.summary.amazonVoiceCostCents,
+        lastUsedAt: null,
+      },
+    ];
+  }, [summary]);
+
   return (
-    <div style={pageStyle}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '2rem', color: '#111827' }}>OpenAI Usage Audit</h1>
-          <p style={{ margin: '6px 0 0', color: '#4b5563' }}>Requests, token usage, estimated cost, and tracked credit balance.</p>
+    <div style={embedded ? { width: '100%' } : pageStyle}>
+      {!embedded && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '2rem', color: '#111827' }}>AI Usage Audit</h1>
+            <p style={{ margin: '6px 0 0', color: '#4b5563' }}>OpenAI credits, Amazon voice expense, request volume, and tracked balance.</p>
+          </div>
+          <button type="button" style={buttonStyle} onClick={() => void load(0)} disabled={loading}>
+            <RefreshCw size={17} />
+            Refresh
+          </button>
         </div>
-        <button type="button" style={buttonStyle} onClick={() => void load(0)} disabled={loading}>
-          <RefreshCw size={17} />
-          Refresh
-        </button>
-      </div>
+      )}
 
       {error && (
         <div style={{ marginTop: '16px', padding: '12px 14px', borderRadius: '8px', border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b' }}>
@@ -395,45 +441,47 @@ export function OpenAiAuditPage() {
         </div>
       )}
 
-      <div style={{ ...cardStyle, marginTop: '20px', padding: '16px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px', alignItems: 'end' }}>
-          <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
-            Start
-            <input style={inputStyle} type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-          </label>
-          <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
-            End
-            <input style={inputStyle} type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-          </label>
-          <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
-            Feature
-            <select style={inputStyle} value={feature} onChange={(event) => setFeature(event.target.value)}>
-              <option value="">All features</option>
-              {featureOptions.map((value) => (
-                <option key={value} value={value}>{formatFeature(value)}</option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
-            Model
-            <select style={inputStyle} value={model} onChange={(event) => setModel(event.target.value)}>
-              <option value="">All models</option>
-              {modelOptions.map((value) => (
-                <option key={value} value={value}>{value}</option>
-              ))}
-            </select>
-          </label>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button type="button" style={buttonStyle} onClick={() => applyPreset('today')}>Today</button>
-            <button type="button" style={buttonStyle} onClick={() => applyPreset('7d')}>7D</button>
-            <button type="button" style={buttonStyle} onClick={() => applyPreset('mtd')}>MTD</button>
+      {!embedded && (
+        <div style={{ ...cardStyle, marginTop: '20px', padding: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px', alignItems: 'end' }}>
+            <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
+              Start
+              <input style={inputStyle} type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            </label>
+            <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
+              End
+              <input style={inputStyle} type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
+              Feature
+              <select style={inputStyle} value={feature} onChange={(event) => setFeature(event.target.value)}>
+                <option value="">All features</option>
+                {featureOptions.map((value) => (
+                  <option key={value} value={value}>{formatFeature(value)}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
+              Model
+              <select style={inputStyle} value={model} onChange={(event) => setModel(event.target.value)}>
+                <option value="">All models</option>
+                {modelOptions.map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+            </label>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button type="button" style={buttonStyle} onClick={() => applyPreset('today')}>Today</button>
+              <button type="button" style={buttonStyle} onClick={() => applyPreset('7d')}>7D</button>
+              <button type="button" style={buttonStyle} onClick={() => applyPreset('mtd')}>MTD</button>
+            </div>
+            <button type="button" style={primaryButtonStyle} onClick={() => void load(0)} disabled={loading}>
+              <RefreshCw size={17} />
+              Apply
+            </button>
           </div>
-          <button type="button" style={primaryButtonStyle} onClick={() => void load(0)} disabled={loading}>
-            <RefreshCw size={17} />
-            Apply
-          </button>
         </div>
-      </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '14px', marginTop: '18px' }}>
         {summaryCards.map((item) => (
@@ -441,15 +489,33 @@ export function OpenAiAuditPage() {
         ))}
       </div>
 
+      {summary && (
+        <div style={{ ...cardStyle, marginTop: '18px', padding: '18px' }}>
+          <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Vendor Breakdown</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginTop: '14px' }}>
+            {vendorRows.map((item) => (
+              <div key={item.provider} style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '14px' }}>
+                <div style={{ color: '#6b7280', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase' }}>{item.providerLabel}</div>
+                <div style={{ marginTop: '8px', fontSize: '1.45rem', fontWeight: 800 }}>{formatMoney(item.estimatedCostCents)}</div>
+                <div style={{ marginTop: '6px', color: '#4b5563', fontSize: '0.9rem' }}>
+                  {formatNumber(item.requests)} requests
+                  {item.provider === 'openai' ? ` / ${formatNumber(item.totalTokens)} tokens` : ` / ${Math.round(item.estimatedAudioSeconds)}s audio`}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ ...cardStyle, marginTop: '18px', padding: '16px' }}>
         <h2 style={{ margin: '0 0 14px', fontSize: '1.1rem' }}>Balance Settings</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px', alignItems: 'end' }}>
           <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
-            Monthly Budget
+            Monthly AI Budget
             <input style={inputStyle} inputMode="decimal" value={monthlyBudget} onChange={(event) => setMonthlyBudget(event.target.value)} placeholder="150.00" />
           </label>
           <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>
-            Starting Balance
+            OpenAI Starting Balance
             <input style={inputStyle} inputMode="decimal" value={startingBalance} onChange={(event) => setStartingBalance(event.target.value)} placeholder="20.00" />
           </label>
           <label style={{ display: 'grid', gap: '6px', color: '#374151', fontWeight: 700 }}>

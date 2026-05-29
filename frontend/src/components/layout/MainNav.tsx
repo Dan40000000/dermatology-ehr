@@ -319,6 +319,7 @@ const navItems: NavItem[] = [
       { label: 'Payments', path: '/financials?tab=payments', section: 'Financials', module: 'financials' },
       { label: 'Dashboard', path: '/analytics', section: 'Analytics', module: 'analytics' },
       { label: 'Financial Analytics', path: '/analytics?tab=financials', section: 'Analytics', module: 'analytics' },
+      { label: 'AI Usage', path: '/analytics?tab=ai', section: 'Analytics', module: 'analytics' },
       { label: 'Clinical & Operational', path: '/analytics?tab=clinical', section: 'Analytics', module: 'analytics' },
       { label: 'Compliance', path: '/analytics?tab=compliance', section: 'Analytics', module: 'analytics' },
       { label: 'Inventory', path: '/analytics?tab=inventory', section: 'Analytics', module: 'analytics' },
@@ -394,7 +395,6 @@ const navItems: NavItem[] = [
       { label: 'Integrations', path: '/admin/integrations' },
       { label: 'Fee Schedules', path: '/admin/fee-schedules' },
       { label: 'AI Agents', path: '/admin/ai-agents' },
-      { label: 'OpenAI Usage', path: '/admin/openai-usage' },
       { label: 'Audit Log', path: '/admin/audit-log' },
       { label: 'Feedback Inbox', path: '/admin/feedback', requiresFeedbackAccess: true },
     ]

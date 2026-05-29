@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton } from '../components/ui';
+import { OpenAiAuditPage } from './OpenAiAuditPage';
 import {
   LineChart,
   Line,
@@ -50,6 +51,7 @@ import {
   AlertTriangle,
   ArrowRight,
   BarChart3,
+  Bot,
   CalendarClock,
   CheckCircle2,
   ClipboardList,
@@ -320,13 +322,17 @@ interface FinancialWorkQueueItem {
 }
 
 type DateRangePreset = 'today' | 'week' | 'month' | '30days' | 'year';
-type AnalyticsTab = 'financials' | 'clinical' | 'compliance' | 'inventory' | 'dermatology';
+type AnalyticsTab = 'financials' | 'ai' | 'clinical' | 'compliance' | 'inventory' | 'dermatology';
 
 const ANALYTICS_TAB_QUERY_MAP: Record<string, AnalyticsTab> = {
   financials: 'financials',
   financial: 'financials',
   revenue: 'financials',
   dashboard: 'financials',
+  ai: 'ai',
+  openai: 'ai',
+  artificial_intelligence: 'ai',
+  usage: 'ai',
   clinical: 'clinical',
   operational: 'clinical',
   productivity: 'clinical',
@@ -421,6 +427,8 @@ export function AnalyticsPage() {
       endDate: end.toISOString().split('T')[0],
     };
   }, [dateRange, useCustomRange, customStartDate, customEndDate]);
+
+  const analyticsDateFilter = useMemo(() => getDateFilter(), [getDateFilter]);
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (!session) return;
@@ -771,6 +779,13 @@ export function AnalyticsPage() {
         </button>
         <button
           type="button"
+          className={`analytics-tab ${activeTab === 'ai' ? 'active' : ''}`}
+          onClick={() => setAnalyticsTab('ai')}
+        >
+          AI
+        </button>
+        <button
+          type="button"
           className={`analytics-tab ${activeTab === 'clinical' ? 'active' : ''}`}
           onClick={() => setAnalyticsTab('clinical')}
         >
@@ -857,49 +872,66 @@ export function AnalyticsPage() {
       </Panel>
 
       {/* KPI Cards */}
-      <div className="kpi-cards">
-        <div className="kpi-card patients">
-          <div className="kpi-icon">
-            <Users size={24} aria-hidden="true" />
+      {activeTab !== 'ai' && (
+        <div className="kpi-cards">
+          <div className="kpi-card patients">
+            <div className="kpi-icon">
+              <Users size={24} aria-hidden="true" />
+            </div>
+            <div className="kpi-content">
+              <div className="kpi-label">Total Patients</div>
+              <div className="kpi-value">{kpis?.totalPatients.toLocaleString() || 0}</div>
+            </div>
           </div>
-          <div className="kpi-content">
-            <div className="kpi-label">Total Patients</div>
-            <div className="kpi-value">{kpis?.totalPatients.toLocaleString() || 0}</div>
-          </div>
-        </div>
 
-        <div className="kpi-card appointments">
-          <div className="kpi-icon">
-            <CalendarClock size={24} aria-hidden="true" />
+          <div className="kpi-card appointments">
+            <div className="kpi-icon">
+              <CalendarClock size={24} aria-hidden="true" />
+            </div>
+            <div className="kpi-content">
+              <div className="kpi-label">Today's Appointments</div>
+              <div className="kpi-value">{kpis?.todayAppointments || 0}</div>
+            </div>
           </div>
-          <div className="kpi-content">
-            <div className="kpi-label">Today's Appointments</div>
-            <div className="kpi-value">{kpis?.todayAppointments || 0}</div>
-          </div>
-        </div>
 
-        <div className="kpi-card revenue">
-          <div className="kpi-icon">
-            <DollarSign size={24} aria-hidden="true" />
+          <div className="kpi-card revenue">
+            <div className="kpi-icon">
+              <DollarSign size={24} aria-hidden="true" />
+            </div>
+            <div className="kpi-content">
+              <div className="kpi-label">This Month's Revenue</div>
+              <div className="kpi-value">{formatCurrency(kpis?.monthRevenue || 0)}</div>
+            </div>
           </div>
-          <div className="kpi-content">
-            <div className="kpi-label">This Month's Revenue</div>
-            <div className="kpi-value">{formatCurrency(kpis?.monthRevenue || 0)}</div>
-          </div>
-        </div>
 
-        <div className="kpi-card encounters">
-          <div className="kpi-icon">
-            <Stethoscope size={24} aria-hidden="true" />
-          </div>
-          <div className="kpi-content">
-            <div className="kpi-label">Active Encounters</div>
-            <div className="kpi-value">{kpis?.activeEncounters || 0}</div>
+          <div className="kpi-card encounters">
+            <div className="kpi-icon">
+              <Stethoscope size={24} aria-hidden="true" />
+            </div>
+            <div className="kpi-content">
+              <div className="kpi-label">Active Encounters</div>
+              <div className="kpi-value">{kpis?.activeEncounters || 0}</div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Tab Content */}
+      {activeTab === 'ai' && (
+        <div className="tab-content">
+          <div className="analytics-section-header">
+            <div className="section-icon">
+              <Bot size={34} aria-hidden="true" />
+            </div>
+            <div className="section-header-content">
+              <h2>AI Usage</h2>
+              <p>OpenAI credits and Amazon voice expense for the selected date range.</p>
+            </div>
+          </div>
+          <OpenAiAuditPage embedded externalDateRange={analyticsDateFilter} />
+        </div>
+      )}
+
       {activeTab === 'financials' && (
         <div className="tab-content">
           <div className="analytics-section-header financial-story-header">

@@ -1,8 +1,10 @@
 import { pool } from "../../db/pool";
 import {
+  estimateAwsHealthScribeCostCents,
   estimateOpenAiCostCents,
   getOpenAiUsageSummary,
   normalizeOpenAiUsage,
+  recordAwsHealthScribeUsageAudit,
   recordOpenAiUsageAudit,
   updateOpenAiUsageSettings,
 } from "../openAiUsageAuditService";
@@ -57,6 +59,10 @@ describe("openAiUsageAuditService", () => {
     expect(estimateOpenAiCostCents("gpt-4o-mini", usage)).toBe(75);
   });
 
+  it("estimates AWS HealthScribe costs in cents", () => {
+    expect(estimateAwsHealthScribeCostCents(90)).toBe(15);
+  });
+
   it("writes audit rows without storing prompt content", async () => {
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
@@ -81,10 +87,29 @@ describe("openAiUsageAuditService", () => {
       ])
     );
     const params = queryMock.mock.calls[0][1];
-    expect(params[10]).toBe(10);
-    expect(params[11]).toBe(5);
-    expect(params[12]).toBe(15);
-    expect(JSON.parse(params[22])).toEqual({ safe: true });
+    expect(params[1]).toBe("openai");
+    expect(params[11]).toBe(10);
+    expect(params[12]).toBe(5);
+    expect(params[13]).toBe(15);
+    expect(JSON.parse(params[23])).toEqual({ safe: true, provider: "openai" });
+  });
+
+  it("writes AWS HealthScribe rows as Amazon voice usage", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    await recordAwsHealthScribeUsageAudit({
+      tenantId: "tenant-1",
+      userId: "user-1",
+      estimatedAudioSeconds: 120,
+      resourceId: "recording-1",
+    });
+
+    const params = queryMock.mock.calls[0][1];
+    expect(params[1]).toBe("aws_healthscribe");
+    expect(params[4]).toBe("amazon_voice_transcription");
+    expect(params[5]).toBe("AWS HealthScribe");
+    expect(params[19]).toBe(120);
+    expect(params[20]).toBe(20);
   });
 
   it("returns summary with balance settings", async () => {
@@ -99,10 +124,13 @@ describe("openAiUsageAuditService", () => {
           total_tokens: 125,
           estimated_audio_seconds: 60,
           estimated_cost_cents: 1.25,
+          openai_cost_cents: 0.75,
+          amazon_voice_cost_cents: 0.5,
         }],
       })
       .mockResolvedValueOnce({
         rows: [{
+          provider: "openai",
           feature: "clinical_copilot",
           requests: 2,
           total_tokens: 125,
@@ -111,6 +139,7 @@ describe("openAiUsageAuditService", () => {
           last_used_at: new Date("2026-05-29T12:00:00Z"),
         }],
       })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
@@ -128,9 +157,12 @@ describe("openAiUsageAuditService", () => {
     });
 
     expect(result.summary.totalRequests).toBe(2);
+    expect(result.summary.openAiCostCents).toBe(0.75);
+    expect(result.summary.amazonVoiceCostCents).toBe(0.5);
     expect(result.summary.estimatedRemainingBudgetCents).toBe(998.75);
     expect(result.summary.estimatedRemainingBalanceCents).toBe(375);
     expect(result.byFeature[0].feature).toBe("clinical_copilot");
+    expect(result.byFeature[0].providerLabel).toBe("OpenAI");
   });
 
   it("upserts usage settings", async () => {

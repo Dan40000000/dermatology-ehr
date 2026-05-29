@@ -13728,6 +13728,20 @@ Consider age-appropriate treatments and include family counseling points.',
     );
     `,
   },
+  {
+    name: "198_ai_usage_provider_breakdown",
+    sql: `
+    ALTER TABLE openai_usage_audit
+      ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'openai';
+
+    UPDATE openai_usage_audit
+       SET provider = 'openai'
+     WHERE provider IS NULL OR provider = '';
+
+    CREATE INDEX IF NOT EXISTS idx_openai_usage_audit_tenant_provider_created
+      ON openai_usage_audit(tenant_id, provider, created_at DESC);
+    `,
+  },
 
 ];
 

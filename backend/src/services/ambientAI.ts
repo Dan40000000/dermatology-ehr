@@ -25,6 +25,7 @@ import {
   resolveAmbientTranscriptionProviderFromEnv,
   type AmbientTranscriptionResult,
 } from '../integrations/ambientTranscriptionAdapter';
+import { recordAwsHealthScribeUsageAudit } from './openAiUsageAuditService';
 import { inferLiveSpeakerRole, type LiveSpeakerRole } from './ambientLiveInsights';
 
 // ============================================================================
@@ -384,7 +385,22 @@ export async function transcribeAudio(
   const ambientAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
   if (ambientAdapter) {
     try {
+      const startedAt = Date.now();
       const result = await ambientAdapter.transcribeFile(audioFilePath);
+      if (result.source === 'aws_healthscribe') {
+        void recordAwsHealthScribeUsageAudit({
+          tenantId: options?.tenantId,
+          userId: options?.userId,
+          estimatedAudioSeconds: durationSeconds,
+          durationMs: Date.now() - startedAt,
+          resourceType: options?.resourceType || 'ambient_recording',
+          resourceId: options?.resourceId,
+          metadata: {
+            source: result.source,
+            language: result.language,
+          },
+        });
+      }
       return buildTranscriptionResultFromAdapter(result, durationSeconds);
     } catch (error) {
       logger.warn('Ambient transcription provider failed, falling back to OpenAI/mock', {

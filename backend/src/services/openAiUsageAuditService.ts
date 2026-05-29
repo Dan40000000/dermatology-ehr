@@ -3,6 +3,7 @@ import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
 
 export type OpenAiUsageAuditInput = {
+  provider?: string | null;
   tenantId?: string | null;
   userId?: string | null;
   feature: string;
@@ -17,6 +18,7 @@ export type OpenAiUsageAuditInput = {
   resourceType?: string | null;
   resourceId?: string | null;
   metadata?: Record<string, unknown> | null;
+  estimatedCostCents?: number | null;
 };
 
 export type OpenAiUsageRange = {
@@ -78,6 +80,11 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     audioCentsPerMinute: 0.6,
   },
   "whisper-1": { audioCentsPerMinute: 0.6 },
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: "OpenAI",
+  aws_healthscribe: "Amazon Voice (AWS HealthScribe)",
 };
 
 function toNumber(value: unknown): number {
@@ -180,6 +187,13 @@ export function estimateOpenAiCostCents(
   );
 }
 
+export function estimateAwsHealthScribeCostCents(estimatedAudioSeconds = 0): number {
+  const defaultCentsPerMinute = 10;
+  const envValue = Number(process.env.AWS_HEALTHSCRIBE_CENTS_PER_MINUTE);
+  const centsPerMinute = Number.isFinite(envValue) && envValue >= 0 ? envValue : defaultCentsPerMinute;
+  return Number(((Math.max(0, estimatedAudioSeconds) / 60) * centsPerMinute).toFixed(6));
+}
+
 function sanitizeMetadata(metadata?: Record<string, unknown> | null): Record<string, unknown> {
   if (!metadata) return {};
   const safe: Record<string, unknown> = {};
@@ -206,14 +220,18 @@ function mapSettingsRow(row: any) {
 }
 
 export async function recordOpenAiUsageAudit(input: OpenAiUsageAuditInput): Promise<void> {
+  const provider = toNullableString(input.provider, 80) || "openai";
   const usage = normalizeOpenAiUsage(input.usage);
   const estimatedAudioSeconds = toNumber(input.estimatedAudioSeconds);
-  const estimatedCostCents = estimateOpenAiCostCents(input.model, usage, estimatedAudioSeconds);
+  const estimatedCostCents = input.estimatedCostCents === null || input.estimatedCostCents === undefined
+    ? estimateOpenAiCostCents(input.model, usage, estimatedAudioSeconds)
+    : toNumber(input.estimatedCostCents);
 
   try {
     await pool.query(
       `INSERT INTO openai_usage_audit (
         id,
+        provider,
         tenant_id,
         user_id,
         feature,
@@ -239,10 +257,11 @@ export async function recordOpenAiUsageAudit(input: OpenAiUsageAuditInput): Prom
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23
+        $21, $22, $23, $24
       )`,
       [
         randomUUID(),
+        provider,
         toNullableString(input.tenantId, 80),
         toNullableString(input.userId, 80),
         toNullableString(input.feature, 120) || "unknown",
@@ -264,7 +283,7 @@ export async function recordOpenAiUsageAudit(input: OpenAiUsageAuditInput): Prom
         estimatedCostCents,
         toNullableString(input.resourceType, 80),
         toNullableString(input.resourceId, 120),
-        JSON.stringify(sanitizeMetadata(input.metadata)),
+        JSON.stringify(sanitizeMetadata({ ...(input.metadata || {}), provider })),
       ]
     );
   } catch (error) {
@@ -275,6 +294,35 @@ export async function recordOpenAiUsageAudit(input: OpenAiUsageAuditInput): Prom
       tenantId: input.tenantId || undefined,
     });
   }
+}
+
+export async function recordAwsHealthScribeUsageAudit(input: {
+  tenantId?: string | null;
+  userId?: string | null;
+  estimatedAudioSeconds: number;
+  resourceType?: string | null;
+  resourceId?: string | null;
+  statusCode?: number | null;
+  ok?: boolean | null;
+  durationMs?: number | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<void> {
+  await recordOpenAiUsageAudit({
+    provider: "aws_healthscribe",
+    tenantId: input.tenantId,
+    userId: input.userId,
+    feature: "amazon_voice_transcription",
+    model: "AWS HealthScribe",
+    endpoint: "aws://healthscribe/medicalscribejobs",
+    statusCode: input.statusCode ?? 200,
+    ok: input.ok ?? true,
+    durationMs: input.durationMs,
+    estimatedAudioSeconds: input.estimatedAudioSeconds,
+    estimatedCostCents: estimateAwsHealthScribeCostCents(input.estimatedAudioSeconds),
+    resourceType: input.resourceType || "ambient_recording",
+    resourceId: input.resourceId,
+    metadata: input.metadata,
+  });
 }
 
 export async function getOpenAiUsageSettings(tenantId: string) {
@@ -324,7 +372,7 @@ export async function updateOpenAiUsageSettings(
 }
 
 export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsageRange) {
-  const [summaryResult, featureResult, modelResult, dailyResult, settings] = await Promise.all([
+  const [summaryResult, featureResult, modelResult, providerResult, dailyResult, settings] = await Promise.all([
     pool.query(
       `SELECT
          COUNT(*)::int AS total_requests,
@@ -334,13 +382,16 @@ export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsage
          COALESCE(SUM(completion_tokens), 0)::bigint AS total_completion_tokens,
          COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
          COALESCE(SUM(estimated_audio_seconds), 0)::float AS estimated_audio_seconds,
-         COALESCE(SUM(estimated_cost_cents), 0)::float AS estimated_cost_cents
+         COALESCE(SUM(estimated_cost_cents), 0)::float AS estimated_cost_cents,
+         COALESCE(SUM(estimated_cost_cents) FILTER (WHERE provider = 'openai'), 0)::float AS openai_cost_cents,
+         COALESCE(SUM(estimated_cost_cents) FILTER (WHERE provider = 'aws_healthscribe'), 0)::float AS amazon_voice_cost_cents
        FROM openai_usage_audit
        WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3`,
       [tenantId, range.startDate, range.endDate]
     ),
     pool.query(
       `SELECT
+         provider,
          feature,
          COUNT(*)::int AS requests,
          COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
@@ -349,12 +400,13 @@ export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsage
          MAX(created_at) AS last_used_at
        FROM openai_usage_audit
        WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3
-       GROUP BY feature
+       GROUP BY provider, feature
        ORDER BY estimated_cost_cents DESC, requests DESC`,
       [tenantId, range.startDate, range.endDate]
     ),
     pool.query(
       `SELECT
+         provider,
          COALESCE(model, 'unknown') AS model,
          COUNT(*)::int AS requests,
          COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
@@ -362,7 +414,21 @@ export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsage
          COALESCE(SUM(estimated_cost_cents), 0)::float AS estimated_cost_cents
        FROM openai_usage_audit
        WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3
-       GROUP BY COALESCE(model, 'unknown')
+       GROUP BY provider, COALESCE(model, 'unknown')
+       ORDER BY estimated_cost_cents DESC, requests DESC`,
+      [tenantId, range.startDate, range.endDate]
+    ),
+    pool.query(
+      `SELECT
+         provider,
+         COUNT(*)::int AS requests,
+         COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
+         COALESCE(SUM(estimated_audio_seconds), 0)::float AS estimated_audio_seconds,
+         COALESCE(SUM(estimated_cost_cents), 0)::float AS estimated_cost_cents,
+         MAX(created_at) AS last_used_at
+       FROM openai_usage_audit
+       WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3
+       GROUP BY provider
        ORDER BY estimated_cost_cents DESC, requests DESC`,
       [tenantId, range.startDate, range.endDate]
     ),
@@ -385,12 +451,14 @@ export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsage
   const balanceUsageResult = await pool.query(
     `SELECT COALESCE(SUM(estimated_cost_cents), 0)::float AS estimated_cost_cents
      FROM openai_usage_audit
-     WHERE tenant_id = $1 AND created_at >= $2`,
+     WHERE tenant_id = $1 AND provider = 'openai' AND created_at >= $2`,
     [tenantId, balanceStartDate]
   );
 
   const row = summaryResult.rows[0] || {};
   const estimatedCostCents = toNumber(row.estimated_cost_cents);
+  const openAiCostCents = toNumber(row.openai_cost_cents);
+  const amazonVoiceCostCents = toNumber(row.amazon_voice_cost_cents);
   const balancePeriodUsageCents = toNumber(balanceUsageResult.rows[0]?.estimated_cost_cents);
   const monthlyBudgetCents = settings.monthlyBudgetCents;
   const startingBalanceCents = settings.startingBalanceCents;
@@ -410,6 +478,8 @@ export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsage
       totalTokens: toNumber(row.total_tokens),
       estimatedAudioSeconds: toNumber(row.estimated_audio_seconds),
       estimatedCostCents,
+      openAiCostCents,
+      amazonVoiceCostCents,
       monthlyBudgetCents,
       startingBalanceCents,
       balancePeriodUsageCents,
@@ -419,6 +489,8 @@ export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsage
         startingBalanceCents === null ? null : startingBalanceCents - balancePeriodUsageCents,
     },
     byFeature: featureResult.rows.map((featureRow) => ({
+      provider: featureRow.provider || "openai",
+      providerLabel: PROVIDER_LABELS[featureRow.provider] || featureRow.provider || "OpenAI",
       feature: featureRow.feature,
       requests: toNumber(featureRow.requests),
       totalTokens: toNumber(featureRow.total_tokens),
@@ -427,11 +499,22 @@ export async function getOpenAiUsageSummary(tenantId: string, range: OpenAiUsage
       lastUsedAt: featureRow.last_used_at ? new Date(featureRow.last_used_at).toISOString() : null,
     })),
     byModel: modelResult.rows.map((modelRow) => ({
+      provider: modelRow.provider || "openai",
+      providerLabel: PROVIDER_LABELS[modelRow.provider] || modelRow.provider || "OpenAI",
       model: modelRow.model,
       requests: toNumber(modelRow.requests),
       totalTokens: toNumber(modelRow.total_tokens),
       estimatedAudioSeconds: toNumber(modelRow.estimated_audio_seconds),
       estimatedCostCents: toNumber(modelRow.estimated_cost_cents),
+    })),
+    byProvider: providerResult.rows.map((providerRow) => ({
+      provider: providerRow.provider || "openai",
+      providerLabel: PROVIDER_LABELS[providerRow.provider] || providerRow.provider || "OpenAI",
+      requests: toNumber(providerRow.requests),
+      totalTokens: toNumber(providerRow.total_tokens),
+      estimatedAudioSeconds: toNumber(providerRow.estimated_audio_seconds),
+      estimatedCostCents: toNumber(providerRow.estimated_cost_cents),
+      lastUsedAt: providerRow.last_used_at ? new Date(providerRow.last_used_at).toISOString() : null,
     })),
     daily: dailyResult.rows.map((dailyRow) => ({
       date: new Date(dailyRow.usage_date).toISOString().slice(0, 10),
@@ -469,6 +552,7 @@ export async function listOpenAiUsageLogs(
     pool.query(
       `SELECT
          id,
+         provider,
          feature,
          model,
          endpoint,
@@ -507,6 +591,8 @@ export async function listOpenAiUsageLogs(
   return {
     logs: rowsResult.rows.map((row) => ({
       id: row.id,
+      provider: row.provider || "openai",
+      providerLabel: PROVIDER_LABELS[row.provider] || row.provider || "OpenAI",
       feature: row.feature,
       model: row.model,
       endpoint: row.endpoint,

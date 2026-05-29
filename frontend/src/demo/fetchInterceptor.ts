@@ -74,6 +74,7 @@ const DEMO_BIOPSY_OVERRIDES_KEY = 'demoBiopsyOverrides.v1';
 const DEMO_TASKS_KEY = 'demoTasks.v1';
 const DEMO_STORE_PRODUCTS_KEY = 'demoStoreProducts.v1';
 const DEMO_STORE_ORDERS_KEY = 'demoStoreOrders.v1';
+const DEMO_AI_USAGE_SETTINGS_KEY = 'demoAiUsageSettings.v1';
 
 function isLocalDemoEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
@@ -2580,6 +2581,195 @@ function getDemoAnalyticsResponse(path: string, params: URLSearchParams): DemoIt
   return {};
 }
 
+function readDemoAiUsageSettings() {
+  return readStorageJson(DEMO_AI_USAGE_SETTINGS_KEY, {
+    monthlyBudgetCents: 15000,
+    startingBalanceCents: 197,
+    balancePeriodStart: new Date().toISOString().slice(0, 10),
+  });
+}
+
+function getDemoAiUsageSummary(params: URLSearchParams): DemoItem {
+  const startDate = params.get('startDate') || new Date().toISOString().slice(0, 10);
+  const endDate = params.get('endDate') || startDate;
+  const settings = readDemoAiUsageSettings();
+  const openAiCostCents = 8.42;
+  const amazonVoiceCostCents = 78;
+  const estimatedCostCents = openAiCostCents + amazonVoiceCostCents;
+  const openAiTokens = 18420;
+  const amazonAudioSeconds = 468;
+
+  return {
+    range: {
+      startDate: `${startDate}T00:00:00.000Z`,
+      endDate: `${endDate}T23:59:59.999Z`,
+    },
+    settings,
+    summary: {
+      totalRequests: 9,
+      successfulRequests: 9,
+      failedRequests: 0,
+      totalPromptTokens: 13200,
+      totalCompletionTokens: 5220,
+      totalTokens: openAiTokens,
+      estimatedAudioSeconds: amazonAudioSeconds,
+      estimatedCostCents,
+      openAiCostCents,
+      amazonVoiceCostCents,
+      monthlyBudgetCents: settings.monthlyBudgetCents,
+      startingBalanceCents: settings.startingBalanceCents,
+      balancePeriodUsageCents: openAiCostCents,
+      estimatedRemainingBudgetCents:
+        settings.monthlyBudgetCents == null ? null : Math.max(0, Number(settings.monthlyBudgetCents) - estimatedCostCents),
+      estimatedRemainingBalanceCents:
+        settings.startingBalanceCents == null ? null : Number(settings.startingBalanceCents) - openAiCostCents,
+    },
+    byProvider: [
+      {
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        requests: 7,
+        totalTokens: openAiTokens,
+        estimatedAudioSeconds: 0,
+        estimatedCostCents: openAiCostCents,
+        lastUsedAt: `${endDate}T16:20:00.000Z`,
+      },
+      {
+        provider: 'aws_healthscribe',
+        providerLabel: 'Amazon Voice (AWS HealthScribe)',
+        requests: 2,
+        totalTokens: 0,
+        estimatedAudioSeconds: amazonAudioSeconds,
+        estimatedCostCents: amazonVoiceCostCents,
+        lastUsedAt: `${endDate}T15:40:00.000Z`,
+      },
+    ],
+    byFeature: [
+      {
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        feature: 'clinical_copilot',
+        requests: 4,
+        totalTokens: 10200,
+        estimatedAudioSeconds: 0,
+        estimatedCostCents: 4.72,
+        lastUsedAt: `${endDate}T16:20:00.000Z`,
+      },
+      {
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        feature: 'ai_assistant',
+        requests: 3,
+        totalTokens: 8220,
+        estimatedAudioSeconds: 0,
+        estimatedCostCents: 3.7,
+        lastUsedAt: `${endDate}T14:10:00.000Z`,
+      },
+      {
+        provider: 'aws_healthscribe',
+        providerLabel: 'Amazon Voice (AWS HealthScribe)',
+        feature: 'amazon_voice_transcription',
+        requests: 2,
+        totalTokens: 0,
+        estimatedAudioSeconds: amazonAudioSeconds,
+        estimatedCostCents: amazonVoiceCostCents,
+        lastUsedAt: `${endDate}T15:40:00.000Z`,
+      },
+    ],
+    byModel: [
+      {
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        model: 'gpt-4o-mini',
+        requests: 7,
+        totalTokens: openAiTokens,
+        estimatedAudioSeconds: 0,
+        estimatedCostCents: openAiCostCents,
+      },
+      {
+        provider: 'aws_healthscribe',
+        providerLabel: 'Amazon Voice (AWS HealthScribe)',
+        model: 'AWS HealthScribe',
+        requests: 2,
+        totalTokens: 0,
+        estimatedAudioSeconds: amazonAudioSeconds,
+        estimatedCostCents: amazonVoiceCostCents,
+      },
+    ],
+    daily: [
+      { date: startDate, requests: 9, totalTokens: openAiTokens, estimatedCostCents },
+    ],
+  };
+}
+
+function getDemoAiUsageLogs(params: URLSearchParams): DemoItem {
+  const endDate = params.get('endDate') || new Date().toISOString().slice(0, 10);
+  const logs = [
+    {
+      id: 'demo-ai-log-1',
+      provider: 'openai',
+      providerLabel: 'OpenAI',
+      feature: 'clinical_copilot',
+      model: 'gpt-4o-mini',
+      endpoint: '/v1/chat/completions',
+      requestId: 'demo-openai-1',
+      statusCode: 200,
+      ok: true,
+      durationMs: 842,
+      promptTokens: 4200,
+      completionTokens: 1600,
+      totalTokens: 5800,
+      inputTokens: 4200,
+      outputTokens: 1600,
+      cachedInputTokens: 0,
+      audioInputTokens: 0,
+      audioOutputTokens: 0,
+      estimatedAudioSeconds: 0,
+      estimatedCostCents: 2.1,
+      resourceType: 'encounter',
+      resourceId: 'demo-encounter-1',
+      metadata: { provider: 'openai' },
+      createdAt: `${endDate}T16:20:00.000Z`,
+    },
+    {
+      id: 'demo-ai-log-2',
+      provider: 'aws_healthscribe',
+      providerLabel: 'Amazon Voice (AWS HealthScribe)',
+      feature: 'amazon_voice_transcription',
+      model: 'AWS HealthScribe',
+      endpoint: 'aws://healthscribe/medicalscribejobs',
+      requestId: null,
+      statusCode: 200,
+      ok: true,
+      durationMs: 182000,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      audioInputTokens: 0,
+      audioOutputTokens: 0,
+      estimatedAudioSeconds: 468,
+      estimatedCostCents: 78,
+      resourceType: 'ambient_recording',
+      resourceId: 'demo-recording-1',
+      metadata: { provider: 'aws_healthscribe' },
+      createdAt: `${endDate}T15:40:00.000Z`,
+    },
+  ];
+
+  const feature = params.get('feature');
+  const model = params.get('model');
+  const filtered = logs.filter((log) => (!feature || log.feature === feature) && (!model || log.model === model));
+  return {
+    logs: filtered,
+    total: filtered.length,
+    limit: Number(params.get('limit') || 25),
+    offset: Number(params.get('offset') || 0),
+  };
+}
+
 function handleProviderRoute(
   path: string,
   params: URLSearchParams,
@@ -2802,6 +2992,28 @@ function handleProviderRoute(
 
   if (path === '/api/appointment-types') {
     return mockResponse({ appointmentTypes: getDemoAppointmentTypes() });
+  }
+
+  if (path === '/api/openai-audit/summary' && method.toUpperCase() === 'GET') {
+    return mockResponse(getDemoAiUsageSummary(params));
+  }
+
+  if (path === '/api/openai-audit/logs' && method.toUpperCase() === 'GET') {
+    return mockResponse(getDemoAiUsageLogs(params));
+  }
+
+  if (path === '/api/openai-audit/settings') {
+    if (method.toUpperCase() === 'PUT') {
+      const current = readDemoAiUsageSettings();
+      const next = {
+        monthlyBudgetCents: body?.monthlyBudgetCents === undefined ? current.monthlyBudgetCents : body.monthlyBudgetCents,
+        startingBalanceCents: body?.startingBalanceCents === undefined ? current.startingBalanceCents : body.startingBalanceCents,
+        balancePeriodStart: body?.balancePeriodStart || current.balancePeriodStart,
+      };
+      writeStorageJson(DEMO_AI_USAGE_SETTINGS_KEY, next);
+      return mockResponse({ settings: next });
+    }
+    return mockResponse({ settings: readDemoAiUsageSettings() });
   }
 
   if (path.startsWith('/api/analytics/')) {

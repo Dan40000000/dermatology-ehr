@@ -3,6 +3,7 @@ import express from "express";
 import { smsAuditRouter } from "../smsAudit";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
+import { getTableColumns } from "../../db/schema";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -17,6 +18,10 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../db/schema", () => ({
+  getTableColumns: jest.fn(),
+}));
+
 jest.mock("../../lib/logger", () => ({
   logger: {
     error: jest.fn(),
@@ -29,10 +34,41 @@ app.use("/sms-audit", smsAuditRouter);
 
 const queryMock = pool.query as jest.Mock;
 const loggerErrorMock = logger.error as jest.Mock;
+const getTableColumnsMock = getTableColumns as jest.Mock;
+
+const modernSmsAuditColumns = new Set([
+  "id",
+  "tenant_id",
+  "event_type",
+  "patient_id",
+  "patient_name",
+  "user_id",
+  "user_name",
+  "message_id",
+  "message_preview",
+  "direction",
+  "status",
+  "metadata",
+  "created_at",
+]);
+
+const legacySmsAuditColumns = new Set([
+  "id",
+  "tenant_id",
+  "patient_id",
+  "message_id",
+  "action",
+  "performed_by_user_id",
+  "performed_by_name",
+  "details",
+  "created_at",
+]);
 
 beforeEach(() => {
   queryMock.mockReset();
   loggerErrorMock.mockReset();
+  getTableColumnsMock.mockReset();
+  getTableColumnsMock.mockResolvedValue(modernSmsAuditColumns);
   queryMock.mockResolvedValue({ rows: [] });
 });
 
@@ -49,6 +85,7 @@ describe("SMS audit routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.auditLogs).toHaveLength(1);
     expect(res.body.pagination.total).toBe(5);
+    expect(queryMock.mock.calls[0][0]).toContain("event_type as \"eventType\"");
   });
 
   it("GET /sms-audit/export returns CSV", async () => {
@@ -91,6 +128,43 @@ describe("SMS audit routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.messagesSent).toBe("3");
+  });
+
+  it("GET /sms-audit/summary supports the legacy production audit schema", async () => {
+    getTableColumnsMock.mockResolvedValueOnce(legacySmsAuditColumns);
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          messagesSent: "0",
+          messagesReceived: "0",
+          consentsObtained: "0",
+          consentsRevoked: "0",
+          optOuts: "0",
+          uniquePatients: "0",
+        },
+      ],
+    });
+
+    const res = await request(app).get("/sms-audit/summary?startDate=2026-05-25&endDate=2026-05-29");
+
+    expect(res.status).toBe(200);
+    expect(res.body.uniquePatients).toBe("0");
+    expect(queryMock.mock.calls[0][0]).toContain("WHERE action = 'message_sent'");
+    expect(queryMock.mock.calls[0][0]).toContain("created_at < ($3::date + interval '1 day')");
+  });
+
+  it("GET /sms-audit list supports legacy details fields", async () => {
+    getTableColumnsMock.mockResolvedValueOnce(legacySmsAuditColumns);
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ total: "0" }] });
+
+    const res = await request(app).get("/sms-audit?eventType=message_sent&startDate=2026-05-29&endDate=2026-05-29");
+
+    expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[0][0]).toContain("action as \"eventType\"");
+    expect(queryMock.mock.calls[0][0]).toContain("performed_by_user_id as \"userId\"");
+    expect(queryMock.mock.calls[0][0]).toContain("COALESCE(details->>'direction', '') as direction");
   });
 
   it("GET /sms-audit handles errors", async () => {

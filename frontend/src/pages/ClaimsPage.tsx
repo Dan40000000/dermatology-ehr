@@ -428,9 +428,26 @@ function getClaimTotalCents(raw: Record<string, unknown>): number {
 
 function getDaysSince(dateInput?: string): number {
   if (!dateInput) return 0;
-  const ts = new Date(dateInput).getTime();
+  const ts = parseClaimCalendarDate(dateInput)?.getTime() ?? Number.NaN;
   if (!Number.isFinite(ts)) return 0;
   return Math.max(0, Math.floor((Date.now() - ts) / DAY_MS));
+}
+
+function parseClaimCalendarDate(value?: string): Date | null {
+  if (!value) return null;
+  const calendarMatch = /^(\d{4})-(\d{2})-(\d{2})(?:$|T00:00:00(?:\.000)?Z$)/.exec(value);
+  if (calendarMatch) {
+    const [, year, month, day] = calendarMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatClaimDate(value?: string): string {
+  const date = parseClaimCalendarDate(value);
+  return date ? date.toLocaleDateString() : '-';
 }
 
 function formatCurrency(cents: number): string {
@@ -1975,7 +1992,7 @@ export function ClaimsPage() {
                       return (
                         <tr key={claim.id}>
                           <td className="strong claims-claim-id">{claim.claimNumber}</td>
-                          <td className="muted">{new Date(claim.serviceDate || claim.createdAt).toLocaleDateString()}</td>
+                          <td className="muted">{formatClaimDate(claim.serviceDate || claim.createdAt)}</td>
                           <td>{claim.patientName}</td>
                           <td className="muted">{claim.payer}</td>
                           <td>
@@ -2119,7 +2136,7 @@ export function ClaimsPage() {
                   ) : (
                     recentPayments.map((payment) => (
                       <tr key={payment.id}>
-                        <td className="muted">{new Date(payment.paymentDate).toLocaleDateString()}</td>
+                        <td className="muted">{formatClaimDate(payment.paymentDate)}</td>
                         <td className="strong claims-claim-id">{payment.claimNumber}</td>
                         <td>{payment.patientName}</td>
                         <td className="positive claims-num">{formatCurrency(payment.amountCents)}</td>
@@ -2222,7 +2239,7 @@ export function ClaimsPage() {
                 </div>
                 <div className="field">
                   <span className="label">DOB:</span>
-                  <span className="value">{selectedClaim.claim.dob ? new Date(selectedClaim.claim.dob).toLocaleDateString() : '-'}</span>
+                  <span className="value">{formatClaimDate(selectedClaim.claim.dob)}</span>
                 </div>
                 <div className="field">
                   <span className="label">Insurance:</span>
@@ -2362,7 +2379,7 @@ export function ClaimsPage() {
                 <tbody>
                   {selectedClaim.payments.map((payment) => (
                     <tr key={payment.id}>
-                      <td>{new Date(payment.paymentDate).toLocaleDateString()}</td>
+                      <td>{formatClaimDate(payment.paymentDate)}</td>
                       <td>{payment.payer || '-'}</td>
                       <td>{payment.paymentMethod || '-'}</td>
                       <td>{payment.checkNumber || '-'}</td>

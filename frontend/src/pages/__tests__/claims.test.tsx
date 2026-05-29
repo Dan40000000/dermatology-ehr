@@ -52,6 +52,8 @@ vi.mock('../../components/ui', () => ({
 
 import { ClaimsPage } from '../ClaimsPage';
 
+const originalTz = process.env.TZ;
+
 function renderClaimsPage(initialEntry = '/claims') {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
@@ -84,6 +86,7 @@ const buildFixtures = () => {
       status: 'submitted',
       payer: 'Aetna',
       providerName: 'Dr Demo',
+      serviceDate: '2026-05-28T00:00:00.000Z',
       createdAt: '2024-01-01',
       updatedAt: '2024-01-02',
     },
@@ -144,6 +147,7 @@ const buildFixtures = () => {
 
 describe('ClaimsPage', () => {
   beforeEach(() => {
+    process.env.TZ = 'America/Denver';
     authMocks.session = { tenantId: 'tenant-1', accessToken: 'token-1' };
     const fixtures = buildFixtures();
     apiMocks.fetchClaims.mockResolvedValue({ claims: fixtures.claims });
@@ -166,7 +170,17 @@ describe('ClaimsPage', () => {
   });
 
   afterEach(() => {
+    process.env.TZ = originalTz;
     vi.clearAllMocks();
+  });
+
+  it('renders claim service dates as calendar dates without UTC timezone shift', async () => {
+    renderClaimsPage();
+
+    await screen.findByText('Claims Management');
+
+    const claimRow = getClaimsTableRow('CLM-001');
+    expect(within(claimRow).getByText('5/28/2026')).toBeInTheDocument();
   });
 
   it('renders claims, filters, shows detail, and posts payments', async () => {

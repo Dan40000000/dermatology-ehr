@@ -3,6 +3,7 @@ import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
 import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
+import { meteredOpenAiFetch } from "../utils/openAiSpendGuard";
 
 /**
  * AI Lesion Analysis Service
@@ -720,15 +721,16 @@ class AILesionAnalysisService {
   ): Promise<ReturnType<typeof this.performAIAnalysis> extends Promise<infer T> ? T : never> {
     try {
       const systemPrompt = this.getAnalysisPrompt(analysisType);
+      const model = process.env.OPENAI_LESION_ANALYSIS_MODEL || "gpt-4o-mini";
 
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      const response = await meteredOpenAiFetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.openaiApiKey}`,
         },
         body: JSON.stringify({
-          model: "gpt-4o",
+          model,
           messages: [
             { role: "system", content: systemPrompt },
             {
@@ -741,6 +743,9 @@ class AILesionAnalysisService {
           ],
           max_tokens: 2000,
         }),
+      }, {
+        feature: "ai_lesion_analysis",
+        model,
       });
 
       if (!response.ok) {

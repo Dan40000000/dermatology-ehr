@@ -1,5 +1,6 @@
 import { generateAmbientLiveInsights } from '../ambientLiveInsights';
 import { generateAmbientLiveInsightsWithAI } from '../ambientLiveInsightsAI';
+import { resetOpenAiSpendGuardForTests } from '../../utils/openAiSpendGuard';
 
 describe('ambientLiveInsightsAI', () => {
   const originalOpenAIKey = process.env.OPENAI_API_KEY;
@@ -7,6 +8,7 @@ describe('ambientLiveInsightsAI', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    resetOpenAiSpendGuardForTests();
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_LIVE_INSIGHTS_MODEL = 'gpt-4o-mini';
     (global.fetch as jest.Mock | undefined)?.mockReset?.();

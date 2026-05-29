@@ -6,6 +6,7 @@ import {
   isHipaaClinicalAiEnabled,
 } from '../utils/aiPhiGuard';
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from '../utils/externalAiGate';
+import { meteredOpenAiFetch } from '../utils/openAiSpendGuard';
 import { redactValue } from '../utils/phiRedaction';
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
@@ -303,7 +304,7 @@ function getAnthropicKey(): string | undefined {
 }
 
 function getOpenAIModel(): string {
-  return process.env.OPENAI_COPILOT_MODEL || process.env.OPENAI_NOTE_MODEL || 'gpt-4o';
+  return process.env.OPENAI_COPILOT_MODEL || process.env.OPENAI_NOTE_MODEL || 'gpt-4o-mini';
 }
 
 function getAnthropicModel(): string {
@@ -322,7 +323,7 @@ async function askOpenAI(input: AskClinicalCopilotInput): Promise<ClinicalCopilo
     content: message.content,
   }));
 
-  const response = await fetch(OPENAI_CHAT_URL, {
+  const response = await meteredOpenAiFetch(OPENAI_CHAT_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -339,6 +340,9 @@ async function askOpenAI(input: AskClinicalCopilotInput): Promise<ClinicalCopilo
         { role: 'user', content: buildUserPrompt(input.question, input.context) },
       ],
     }),
+  }, {
+    feature: 'clinical_copilot',
+    model,
   });
 
   if (!response.ok) {

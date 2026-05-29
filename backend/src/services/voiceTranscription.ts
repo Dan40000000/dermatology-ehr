@@ -6,6 +6,7 @@ import path from "path";
 import { logger } from "../lib/logger";
 import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 import { getEnabledOpenAiApiKey } from "../utils/externalAiGate";
+import { meteredOpenAiFetch } from "../utils/openAiSpendGuard";
 
 /**
  * Voice Transcription Service
@@ -147,13 +148,17 @@ export class VoiceTranscriptionService {
         formData.append("prompt", medicalPrompt);
       }
 
-      const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      const response = await meteredOpenAiFetch("https://api.openai.com/v1/audio/transcriptions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.openaiApiKey}`,
           ...formData.getHeaders(),
         },
         body: formData,
+      }, {
+        feature: "voice_transcription",
+        model,
+        estimatedAudioSeconds: Number(process.env.VOICE_TRANSCRIPTION_ESTIMATED_SECONDS || 60),
       });
 
       if (!response.ok) {

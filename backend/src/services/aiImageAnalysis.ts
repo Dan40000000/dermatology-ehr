@@ -3,6 +3,7 @@ import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
 import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
+import { meteredOpenAiFetch } from "../utils/openAiSpendGuard";
 
 /**
  * AI Image Analysis Service for Dermatology
@@ -162,14 +163,15 @@ export class AIImageAnalysisService {
    */
   private async analyzeWithOpenAI(imageUrl: string): Promise<AIAnalysisResult> {
     try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      const model = process.env.OPENAI_IMAGE_ANALYSIS_MODEL || "gpt-4o-mini";
+      const response = await meteredOpenAiFetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.openaiApiKey}`,
         },
         body: JSON.stringify({
-          model: "gpt-4o",
+          model,
           messages: [
             {
               role: "system",
@@ -210,6 +212,9 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
           ],
           max_tokens: 1000,
         }),
+      }, {
+        feature: "ai_image_analysis",
+        model,
       });
 
       if (!response.ok) {

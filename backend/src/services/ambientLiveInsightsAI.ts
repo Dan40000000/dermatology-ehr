@@ -1,5 +1,6 @@
 import { logger } from '../lib/logger';
 import { getEnabledOpenAiApiKey } from '../utils/externalAiGate';
+import { meteredOpenAiFetch } from '../utils/openAiSpendGuard';
 import { redactValue } from '../utils/phiRedaction';
 import {
   generateAmbientLiveInsights,
@@ -405,14 +406,15 @@ export async function generateAmbientLiveInsightsWithAI(
   const sanitizedFallback = sanitizeLiveAIValue(fallback);
 
   try {
-    const response = await fetch(OPENAI_CHAT_URL, {
+    const model = getLiveInsightsModel();
+    const response = await meteredOpenAiFetch(OPENAI_CHAT_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: getLiveInsightsModel(),
+        model,
         temperature: 0.1,
         max_tokens: 1400,
         response_format: { type: 'json_object' },
@@ -421,6 +423,9 @@ export async function generateAmbientLiveInsightsWithAI(
           { role: 'user', content: buildUserPrompt(sanitizedTranscript, sanitizedFallback) },
         ],
       }),
+    }, {
+      feature: 'ambient_live_insights',
+      model,
     });
 
     if (!response.ok) {

@@ -15,6 +15,7 @@ import FormData from 'form-data';
 import { logger } from '../lib/logger';
 import { deidentifyTextForExternalAi, isHipaaClinicalAiEnabled } from '../utils/aiPhiGuard';
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from '../utils/externalAiGate';
+import { meteredOpenAiFetch } from '../utils/openAiSpendGuard';
 import { redactValue } from '../utils/phiRedaction';
 import { AgentConfiguration } from './agentConfigService';
 import { getIntegrationConfig } from '../integrations/baseAdapter';
@@ -174,7 +175,7 @@ const getOpenAIKey = () => getEnabledOpenAiApiKey();
 const getAnthropicKey = () => getEnabledAnthropicApiKey();
 const getOpenAITranscribeModel = () =>
   process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
-const getOpenAINoteModel = () => process.env.OPENAI_NOTE_MODEL || 'gpt-4o';
+const getOpenAINoteModel = () => process.env.OPENAI_NOTE_MODEL || 'gpt-4o-mini';
 const getAnthropicNoteModel = () =>
   process.env.ANTHROPIC_NOTE_MODEL || 'claude-3-5-sonnet-20241022';
 type NoteGenerationProvider = 'anthropic' | 'openai';
@@ -467,13 +468,17 @@ async function transcribeWithOpenAI(
   // Execute API call with retry logic
   const transcription = await withRetry(
     async () => {
-      const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
+      const response = await meteredOpenAiFetch(OPENAI_TRANSCRIPTION_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openAIKey}`,
           ...formHeaders
         },
         body: formBuffer
+      }, {
+        feature: 'ambient_transcription',
+        model: resolvedModel,
+        estimatedAudioSeconds: durationSeconds,
       });
 
       if (!response.ok) {
@@ -667,13 +672,17 @@ export async function transcribeLiveAudioChunk(
 
     const transcription = await withRetry(
       async () => {
-        const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
+        const response = await meteredOpenAiFetch(OPENAI_TRANSCRIPTION_URL, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${openAIKey}`,
             ...formData.getHeaders()
           },
           body: formData
+        }, {
+          feature: 'ambient_live_transcription',
+          model,
+          estimatedAudioSeconds: Number(process.env.AMBIENT_LIVE_CHUNK_SECONDS || 10),
         });
 
         if (!response.ok) {
@@ -1633,7 +1642,7 @@ async function generateNoteWithGPT4(
   // Execute API call with retry logic
   const result = await withRetry(
     async () => {
-      const response = await fetch(OPENAI_CHAT_URL, {
+      const response = await meteredOpenAiFetch(OPENAI_CHAT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1655,6 +1664,9 @@ async function generateNoteWithGPT4(
           max_tokens: maxTokens,
           response_format: { type: 'json_object' }
         })
+      }, {
+        feature: 'ambient_note_generation',
+        model,
       });
 
       if (!response.ok) {

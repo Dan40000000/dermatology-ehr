@@ -3,6 +3,7 @@ import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
 import { deidentifyTextForExternalAi } from "../utils/aiPhiGuard";
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
+import { meteredOpenAiFetch, OpenAiSpendGuardError } from "../utils/openAiSpendGuard";
 import { redactValue } from "../utils/phiRedaction";
 
 /**
@@ -170,6 +171,7 @@ export class AINoteDraftingService {
         if (
           message.startsWith("OpenAI API error:") ||
           message.startsWith("Invalid response from OpenAI API") ||
+          error instanceof OpenAiSpendGuardError ||
           message.startsWith("Anthropic API error:") ||
           message.startsWith("Invalid response from Anthropic API")
         ) {
@@ -262,15 +264,16 @@ export class AINoteDraftingService {
   ): Promise<NoteDraft> {
     const systemPrompt = this.buildSystemPrompt(providerStyle, template);
     const userPrompt = this.buildUserPrompt(request, patientContext, priorNotes);
+    const model = process.env.OPENAI_NOTE_MODEL || "gpt-4o-mini";
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await meteredOpenAiFetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.openaiApiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -278,6 +281,9 @@ export class AINoteDraftingService {
         temperature: 0.7,
         max_tokens: 2000,
       }),
+    }, {
+      feature: "ai_note_drafting",
+      model,
     });
 
     if (!response.ok) {

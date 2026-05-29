@@ -19,6 +19,42 @@ app.use(express.json());
 app.use("/products", productsRouter);
 
 describe("Products routes", () => {
+  it("builds inclusive whole-day product sales date filters", () => {
+    const sql = productSalesService.buildProductSaleDateRangeSql(
+      "ps.sale_date",
+      "2026-05-28",
+      "2026-05-28",
+      2
+    );
+
+    expect(sql).toEqual({
+      conditions: [
+        "ps.sale_date >= $2::date",
+        "ps.sale_date < ($3::date + interval '1 day')",
+      ],
+      params: ["2026-05-28", "2026-05-28"],
+      nextParamIndex: 4,
+    });
+  });
+
+  it("keeps exact timestamp product sales filters inclusive at the provided instant", () => {
+    const sql = productSalesService.buildProductSaleDateRangeSql(
+      "ps.sale_date",
+      "2026-05-28T12:00:00.000Z",
+      "2026-05-28T18:58:00.000Z",
+      5
+    );
+
+    expect(sql).toEqual({
+      conditions: [
+        "ps.sale_date >= $5::timestamptz",
+        "ps.sale_date <= $6::timestamptz",
+      ],
+      params: ["2026-05-28T12:00:00.000Z", "2026-05-28T18:58:00.000Z"],
+      nextParamIndex: 7,
+    });
+  });
+
   it("GET /products/inventory/status returns empty status when products table is missing", async () => {
     const spy = jest
       .spyOn(productSalesService, "getInventoryStatus")

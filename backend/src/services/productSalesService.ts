@@ -120,6 +120,43 @@ export interface SalesReport {
   }>;
 }
 
+function isDateOnlyFilterValue(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+export function buildProductSaleDateRangeSql(
+  column: string,
+  startDate?: string,
+  endDate?: string,
+  firstParamIndex = 1
+): { conditions: string[]; params: string[]; nextParamIndex: number } {
+  const conditions: string[] = [];
+  const params: string[] = [];
+  let paramIndex = firstParamIndex;
+
+  if (startDate) {
+    conditions.push(
+      isDateOnlyFilterValue(startDate)
+        ? `${column} >= $${paramIndex}::date`
+        : `${column} >= $${paramIndex}::timestamptz`
+    );
+    params.push(startDate);
+    paramIndex++;
+  }
+
+  if (endDate) {
+    conditions.push(
+      isDateOnlyFilterValue(endDate)
+        ? `${column} < ($${paramIndex}::date + interval '1 day')`
+        : `${column} <= $${paramIndex}::timestamptz`
+    );
+    params.push(endDate);
+    paramIndex++;
+  }
+
+  return { conditions, params, nextParamIndex: paramIndex };
+}
+
 export interface StoreShippingAddress {
   name: string;
   street: string;
@@ -1495,17 +1532,10 @@ export async function getSalesReport(
   const params: any[] = [tenantId];
   let paramIndex = 2;
 
-  if (startDate) {
-    dateConditions.push(`ps.sale_date >= $${paramIndex}::timestamp`);
-    params.push(startDate);
-    paramIndex++;
-  }
-
-  if (endDate) {
-    dateConditions.push(`ps.sale_date <= $${paramIndex}::timestamp`);
-    params.push(endDate);
-    paramIndex++;
-  }
+  const dateRangeSql = buildProductSaleDateRangeSql("ps.sale_date", startDate, endDate, paramIndex);
+  dateConditions.push(...dateRangeSql.conditions);
+  params.push(...dateRangeSql.params);
+  paramIndex = dateRangeSql.nextParamIndex;
 
   if (soldBy) {
     dateConditions.push(`ps.sold_by = $${paramIndex}`);
@@ -2127,17 +2157,15 @@ async function getStoreOrdersWithoutFulfillment(
     paramIndex++;
   }
 
-  if (filters.startDate) {
-    conditions.push(`ps.sale_date >= $${paramIndex}::timestamp`);
-    params.push(filters.startDate);
-    paramIndex++;
-  }
-
-  if (filters.endDate) {
-    conditions.push(`ps.sale_date <= $${paramIndex}::timestamp`);
-    params.push(filters.endDate);
-    paramIndex++;
-  }
+  const dateRangeSql = buildProductSaleDateRangeSql(
+    "ps.sale_date",
+    filters.startDate,
+    filters.endDate,
+    paramIndex
+  );
+  conditions.push(...dateRangeSql.conditions);
+  params.push(...dateRangeSql.params);
+  paramIndex = dateRangeSql.nextParamIndex;
 
   const limit = Math.min(Math.max(filters.limit || 100, 1), 500);
   params.push(limit);
@@ -2192,17 +2220,15 @@ export async function getStoreOrders(
     paramIndex++;
   }
 
-  if (filters.startDate) {
-    conditions.push(`ps.sale_date >= $${paramIndex}::timestamp`);
-    params.push(filters.startDate);
-    paramIndex++;
-  }
-
-  if (filters.endDate) {
-    conditions.push(`ps.sale_date <= $${paramIndex}::timestamp`);
-    params.push(filters.endDate);
-    paramIndex++;
-  }
+  const dateRangeSql = buildProductSaleDateRangeSql(
+    "ps.sale_date",
+    filters.startDate,
+    filters.endDate,
+    paramIndex
+  );
+  conditions.push(...dateRangeSql.conditions);
+  params.push(...dateRangeSql.params);
+  paramIndex = dateRangeSql.nextParamIndex;
 
   if (filters.fulfillmentStatus) {
     conditions.push(`COALESCE(sof.fulfillment_status, 'paid') = $${paramIndex}`);

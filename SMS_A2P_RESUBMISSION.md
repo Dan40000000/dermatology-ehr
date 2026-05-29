@@ -30,12 +30,12 @@ The existing failed Twilio A2P campaign should be updated with the corrected opt
 Use this wording when resubmitting the A2P campaign:
 
 ```text
-Patients may optionally opt in to operational SMS messages from Nuvora Health / Perry Software LLC during patient intake, patient portal registration, staff-assisted registration, or the public SMS preference page at https://perry-software-site.vercel.app/sms-consent.html. The SMS checkbox is optional, unchecked by default, and not required to receive treatment, complete registration, schedule an appointment, make a payment, or use any other office service.
+Patients may optionally opt in to operational SMS messages from Nuvora Health / Perry Software LLC during patient intake, patient portal registration, staff-assisted registration, or the public SMS preference page at https://perry-software-site.vercel.app/sms-consent.html. The SMS checkbox is optional, unchecked by default, and not required to receive treatment, complete registration, schedule an appointment, make a payment, use the patient portal, or receive any other office service.
 
-The opt-in disclosure states that messages may include appointment reminders, scheduling updates, billing notices, prescription coordination, and care follow-up; message frequency varies; message and data rates may apply; patients can reply HELP for help and STOP to opt out. Patients may also text START or YES to the practice messaging number to opt in or re-subscribe after opting out.
+The opt-in disclosure states that messages may include appointment reminders, scheduling updates, billing notices, prescription coordination, and care follow-up; message frequency varies; message and data rates may apply; patients can reply HELP for help and STOP to opt out. Patients may also opt in or re-subscribe by texting START or YES to the registered practice messaging number +1 980-737-1319. They receive this auto-reply: "Dermatology DEMO Office: You are opted in for text messages. Msg frequency varies. Msg&data rates may apply. Reply HELP for help, STOP to opt out."
 
 Terms of Service: https://perry-software-site.vercel.app/sms-terms.html
-Privacy Policy: https://perry-software-site.vercel.app/sms-privacy.html
+Privacy Policy: https://perry-software-site.vercel.app/sms-privacy.html. The SMS Privacy Policy states that mobile numbers, SMS consent, and opt-in status are not sold, rented, or shared with third parties or affiliates for marketing or promotional purposes.
 ```
 
 ## Recommended Sample Messages

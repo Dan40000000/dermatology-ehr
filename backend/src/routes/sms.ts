@@ -44,6 +44,7 @@ router.use((req, res, next) => {
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
 const smsRoutingCategories = ['general', 'appointment', 'billing', 'prescription', 'medical', 'other'] as const;
 const SMS_A2P_BRAND_NAME = 'Nuvora Health, operated by Perry Software LLC';
+const SMS_A2P_PRACTICE_NUMBER = '+1 980-737-1319';
 const SMS_A2P_CONSENT_URL = 'https://perry-software-site.vercel.app/sms-consent.html';
 const SMS_A2P_TERMS_URL = 'https://perry-software-site.vercel.app/sms-terms.html';
 const SMS_A2P_PRIVACY_URL = 'https://perry-software-site.vercel.app/sms-privacy.html';
@@ -120,8 +121,13 @@ function buildA2PCampaignUpdate(): TwilioA2PCampaignUpdate {
       'schedule an appointment, make a payment, use the patient portal, or receive any other office service. ' +
       'The opt-in disclosure states that messages may include appointment reminders, scheduling updates, billing notices, ' +
       'prescription coordination, and care follow-up; message frequency varies; message and data rates may apply; ' +
-      'patients can reply HELP for help and STOP to opt out. Patients may also text START or YES to the practice messaging ' +
-      `number to opt in or re-subscribe after opting out. Terms of Service: ${SMS_A2P_TERMS_URL}. Privacy Policy: ${SMS_A2P_PRIVACY_URL}.`,
+      'patients can reply HELP for help and STOP to opt out. Patients may also opt in or re-subscribe by texting START ' +
+      `or YES to the registered practice messaging number ${SMS_A2P_PRACTICE_NUMBER}. They receive this auto-reply: ` +
+      '"Dermatology DEMO Office: You are opted in for text messages. Msg frequency varies. Msg&data rates may apply. ' +
+      'Reply HELP for help, STOP to opt out." ' +
+      `Terms of Service: ${SMS_A2P_TERMS_URL}. Privacy Policy: ${SMS_A2P_PRIVACY_URL}. The SMS Privacy Policy states ` +
+      'that mobile numbers, SMS consent, and opt-in status are not sold, rented, or shared with third parties or ' +
+      'affiliates for marketing or promotional purposes.',
     messageSamples: [
       'Nuvora Health: Reminder for your dermatology appointment on 05/08 at 2:15 PM. Reply HELP for help or STOP to opt out.',
       'Nuvora Health: Your billing statement is ready in the patient portal. Reply HELP for help or STOP to opt out.',

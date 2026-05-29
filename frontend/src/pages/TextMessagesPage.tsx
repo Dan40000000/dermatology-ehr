@@ -138,6 +138,23 @@ const formatOutboundStatus = (status?: string) => {
   }
 };
 
+const formatA2PCampaignError = (error: unknown): string | null => {
+  if (!error) return null;
+  if (typeof error === 'string') return error;
+  if (typeof error !== 'object') return null;
+
+  const record = error as Record<string, unknown>;
+  const code = record.error_code || record.errorCode || record.code;
+  const description = record.description || record.message;
+  const fields = Array.isArray(record.fields) ? record.fields.join(', ') : record.fields;
+
+  return [
+    code ? `Code ${code}` : null,
+    fields ? `field ${fields}` : null,
+    description ? String(description) : null,
+  ].filter(Boolean).join(': ') || null;
+};
+
 type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'rules' | 'audit' | 'settings' | 'optin';
 type ConversationGroup = 'all' | 'general' | 'appointment' | 'billing' | 'prescription' | 'medical' | 'other';
 type RoutedConversationGroup = Exclude<ConversationGroup, 'all'>;
@@ -260,8 +277,20 @@ export default function TextMessagesPage() {
   // Stats
   const totalUnread = patients.reduce((acc, p) => acc + (p.unreadCount || 0), 0);
   const optedInCount = patients.filter(p => p.smsOptIn !== false).length;
+  const a2pCampaigns = smsReadiness?.a2p.campaigns ?? [];
   const a2pCampaignNeedsResubmission = Boolean(
-    smsReadiness?.a2p.campaigns?.some(campaign => String(campaign.campaignStatus || '').toUpperCase() === 'FAILED')
+    a2pCampaigns.some(campaign => String(campaign.campaignStatus || '').toUpperCase() === 'FAILED')
+  );
+  const a2pCampaignPendingReview = Boolean(
+    a2pCampaigns.some(campaign => String(campaign.campaignStatus || '').toUpperCase() === 'IN_PROGRESS')
+  );
+  const a2pCampaignReviewMessages = a2pCampaigns
+    .flatMap(campaign => campaign.errors || [])
+    .map(formatA2PCampaignError)
+    .filter((message): message is string => Boolean(message));
+  const a2pCampaignReviewSummary = Array.from(new Set(a2pCampaignReviewMessages)).slice(0, 3);
+  const showA2PPendingReviewNotice = Boolean(
+    !a2pCampaignNeedsResubmission && a2pCampaignPendingReview
   );
 
   // Auto-scroll
@@ -1907,8 +1936,9 @@ export default function TextMessagesPage() {
                       <div>
                         <strong>A2P campaign needs Twilio review</strong>
                         <p>
-                          The current campaign was rejected for opt-in/CTA language. Resubmitting sends the corrected
-                          optional consent flow and sample messages to Twilio.
+                          The existing campaign was rejected for opt-in/CTA language. Resubmitting updates that same
+                          campaign with the corrected optional consent flow and sample messages; it does not create or
+                          buy another campaign.
                         </p>
                       </div>
                       <button
@@ -1917,8 +1947,27 @@ export default function TextMessagesPage() {
                         onClick={handleResubmitA2PCampaign}
                         disabled={resubmittingA2P}
                       >
-                        {resubmittingA2P ? 'Submitting...' : 'Resubmit to Twilio'}
+                        {resubmittingA2P ? 'Submitting...' : 'Resubmit existing campaign'}
                       </button>
+                    </div>
+                  )}
+
+                  {showA2PPendingReviewNotice && (
+                    <div className="sms-readiness-actions">
+                      <div>
+                        <strong>Existing A2P campaign is under Twilio review</strong>
+                        <p>
+                          Twilio is reviewing the current campaign. No new campaign purchase is needed; live texting
+                          stays blocked until Twilio marks the campaign VERIFIED.
+                        </p>
+                        {a2pCampaignReviewSummary.length > 0 && (
+                          <ul className="sms-readiness-errors">
+                            {a2pCampaignReviewSummary.map(message => (
+                              <li key={message}>{message}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     </div>
                   )}
 

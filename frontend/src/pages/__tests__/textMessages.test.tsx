@@ -978,13 +978,84 @@ describe('TextMessagesPage', () => {
     await screen.findByRole('heading', { name: 'Text Messages' });
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
 
-    const resubmitButton = await screen.findByRole('button', { name: 'Resubmit to Twilio' });
+    expect(await screen.findByText(/does not create or/)).toBeInTheDocument();
+    const resubmitButton = await screen.findByRole('button', { name: 'Resubmit existing campaign' });
     fireEvent.click(resubmitButton);
 
     await waitFor(() =>
       expect(apiMocks.resubmitSMSA2PCampaign).toHaveBeenCalledWith('tenant-1', 'token-1'),
     );
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('A2P campaign sent to Twilio (IN_PROGRESS)');
+  });
+
+  it('explains in-progress A2P campaign review without prompting another campaign purchase', async () => {
+    apiMocks.fetchSMSReadiness.mockResolvedValue({
+      settings: {
+        isActive: true,
+        isTestMode: false,
+        twilioPhoneNumber: '+15551112222',
+        appointmentRemindersEnabled: true,
+        allowPatientReplies: true,
+        hasCredentials: true,
+      },
+      environment: {
+        nodeEnv: 'production',
+        liveSendEnabled: false,
+        messagingServiceSidConfigured: true,
+        messagingServiceSidSuffix: 'abc123',
+        messagingServiceMatchesRegisteredPhone: true,
+        inboundSimulationEnabled: false,
+      },
+      twilio: {
+        connection: { success: true, accountName: 'Test Twilio' },
+        phoneNumber: { phoneNumber: '+15551112222', capabilities: { sms: true } },
+        messaging: { services: [], brandRegistrations: [], errors: [] },
+        errors: [],
+      },
+      a2p: {
+        brandStatus: 'APPROVED',
+        campaignStatus: 'IN_PROGRESS',
+        verified: false,
+        campaigns: [
+          {
+            sidSuffix: 'camp-1',
+            campaignStatus: 'IN_PROGRESS',
+            usecase: 'LOW_VOLUME',
+            errors: [
+              {
+                error_code: 30909,
+                fields: ['MESSAGE_FLOW'],
+                description: 'The campaign submission has been reviewed and rejected due to issues verifying the Call to Action (CTA) provided for the campaign.',
+              },
+            ],
+          },
+        ],
+      },
+      recentTraffic: {
+        total: 0,
+        outbound: 0,
+        inbound: 0,
+        mockMessages: 0,
+        twilioMessages: 0,
+        lastMessageAt: null,
+        statusBreakdown: [],
+      },
+      consent: { total: 10, optedIn: 10, optedOut: 0 },
+      gates: [
+        { key: 'campaign', label: 'A2P campaign', ok: false, detail: 'Campaign status: IN_PROGRESS.' },
+      ],
+      readyForLiveSend: false,
+    });
+
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(await screen.findByText('Existing A2P campaign is under Twilio review')).toBeInTheDocument();
+    expect(screen.getByText(/No new campaign purchase is needed/)).toBeInTheDocument();
+    expect(screen.getByText(/Code 30909/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resubmit existing campaign' })).not.toBeInTheDocument();
   });
 
   it('surfaces conversation load errors', async () => {

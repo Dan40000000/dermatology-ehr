@@ -931,6 +931,14 @@
   line-height: 1.4;
 }
 
+.sms-readiness-errors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .sms-readiness-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

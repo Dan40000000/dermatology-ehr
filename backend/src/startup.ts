@@ -1,5 +1,4 @@
-// Simple startup - just start the server
-// Migrations and seed are triggered via /health/init-db endpoint
+// Simple startup - run migrations for deploys, then start the server.
 console.log("=== Starting Server ===");
 
 // Log environment for debugging
@@ -18,11 +17,27 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-try {
+function shouldRunMigrationsOnStartup(): boolean {
+  if (String(process.env.RUN_MIGRATIONS_ON_STARTUP || "").toLowerCase() === "false") {
+    return false;
+  }
+
+  return process.env.NODE_ENV === "production" || Boolean(process.env.RAILWAY_ENVIRONMENT);
+}
+
+async function start() {
   console.log("Loading index.ts...");
+  if (shouldRunMigrationsOnStartup()) {
+    console.log("Running startup database migrations...");
+    const { runMigrations } = require("./db/migrate");
+    await runMigrations();
+    console.log("Startup database migrations complete");
+  }
   require("./index");
   console.log("Index loaded successfully");
-} catch (error) {
+}
+
+start().catch((error) => {
   console.error("STARTUP ERROR:", error);
   process.exit(1);
-}
+});

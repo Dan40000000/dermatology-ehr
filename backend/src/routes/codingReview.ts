@@ -269,6 +269,7 @@ codingReviewRouter.get(
                  nullif(to_jsonb(charges)->>'billing_route', ''),
                  case when status = 'self_pay' then 'self_pay' else 'insurance' end
                ) = 'insurance'
+                 and coalesce(status, 'pending') in ('pending', 'ready')
              )::int as claimable_charge_count,
              count(*) filter (where nullif(trim(coalesce(cpt_code, '')), '') is null)::int as missing_cpt_count,
              count(*) filter (

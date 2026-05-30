@@ -58,6 +58,7 @@ interface CodingReviewRow {
   primaryDiagnosisCount: number;
   diagnosisCodes: string[];
   chargeCount: number;
+  claimableChargeCount: number;
   missingCptCount: number;
   unlinkedChargeCount: number;
   totalChargeCents: number;
@@ -113,6 +114,7 @@ function mapReviewRow(row: Record<string, any>): CodingReviewRow {
     primaryDiagnosisCount: numberFrom(row.primaryDiagnosisCount),
     diagnosisCodes: stringArrayFrom(row.diagnosisCodes),
     chargeCount: numberFrom(row.chargeCount),
+    claimableChargeCount: numberFrom(row.claimableChargeCount),
     missingCptCount: numberFrom(row.missingCptCount),
     unlinkedChargeCount: numberFrom(row.unlinkedChargeCount),
     totalChargeCents: numberFrom(row.totalChargeCents),
@@ -151,7 +153,7 @@ function getIssues(item: CodingReviewRow): CodingReviewIssue[] {
   if (item.superbillId && !closedSuperbillStatuses.has(superbillStatus)) {
     issues.push("superbill_open");
   }
-  if (item.chargeCount > 0 && !item.claimId) {
+  if (item.claimableChargeCount > 0 && !item.claimId) {
     issues.push("claim_not_created");
   }
   if (claimStatus === "draft" || claimStatus === "coding_review") {
@@ -262,6 +264,12 @@ codingReviewRouter.get(
              tenant_id,
              encounter_id,
              count(*)::int as charge_count,
+             count(*) filter (
+               where coalesce(
+                 nullif(to_jsonb(charges)->>'billing_route', ''),
+                 case when status = 'self_pay' then 'self_pay' else 'insurance' end
+               ) = 'insurance'
+             )::int as claimable_charge_count,
              count(*) filter (where nullif(trim(coalesce(cpt_code, '')), '') is null)::int as missing_cpt_count,
              count(*) filter (
                where coalesce(array_length(linked_diagnosis_ids, 1), 0) = 0
@@ -310,6 +318,7 @@ codingReviewRouter.get(
            coalesce(dx.primary_diagnosis_count, 0) as "primaryDiagnosisCount",
            coalesce(dx.diagnosis_codes, array[]::text[]) as "diagnosisCodes",
            coalesce(ch.charge_count, 0) as "chargeCount",
+           coalesce(ch.claimable_charge_count, 0) as "claimableChargeCount",
            coalesce(ch.missing_cpt_count, 0) as "missingCptCount",
            coalesce(ch.unlinked_charge_count, 0) as "unlinkedChargeCount",
            coalesce(ch.total_charge_cents, 0) as "totalChargeCents",

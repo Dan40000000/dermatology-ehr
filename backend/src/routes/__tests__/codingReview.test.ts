@@ -242,6 +242,85 @@ describe("Coding review routes", () => {
     expect(res.body.items[0].reviewRoute).toBe("/patients/patient-3/encounter/enc-3?section=billing");
   });
 
+  it("does not require an insurance claim for self-pay-only cosmetic charges", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          encounterId: "enc-self-pay",
+          appointmentId: "appt-self-pay",
+          patientId: "patient-cosmetic",
+          patientName: "Cosmetic Patient",
+          providerId: "provider-1",
+          providerName: "Dr Demo",
+          serviceAt: "2026-05-24T18:00:00.000Z",
+          appointmentStatus: "completed",
+          encounterStatus: "completed",
+          chiefComplaint: "Botox",
+          diagnosisCount: 1,
+          primaryDiagnosisCount: 1,
+          diagnosisCodes: ["Z41.1"],
+          chargeCount: 1,
+          claimableChargeCount: 0,
+          missingCptCount: 0,
+          unlinkedChargeCount: 0,
+          totalChargeCents: 56000,
+          cptCodes: ["BOTOX-40"],
+          superbillId: null,
+          superbillStatus: null,
+          claimId: null,
+          claimStatus: null,
+        },
+      ],
+    });
+
+    const res = await request(app).get(
+      "/coding-review/post-visit?startDate=2026-05-20&endDate=2026-05-24&includeCleared=true",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].issues).toEqual([]);
+    expect(res.body.summary.cleared).toBe(1);
+  });
+
+  it("still flags insurance-routed charges with no claim", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          encounterId: "enc-insurance",
+          appointmentId: "appt-insurance",
+          patientId: "patient-medical",
+          patientName: "Medical Patient",
+          providerId: "provider-1",
+          providerName: "Dr Demo",
+          serviceAt: "2026-05-24T18:00:00.000Z",
+          appointmentStatus: "completed",
+          encounterStatus: "completed",
+          chiefComplaint: "Biopsy",
+          diagnosisCount: 1,
+          primaryDiagnosisCount: 1,
+          diagnosisCodes: ["D48.5"],
+          chargeCount: 1,
+          claimableChargeCount: 1,
+          missingCptCount: 0,
+          unlinkedChargeCount: 0,
+          totalChargeCents: 17500,
+          cptCodes: ["11102"],
+          superbillId: null,
+          superbillStatus: null,
+          claimId: null,
+          claimStatus: null,
+        },
+      ],
+    });
+
+    const res = await request(app).get("/coding-review/post-visit?startDate=2026-05-20&endDate=2026-05-24");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].issues).toContain("claim_not_created");
+    expect(res.body.summary.issueCounts.claim_not_created).toBe(1);
+  });
+
   it("rejects invalid dates", async () => {
     const res = await request(app).get("/coding-review/post-visit?startDate=bad");
 

@@ -51,6 +51,7 @@ const apiMocks = vi.hoisted(() => ({
   deleteDiagnosis: vi.fn(),
   fetchChargesByEncounter: vi.fn(),
   createCharge: vi.fn(),
+  updateCharge: vi.fn(),
   deleteCharge: vi.fn(),
   generateAiNoteDraft: vi.fn(),
   fetchNoteTemplates: vi.fn(),
@@ -372,6 +373,7 @@ describe('EncounterPage', () => {
     apiMocks.updateDiagnosis.mockResolvedValue({ ok: true });
     apiMocks.deleteDiagnosis.mockResolvedValue({ ok: true });
     apiMocks.createCharge.mockResolvedValue({ id: 'charge-2' });
+    apiMocks.updateCharge.mockResolvedValue({ success: true });
     apiMocks.deleteCharge.mockResolvedValue({ ok: true });
     apiMocks.updateEncounter.mockResolvedValue({ ok: true });
     apiMocks.updateEncounterStatus.mockResolvedValue({ ok: true });
@@ -604,6 +606,45 @@ describe('EncounterPage', () => {
     expect(apiMocks.updateEncounterStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'enc-1', 'signed');
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Encounter signed and appointment sent to checkout');
     expect(navigateMock).toHaveBeenCalledWith('/office-flow');
+  });
+
+  it('lets the provider confirm an AI-suggested billing code', async () => {
+    apiMocks.fetchChargesByEncounter.mockResolvedValue({
+      charges: [
+        {
+          id: 'charge-ai-1',
+          cptCode: '99213',
+          codeType: 'CPT',
+          billingRoute: 'insurance',
+          description: 'Established patient office visit',
+          quantity: 1,
+          feeCents: 12000,
+          amountCents: 12000,
+          linkedDiagnosisIds: ['dx-1'],
+          icdCodes: ['L40.0'],
+          source: 'clinical_copilot_assistant',
+          lineNote: 'AI rationale',
+          status: 'pending',
+          createdAt: '2026-06-01T17:31:36.403Z',
+        },
+      ],
+    });
+
+    render(<EncounterPage />);
+
+    await screen.findByTestId('patient-banner');
+    fireEvent.click(screen.getByRole('button', { name: 'Billing' }));
+
+    expect(await screen.findByText(/AI suggested/)).toHaveTextContent('Needs provider confirmation');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Code' }));
+
+    await waitFor(() =>
+      expect(apiMocks.updateCharge).toHaveBeenCalledWith('tenant-1', 'token-1', 'charge-ai-1', {
+        status: 'ready',
+        lineNote: 'AI rationale Provider confirmed AI-suggested billing code for claim review.',
+      }),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Billing code confirmed for claim review');
   });
 
   it('falls back to appointment status update when patient-flow checkout fails', async () => {

@@ -5,6 +5,7 @@ import {
   askClinicalCopilot,
   saveClinicalCopilotVisitSummary,
   type ClinicalCopilotMessage,
+  type ClinicalCopilotApplyResponse,
   type ClinicalCopilotResponse
 } from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -23,6 +24,7 @@ interface ClinicalCopilotPanelProps {
   compact?: boolean;
   showOpenFullButton?: boolean;
   onVisitSummarySaved?: (summaryId: string) => void;
+  onAppliedToChart?: (result: ClinicalCopilotApplyResponse) => void;
 }
 
 const shellStyle: React.CSSProperties = {
@@ -113,6 +115,7 @@ export function ClinicalCopilotPanel({
   compact = false,
   showOpenFullButton = false,
   onVisitSummarySaved,
+  onAppliedToChart,
 }: ClinicalCopilotPanelProps) {
   const navigate = useNavigate();
   const { session } = useAuth();
@@ -286,6 +289,7 @@ export function ClinicalCopilotPanel({
       setSavedSummaryId(result.summaryId);
       setSavedSummaryMessage(message);
       onVisitSummarySaved?.(result.summaryId);
+      onAppliedToChart?.(result);
       showSuccess(message, patientHistoryPath ? {
         duration: 8000,
         action: {
@@ -717,7 +721,7 @@ export function ClinicalCopilotPanel({
                         color: applyStatus ? '#166534' : 'white',
                         cursor: applyingResponseIndex !== null || applyStatus ? 'not-allowed' : 'pointer',
                       }}
-                      title="Save this AI response to patient history, append it to the encounter, and send code suggestions to billing review"
+                      title="Save this AI response to patient history, append it to the encounter, and create pending billing code lines for provider confirmation"
                     >
                       {applyStatus ? 'Submitted to Chart' : applyingResponseIndex === index ? 'Submitting...' : 'Submit to Chart & Billing'}
                     </button>

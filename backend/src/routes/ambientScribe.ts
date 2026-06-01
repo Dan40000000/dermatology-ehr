@@ -2558,12 +2558,16 @@ router.post('/copilot/apply', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES
       saved.summaryId,
     );
 
+    const actionMessage = structuredActions.chargesCreated > 0
+      ? `AI assistant response added to the chart; ${structuredActions.chargesCreated} billing code${structuredActions.chargesCreated === 1 ? '' : 's'} added to Billing for provider confirmation`
+      : structuredActions.diagnosesCreated > 0 || structuredActions.billingReviewItemsCreated > 0
+        ? 'AI assistant response added to the chart; diagnosis suggestions and billing review are awaiting review'
+        : 'AI assistant response added to the chart';
+
     res.status(saved.created ? 201 : 200).json({
       summaryId: saved.summaryId,
       created: saved.created,
-      message: structuredActions.diagnosesCreated > 0 || structuredActions.billingReviewItemsCreated > 0
-        ? 'AI assistant response added to the chart; diagnosis suggestions and billing review are awaiting review'
-        : 'AI assistant response added to the chart',
+      message: actionMessage,
       structuredActions,
       context: {
         patientId: target.patientId,

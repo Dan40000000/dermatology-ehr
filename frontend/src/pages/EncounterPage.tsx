@@ -30,6 +30,7 @@ import {
   deleteDiagnosis,
   fetchChargesByEncounter,
   createCharge,
+  updateCharge,
   deleteCharge,
   syncLiveEncounterCoding,
   generateAiNoteDraft,
@@ -38,7 +39,7 @@ import {
   fetchEncounterAmbientNotes,
 } from '../api';
 import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD10Code, CPTCode } from '../types';
-import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote, PatientDiagnosisSummary, LiveEncounterCodingResult } from '../api';
+import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote, PatientDiagnosisSummary, LiveEncounterCodingResult, ClinicalCopilotApplyResponse } from '../api';
 import type { PerformedWorkSubmission } from '../components/billing/PerformedWorkModal';
 import { useAutosave } from '../hooks/useAutosave';
 import { ScribeSummaryCard } from '../components/ScribeSummaryCard';
@@ -447,6 +448,24 @@ export function EncounterPage() {
     encounter.assessmentPlan,
     runLiveCodingSync,
   ]);
+
+  const refreshEncounterCodingData = useCallback(async () => {
+    if (!session || !encounterId || isNew) return;
+
+    const [diagnosesRes, chargesRes] = await Promise.all([
+      fetchDiagnosesByEncounter(session.tenantId, session.accessToken, encounterId),
+      fetchChargesByEncounter(session.tenantId, session.accessToken, encounterId),
+    ]);
+    setDiagnoses(diagnosesRes.diagnoses || []);
+    setCharges(chargesRes.charges || []);
+  }, [session, encounterId, isNew]);
+
+  const handleClinicalCopilotApplied = useCallback((result: ClinicalCopilotApplyResponse) => {
+    void refreshEncounterCodingData();
+    if ((result.structuredActions?.chargesCreated || 0) > 0) {
+      setActiveSection('billing');
+    }
+  }, [refreshEncounterCodingData]);
 
   const saveAndSignEncounter = async () => {
     if (!session || !encounterId || isNew) return;
@@ -986,6 +1005,40 @@ export function EncounterPage() {
       .map((diagnosisId) => diagnoses.find((dx) => dx.id === diagnosisId)?.icd10Code)
       .filter((code): code is string => Boolean(code));
   };
+  const isClinicalCopilotCharge = (charge: Charge) => charge.source === 'clinical_copilot_assistant';
+  const isAiChargeAwaitingConfirmation = (charge: Charge) => (
+    isClinicalCopilotCharge(charge) && getChargeBillingRoute(charge) === 'insurance' && charge.status === 'pending'
+  );
+  const isAiChargeConfirmed = (charge: Charge) => (
+    isClinicalCopilotCharge(charge) && (charge.status === 'ready' || getChargeBillingRoute(charge) !== 'insurance')
+  );
+  const handleConfirmAiCharge = async (charge: Charge) => {
+    if (!session || !canEditBilling) return;
+
+    const route = getChargeBillingRoute(charge);
+    const diagnosisCodes = getChargeDiagnosisCodes(charge);
+    if (route === 'insurance' && diagnosisCodes.length === 0) {
+      showError('Add or link a diagnosis before confirming this billing code.');
+      return;
+    }
+
+    const confirmationNote = 'Provider confirmed AI-suggested billing code for claim review.';
+    const existingNote = (charge.lineNote || '').trim();
+    const lineNote = existingNote.includes(confirmationNote)
+      ? existingNote
+      : [existingNote, confirmationNote].filter(Boolean).join(' ');
+
+    try {
+      await updateCharge(session.tenantId, session.accessToken, charge.id, {
+        status: route === 'insurance' ? 'ready' : charge.status,
+        lineNote,
+      });
+      showSuccess('Billing code confirmed for claim review');
+      await refreshEncounterCodingData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to confirm billing code');
+    }
+  };
   const hasChargesMissingRequiredDiagnosisLinks = charges.some((charge) => {
     if (getChargeBillingRoute(charge) !== 'insurance') return false;
     const missingDiagnosisLink = !charge.linkedDiagnosisIds || charge.linkedDiagnosisIds.length === 0;
@@ -1062,13 +1115,16 @@ export function EncounterPage() {
               <th style={{ width: '70px', textAlign: 'center' }}>Units</th>
               <th style={{ width: '110px', textAlign: 'right' }}>Charge</th>
               <th style={{ width: '110px' }}>Route</th>
-              <th style={{ width: '90px' }}>Actions</th>
+              <th style={{ width: '140px' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {chargeRows.map((charge) => {
               const diagnosisCodes = getChargeDiagnosisCodes(charge);
               const route = getChargeBillingRoute(charge);
+              const copilotCharge = isClinicalCopilotCharge(charge);
+              const awaitingAiConfirmation = isAiChargeAwaitingConfirmation(charge);
+              const confirmedAiCharge = isAiChargeConfirmed(charge);
               return (
                 <tr key={charge.id}>
                   <td>
@@ -1090,6 +1146,27 @@ export function EncounterPage() {
                     <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '0.2rem' }}>
                       {charge.description}
                     </div>
+                    {copilotCharge && (
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        marginTop: '0.35rem',
+                        padding: '0.18rem 0.45rem',
+                        borderRadius: '999px',
+                        background: awaitingAiConfirmation ? '#fef3c7' : '#dcfce7',
+                        color: awaitingAiConfirmation ? '#92400e' : '#166534',
+                        fontSize: '0.68rem',
+                        fontWeight: 800,
+                      }}>
+                        AI suggested • {awaitingAiConfirmation ? 'Needs provider confirmation' : 'Provider confirmed'}
+                      </div>
+                    )}
+                    {charge.lineNote && (
+                      <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.25rem', maxWidth: '34rem' }}>
+                        {charge.lineNote}
+                      </div>
+                    )}
                   </td>
                   <td>
                     {route === 'insurance' ? (
@@ -1141,23 +1218,57 @@ export function EncounterPage() {
                     </span>
                   </td>
                   <td>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteCharge(charge.id)}
-                      disabled={!canEditBilling}
-                      style={{
-                        padding: '0.25rem 0.5rem',
-                        background: '#fee2e2',
-                        color: '#dc2626',
-                        border: '1px solid #fca5a5',
-                        borderRadius: '4px',
-                        fontSize: '0.75rem',
-                        cursor: canEditBilling ? 'pointer' : 'not-allowed',
-                        opacity: canEditBilling ? 1 : 0.6
-                      }}
-                    >
-                      Delete
-                    </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start' }}>
+                      {awaitingAiConfirmation && (
+                        <button
+                          type="button"
+                          onClick={() => void handleConfirmAiCharge(charge)}
+                          disabled={!canEditBilling}
+                          style={{
+                            padding: '0.25rem 0.5rem',
+                            background: '#ecfdf5',
+                            color: '#047857',
+                            border: '1px solid #86efac',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            cursor: canEditBilling ? 'pointer' : 'not-allowed',
+                            opacity: canEditBilling ? 1 : 0.6,
+                            fontWeight: 700,
+                          }}
+                        >
+                          Confirm Code
+                        </button>
+                      )}
+                      {confirmedAiCharge && (
+                        <span style={{
+                          padding: '0.2rem 0.45rem',
+                          borderRadius: '999px',
+                          background: '#dcfce7',
+                          color: '#166534',
+                          fontSize: '0.68rem',
+                          fontWeight: 800,
+                        }}>
+                          Confirmed
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCharge(charge.id)}
+                        disabled={!canEditBilling}
+                        style={{
+                          padding: '0.25rem 0.5rem',
+                          background: '#fee2e2',
+                          color: '#dc2626',
+                          border: '1px solid #fca5a5',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          cursor: canEditBilling ? 'pointer' : 'not-allowed',
+                          opacity: canEditBilling ? 1 : 0.6
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -1497,6 +1608,7 @@ export function EncounterPage() {
                 title="Encounter AI Assistant"
                 compact
                 showOpenFullButton
+                onAppliedToChart={handleClinicalCopilotApplied}
               />
             )}
 

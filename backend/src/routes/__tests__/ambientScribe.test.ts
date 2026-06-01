@@ -1194,7 +1194,7 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
         });
 
       expect(res.status).toBe(201);
-      expect(res.body.message).toMatch(/billing review/i);
+      expect(res.body.message).toMatch(/Billing for provider confirmation/i);
       expect(res.body.structuredActions).toEqual({
         encounterUpdated: true,
         diagnosesCreated: 1,
@@ -1412,6 +1412,10 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
           appointmentTypeName: 'Rash Follow-up',
           appointmentTypeCategory: 'Medical Dermatology',
           specialtyFocus: 'medical_derm',
+        }),
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          resourceType: 'ambient_note',
         })
       );
 
@@ -1562,6 +1566,10 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
         expect.objectContaining({
           appointmentTypeName: 'Annual Skin Check',
           specialtyFocus: 'medical_derm',
+        }),
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          resourceType: 'ambient_note',
         })
       );
     });
@@ -1716,6 +1724,10 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
         expect.objectContaining({
           appointmentTypeName: 'Annual Skin Check',
           specialtyFocus: 'medical_derm',
+        }),
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          resourceType: 'ambient_note',
         })
       );
 

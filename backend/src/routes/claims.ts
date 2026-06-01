@@ -568,7 +568,11 @@ claimsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   let query = `
     select
       c.id, c.claim_number as "claimNumber", c.encounter_id as "encounterId",
-      c.patient_id as "patientId", c.total_charges as "totalCharges", c.status,
+      c.patient_id as "patientId",
+      COALESCE(c.total_cents, ROUND(COALESCE(c.total_charges, 0) * 100)::int, 0) as "totalCents",
+      COALESCE(c.total_cents, ROUND(COALESCE(c.total_charges, 0) * 100)::int, 0) as "totalChargesCents",
+      COALESCE(c.total_charges, c.total_cents / 100.0, 0) as "totalCharges",
+      c.status,
       COALESCE(NULLIF(c.payer, ''), NULLIF(c.payer_name, ''), NULLIF(iv.payer_name, ''),
         NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
         NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'plan_name', ''),

@@ -3,6 +3,7 @@ import { API_BASE_URL } from './apiBase';
 const DERM_SESSION_STORAGE_KEY = 'derm_session';
 const KIOSK_CODE_STORAGE_KEY = 'kioskCode';
 const TENANT_ID_STORAGE_KEY = 'tenantId';
+const KIOSK_LOCATION_ID_STORAGE_KEY = 'kioskLocationId';
 const KIOSK_PATIENT_ID_STORAGE_KEY = 'kioskPatientId';
 const KIOSK_PATIENT_NAME_STORAGE_KEY = 'kioskPatientName';
 const KIOSK_APPOINTMENT_ID_STORAGE_KEY = 'kioskAppointmentId';
@@ -15,6 +16,7 @@ type StoredSession = {
 export type KioskContext = {
   kioskCode: string;
   tenantId: string;
+  locationId?: string;
 };
 
 type EnsureKioskContextOptions = {
@@ -64,6 +66,7 @@ export function syncKioskContextFromUrl(search = '') {
   const params = new URLSearchParams(search);
   persistIfPresent(TENANT_ID_STORAGE_KEY, params.get('tenantId'));
   persistIfPresent(KIOSK_CODE_STORAGE_KEY, params.get('kioskCode'));
+  persistIfPresent(KIOSK_LOCATION_ID_STORAGE_KEY, params.get('locationId'));
 
   const patientId = readString(params.get('patientId'));
   const patientName = readString(params.get('patientName'));
@@ -85,10 +88,11 @@ function getStoredKioskContext(): KioskContext | null {
 
   const kioskCode = readString(localStorage.getItem(KIOSK_CODE_STORAGE_KEY));
   const tenantId = readString(localStorage.getItem(TENANT_ID_STORAGE_KEY));
+  const locationId = readString(localStorage.getItem(KIOSK_LOCATION_ID_STORAGE_KEY));
   if (!kioskCode || !tenantId) {
     return null;
   }
-  return { kioskCode, tenantId };
+  return { kioskCode, tenantId, ...(locationId ? { locationId } : {}) };
 }
 
 export async function ensureKioskContext(
@@ -106,9 +110,14 @@ export async function ensureKioskContext(
   if (effectiveTenantId) {
     localStorage.setItem(TENANT_ID_STORAGE_KEY, effectiveTenantId);
   }
+  const requestedLocationId = readString(options.locationId || new URLSearchParams(search).get('locationId'));
 
   const existingContext = getStoredKioskContext();
-  if (existingContext) {
+  if (
+    existingContext
+    && existingContext.tenantId === effectiveTenantId
+    && (!requestedLocationId || existingContext.locationId === requestedLocationId)
+  ) {
     return existingContext;
   }
 
@@ -120,9 +129,8 @@ export async function ensureKioskContext(
   if (!contextPromise) {
     contextPromise = (async () => {
       const params = new URLSearchParams();
-      const locationId = readString(options.locationId || new URLSearchParams(search).get('locationId'));
-      if (locationId) {
-        params.set('locationId', locationId);
+      if (requestedLocationId) {
+        params.set('locationId', requestedLocationId);
       }
 
       const response = await fetch(buildApiUrl(`/api/kiosk/launch-context${params.toString() ? `?${params.toString()}` : ''}`), {
@@ -139,6 +147,7 @@ export async function ensureKioskContext(
       const payload = await response.json() as Partial<KioskContext>;
       persistIfPresent(TENANT_ID_STORAGE_KEY, payload.tenantId || effectiveTenantId);
       persistIfPresent(KIOSK_CODE_STORAGE_KEY, payload.kioskCode);
+      persistIfPresent(KIOSK_LOCATION_ID_STORAGE_KEY, payload.locationId || requestedLocationId);
       return getStoredKioskContext();
     })()
       .catch((error) => {

@@ -1596,8 +1596,8 @@ export function HomePage() {
     {
       label: `Revenue ${dayScopeLower}`,
       value: currencyFromCents(stats.revenueTodayCents),
-      detail: `${currencyFromCents(stats.netCollectionsCents)} clinical collections${
-        stats.storeCollectionsCents > 0 ? `, ${currencyFromCents(stats.storeCollectionsCents)} store` : ''
+      detail: `${currencyFromCents(stats.netCollectionsCents)} clinical payments posted${
+        stats.storeCollectionsCents > 0 ? `, ${currencyFromCents(stats.storeCollectionsCents)} store payments` : ''
       }`,
       route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
@@ -1735,7 +1735,7 @@ export function HomePage() {
       id: 'expected-revenue',
       label: 'Expected clinical revenue',
       value: currencyFromCents(stats.revenueTodayCents),
-      detail: 'Posted clinical revenue in the selected day',
+      detail: 'Clinical revenue posted for the selected day',
       route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
       commandSection: 'panel_revenue_pulse',
@@ -1744,7 +1744,7 @@ export function HomePage() {
     },
     {
       id: 'collected-revenue',
-      label: 'Collected so far',
+      label: 'Payments posted',
       value: currencyFromCents(stats.netCollectionsCents),
       detail: `${currencyFromCents(stats.patientCollectionsCents)} patient · ${currencyFromCents(stats.payerCollectionsCents)} payer`,
       route: withBusinessDateRoute('/financials?tab=payments'),
@@ -1757,7 +1757,7 @@ export function HomePage() {
       id: 'collection-gap',
       label: 'Collection opportunity',
       value: currencyFromCents(Math.max(0, stats.revenueTodayCents - stats.netCollectionsCents)),
-      detail: `${stats.collectionRateToday}% collection rate ${dayScopeLower}`,
+      detail: `${stats.collectionRateToday}% payment-to-revenue ratio ${dayScopeLower}`,
       route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
       commandSection: 'panel_revenue_pulse',
@@ -2198,7 +2198,7 @@ export function HomePage() {
             </div>
             <div>
               <span>{currencyFromCents(stats.netCollectionsCents)}</span>
-              <p>Clinical collections</p>
+              <p>Payments posted</p>
             </div>
             <div>
               <span>{stats.collectionRateToday}%</span>

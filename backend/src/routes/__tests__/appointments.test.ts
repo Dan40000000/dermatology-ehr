@@ -107,6 +107,7 @@ describe("Appointments routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.appointments).toHaveLength(1);
+    expect(String(queryMock.mock.calls[0]?.[0] || "")).toContain('as "priorAuthRequired"');
   });
 
   it("POST /appointments validates payload", async () => {

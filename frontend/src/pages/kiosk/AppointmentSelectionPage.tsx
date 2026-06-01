@@ -41,7 +41,10 @@ export function KioskAppointmentSelectionPage() {
   const fetchTodayAppointments = async () => {
     try {
       const headers = await getKioskHeaders({ search: location.search });
-      const response = await fetch('/api/kiosk/today-appointments', {
+      const params = new URLSearchParams();
+      if (patientId) params.set('patientId', patientId);
+      if (queryAppointmentId) params.set('appointmentId', queryAppointmentId);
+      const response = await fetch(`/api/kiosk/today-appointments${params.toString() ? `?${params.toString()}` : ''}`, {
         headers,
       });
 

@@ -1398,7 +1398,19 @@ export function SchedulePage() {
       };
     }
 
-    const required = inferPriorAuthRequired(appt.appointmentTypeName);
+    const explicitPriorAuthRequired = (
+      appt as Appointment & {
+        priorAuthRequired?: boolean;
+        prior_auth_required?: boolean;
+      }
+    ).priorAuthRequired ?? (
+      appt as Appointment & {
+        prior_auth_required?: boolean;
+      }
+    ).prior_auth_required;
+    const required = typeof explicitPriorAuthRequired === 'boolean'
+      ? explicitPriorAuthRequired
+      : inferPriorAuthRequired(appt.appointmentTypeName);
     const patientSnapshot = priorAuthByPatientId[appt.patientId];
 
     if (!required) {
@@ -1530,6 +1542,7 @@ export function SchedulePage() {
     const params = new URLSearchParams({
       appointmentId: copayCheckInAppointment.id,
       kioskCode: kioskContext.kioskCode,
+      locationId: kioskContext.locationId || copayCheckInAppointment.locationId || '',
       patientId: copayCheckInAppointment.patientId,
       patientName: copayCheckInAppointment.patientName || '',
       tenantId: kioskContext.tenantId,

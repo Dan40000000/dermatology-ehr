@@ -899,6 +899,33 @@ describe('SchedulePage', () => {
     openSpy.mockRestore();
   });
 
+  it('does not infer prior auth when the appointment type explicitly does not require it', async () => {
+    const fixtures = buildFixtures();
+    fixtures.appointments = [
+      {
+        ...fixtures.appointments[0],
+        appointmentTypeName: 'Laser Hair Removal',
+        priorAuthRequired: false,
+      },
+    ];
+    apiMocks.fetchAppointments.mockResolvedValueOnce({ appointments: fixtures.appointments });
+
+    render(<SchedulePage />);
+    await screen.findByTestId('calendar');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
+    const actionBar = document.querySelector('.ema-action-bar');
+    if (!actionBar) {
+      throw new Error('Action bar not found');
+    }
+
+    fireEvent.click(within(actionBar).getByRole('button', { name: /Check In/ }));
+
+    expect(await screen.findByText(/Prior authorization:/)).toBeInTheDocument();
+    expect(screen.getByText('Not required for this visit type')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy Patient Check-In Link' })).not.toBeInTheDocument();
+  });
+
 it('confirms no-show for overdue appointments and posts a no-show fee', async () => {
   const overdueStart = new Date(Date.now() - 2 * 60 * 60 * 1000);
   const overdueEnd = new Date(overdueStart.getTime() + 30 * 60000);

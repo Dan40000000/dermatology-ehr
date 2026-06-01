@@ -21,6 +21,7 @@ export interface AppointmentWithDetails {
   locationName: string;
   appointmentTypeId: string;
   appointmentTypeName: string;
+  priorAuthRequired?: boolean;
   scheduledStart: string;
   scheduledEnd: string;
   status: string;
@@ -271,6 +272,7 @@ export class FrontDeskService {
           l.name as location_name,
           a.appointment_type_id,
           at.name as appointment_type_name,
+          COALESCE(at.prior_auth_required, false) as prior_auth_required,
           a.scheduled_start,
           a.scheduled_end,
           a.status,
@@ -374,6 +376,7 @@ export class FrontDeskService {
           locationName: row.location_name,
           appointmentTypeId: row.appointment_type_id,
           appointmentTypeName: row.appointment_type_name,
+          priorAuthRequired: row.prior_auth_required === true,
           scheduledStart: row.scheduled_start,
           scheduledEnd: row.scheduled_end,
           status: row.status,

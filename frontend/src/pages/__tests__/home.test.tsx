@@ -523,7 +523,7 @@ describe('HomePage', () => {
 
     expect(within(riskPanel).getByText('Waiting 30+ min')).toBeInTheDocument();
     expect(within(riskPanel).getByText('Claim exceptions')).toBeInTheDocument();
-    expect(within(revenuePanel).getByText('Collected so far')).toBeInTheDocument();
+    expect(within(revenuePanel).getByText('Payments posted')).toBeInTheDocument();
     expect(within(frontDeskPanel).getByText('Forms incomplete')).toBeInTheDocument();
     expect(within(providerPanel).getByText('Dr. Test Provider')).toBeInTheDocument();
     expect(within(readinessPanel).getByText('Safety closeout')).toBeInTheDocument();
@@ -535,7 +535,7 @@ describe('HomePage', () => {
     fireEvent.click(within(riskPanel).getByRole('button', { name: /Claim exceptions/i }));
     expect(navigateMock).toHaveBeenLastCalledWith('/claims?queue=exceptions');
 
-    fireEvent.click(within(revenuePanel).getByRole('button', { name: /Collected so far/i }));
+    fireEvent.click(within(revenuePanel).getByRole('button', { name: /Payments posted/i }));
     expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/financials\?tab=payments&startDate=\d{4}-\d{2}-\d{2}&endDate=\d{4}-\d{2}-\d{2}$/));
 
     fireEvent.click(within(frontDeskPanel).getByRole('button', { name: /Forms incomplete/i }));

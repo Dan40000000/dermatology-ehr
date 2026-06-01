@@ -310,9 +310,35 @@ describe("Kiosk Routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.appointments).toHaveLength(1);
       expect(queryMock).toHaveBeenCalledWith(
-        expect.stringContaining("DATE(a.scheduled_start) = CURRENT_DATE"),
-        ["tenant-1", "location-1"]
+        expect.stringContaining("a.scheduled_start >= $3::timestamptz"),
+        ["tenant-1", "location-1", expect.any(String), expect.any(String)]
       );
+    });
+
+    it("should narrow kiosk launch to the selected patient appointment", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            id: appointmentId,
+            scheduledStart: "2026-06-01T10:00:00Z",
+            patientId,
+            patientFirstName: "Benjamin",
+            patientLastName: "Ramirez",
+          },
+        ],
+      });
+
+      const res = await request(app)
+        .get("/api/kiosk/today-appointments")
+        .query({ patientId, appointmentId });
+
+      expect(res.status).toBe(200);
+      expect(res.body.appointments).toHaveLength(1);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("AND a.patient_id = $5"),
+        ["tenant-1", "location-1", expect.any(String), expect.any(String), patientId, appointmentId],
+      );
+      expect(String(queryMock.mock.calls[0]?.[0] || "")).toContain("AND a.id = $6");
     });
 
     it("should return 500 on database error", async () => {

@@ -71,6 +71,7 @@ describe("frontDeskService", () => {
           location_name: "Main",
           appointment_type_id: "type-1",
           appointment_type_name: "Consult",
+          prior_auth_required: true,
           scheduled_start: "2025-01-01T12:30:00Z",
           scheduled_end: "2025-01-01T12:45:00Z",
           status: "checked_in",
@@ -95,8 +96,9 @@ describe("frontDeskService", () => {
 
     expect(result[0].waitTimeMinutes).toBe(30);
     expect(result[0].copayAmount).toBe(25);
+    expect(result[0].priorAuthRequired).toBe(true);
     expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining("a.scheduled_start >= $2::timestamptz"),
+      expect.stringContaining("COALESCE(at.prior_auth_required, false) as prior_auth_required"),
       ["tenant-1", "2025-01-01T07:00:00.000Z", "2025-01-02T07:00:00.000Z", "prov-1", "checked_in"]
     );
     jest.useRealTimers();

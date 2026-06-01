@@ -8,6 +8,7 @@ import { KioskRequest, requireKioskAuth } from "../middleware/kioskAuth";
 import { saveSignature, saveInsuranceCardPhoto, savePatientProfilePhoto, validateSignatureData } from "../services/signatureService";
 import { auditLog } from "../services/audit";
 import { logger } from "../lib/logger";
+import { getDateKeyInTimeZone, getPracticeTimeZone, getUtcRangeForPracticeDate } from "../lib/practiceTimeZone";
 
 export const kioskRouter = Router();
 
@@ -274,10 +275,22 @@ kioskRouter.post("/verify-patient", requireKioskAuth, async (req: KioskRequest, 
 kioskRouter.get("/today-appointments", requireKioskAuth, async (req: KioskRequest, res) => {
   const tenantId = req.kiosk!.tenantId;
   const locationId = req.kiosk!.locationId;
+  const appointmentId =
+    typeof req.query.appointmentId === "string" && req.query.appointmentId.trim()
+      ? req.query.appointmentId.trim()
+      : null;
+  const patientId =
+    typeof req.query.patientId === "string" && req.query.patientId.trim()
+      ? req.query.patientId.trim()
+      : null;
+  const timeZone = getPracticeTimeZone();
+  const todayKey = getDateKeyInTimeZone(new Date(), timeZone);
+  const { start, end } = getUtcRangeForPracticeDate(todayKey, timeZone);
 
   try {
-    const result = await pool.query(
-      `SELECT a.id,
+    const params: any[] = [tenantId, locationId, start.toISOString(), end.toISOString()];
+    let query = `
+      SELECT a.id,
               a.scheduled_start as "scheduledStart",
               a.scheduled_end as "scheduledEnd",
               a.status,
@@ -292,10 +305,26 @@ kioskRouter.get("/today-appointments", requireKioskAuth, async (req: KioskReques
        JOIN appointment_types at ON a.appointment_type_id = at.id
        WHERE a.tenant_id = $1
          AND a.location_id = $2
-         AND DATE(a.scheduled_start) = CURRENT_DATE
+         AND a.scheduled_start >= $3::timestamptz
+         AND a.scheduled_start < $4::timestamptz
          AND a.status IN ('scheduled', 'confirmed')
-       ORDER BY a.scheduled_start`,
-      [tenantId, locationId]
+    `;
+
+    if (patientId) {
+      params.push(patientId);
+      query += `\n         AND a.patient_id = $${params.length}`;
+    }
+
+    if (appointmentId) {
+      params.push(appointmentId);
+      query += `\n         AND a.id = $${params.length}`;
+    }
+
+    query += `\n       ORDER BY a.scheduled_start`;
+
+    const result = await pool.query(
+      query,
+      params
     );
 
     return res.json({ appointments: result.rows });

@@ -300,6 +300,7 @@ appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
             pr.full_name as "providerName",
             l.name as "locationName",
             at.name as "appointmentTypeName",
+            COALESCE(at.prior_auth_required, false) as "priorAuthRequired",
             at.duration_minutes as "durationMinutes",
             a.appointment_type_id as "appointmentTypeId"
      from appointments a

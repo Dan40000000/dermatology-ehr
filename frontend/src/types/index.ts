@@ -374,6 +374,7 @@ export interface AppointmentType {
   color?: string;
   category?: string;
   description?: string;
+  priorAuthRequired?: boolean;
   isActive?: boolean;
   createdAt: string;
 }
@@ -389,6 +390,7 @@ export interface Appointment {
   locationName?: string;
   appointmentTypeId: string;
   appointmentTypeName?: string;
+  priorAuthRequired?: boolean;
   scheduledStart: string;
   scheduledEnd: string;
   status: 'scheduled' | 'checked_in' | 'in_room' | 'with_provider' | 'checkout' | 'completed' | 'cancelled' | 'no_show';

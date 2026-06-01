@@ -1639,6 +1639,13 @@ claimsRouter.post("/:id/payments", requireAuth, requireRoles(["admin", "billing"
     return res.status(404).json({ error: "Claim not found" });
   }
 
+  const currentStatus = String(existing.rows[0].status || "");
+  if (!["accepted", "partially_paid"].includes(currentStatus)) {
+    return res.status(409).json({
+      error: "Post payer payment after the payer has accepted or adjudicated the claim.",
+    });
+  }
+
   const paymentId = crypto.randomUUID();
 
   await pool.query(

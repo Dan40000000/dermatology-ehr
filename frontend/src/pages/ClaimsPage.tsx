@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -114,6 +114,8 @@ interface ReleaseIssue {
   claimId: string;
   claimNumber: string;
   patientName: string;
+  actionLabel?: string;
+  fixHeading?: string;
   message: string;
   scrubStatus?: string;
   errors: ReleaseRuleMessage[];
@@ -510,17 +512,40 @@ function isClaimException(claim: ClaimRecord): boolean {
 }
 
 function isPaymentQueueClaim(claim: ClaimRecord): boolean {
-  return claim.balanceCents > 0 && ['accepted', 'submitted', 'partially_paid'].includes(claim.status);
+  return canPostPayerPayment(claim.status, claim.balanceCents);
+}
+
+function canPostPayerPayment(status: unknown, balanceCents: number): boolean {
+  const normalized = normalizeStatus(status);
+  return balanceCents > 0 && ['accepted', 'partially_paid'].includes(normalized);
+}
+
+function getClaimStatusActionLabel(status: ClaimStatus, currentStatus: ClaimUiStatus): string {
+  if (status === 'submitted') {
+    return currentStatus === 'ready' ? 'Submit to Insurance' : 'Submitted';
+  }
+  if (status === 'accepted') return 'Mark Payer Accepted';
+  if (status === 'rejected') return 'Mark Rejected';
+  if (status === 'ready') return 'Ready';
+  return toStatusLabel(normalizeStatus(status));
+}
+
+function getClaimStatusSuccessMessage(status: ClaimStatus): string {
+  if (status === 'submitted') return 'Claim submitted to insurance';
+  if (status === 'accepted') return 'Claim marked accepted by payer';
+  if (status === 'rejected') return 'Claim marked rejected';
+  if (status === 'ready') return 'Claim marked ready';
+  return `Claim status updated to ${toStatusLabel(normalizeStatus(status))}`;
 }
 
 function getNextAction(claim: ClaimRecord): string {
   switch (claimQueue(claim)) {
     case 'ready':
-      return 'Run scrubber and submit';
+      return 'Submit to insurance';
     case 'coding_review':
       return 'Validate coding and release';
     case 'pending':
-      return 'Monitor 277/ERA response';
+      return 'Await payer response';
     case 'denials':
       return 'Correct and resubmit';
     case 'payment':
@@ -912,6 +937,7 @@ function buildDemoClaimDetail(claim: ClaimRecord): ClaimWithDetails {
 export function ClaimsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
   const { claimId: routeClaimId } = useParams<{ claimId?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const startDateParam = searchParams.get('startDate') || undefined;
@@ -925,6 +951,7 @@ export function ClaimsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClaim, setSelectedClaim] = useState<ClaimWithDetails | null>(null);
   const [showClaimDetail, setShowClaimDetail] = useState(false);
+  const [dismissedClaimDetailId, setDismissedClaimDetailId] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [usingDemoData, setUsingDemoData] = useState(false);
   const [forceDemoData, setForceDemoData] = useState(false);
@@ -999,6 +1026,24 @@ export function ClaimsPage() {
     },
     [searchParams, setSearchParams]
   );
+
+  const closeClaimDetail = useCallback((options?: { clearSelectedClaim?: boolean }) => {
+    setDismissedClaimDetailId(selectedClaim?.claim.id || routeClaimId || searchParams.get('claimId'));
+    setShowClaimDetail(false);
+    if (options?.clearSelectedClaim !== false) {
+      setSelectedClaim(null);
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('claimId');
+    const nextSearch = next.toString();
+
+    if (routeClaimId) {
+      navigate(`/claims${nextSearch ? `?${nextSearch}` : ''}`, { replace: true });
+    } else if (searchParams.has('claimId')) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [navigate, routeClaimId, searchParams, selectedClaim?.claim.id, setSearchParams]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -1149,7 +1194,12 @@ export function ClaimsPage() {
 
   useEffect(() => {
     const targetClaimId = routeClaimId || searchParams.get('claimId');
-    if (!targetClaimId || loading || claims.length === 0) return;
+    if (!targetClaimId) {
+      if (dismissedClaimDetailId) setDismissedClaimDetailId(null);
+      return;
+    }
+    if (loading || claims.length === 0) return;
+    if (dismissedClaimDetailId === targetClaimId) return;
     if (showClaimDetail && selectedClaim?.claim.id === targetClaimId) return;
 
     const claim = claims.find((entry) => entry.id === targetClaimId);
@@ -1158,7 +1208,7 @@ export function ClaimsPage() {
     }
     // loadClaimDetail intentionally omitted to avoid reopening the modal whenever its cache changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [claims, loading, routeClaimId, searchParams, selectedClaim?.claim.id, showClaimDetail]);
+  }, [claims, dismissedClaimDetailId, loading, routeClaimId, searchParams, selectedClaim?.claim.id, showClaimDetail]);
 
   const handleUpdateStatus = async (claimId: string, status: ClaimStatus, notes?: string) => {
     if (!session) return;
@@ -1196,13 +1246,13 @@ export function ClaimsPage() {
         return { ...prev, [claimId]: next };
       });
 
-      showSuccess(`Claim status updated to ${status}`);
+      showSuccess(getClaimStatusSuccessMessage(status));
       return;
     }
 
     try {
       await updateClaimStatus(session.tenantId, session.accessToken, claimId, { status, notes });
-      showSuccess(`Claim status updated to ${status}`);
+      showSuccess(getClaimStatusSuccessMessage(status));
       await loadData();
 
       if (selectedClaim?.claim.id === claimId) {
@@ -1212,7 +1262,21 @@ export function ClaimsPage() {
         }
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to update claim status';
+      const statusError = err as Error & { details?: { error?: string; scrubStatus?: string; errors?: ReleaseRuleMessage[]; warnings?: ReleaseRuleMessage[] } };
+      const message = statusError instanceof Error ? statusError.message : 'Failed to update claim status';
+      if (status === 'submitted' && (statusError.details?.errors?.length || statusError.details?.warnings?.length)) {
+        setReleaseIssue({
+          claimId: claim.id,
+          claimNumber: claim.claimNumber,
+          patientName: claim.patientName,
+          actionLabel: 'Submission',
+          fixHeading: 'Must Fix Before Submission',
+          message,
+          scrubStatus: statusError.details?.scrubStatus || claim.scrubStatus,
+          errors: statusError.details?.errors || [],
+          warnings: statusError.details?.warnings || [],
+        });
+      }
       showError(message);
     }
   };
@@ -1264,14 +1328,14 @@ export function ClaimsPage() {
         return { ...prev, [claimId]: next };
       });
 
-      showSuccess('Claim released for submission');
+      showSuccess('Claim released to ready queue for insurance submission');
       setReleaseInFlightId(null);
       return;
     }
 
     try {
       await releaseClaimFromCodingReview(session.tenantId, session.accessToken, claimId, { notes });
-      showSuccess('Claim released for submission');
+      showSuccess('Claim released to ready queue for insurance submission');
       await loadData();
 
       if (selectedClaim?.claim.id === claimId) {
@@ -1287,6 +1351,8 @@ export function ClaimsPage() {
         claimId: claim.id,
         claimNumber: claim.claimNumber,
         patientName: claim.patientName,
+        actionLabel: 'Release',
+        fixHeading: 'Must Fix Before Release',
         message,
         scrubStatus: releaseError.details?.scrubStatus || claim.scrubStatus,
         errors: releaseError.details?.errors || [],
@@ -1309,6 +1375,13 @@ export function ClaimsPage() {
 
     const claimId = selectedClaim.claim.id;
     const amountCents = Math.round(amount * 100);
+    const paidCents = selectedClaim.payments.reduce((sum, payment) => sum + payment.amountCents, 0);
+    const balanceCents = Math.max(0, (selectedClaim.claim.totalCents || 0) - paidCents);
+
+    if (!canPostPayerPayment(selectedClaim.claim.status, balanceCents)) {
+      showError('Post payer payment after the payer has accepted or adjudicated the claim.');
+      return;
+    }
 
     if (claimId.startsWith('demo-') || usingDemoData) {
       const paymentRow = {
@@ -1346,7 +1419,7 @@ export function ClaimsPage() {
         status: nextStatus,
       });
 
-      showSuccess('Payment posted successfully');
+      showSuccess('Payer payment posted successfully');
       setShowPaymentModal(false);
       resetPaymentForm();
       return;
@@ -1362,7 +1435,7 @@ export function ClaimsPage() {
         notes: paymentNotes || undefined,
       });
 
-      showSuccess('Payment posted successfully');
+      showSuccess('Payer payment posted successfully');
       setShowPaymentModal(false);
       resetPaymentForm();
       await loadData();
@@ -1560,6 +1633,13 @@ export function ClaimsPage() {
   const claimsWithEligibility = claims.filter((claim) => claim.eligibilityVerifiedAt).length;
   const claimsWithEligibilityIssues = claims.filter((claim) => claim.eligibilityHasIssues).length;
   const stediBackedClaims = claims.filter((claim) => String(claim.eligibilitySource || '').includes('stedi')).length;
+  const selectedClaimPaidCents = selectedClaim?.payments.reduce((sum, payment) => sum + payment.amountCents, 0) ?? 0;
+  const selectedClaimBalanceCents = selectedClaim
+    ? Math.max(0, (selectedClaim.claim.totalCents || 0) - selectedClaimPaidCents)
+    : 0;
+  const selectedClaimCanPostPayerPayment = selectedClaim
+    ? canPostPayerPayment(selectedClaim.claim.status, selectedClaimBalanceCents)
+    : false;
 
   if (loading) {
     return (
@@ -2038,7 +2118,7 @@ export function ClaimsPage() {
                                   {releaseInFlightId === claim.id ? 'Checking...' : getReleaseButtonLabel(claim)}
                                 </button>
                               )}
-                              {claim.balanceCents > 0 && (
+                              {canPostPayerPayment(claim.status, claim.balanceCents) && (
                                 <button
                                   type="button"
                                   className="btn-sm btn-primary"
@@ -2049,7 +2129,7 @@ export function ClaimsPage() {
                                     }
                                   }}
                                 >
-                                  Post Payment
+                                  Post Payer Payment
                                 </button>
                               )}
                             </div>
@@ -2104,7 +2184,7 @@ export function ClaimsPage() {
                               }
                             }}
                           >
-                            Post
+                            Post Payer Payment
                           </button>
                         </td>
                       </tr>
@@ -2152,7 +2232,7 @@ export function ClaimsPage() {
 
       <Modal
         isOpen={releaseIssue !== null}
-        title={releaseIssue ? `Release Blocked: ${releaseIssue.claimNumber}` : 'Release Blocked'}
+        title={releaseIssue ? `${releaseIssue.actionLabel || 'Release'} Blocked: ${releaseIssue.claimNumber}` : 'Claim Blocked'}
         onClose={() => setReleaseIssue(null)}
         size="md"
       >
@@ -2165,7 +2245,7 @@ export function ClaimsPage() {
             </div>
             {releaseIssue.errors.length > 0 ? (
               <div>
-                <h3>Must Fix Before Release</h3>
+                <h3>{releaseIssue.fixHeading || 'Must Fix Before Release'}</h3>
                 <ul>
                   {releaseIssue.errors.map((item, index) => (
                     <li key={`${item.ruleCode || 'error'}-${index}`}>
@@ -2218,10 +2298,7 @@ export function ClaimsPage() {
       <Modal
         isOpen={showClaimDetail}
         title={selectedClaim ? `Claim ${selectedClaim.claim.claimNumber}` : 'Claim Detail'}
-        onClose={() => {
-          setShowClaimDetail(false);
-          setSelectedClaim(null);
-        }}
+        onClose={closeClaimDetail}
         size="lg"
       >
         {selectedClaim && (
@@ -2287,21 +2364,26 @@ export function ClaimsPage() {
                   {(['ready', 'submitted', 'accepted', 'rejected'] as ClaimStatus[])
                     .filter((status) => {
                       const current = normalizeStatus(selectedClaim.claim.status);
-                      if ((current === 'coding_review' || current === 'draft') && status === 'ready') return false;
-                      if (status === 'submitted' && current !== 'ready' && current !== 'submitted') return false;
-                      return true;
+                      if (status === 'ready') return current === 'ready';
+                      if (status === 'submitted') return current === 'ready' || current === 'submitted';
+                      if (status === 'accepted') return current === 'submitted' || current === 'accepted';
+                      if (status === 'rejected') return current === 'submitted' || current === 'accepted' || current === 'rejected';
+                      return false;
                     })
-                    .map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      className={`btn-sm ${selectedClaim.claim.status === status ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => void handleUpdateStatus(selectedClaim.claim.id, status)}
-                      disabled={selectedClaim.claim.status === status}
-                    >
-                      {status}
-                    </button>
-                  ))}
+                    .map((status) => {
+                      const current = normalizeStatus(selectedClaim.claim.status);
+                      return (
+                        <button
+                          key={status}
+                          type="button"
+                          className={`btn-sm ${selectedClaim.claim.status === status ? 'btn-primary' : 'btn-secondary'}`}
+                          onClick={() => void handleUpdateStatus(selectedClaim.claim.id, status)}
+                          disabled={selectedClaim.claim.status === status}
+                        >
+                          {getClaimStatusActionLabel(status, current)}
+                        </button>
+                      );
+                    })}
                 </div>
               </div>
             </div>
@@ -2394,7 +2476,7 @@ export function ClaimsPage() {
                 </tbody>
               </table>
               <div className="claims-total-paid">
-                Total Paid: {formatCurrency(selectedClaim.payments.reduce((sum, payment) => sum + payment.amountCents, 0))}
+                Total Paid: {formatCurrency(selectedClaimPaidCents)}
               </div>
             </div>
 
@@ -2414,19 +2496,19 @@ export function ClaimsPage() {
         )}
 
         <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowClaimDetail(false)}>
+          <button type="button" className="btn-secondary" onClick={() => closeClaimDetail()}>
             Close
           </button>
-          {selectedClaim && (selectedClaim.claim.totalCents || 0) > selectedClaim.payments.reduce((sum, payment) => sum + payment.amountCents, 0) && (
+          {selectedClaim && selectedClaimCanPostPayerPayment && (
             <button
               type="button"
               className="btn-primary"
               onClick={() => {
-                setShowClaimDetail(false);
+                closeClaimDetail({ clearSelectedClaim: false });
                 setShowPaymentModal(true);
               }}
             >
-              Post Payment
+              Post Payer Payment
             </button>
           )}
         </div>
@@ -2434,7 +2516,7 @@ export function ClaimsPage() {
 
       <Modal
         isOpen={showPaymentModal}
-        title="Post Payment"
+        title="Post Payer Payment"
         onClose={() => {
           setShowPaymentModal(false);
           resetPaymentForm();
@@ -2461,19 +2543,22 @@ export function ClaimsPage() {
               </div>
               <div className="info-row">
                 <span className="label">Total Paid:</span>
-                <span className="value">{formatCurrency(selectedClaim.payments.reduce((sum, payment) => sum + payment.amountCents, 0))}</span>
+                <span className="value">{formatCurrency(selectedClaimPaidCents)}</span>
               </div>
               <div className="info-row">
                 <span className="label">Balance:</span>
                 <span className="value strong">
-                  {formatCurrency((selectedClaim.claim.totalCents || 0) - selectedClaim.payments.reduce((sum, payment) => sum + payment.amountCents, 0))}
+                  {formatCurrency(selectedClaimBalanceCents)}
                 </span>
+              </div>
+              <div className="claims-payment-guidance">
+                Payer payments are posted after ERA, EOB, EFT, or check response. Patient payments belong in checkout or patient balance collection.
               </div>
             </div>
 
             <div className="form-row">
               <div className="form-field">
-                <label>Payment Amount *</label>
+                <label>Payer Payment Amount *</label>
                 <input
                   type="number"
                   step="0.01"
@@ -2506,12 +2591,12 @@ export function ClaimsPage() {
               </div>
 
               <div className="form-field">
-                <label>Payer</label>
+                <label>Payer Name</label>
                 <input
                   type="text"
                   value={paymentPayer}
                   onChange={(event) => setPaymentPayer(event.target.value)}
-                  placeholder="Insurance company or patient name"
+                  placeholder="Insurance company"
                 />
               </div>
             </div>
@@ -2552,7 +2637,7 @@ export function ClaimsPage() {
             Cancel
           </button>
           <button type="button" className="btn-primary" onClick={() => void handlePostPayment()}>
-            Post Payment
+            Post Payer Payment
           </button>
         </div>
       </Modal>

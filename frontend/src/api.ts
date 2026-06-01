@@ -2620,7 +2620,12 @@ export async function updateClaimStatus(tenantId: string, accessToken: string, c
     },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to update claim status");
+  if (!res.ok) {
+    const details = await res.json().catch(() => ({}));
+    const error = new Error(details.error || "Failed to update claim status") as Error & { details?: any };
+    error.details = details;
+    throw error;
+  }
   return res.json();
 }
 

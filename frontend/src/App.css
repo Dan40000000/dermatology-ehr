@@ -8699,6 +8699,15 @@ pre {
   text-align: right;
 }
 
+.claims-page .claims-payment-guidance {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--gray-200);
+  color: var(--gray-600);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
 .claims-page .pill.gray {
   background: var(--gray-100);
   color: var(--gray-700);

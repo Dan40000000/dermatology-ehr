@@ -367,7 +367,7 @@ describe("Claims routes", () => {
 
   it("POST /claims/:id/payments posts payment", async () => {
     queryMock
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: "submitted" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: "accepted" }] })
       .mockResolvedValueOnce({ rows: [] }) // insert payment
       .mockResolvedValueOnce({ rows: [{ totalPaid: 1000 }] })
       .mockResolvedValueOnce({ rows: [{ totalCents: 1000 }] })
@@ -382,6 +382,19 @@ describe("Claims routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /claims/:id/payments blocks payment before payer acceptance", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: "submitted" }] });
+
+    const res = await request(app).post("/claims/claim-1/payments").send({
+      amountCents: 1000,
+      paymentDate: "2025-01-01",
+      paymentMethod: "check",
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("payer has accepted");
   });
 
   it("GET /claims/diagnosis-codes applies filters", async () => {

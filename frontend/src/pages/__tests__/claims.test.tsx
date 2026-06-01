@@ -83,7 +83,7 @@ const buildFixtures = () => {
       patientId: 'patient-1',
       claimNumber: 'CLM-001',
       totalCents: 20000,
-      status: 'submitted',
+      status: 'accepted',
       payer: 'Aetna',
       providerName: 'Dr Demo',
       serviceDate: '2026-05-28T00:00:00.000Z',
@@ -136,7 +136,7 @@ const buildFixtures = () => {
         id: 'hist-1',
         tenantId: 'tenant-1',
         claimId: 'claim-1',
-        status: 'submitted',
+        status: 'accepted',
         changedAt: '2024-03-01T00:00:00Z',
       },
     ],
@@ -191,9 +191,9 @@ describe('ClaimsPage', () => {
     expect(apiMocks.fetchClaims).toHaveBeenCalledWith('tenant-1', 'token-1', {});
     expect(screen.getByText('Total Claims')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'submitted' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'accepted' } });
     await waitFor(() =>
-      expect(apiMocks.fetchClaims).toHaveBeenCalledWith('tenant-1', 'token-1', { status: 'submitted' }),
+      expect(apiMocks.fetchClaims).toHaveBeenCalledWith('tenant-1', 'token-1', { status: 'accepted' }),
     );
 
     fireEvent.change(screen.getByPlaceholderText('Search by claim #, patient, or provider...'), { target: { value: 'Ana' } });
@@ -205,18 +205,18 @@ describe('ClaimsPage', () => {
     await waitFor(() => expect(apiMocks.fetchClaimDetail).toHaveBeenCalledWith('tenant-1', 'token-1', 'claim-1'));
     expect(screen.getByText('Claim Information')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'accepted' }));
-    await waitFor(() => expect(apiMocks.updateClaimStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'claim-1', { status: 'accepted', notes: undefined }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Claim status updated to accepted');
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Rejected' }));
+    await waitFor(() => expect(apiMocks.updateClaimStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'claim-1', { status: 'rejected', notes: undefined }));
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Claim marked rejected');
 
-    fireEvent.click(within(claimRow).getByRole('button', { name: 'Post Payment' }));
+    fireEvent.click(within(claimRow).getByRole('button', { name: 'Post Payer Payment' }));
 
-    const paymentModal = await screen.findByTestId('modal-post-payment');
+    const paymentModal = await screen.findByTestId('modal-post-payer-payment');
     const modalScope = within(paymentModal);
     const amountInput = modalScope.getByPlaceholderText('0.00');
     fireEvent.change(amountInput, { target: { value: '100.50' } });
 
-    fireEvent.click(modalScope.getByRole('button', { name: 'Post Payment' }));
+    fireEvent.click(modalScope.getByRole('button', { name: 'Post Payer Payment' }));
 
     const today = new Date().toISOString().split('T')[0];
     await waitFor(() =>
@@ -229,7 +229,7 @@ describe('ClaimsPage', () => {
         notes: undefined,
       }),
     );
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Payment posted successfully');
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Payer payment posted successfully');
   });
 
   it('validates payment amounts', async () => {
@@ -241,15 +241,50 @@ describe('ClaimsPage', () => {
     fireEvent.click(within(claimRow).getByRole('button', { name: 'View' }));
     await screen.findByText('Claim Information');
 
-    fireEvent.click(within(claimRow).getByRole('button', { name: 'Post Payment' }));
-    const paymentModal = await screen.findByTestId('modal-post-payment');
+    fireEvent.click(within(claimRow).getByRole('button', { name: 'Post Payer Payment' }));
+    const paymentModal = await screen.findByTestId('modal-post-payer-payment');
     const modalScope = within(paymentModal);
     const amountInput = modalScope.getByPlaceholderText('0.00');
     fireEvent.change(amountInput, { target: { value: '0' } });
-    fireEvent.click(modalScope.getByRole('button', { name: 'Post Payment' }));
+    fireEvent.click(modalScope.getByRole('button', { name: 'Post Payer Payment' }));
 
     expect(toastMocks.showError).toHaveBeenCalledWith('Invalid payment amount');
     expect(apiMocks.postClaimPayment).not.toHaveBeenCalled();
+  });
+
+  it('does not offer payer payment posting before payer acceptance', async () => {
+    const fixtures = buildFixtures();
+    const submittedClaims = fixtures.claims.map((claim) =>
+      claim.id === 'claim-1' ? { ...claim, status: 'submitted' } : claim,
+    );
+    apiMocks.fetchClaims.mockResolvedValueOnce({ claims: submittedClaims });
+    apiMocks.fetchClaimDetail.mockResolvedValueOnce({
+      ...fixtures.detail,
+      claim: { ...fixtures.detail.claim, status: 'submitted' },
+    });
+
+    renderClaimsPage();
+
+    await screen.findByText('Claims Management');
+
+    const claimRow = getClaimsTableRow('CLM-001');
+    expect(within(claimRow).queryByRole('button', { name: 'Post Payer Payment' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(claimRow).getByRole('button', { name: 'View' }));
+    await screen.findByText('Claim Information');
+
+    expect(screen.queryByRole('button', { name: 'Post Payer Payment' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Submitted' })).toBeDisabled();
+  });
+
+  it('closes claim detail deep links without reopening the modal', async () => {
+    renderClaimsPage('/claims?claimId=claim-1');
+
+    await screen.findByText('Claim Information');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    await waitFor(() => expect(screen.queryByText('Claim Information')).not.toBeInTheDocument());
   });
 
   it('opens the exceptions queue without forcing a same-day denied-only fetch', async () => {

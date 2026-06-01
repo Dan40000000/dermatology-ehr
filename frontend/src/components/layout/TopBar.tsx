@@ -400,6 +400,7 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
               placeholder="Patient Search..."
               selectClassName="ema-search-select"
               compact
+              hideSelect
               maxResults={6}
               showInitialResults={false}
             />

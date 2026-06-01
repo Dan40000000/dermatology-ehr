@@ -59,6 +59,7 @@ interface PatientLookupSelectProps {
   selectClassName?: string;
   style?: CSSProperties;
   compact?: boolean;
+  hideSelect?: boolean;
   onPatientSelect?: (patient: PatientLookupOption | null) => void;
 }
 
@@ -138,6 +139,7 @@ export function PatientLookupSelect({
   selectClassName = '',
   style,
   compact = false,
+  hideSelect = false,
   onPatientSelect,
 }: PatientLookupSelectProps) {
   const generatedId = useId();
@@ -225,7 +227,7 @@ export function PatientLookupSelect({
       style={style}
     >
       {label && (
-        <label className={`patient-lookup__label ${labelClassName}`.trim()} htmlFor={selectId}>
+        <label className={`patient-lookup__label ${labelClassName}`.trim()} htmlFor={hideSelect ? inputId : selectId}>
           {label}
           {required && <span className="patient-lookup__required"> *</span>}
         </label>
@@ -293,24 +295,26 @@ export function PatientLookupSelect({
         <div className="patient-lookup__empty">{emptyLabel}</div>
       )}
 
-      <select
-        id={selectId}
-        value={value}
-        onChange={(event) => handleChange(event.target.value)}
-        disabled={disabled || loading}
-        required={required}
-        className={`patient-lookup__select ${selectClassName}`.trim()}
-      >
-        {includeAllOption && <option value={allValue}>{allLabel}</option>}
-        {!includeAllOption && <option value="">{loading ? 'Loading patients...' : placeholder}</option>}
-        {visibleSelectOptions.map((patient) => (
-          <option key={patient.id} value={patient.id}>
-            {patient.name}
-            {patient.dateOfBirth ? ` - DOB ${formatDate(patient.dateOfBirth)}` : ''}
-            {patient.mrn ? ` - MRN ${patient.mrn}` : ''}
-          </option>
-        ))}
-      </select>
+      {!hideSelect && (
+        <select
+          id={selectId}
+          value={value}
+          onChange={(event) => handleChange(event.target.value)}
+          disabled={disabled || loading}
+          required={required}
+          className={`patient-lookup__select ${selectClassName}`.trim()}
+        >
+          {includeAllOption && <option value={allValue}>{allLabel}</option>}
+          {!includeAllOption && <option value="">{loading ? 'Loading patients...' : placeholder}</option>}
+          {visibleSelectOptions.map((patient) => (
+            <option key={patient.id} value={patient.id}>
+              {patient.name}
+              {patient.dateOfBirth ? ` - DOB ${formatDate(patient.dateOfBirth)}` : ''}
+              {patient.mrn ? ` - MRN ${patient.mrn}` : ''}
+            </option>
+          ))}
+        </select>
+      )}
 
       {helperText && <div className="patient-lookup__helper">{helperText}</div>}
     </div>

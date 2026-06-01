@@ -13742,6 +13742,37 @@ Consider age-appropriate treatments and include family counseling points.',
       ON openai_usage_audit(tenant_id, provider, created_at DESC);
     `,
   },
+  {
+    name: "199_claims_financials_runtime_compat",
+    sql: `
+    ALTER TABLE claims
+      ADD COLUMN IF NOT EXISTS total_charges NUMERIC(10,2),
+      ADD COLUMN IF NOT EXISTS service_date DATE,
+      ADD COLUMN IF NOT EXISTS payer_name TEXT,
+      ADD COLUMN IF NOT EXISTS denial_reason TEXT;
+
+    UPDATE claims
+    SET total_charges = ROUND((total_cents::numeric / 100), 2)
+    WHERE total_charges IS NULL
+      AND total_cents IS NOT NULL;
+
+    UPDATE claims
+    SET total_cents = ROUND(total_charges * 100)::int
+    WHERE total_cents IS NULL
+      AND total_charges IS NOT NULL;
+
+    UPDATE claims
+    SET service_date = COALESCE(submitted_at::date, created_at::date, CURRENT_DATE)
+    WHERE service_date IS NULL;
+
+    UPDATE claims
+    SET payer_name = COALESCE(NULLIF(payer_name, ''), NULLIF(payer, ''), NULLIF(payer_id, ''))
+    WHERE payer_name IS NULL OR payer_name = '';
+
+    CREATE INDEX IF NOT EXISTS idx_claims_tenant_service_date
+      ON claims(tenant_id, service_date DESC);
+    `,
+  },
 
 ];
 

@@ -176,9 +176,11 @@ describe("frontDeskService", () => {
     ]);
     expect(queryMock).toHaveBeenNthCalledWith(2, expect.any(String), [
       "tenant-1",
+      "2026-02-21",
       "2026-02-21T07:00:00.000Z",
       "2026-02-22T07:00:00.000Z",
     ]);
+    expect(queryMock.mock.calls[1][0]).toContain("FROM patient_payments");
     expect(queryMock).toHaveBeenNthCalledWith(3, expect.any(String), [
       "tenant-1",
       "2026-02-21T07:00:00.000Z",

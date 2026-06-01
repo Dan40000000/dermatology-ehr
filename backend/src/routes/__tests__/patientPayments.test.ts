@@ -148,6 +148,53 @@ describe("Patient payments routes", () => {
     );
   });
 
+  it("POST /patient-payments auto-applies appointment checkout payments to the visit bill", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ count: "3" }] }) // receipt count
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [
+          {
+            id: "bill-1",
+            patient_id: "patient-1",
+            patient_responsibility_cents: 7500,
+            paid_amount_cents: 0,
+            adjustment_amount_cents: 0,
+            balance_cents: 7500,
+          },
+        ],
+      }) // appointment bill lookup
+      .mockResolvedValueOnce({ rows: [] }) // insert payment
+      .mockResolvedValueOnce({ rows: [] }) // update bill
+      .mockResolvedValueOnce({
+        rows: [{ first_name: "Ada", last_name: "Lovelace", email: "ada@example.com" }],
+        rowCount: 1,
+      }) // patient contact
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/patient-payments").send({
+      patientId: "patient-1",
+      paymentDate: "2025-01-01",
+      amountCents: 7500,
+      paymentMethod: "cash",
+      referenceNumber: "apt-1",
+      notes: "Checkout payment for appointment apt-1",
+    });
+
+    expect(res.status).toBe(201);
+    const insertPaymentCall = client.query.mock.calls.find((call) =>
+      typeof call[0] === "string" && call[0].includes("insert into patient_payments")
+    );
+    expect(insertPaymentCall?.[1]).toEqual(expect.arrayContaining(["apt-1", "bill-1"]));
+    const billUpdateCall = client.query.mock.calls.find((call) =>
+      typeof call[0] === "string" && call[0].includes("update bills")
+    );
+    expect(billUpdateCall?.[1]).toEqual([7500, 0, "paid", "bill-1", "tenant-1"]);
+  });
+
   it("PUT /patient-payments/:id returns 404 when missing", async () => {
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
     const res = await request(app).put("/patient-payments/pay-1").send({ notes: "Updated" });

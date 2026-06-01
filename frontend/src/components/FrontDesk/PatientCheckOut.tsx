@@ -52,9 +52,8 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
     }
   };
 
-  // The current visit charge total is finalized from the encounter bill in Financials.
-  const todaysCharges = 0;
-  const patientResponsibility = appointment.copayAmount || 0;
+  const checkoutDue = Math.max(0, (appointment.paymentDueCents || 0) / 100);
+  const patientResponsibility = checkoutDue;
   const hasBalance = (appointment.outstandingBalance || 0) > 0;
 
   return (
@@ -130,12 +129,17 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
               </div>
               <div className="pt-2 border-t border-gray-200 flex justify-between">
                 <span className="font-semibold text-gray-900">
-                  Patient Responsibility (Est.)
+                  Due at Checkout
                 </span>
                 <span className="text-xl font-bold text-gray-900">
                   ${patientResponsibility.toFixed(2)}
                 </span>
               </div>
+              {patientResponsibility === 0 && (
+                <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">
+                  No patient payment is due at checkout.
+                </div>
+              )}
             </div>
           </div>
 
@@ -193,7 +197,7 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
                       onClick={() => setPaymentAmount(patientResponsibility)}
                       className="px-4 py-2 bg-green-100 text-green-700 rounded-md hover:bg-green-200 font-medium text-sm whitespace-nowrap"
                     >
-                      Use Today's Total
+                      Use Checkout Due
                     </button>
                   )}
                 </div>
@@ -209,9 +213,7 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
                       Remaining balance: $
                       {Math.max(
                         0,
-                        (appointment.outstandingBalance || 0) +
-                          patientResponsibility -
-                          paymentAmount
+                        patientResponsibility - paymentAmount
                       ).toFixed(2)}
                     </div>
                   )}

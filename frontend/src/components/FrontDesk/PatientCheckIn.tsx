@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import type { AppointmentWithDetails } from './TodaySchedulePanel';
 
@@ -25,6 +25,13 @@ export const PatientCheckIn: React.FC<PatientCheckInProps> = ({
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!appointment) return;
+    setDemographicsConfirmed(false);
+    setPaymentAmount(appointment.copayAmount || 0);
+    setNotes('');
+  }, [appointment?.id, appointment?.copayAmount]);
 
   if (!appointment) {
     return null;

@@ -283,9 +283,15 @@ export class FrontDeskService {
           -- Insurance info
           CASE
             WHEN (
+              COALESCE(NULLIF(to_jsonb(latest_iv)->>'verification_status', ''), '') IN ('active', 'Active', 'verified', 'Verified')
+              OR COALESCE(NULLIF(to_jsonb(latest_iv)->>'coverage_active', '')::boolean, false)
+              OR COALESCE(NULLIF(to_jsonb(p)->>'eligibility_status', ''), '') IN ('active', 'Active', 'verified', 'Verified')
+              OR
+            (
               to_jsonb(p)->'insurance_details' IS NOT NULL
               AND (to_jsonb(p)->'insurance_details'->>'primary' IS NOT NULL)
               AND (to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus' = 'Active')
+            )
             )
               OR COALESCE(
                 NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
@@ -295,15 +301,18 @@ export class FrontDeskService {
             ELSE false
           END as insurance_verified,
           COALESCE(
+            NULLIF(to_jsonb(latest_iv)->>'plan_name', ''),
             NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
             NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
             NULLIF(to_jsonb(p)->>'insurance', '')
           ) as insurance_plan_name,
-          CASE
-            WHEN NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '') IS NOT NULL
-            THEN (to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount')::numeric
-            ELSE 0
-          END as copay_amount,
+          COALESCE(
+            NULLIF(to_jsonb(latest_iv)->>'copay_specialist_cents', '')::numeric / 100.0,
+            NULLIF(to_jsonb(latest_iv)->>'copay_amount_cents', '')::numeric / 100.0,
+            NULLIF(to_jsonb(p)->>'copay_amount_cents', '')::numeric / 100.0,
+            NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '')::numeric,
+            0
+          ) as copay_amount,
           -- Outstanding balance (placeholder - would come from billing system)
           COALESCE(
             (SELECT SUM(
@@ -321,12 +330,39 @@ export class FrontDeskService {
           ) as outstanding_balance,
           COALESCE(
             (
-              SELECT SUM(c.amount_cents)
+              SELECT CASE
+                WHEN COUNT(b.id) > 0 THEN COALESCE(SUM(COALESCE(b.balance_cents, 0)), 0)
+                ELSE NULL
+              END
+              FROM encounters e
+              INNER JOIN bills b ON b.encounter_id = e.id AND b.tenant_id = e.tenant_id
+              WHERE e.tenant_id = a.tenant_id
+                AND e.appointment_id = a.id
+                AND b.status NOT IN ('paid', 'written_off', 'cancelled')
+            ),
+            (
+              SELECT GREATEST(
+                COALESCE(SUM(COALESCE(c.amount_cents, c.fee_cents * COALESCE(c.quantity, 1), 0)), 0)
+                - COALESCE((
+                    SELECT SUM(pp.amount_cents)
+                    FROM patient_payments pp
+                    WHERE pp.tenant_id = a.tenant_id
+                      AND COALESCE(NULLIF(to_jsonb(pp)->>'reference_number', ''), '') = a.id
+                      AND pp.status = 'posted'
+                      AND NULLIF(to_jsonb(pp)->>'applied_to_invoice_id', '') IS NULL
+                      AND NULLIF(to_jsonb(pp)->>'applied_to_claim_id', '') IS NULL
+                      AND COALESCE(pp.notes, '') ILIKE '%checkout%'
+                  ), 0),
+                0
+              )
               FROM encounters e
               INNER JOIN charges c ON c.encounter_id = e.id AND c.tenant_id = e.tenant_id
               WHERE e.tenant_id = a.tenant_id
                 AND e.appointment_id = a.id
-                AND c.status = 'self_pay'
+                AND (
+                  c.status = 'self_pay'
+                  OR COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), '') = 'self_pay'
+                )
             ),
             0
           ) as payment_due_cents
@@ -335,6 +371,20 @@ export class FrontDeskService {
         INNER JOIN providers prov ON a.provider_id = prov.id
         INNER JOIN locations l ON a.location_id = l.id
         INNER JOIN appointment_types at ON a.appointment_type_id = at.id
+        LEFT JOIN LATERAL (
+          SELECT iv.*
+          FROM insurance_verifications iv
+          WHERE iv.tenant_id = a.tenant_id
+            AND iv.patient_id = p.id
+          ORDER BY
+            CASE
+              WHEN iv.appointment_id = a.id THEN 0
+              WHEN iv.id::text = NULLIF(to_jsonb(p)->>'latest_verification_id', '') THEN 1
+              ELSE 2
+            END,
+            iv.verified_at DESC
+          LIMIT 1
+        ) latest_iv ON true
         WHERE a.tenant_id = $1
           AND a.scheduled_start >= $2::timestamptz
           AND a.scheduled_start < $3::timestamptz
@@ -431,16 +481,19 @@ export class FrontDeskService {
         [tenantId, dayWindow.startIso, dayWindow.endIso]
       );
 
-      // Get today's collections (from payments or charges marked as paid)
+      // Get today's patient collections. Copays, checkout payments, and past-balance payments all post here.
       const collectionsResult = await pool.query(
         `
         SELECT COALESCE(SUM(amount_cents) / 100.0, 0) as collections_today
-        FROM payments
+        FROM patient_payments
         WHERE tenant_id = $1
-          AND created_at >= $2::timestamptz
-          AND created_at < $3::timestamptz
+          AND status = 'posted'
+          AND (
+            payment_date = $2::date
+            OR (created_at >= $3::timestamptz AND created_at < $4::timestamptz)
+          )
         `,
-        [tenantId, dayWindow.startIso, dayWindow.endIso]
+        [tenantId, dayWindow.dateKey, dayWindow.startIso, dayWindow.endIso]
       );
 
       // Calculate open slots (simplified - assumes 15-min slots, 8am-5pm)
@@ -583,9 +636,20 @@ export class FrontDeskService {
            at.name as appointment_type_name,
            COALESCE(at.prior_auth_required, false) as prior_auth_required,
            latest_pa.status as latest_prior_auth_status,
-           NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '') as insurance_copay_amount,
-           NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus', '') as insurance_eligibility_status,
            COALESCE(
+             NULLIF(to_jsonb(latest_iv)->>'copay_specialist_cents', '')::numeric / 100.0,
+             NULLIF(to_jsonb(latest_iv)->>'copay_amount_cents', '')::numeric / 100.0,
+             NULLIF(to_jsonb(p)->>'copay_amount_cents', '')::numeric / 100.0,
+             NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '')::numeric
+           ) as insurance_copay_amount,
+           COALESCE(
+             NULLIF(to_jsonb(latest_iv)->>'verification_status', ''),
+             NULLIF(to_jsonb(p)->>'eligibility_status', ''),
+             NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus', '')
+           ) as insurance_eligibility_status,
+           COALESCE(
+             NULLIF(to_jsonb(latest_iv)->>'verified_at', ''),
+             NULLIF(to_jsonb(p)->>'eligibility_checked_at', ''),
              NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'verifiedAt', ''),
              NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityCheckedAt', ''),
              NULLIF(to_jsonb(p)->>'eligibility_checked_at', '')
@@ -593,6 +657,20 @@ export class FrontDeskService {
          FROM appointments a
          INNER JOIN patients p ON p.id = a.patient_id
          INNER JOIN appointment_types at ON at.id = a.appointment_type_id
+         LEFT JOIN LATERAL (
+           SELECT iv.*
+           FROM insurance_verifications iv
+           WHERE iv.tenant_id = a.tenant_id
+             AND iv.patient_id = p.id
+           ORDER BY
+             CASE
+               WHEN iv.appointment_id = a.id THEN 0
+               WHEN iv.id::text = NULLIF(to_jsonb(p)->>'latest_verification_id', '') THEN 1
+               ELSE 2
+             END,
+             iv.verified_at DESC
+           LIMIT 1
+         ) latest_iv ON true
          LEFT JOIN LATERAL (
            SELECT pa.status
            FROM prior_authorizations pa

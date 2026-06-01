@@ -21,6 +21,7 @@ export interface AppointmentWithDetails {
   insurancePlanName?: string;
   copayAmount?: number;
   outstandingBalance?: number;
+  paymentDueCents?: number;
   accessibilityProfile?: Record<string, unknown>;
 }
 

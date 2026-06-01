@@ -27,15 +27,29 @@ export async function getAppointmentCheckoutBalanceCents(
   }
 
   const selfPayResult = await queryable.query(
-    `SELECT COALESCE(SUM(COALESCE(c.amount_cents, c.fee_cents * COALESCE(c.quantity, 1), 0)), 0)::int as balance_cents
-     FROM encounters e
-     JOIN charges c ON c.encounter_id = e.id AND c.tenant_id = e.tenant_id
-     WHERE e.tenant_id = $1
-       AND e.appointment_id = $2
-       AND (
-         c.status = 'self_pay'
-         OR COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), '') = 'self_pay'
-       )`,
+    `WITH self_pay AS (
+       SELECT COALESCE(SUM(COALESCE(c.amount_cents, c.fee_cents * COALESCE(c.quantity, 1), 0)), 0)::int as total_cents
+       FROM encounters e
+       JOIN charges c ON c.encounter_id = e.id AND c.tenant_id = e.tenant_id
+       WHERE e.tenant_id = $1
+         AND e.appointment_id = $2
+         AND (
+           c.status = 'self_pay'
+           OR COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), '') = 'self_pay'
+         )
+     ),
+     checkout_payments AS (
+       SELECT COALESCE(SUM(pp.amount_cents), 0)::int as paid_cents
+       FROM patient_payments pp
+       WHERE pp.tenant_id = $1
+         AND COALESCE(NULLIF(to_jsonb(pp)->>'reference_number', ''), '') = $2
+         AND pp.status = 'posted'
+         AND NULLIF(to_jsonb(pp)->>'applied_to_invoice_id', '') IS NULL
+         AND NULLIF(to_jsonb(pp)->>'applied_to_claim_id', '') IS NULL
+         AND COALESCE(pp.notes, '') ILIKE '%checkout%'
+     )
+     SELECT GREATEST(self_pay.total_cents - checkout_payments.paid_cents, 0)::int as balance_cents
+     FROM self_pay, checkout_payments`,
     [tenantId, appointmentId],
   );
 

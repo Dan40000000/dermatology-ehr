@@ -197,6 +197,11 @@ patientFlowRouter.put(
         }
       }
 
+      const checkoutBalanceCents =
+        status === 'checkout'
+          ? await getAppointmentCheckoutBalanceCents(tenantId, appointmentId!)
+          : undefined;
+
       const flow = await patientFlowService.updatePatientStatus(
         tenantId,
         appointmentId!,
@@ -226,6 +231,12 @@ patientFlowRouter.put(
       res.json({
         success: true,
         message: 'Status updated successfully',
+        ...(checkoutBalanceCents !== undefined
+          ? {
+              requiresPayment: checkoutBalanceCents > 0,
+              paymentDueCents: checkoutBalanceCents,
+            }
+          : {}),
         flow,
       });
     } catch (error) {

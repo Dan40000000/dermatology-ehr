@@ -382,7 +382,13 @@ export function OfficeFlowPage() {
 
       if (newStatus === 'checkout') {
         try {
-          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'checkout');
+          const checkoutResult = await updatePatientFlowStatus(
+            session.tenantId,
+            session.accessToken,
+            flow.appointmentId,
+            'checkout'
+          );
+          paymentDueCents = Number(checkoutResult?.paymentDueCents ?? paymentDueCents);
         } catch {
           try {
             const checkoutResult = await checkOutFrontDeskAppointment(

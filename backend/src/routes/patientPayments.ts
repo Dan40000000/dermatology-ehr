@@ -174,6 +174,7 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
     adjustment_amount_cents: number;
     balance_cents: number;
   } | null = null;
+  let appliedInvoiceId = payload.appliedToInvoiceId || null;
 
   const client = await pool.connect();
   try {
@@ -219,6 +220,39 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
         await client.query('ROLLBACK');
         return res.status(400).json({ error: "Payment exceeds bill balance" });
       }
+    } else if (payload.referenceNumber) {
+      const appointmentBillResult = await client.query(
+        `select b.id, b.patient_id, b.patient_responsibility_cents, b.paid_amount_cents,
+                b.adjustment_amount_cents, b.balance_cents
+         from encounters e
+         join bills b on b.encounter_id = e.id and b.tenant_id = e.tenant_id
+         where e.appointment_id = $1
+           and e.tenant_id = $2
+           and b.patient_id = $3
+           and coalesce(b.balance_cents, 0) > 0
+           and b.status not in ('paid', 'written_off', 'cancelled')
+         order by coalesce(b.service_date_start, b.bill_date, b.created_at) asc, b.created_at asc
+         limit 1
+         for update`,
+        [payload.referenceNumber, tenantId, payload.patientId],
+      );
+
+      if (appointmentBillResult.rowCount) {
+        appliedBill = appointmentBillResult.rows[0] as {
+          id: string;
+          patient_id: string;
+          patient_responsibility_cents: number;
+          paid_amount_cents: number;
+          adjustment_amount_cents: number;
+          balance_cents: number;
+        };
+        appliedInvoiceId = appliedBill.id;
+
+        if (payload.amountCents > Number(appliedBill.balance_cents || 0)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: "Payment exceeds bill balance" });
+        }
+      }
     }
 
     // Create payment
@@ -241,7 +275,7 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
         payload.referenceNumber || null,
         receiptNumber,
         payload.appliedToClaimId || null,
-        payload.appliedToInvoiceId || null,
+        appliedInvoiceId,
         'posted',
         payload.notes || null,
         payload.batchId || null,

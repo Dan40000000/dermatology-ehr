@@ -60,11 +60,11 @@ export const FrontDeskDashboard: React.FC = () => {
           }
           break;
         case 'c':
-          // Quick check-in for first waiting
+          // Open check-in review for the first waiting patient
           if (appointments.length > 0) {
             const firstScheduled = appointments.find((a) => a.status === 'scheduled');
             if (firstScheduled) {
-              handleQuickCheckIn(firstScheduled.id);
+              handleCheckInWithModal(firstScheduled);
             }
           }
           break;
@@ -135,13 +135,26 @@ export const FrontDeskDashboard: React.FC = () => {
   // Handle check-in submit
   const handleCheckInSubmit = async (appointmentId: string, data: CheckInData) => {
     try {
-      // In production, would send the full data
-      const response = await api.post(`/api/front-desk/check-in/${appointmentId}`, data);
-
-      // If payment was collected, would also call payment endpoint
-      if (data.paymentCollected && data.paymentCollected > 0) {
-        // await api.post('/api/patient-payments', { ... });
-      }
+      const appointment = appointments.find((appt) => appt.id === appointmentId);
+      const collectedAmountCents = Math.max(0, Math.round((data.paymentCollected || 0) * 100));
+      const copayDueCents = Math.max(0, Math.round((appointment?.copayAmount || 0) * 100));
+      const outstandingDueCents = Math.max(0, Math.round((appointment?.outstandingBalance || 0) * 100));
+      const unappliedAmountCents = Math.max(0, collectedAmountCents - copayDueCents - outstandingDueCents);
+      const copayAmountCents = Math.min(collectedAmountCents, copayDueCents) + unappliedAmountCents;
+      const outstandingBalanceAmountCents = Math.min(
+        Math.max(0, collectedAmountCents - copayAmountCents),
+        outstandingDueCents
+      );
+      const response = await api.post(`/api/front-desk/check-in/${appointmentId}`, {
+        demographicsConfirmed: data.demographicsConfirmed,
+        notes: data.notes,
+        collectCopay: copayAmountCents > 0,
+        copayAmountCents,
+        collectOutstandingBalance: outstandingBalanceAmountCents > 0,
+        outstandingBalanceAmountCents,
+        paymentMethod: 'cash',
+        deferCopay: collectedAmountCents === 0 && copayDueCents > 0,
+      });
 
       await fetchAllData();
       setCheckInModalOpen(false);
@@ -181,7 +194,10 @@ export const FrontDeskDashboard: React.FC = () => {
             paymentDate: new Date().toISOString().slice(0, 10),
             amountCents: Math.round(data.paymentCollected * 100),
             paymentMethod: 'cash',
-            notes: data.notes || `Front desk checkout payment for appointment ${appointmentId}`,
+            referenceNumber: appointmentId,
+            notes: data.notes
+              ? `Checkout payment for appointment ${appointmentId}: ${data.notes}`
+              : `Checkout payment for appointment ${appointmentId}`,
           });
         }
       }
@@ -276,7 +292,14 @@ export const FrontDeskDashboard: React.FC = () => {
           <div className="lg:col-span-2">
             <TodaySchedulePanel
               appointments={appointments}
-              onCheckIn={handleQuickCheckIn}
+              onCheckIn={(id) => {
+                const appointment = appointments.find((appt) => appt.id === id);
+                if (appointment) {
+                  handleCheckInWithModal(appointment);
+                } else {
+                  handleQuickCheckIn(id);
+                }
+              }}
               onCheckOut={(id) => {
                 const apt = appointments.find((a) => a.id === id);
                 if (apt) handleCheckOutWithModal(apt);

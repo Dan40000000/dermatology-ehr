@@ -11,6 +11,7 @@ import {
 } from '../../portalApi';
 import type { PortalCommunicationPreferences } from '../../portalApi';
 import { formatPhoneDisplay } from '../../utils/phone';
+import { formatDateOnly } from '../../utils/dateOnly';
 
 interface PatientProfile {
   id: string;
@@ -264,11 +265,11 @@ export function PortalProfilePage() {
 
   const formatDate = (dateString: string) => {
     if (!dateString) return 'Not set';
-    return new Date(dateString).toLocaleDateString('en-US', {
+    return formatDateOnly(dateString, 'en-US', {
       month: 'long',
       day: 'numeric',
       year: 'numeric',
-    });
+    }) || 'Not set';
   };
 
   const formatDateTime = (dateString?: string | null) => {

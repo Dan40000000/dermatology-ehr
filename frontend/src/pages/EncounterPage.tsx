@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
+import { calculateAgeFromDateOnly } from '../utils/dateOnly';
 import { PatientBanner, TemplateSelector } from '../components/clinical';
 import { PatientBodyDiagram, type BodyMarker } from '../components/body-diagram';
 import { DiagnosisSearchModal, PerformedWorkModal, ProcedureSearchModal } from '../components/billing';
@@ -932,9 +933,7 @@ export function EncounterPage() {
     let result = text;
 
     // Calculate age from DOB
-    const age = patient.dob
-      ? Math.floor((new Date().getTime() - new Date(patient.dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
-      : 'N/A';
+    const age = calculateAgeFromDateOnly(patient.dob) ?? 'N/A';
 
     // Replace variables
     result = result.replace(/\{\{patientName\}\}/g, `${patient.firstName} ${patient.lastName}`);

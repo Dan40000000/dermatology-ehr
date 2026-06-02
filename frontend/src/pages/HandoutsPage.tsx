@@ -6,6 +6,7 @@ import { Modal, Skeleton } from '../components/ui';
 import { API_BASE_URL } from '../utils/apiBase';
 import { fetchAppointments, fetchOrders, fetchPatients, recordPrintedDocument } from '../api';
 import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
+import { formatDateOnly } from '../utils/dateOnly';
 
 type InstructionType =
   | 'all'
@@ -247,9 +248,7 @@ function getTodayDateLabel(): string {
 
 function formatDateLabel(value?: string | null): string {
   if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString();
+  return formatDateOnly(value);
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {

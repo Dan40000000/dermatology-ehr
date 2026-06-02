@@ -29,6 +29,7 @@ import {
   Close as CloseIcon
 } from '@mui/icons-material';
 import toast from 'react-hot-toast';
+import { formatDateOnly } from '../../utils/dateOnly';
 
 interface BiopsyOrderFormProps {
   patientId: string;
@@ -346,7 +347,7 @@ const BiopsyOrderForm: React.FC<BiopsyOrderFormProps> = ({
               {patient.first_name} {patient.last_name} (MRN: {patient.mrn})
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              DOB: {new Date(patient.date_of_birth).toLocaleDateString()}
+              DOB: {formatDateOnly(patient.date_of_birth) || patient.date_of_birth}
             </Typography>
           </CardContent>
         </Card>

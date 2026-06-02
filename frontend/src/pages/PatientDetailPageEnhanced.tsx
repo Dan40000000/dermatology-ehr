@@ -33,6 +33,7 @@ import {
   Clock
 } from 'lucide-react';
 import { formatPhoneDisplay } from '../utils/phone';
+import { calculateAgeFromDateOnly, formatDateOnly } from '../utils/dateOnly';
 
 type TabId =
   | 'overview'
@@ -86,26 +87,8 @@ export function PatientDetailPageEnhanced() {
     }
   }, [error, showError]);
 
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'N/A';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
-
   const calculateAge = (dob: string | null) => {
-    if (!dob) return 'N/A';
-    const birthDate = new Date(dob);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
-    }
-    return age;
+    return calculateAgeFromDateOnly(dob) ?? 'N/A';
   };
 
   if (isLoading) {
@@ -280,7 +263,7 @@ export function PatientDetailPageEnhanced() {
                     <div>
                       <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>Age / DOB</div>
                       <div style={{ fontWeight: 600 }}>
-                        {calculateAge(patient.dob)} years ({formatDate(patient.dob)})
+                        {calculateAge(patient.dob)} years ({formatDateOnly(patient.dob, 'en-US', { month: 'long', day: 'numeric', year: 'numeric' }) || 'N/A'})
                       </div>
                     </div>
                   </div>

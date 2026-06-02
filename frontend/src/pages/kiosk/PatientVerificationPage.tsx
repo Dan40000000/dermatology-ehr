@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
 import { getKioskHeaders } from '../../utils/kioskContext';
+import { formatDateOnly } from '../../utils/dateOnly';
 import '../../styles/kiosk.css';
 
 interface Patient {
@@ -222,7 +223,7 @@ export function KioskPatientVerificationPage() {
                   {patient.firstName} {patient.lastName}
                 </div>
                 <div style={{ fontSize: '1.125rem', color: '#4b5563', marginTop: '0.5rem' }}>
-                  DOB: {new Date(patient.dob).toLocaleDateString()}
+                  DOB: {formatDateOnly(patient.dob) || patient.dob}
                 </div>
                 {patient.phone && (
                   <div style={{ fontSize: '1.125rem', color: '#4b5563' }}>Phone: {patient.phone}</div>

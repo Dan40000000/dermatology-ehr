@@ -19,6 +19,7 @@ import { InsuranceLookupPanel } from '../components/workflows';
 import { ResultFlagBadge } from '../components/ResultFlagBadge';
 import { hasAnyRole, hasRole } from '../utils/roles';
 import { formatPhoneDisplay } from '../utils/phone';
+import { calculateAgeFromDateOnly, formatDateOnly } from '../utils/dateOnly';
 import {
   ACCESSIBILITY_COMMUNICATION_OPTIONS,
   ACCESSIBILITY_EQUIPMENT_OPTIONS,
@@ -218,7 +219,7 @@ function buildFaceSheetHtml(patient: Patient, nextAppointment: Appointment | nul
   </head>
   <body>
     <h1>${escapeHtml(patientName)}</h1>
-    <div class="muted">DOB: ${escapeHtml(patient.dob ? new Date(patient.dob).toLocaleDateString() : 'N/A')} | Sex: ${escapeHtml(patient.sex || 'N/A')}</div>
+    <div class="muted">DOB: ${escapeHtml(formatDateOnly(patient.dob) || 'N/A')} | Sex: ${escapeHtml(patient.sex || 'N/A')}</div>
     <div class="grid">
       <section class="card">
         <h2>Contact</h2>
@@ -1865,7 +1866,7 @@ export function PatientDetailPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h3 style={{ margin: 0 }}>{patient.lastName}, {patient.firstName}</h3>
-                <p style={{ margin: '0.25rem 0', color: '#4b5563' }}>{patient.dob ? new Date(patient.dob).toLocaleDateString() : 'DOB: N/A'} • {patient.sex || 'Sex: N/A'}</p>
+                <p style={{ margin: '0.25rem 0', color: '#4b5563' }}>{formatDateOnly(patient.dob) || 'DOB: N/A'} • {patient.sex || 'Sex: N/A'}</p>
                 <p style={{ margin: '0.25rem 0', color: '#6b7280' }}>{formatPhoneDisplay(patient.phone) || 'No phone'} • {patient.email || 'No email'}</p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -2155,15 +2156,7 @@ export function PatientDetailPage() {
 // Demographics Tab Component
 function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
   const calculateAge = (dob?: string) => {
-    if (!dob) return 'N/A';
-    const birthDate = new Date(dob);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
-    }
-    return age;
+    return calculateAgeFromDateOnly(dob) ?? 'N/A';
   };
 
   return (
@@ -2184,7 +2177,7 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <InfoRow label="Full Name" value={`${patient.firstName} ${patient.lastName}`} />
-            <InfoRow label="Date of Birth" value={patient.dob ? new Date(patient.dob).toLocaleDateString() : 'Not provided'} />
+            <InfoRow label="Date of Birth" value={formatDateOnly(patient.dob) || 'Not provided'} />
             <InfoRow label="Age" value={calculateAge(patient.dob)} />
             <InfoRow label="Sex" value={(patient as any).sex || 'Not specified'} />
             <InfoRow label="MRN" value={patient.mrn || 'Not assigned'} />

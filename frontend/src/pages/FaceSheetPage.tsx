@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../api';
 import { formatPhoneDisplay } from '../utils/phone';
+import { calculateAgeFromDateOnly, formatDateOnly } from '../utils/dateOnly';
 
 interface Patient {
   id: string;
@@ -97,14 +98,7 @@ export function FaceSheetPage() {
   };
 
   const calculateAge = (dob: string) => {
-    const birthDate = new Date(dob);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
-    }
-    return age;
+    return calculateAgeFromDateOnly(dob) ?? 'N/A';
   };
 
   if (loading) {
@@ -182,7 +176,7 @@ export function FaceSheetPage() {
             </div>
             <div>
               <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Date of Birth:</p>
-              <p style={{ fontSize: '1.125rem' }}>{new Date(patient.dateOfBirth).toLocaleDateString()} (Age: {calculateAge(patient.dateOfBirth)})</p>
+              <p style={{ fontSize: '1.125rem' }}>{formatDateOnly(patient.dateOfBirth) || 'N/A'} (Age: {calculateAge(patient.dateOfBirth)})</p>
             </div>
             <div>
               <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Phone:</p>

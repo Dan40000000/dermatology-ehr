@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { Patient } from '../../types';
 import { formatPhoneDisplay } from '../../utils/phone';
 import { getAccessibilitySummary, hasAccessibilityNeeds } from '../../utils/accessibilityAccommodations';
+import { calculateAgeFromDateOnly, formatDateOnly } from '../../utils/dateOnly';
 
 interface PatientBannerProps {
   patient: Patient;
@@ -18,18 +19,11 @@ export function PatientBanner({
   compact = false,
   className = '',
 }: PatientBannerProps) {
+  const dateOfBirth = patient.dateOfBirth || patient.dob;
   const age = useMemo(() => {
-    const dateOfBirth = patient.dateOfBirth || patient.dob;
-    if (!dateOfBirth) return null;
-    const dob = new Date(dateOfBirth);
-    const today = new Date();
-    let years = today.getFullYear() - dob.getFullYear();
-    const monthDiff = today.getMonth() - dob.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-      years--;
-    }
-    return years;
-  }, [patient.dateOfBirth, patient.dob]);
+    return calculateAgeFromDateOnly(dateOfBirth);
+  }, [dateOfBirth]);
+  const dobLabel = useMemo(() => formatDateOnly(dateOfBirth), [dateOfBirth]);
 
   const initials = useMemo(() => {
     const first = patient.firstName?.[0] || '';
@@ -72,7 +66,7 @@ export function PatientBanner({
         <div className="patient-info-compact">
           <span className="patient-name">{fullName}</span>
           <span className="patient-meta">
-            {age && `${age}yo`} {patient.sex && `• ${patient.sex}`}
+            {age !== null && `${age}yo`} {patient.sex && `• ${patient.sex}`}
           </span>
         </div>
         {hasAllergies && (
@@ -98,11 +92,11 @@ export function PatientBanner({
           <h2 className="patient-name">{fullName}</h2>
 
           <div className="patient-meta-row">
-            {(patient.dateOfBirth || patient.dob) && (
+            {dobLabel && (
               <span className="meta-item">
                 <span className="meta-label">DOB:</span>
                 <span className="meta-value">
-                  {new Date(patient.dateOfBirth || patient.dob || '').toLocaleDateString()} {age && `(${age}yo)`}
+                  {dobLabel} {age !== null && `(${age}yo)`}
                 </span>
               </span>
             )}

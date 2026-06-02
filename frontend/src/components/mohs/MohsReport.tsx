@@ -24,6 +24,7 @@ import {
   ContentCopy as CopyIcon
 } from '@mui/icons-material';
 import { format } from 'date-fns';
+import { formatDateOnly } from '../../utils/dateOnly';
 
 interface MohsReportData {
   case_number: string;
@@ -163,7 +164,7 @@ const MohsReport: React.FC<MohsReportProps> = ({
                   </TableRow>
                   <TableRow>
                     <TableCell sx={{ fontWeight: 'bold', border: 'none' }}>DOB:</TableCell>
-                    <TableCell sx={{ border: 'none' }}>{formatDate(reportData.patient_dob)}</TableCell>
+                    <TableCell sx={{ border: 'none' }}>{formatDateOnly(reportData.patient_dob, 'en-US', { month: 'long', day: 'numeric', year: 'numeric' }) || formatDate(reportData.patient_dob)}</TableCell>
                   </TableRow>
                 </TableBody>
               </Table>

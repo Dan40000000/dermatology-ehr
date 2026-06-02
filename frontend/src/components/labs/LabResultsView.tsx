@@ -40,6 +40,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_BASE_URL } from '../../utils/apiBase';
+import { formatDateOnly } from '../../utils/dateOnly';
 
 interface LabResultsViewProps {
   orderId: string;
@@ -245,7 +246,7 @@ export const LabResultsView: React.FC<LabResultsViewProps> = ({
                 Lab Order: {order.order_number}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {order.patient_name} | MRN: {order.mrn} | DOB: {new Date(order.dob).toLocaleDateString()}
+                {order.patient_name} | MRN: {order.mrn} | DOB: {formatDateOnly(order.dob) || order.dob}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 Ordered by: {order.ordering_provider_name} on {new Date(order.order_date).toLocaleDateString()}

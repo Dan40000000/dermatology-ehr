@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
 import { getKioskHeaders } from '../../utils/kioskContext';
+import { formatDateOnly } from '../../utils/dateOnly';
 import '../../styles/kiosk.css';
 
 interface PatientData {
@@ -185,7 +186,7 @@ export function KioskDemographicsReviewPage() {
             <div style={gridStyle}>
               <InfoField label="First Name" value={patientData.firstName} />
               <InfoField label="Last Name" value={patientData.lastName} />
-              <InfoField label="Date of Birth" value={new Date(patientData.dob).toLocaleDateString()} />
+              <InfoField label="Date of Birth" value={formatDateOnly(patientData.dob) || patientData.dob} />
               <InfoField label="Phone" value={patientData.phone || 'Not provided'} />
               <InfoField label="Email" value={patientData.email || 'Not provided'} />
             </div>

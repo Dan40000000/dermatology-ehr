@@ -1,5 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
+import { formatDateOnly } from '../../utils/dateOnly';
 import './PatientLookupSelect.css';
 
 export interface PatientLookupOption {
@@ -70,9 +71,7 @@ function toText(value: unknown): string {
 
 function formatDate(value: string): string {
   if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString();
+  return formatDateOnly(value) || value;
 }
 
 function normalizeForSearch(value: string): string {

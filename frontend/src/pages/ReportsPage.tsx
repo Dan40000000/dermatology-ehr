@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { exportToCSV, exportToPDF, formatCurrency, formatDate } from '../utils/exportUtils';
 import { API_BASE_URL } from '../utils/apiBase';
+import { formatDateOnly } from '../utils/dateOnly';
 
 type ReportType = 'appointments' | 'financial' | 'clinical' | 'patients' | 'productivity' | 'no-shows';
 
@@ -839,7 +840,7 @@ export default function ReportsPage() {
                         {selectedReport === 'patients' && (
                           <>
                             <td style={{ padding: '12px', fontWeight: '500' }}>{row.name}</td>
-                            <td style={{ padding: '12px' }}>{formatDate(row.dob)}</td>
+                            <td style={{ padding: '12px' }}>{formatDateOnly(row.dob) || formatDate(row.dob)}</td>
                             <td style={{ padding: '12px' }}>{row.age}</td>
                             <td style={{ padding: '12px' }}>{row.gender}</td>
                             <td style={{ padding: '12px' }}>{row.phone}</td>

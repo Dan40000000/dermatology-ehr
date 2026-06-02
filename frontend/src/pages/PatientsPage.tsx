@@ -7,6 +7,7 @@ import { fetchPatients } from '../api';
 import type { Patient } from '../types';
 import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate, formatPhone } from '../utils/export';
+import { calculateAgeFromDateOnly, formatDateOnly, getDateOnlySortValue } from '../utils/dateOnly';
 
 type SortField = 'lastName' | 'firstName' | 'mrn' | 'dateOfBirth' | 'phone' | 'email' | 'status' | 'lastVisit';
 type SortOrder = 'asc' | 'desc';
@@ -129,10 +130,8 @@ export function PatientsPage() {
           bVal = b.mrn || '';
           break;
         case 'dateOfBirth':
-          aVal = a.dateOfBirth ? new Date(a.dateOfBirth).getTime() : 0;
-          bVal = b.dateOfBirth ? new Date(b.dateOfBirth).getTime() : 0;
-          if (isNaN(aVal as number)) aVal = 0;
-          if (isNaN(bVal as number)) bVal = 0;
+          aVal = getDateOnlySortValue(a.dateOfBirth);
+          bVal = getDateOnlySortValue(b.dateOfBirth);
           break;
         case 'phone':
           aVal = a.phone || '';
@@ -183,9 +182,10 @@ export function PatientsPage() {
 
   const formatDOB = (dob: string | undefined) => {
     if (!dob) return '—';
-    const date = new Date(dob);
-    const age = Math.floor((Date.now() - date.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-    return `${date.toLocaleDateString('en-US')} (${age})`;
+    const label = formatDateOnly(dob);
+    const age = calculateAgeFromDateOnly(dob);
+    if (!label) return '—';
+    return age === null ? label : `${label} (${age})`;
   };
 
   const handlePageChange = (page: number) => {
@@ -301,7 +301,7 @@ export function PatientsPage() {
               { key: 'lastName', label: 'Last Name' },
               { key: 'firstName', label: 'First Name' },
               { key: 'mrn', label: 'MRN' },
-              { key: 'dateOfBirth', label: 'DOB', format: (date) => formatExportDate(date, 'short') },
+              { key: 'dateOfBirth', label: 'DOB', format: (date) => formatDateOnly(date) || formatExportDate(date, 'short') },
               { key: 'sex', label: 'Sex' },
               { key: 'phone', label: 'Phone', format: formatPhone },
               { key: 'email', label: 'Email' },

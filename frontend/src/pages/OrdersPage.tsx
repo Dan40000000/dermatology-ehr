@@ -8,6 +8,7 @@ import { PatientLookupSelect } from '../components/patients/PatientLookupSelect'
 import { fetchOrders, fetchPatients, updateOrderStatus, createOrder } from '../api';
 import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import type { Order, Patient } from '../types';
+import { formatDateOnly } from '../utils/dateOnly';
 
 type OrderFilter = 'all' | 'pending' | 'in-progress' | 'completed' | 'cancelled';
 type OrderType =
@@ -166,8 +167,7 @@ export function OrdersPage() {
     const dob = patient.dob || patient.dateOfBirth;
     if (!dob) return 'N/A';
 
-    const parsedDob = new Date(dob);
-    return Number.isNaN(parsedDob.getTime()) ? dob : parsedDob.toLocaleDateString();
+    return formatDateOnly(dob) || dob;
   };
 
   const formatPatientOptionLabel = (patient: Patient) =>

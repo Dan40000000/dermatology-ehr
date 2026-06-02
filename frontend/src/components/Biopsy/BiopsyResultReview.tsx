@@ -36,6 +36,7 @@ import {
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import { formatDateOnly } from '../../utils/dateOnly';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_BASE_URL } from '../../utils/apiBase';
 
@@ -323,7 +324,7 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
                   </TableRow>
                   <TableRow>
                     <TableCell>DOB:</TableCell>
-                    <TableCell>{format(new Date(biopsy.date_of_birth), 'MM/dd/yyyy')}</TableCell>
+                    <TableCell>{formatDateOnly(biopsy.date_of_birth) || biopsy.date_of_birth}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Phone:</TableCell>

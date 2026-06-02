@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Box, Typography, Paper, Divider, Grid } from '@mui/material';
 import { format } from 'date-fns';
 import Barcode from 'react-barcode';
+import { formatDateOnly } from '../../utils/dateOnly';
 
 interface BiopsyLabelProps {
   biopsyId: string;
@@ -145,7 +146,7 @@ const BiopsyLabel: React.FC<BiopsyLabelProps> = ({ biopsyId, autoPrint = false }
 
           <Grid item xs={6}>
             <Typography variant="body2" sx={{ fontSize: '9pt' }}>
-              <strong>DOB:</strong> {format(new Date(biopsy.date_of_birth), 'MM/dd/yyyy')}
+              <strong>DOB:</strong> {formatDateOnly(biopsy.date_of_birth) || biopsy.date_of_birth}
             </Typography>
           </Grid>
 

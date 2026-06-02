@@ -493,6 +493,26 @@ router.post('/test-connection', requireAuth, async (req: AuthedRequest, res: Res
 router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
+    const readinessDiagnostics: string[] = [];
+
+    const safeReadinessQuery = async (
+      label: string,
+      sql: string,
+      params: unknown[],
+      fallbackRows: Array<Record<string, unknown>>
+    ) => {
+      try {
+        return await pool.query(sql, params);
+      } catch (error: any) {
+        logger.warn('SMS readiness diagnostic query failed', {
+          tenantId,
+          label,
+          error: error.message,
+        });
+        readinessDiagnostics.push(`${label} unavailable: ${error.message}`);
+        return { rows: fallbackRows };
+      }
+    };
 
     const settingsResult = await pool.query(
       `SELECT
@@ -514,7 +534,8 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
     const appLiveSendEnabled = isSmsLiveSendEnabled();
     const configuredMessagingServiceSid = getConfiguredMessagingServiceSid();
 
-    const messageSummaryResult = await pool.query(
+    const messageSummaryResult = await safeReadinessQuery(
+      'recent SMS traffic summary',
       `SELECT
          COUNT(*)::int as "total",
          COUNT(*) FILTER (WHERE direction = 'outbound')::int as "outbound",
@@ -525,27 +546,32 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
        FROM sms_messages
        WHERE tenant_id = $1
          AND created_at >= NOW() - INTERVAL '30 days'`,
-      [tenantId]
+      [tenantId],
+      [{ total: 0, outbound: 0, inbound: 0, mockMessages: 0, twilioMessages: 0, lastMessageAt: null }]
     );
 
-    const statusBreakdownResult = await pool.query(
+    const statusBreakdownResult = await safeReadinessQuery(
+      'recent SMS status breakdown',
       `SELECT status, COUNT(*)::int as count
        FROM sms_messages
        WHERE tenant_id = $1
          AND created_at >= NOW() - INTERVAL '30 days'
        GROUP BY status
        ORDER BY status`,
-      [tenantId]
+      [tenantId],
+      []
     );
 
-    const consentSummaryResult = await pool.query(
+    const consentSummaryResult = await safeReadinessQuery(
+      'SMS consent summary',
       `SELECT
          COUNT(*)::int as "total",
          COUNT(*) FILTER (WHERE opted_in = true)::int as "optedIn",
          COUNT(*) FILTER (WHERE opted_in = false)::int as "optedOut"
        FROM patient_sms_preferences
        WHERE tenant_id = $1`,
-      [tenantId]
+      [tenantId],
+      [{ total: 0, optedIn: 0, optedOut: 0 }]
     );
 
     let twilioConnection: { success: boolean; accountName?: string; error?: string } | null = null;
@@ -694,7 +720,7 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
         connection: twilioConnection,
         phoneNumber: phoneNumberInfo,
         messaging: messagingReadiness,
-        errors: twilioErrors,
+        errors: [...readinessDiagnostics, ...twilioErrors],
       },
       a2p: {
         brandStatus: approvedBrand ? approvedBrand.status : null,

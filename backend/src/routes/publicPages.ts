@@ -406,6 +406,12 @@ publicPagesRouter.get("/sms-terms", (_req, res) => {
         <h2>Help</h2>
         <p>Patients may reply <code>HELP</code> for assistance or contact ${supportPhone}.</p>
 
+        <h2>Consent</h2>
+        <p>
+          Consent to receive text messages is not a condition of treatment or purchase. Patients may revoke consent at
+          any time.
+        </p>
+
         <h2>Charges and availability</h2>
         <p>
           Message frequency varies. Message and data rates may apply. Wireless carrier delivery is not guaranteed and

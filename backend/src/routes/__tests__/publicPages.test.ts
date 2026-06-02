@@ -57,5 +57,6 @@ describe('Public SMS compliance pages', () => {
     expect(res.status).toBe(200);
     expect(res.text).toContain('SMS Terms of Service');
     expect(res.text).toContain('Patients may opt out at any time by replying');
+    expect(res.text).toContain('Consent to receive text messages is not a condition of treatment or purchase');
   });
 });

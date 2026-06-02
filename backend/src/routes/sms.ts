@@ -533,6 +533,30 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
     const hasCredentials = Boolean(settings?.twilio_account_sid && settings?.twilio_auth_token);
     const appLiveSendEnabled = isSmsLiveSendEnabled();
     const configuredMessagingServiceSid = getConfiguredMessagingServiceSid();
+    const sidColumnResult = await safeReadinessQuery(
+      'SMS message SID column lookup',
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'sms_messages'
+         AND column_name IN ('twilio_message_sid', 'external_id')
+       ORDER BY CASE column_name WHEN 'twilio_message_sid' THEN 0 ELSE 1 END
+       LIMIT 1`,
+      [],
+      []
+    );
+    const smsMessageSidColumn =
+      sidColumnResult.rows[0]?.column_name === 'twilio_message_sid'
+        ? 'twilio_message_sid'
+        : sidColumnResult.rows[0]?.column_name === 'external_id'
+          ? 'external_id'
+          : null;
+    const mockMessageCountSql = smsMessageSidColumn
+      ? `COUNT(*) FILTER (WHERE ${smsMessageSidColumn} LIKE 'mock_sms_%')::int`
+      : '0::int';
+    const twilioMessageCountSql = smsMessageSidColumn
+      ? `COUNT(*) FILTER (WHERE ${smsMessageSidColumn} LIKE 'SM%')::int`
+      : '0::int';
 
     const messageSummaryResult = await safeReadinessQuery(
       'recent SMS traffic summary',
@@ -540,8 +564,8 @@ router.get('/readiness', requireAuth, async (req: AuthedRequest, res: Response) 
          COUNT(*)::int as "total",
          COUNT(*) FILTER (WHERE direction = 'outbound')::int as "outbound",
          COUNT(*) FILTER (WHERE direction = 'inbound')::int as "inbound",
-         COUNT(*) FILTER (WHERE twilio_message_sid LIKE 'mock_sms_%')::int as "mockMessages",
-         COUNT(*) FILTER (WHERE twilio_message_sid LIKE 'SM%')::int as "twilioMessages",
+         ${mockMessageCountSql} as "mockMessages",
+         ${twilioMessageCountSql} as "twilioMessages",
          MAX(created_at) as "lastMessageAt"
        FROM sms_messages
        WHERE tenant_id = $1

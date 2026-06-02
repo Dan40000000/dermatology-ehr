@@ -76,6 +76,22 @@ li {
   background: #fbfdff;
 }
 
+.evidence-step {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+  background: #fbfdff;
+  margin: 14px 0;
+}
+
+.disclosure {
+  border-left: 4px solid var(--accent);
+  background: #eef7fc;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 18px 0;
+}
+
 .links {
   display: flex;
   gap: 16px;

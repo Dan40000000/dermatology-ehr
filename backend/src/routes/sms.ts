@@ -47,8 +47,6 @@ const SMS_A2P_BRAND_NAME = 'Perry Software LLC';
 const SMS_A2P_PRACTICE_NUMBER = '+1 980-737-1319';
 const SMS_A2P_PUBLIC_BASE_URL = (
   process.env.SMS_PUBLIC_BASE_URL ||
-  process.env.PUBLIC_BASE_URL ||
-  process.env.API_PUBLIC_BASE_URL ||
   'https://derm-api-pilot-live.up.railway.app'
 ).replace(/\/+$/, '');
 const SMS_A2P_CONSENT_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-consent`;

@@ -5144,6 +5144,7 @@ export interface SMSA2PResubmissionResult {
   submission: {
     brandName: string;
     consentUrl: string;
+    evidenceUrl?: string;
     termsUrl: string;
     privacyUrl: string;
     sampleCount: number;

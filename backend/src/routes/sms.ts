@@ -43,11 +43,18 @@ router.use((req, res, next) => {
 });
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
 const smsRoutingCategories = ['general', 'appointment', 'billing', 'prescription', 'medical', 'other'] as const;
-const SMS_A2P_BRAND_NAME = 'Nuvora Health, operated by Perry Software LLC';
+const SMS_A2P_BRAND_NAME = 'Perry Software LLC';
 const SMS_A2P_PRACTICE_NUMBER = '+1 980-737-1319';
-const SMS_A2P_CONSENT_URL = 'https://perry-software-site.vercel.app/sms-consent.html';
-const SMS_A2P_TERMS_URL = 'https://perry-software-site.vercel.app/sms-terms.html';
-const SMS_A2P_PRIVACY_URL = 'https://perry-software-site.vercel.app/sms-privacy.html';
+const SMS_A2P_PUBLIC_BASE_URL = (
+  process.env.SMS_PUBLIC_BASE_URL ||
+  process.env.PUBLIC_BASE_URL ||
+  process.env.API_PUBLIC_BASE_URL ||
+  'https://derm-api-pilot-live.up.railway.app'
+).replace(/\/+$/, '');
+const SMS_A2P_CONSENT_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-consent`;
+const SMS_A2P_EVIDENCE_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-opt-in-evidence`;
+const SMS_A2P_TERMS_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-terms`;
+const SMS_A2P_PRIVACY_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-privacy`;
 
 function isInboundSimulationEnabled(isTestMode: boolean): boolean {
   return (
@@ -115,23 +122,24 @@ function buildA2PCampaignUpdate(): TwilioA2PCampaignUpdate {
       `${SMS_A2P_BRAND_NAME} sends patient-authorized operational SMS for dermatology practices, ` +
       'including appointment reminders, scheduling updates, billing notices, prescription coordination, and care follow-up.',
     messageFlow:
-      `Patients may optionally opt in to operational SMS messages from ${SMS_A2P_BRAND_NAME} during patient intake, ` +
-      `patient portal registration, staff-assisted registration, or the public SMS preference page at ${SMS_A2P_CONSENT_URL}. ` +
-      'The SMS checkbox is optional, unchecked by default, and not required to receive treatment, complete registration, ' +
-      'schedule an appointment, make a payment, use the patient portal, or receive any other office service. ' +
-      'The opt-in disclosure states that messages may include appointment reminders, scheduling updates, billing notices, ' +
-      'prescription coordination, and care follow-up; message frequency varies; message and data rates may apply; ' +
-      'patients can reply HELP for help and STOP to opt out. Patients may also opt in or re-subscribe by texting START ' +
-      `or YES to the registered practice messaging number ${SMS_A2P_PRACTICE_NUMBER}. They receive this auto-reply: ` +
-      '"Dermatology DEMO Office: You are opted in for text messages. Msg frequency varies. Msg&data rates may apply. ' +
-      'Reply HELP for help, STOP to opt out." ' +
-      `Terms of Service: ${SMS_A2P_TERMS_URL}. Privacy Policy: ${SMS_A2P_PRIVACY_URL}. The SMS Privacy Policy states ` +
-      'that mobile numbers, SMS consent, and opt-in status are not sold, rented, or shared with third parties or ' +
-      'affiliates for marketing or promotional purposes.',
+      `End users opt in through one of the following ${SMS_A2P_BRAND_NAME} workflows: (1) the dermatology practice ` +
+      'patient portal, (2) the patient check-in workflow, or (3) the intake form. In each flow, the end user provides ' +
+      `their mobile number and affirmatively consents to receive SMS from ${SMS_A2P_BRAND_NAME} for appointment ` +
+      'reminders, check-in links, billing/payment notifications, account alerts, prescription coordination, and support ' +
+      `updates related to their dermatology care and account. SMS may be sent from ${SMS_A2P_PRACTICE_NUMBER}. ` +
+      'The SMS checkbox/consent action is optional and is not required to receive treatment, schedule an appointment, ' +
+      'make a payment, use the patient portal, or receive any other office service. Message frequency varies. Message ' +
+      'and data rates may apply. Reply HELP for help and STOP to opt out. Consent is not a condition of purchase. ' +
+      `Terms and Conditions: ${SMS_A2P_TERMS_URL}. Privacy Policy: ${SMS_A2P_PRIVACY_URL}. Public evidence of the ` +
+      `opt-in flow, including the exact disclosure shown at consent, is available at ${SMS_A2P_EVIDENCE_URL}. ` +
+      `A public SMS consent form using the same disclosure is available at ${SMS_A2P_CONSENT_URL}. Patients may also ` +
+      `opt in or re-subscribe by texting START or YES to ${SMS_A2P_PRACTICE_NUMBER}. The SMS Privacy Policy states ` +
+      'that mobile numbers, SMS consent, and opt-in status are not sold, rented, or shared with third parties, ' +
+      'affiliates, or business partners for marketing or promotional purposes.',
     messageSamples: [
-      'Nuvora Health: Reminder for your dermatology appointment on 05/08 at 2:15 PM. Reply HELP for help or STOP to opt out.',
-      'Nuvora Health: Your billing statement is ready in the patient portal. Reply HELP for help or STOP to opt out.',
-      'Nuvora Health: Your refill request was received and is being reviewed by the office. Reply HELP for help or STOP to opt out.',
+      'Perry Software LLC: Reminder for your dermatology appointment on 05/08 at 2:15 PM. Reply HELP for help or STOP to opt out.',
+      'Perry Software LLC: Your billing statement is ready in the patient portal. Reply HELP for help or STOP to opt out.',
+      'Perry Software LLC: Your refill request was received and is being reviewed by the office. Reply HELP for help or STOP to opt out.',
     ],
   };
 }
@@ -794,6 +802,7 @@ router.post('/a2p/resubmit', requireAuth, async (req: AuthedRequest, res: Respon
       submission: {
         brandName: SMS_A2P_BRAND_NAME,
         consentUrl: SMS_A2P_CONSENT_URL,
+        evidenceUrl: SMS_A2P_EVIDENCE_URL,
         termsUrl: SMS_A2P_TERMS_URL,
         privacyUrl: SMS_A2P_PRIVACY_URL,
         sampleCount: update.messageSamples.length,

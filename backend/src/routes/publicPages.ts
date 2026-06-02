@@ -5,6 +5,9 @@ const publicPagesRouter = Router();
 const practiceName = process.env.MESSAGING_FROM_NAME || process.env.FROM_NAME || "Dermatology DEMO Office";
 const supportPhone = process.env.MESSAGING_SUPPORT_PHONE || "+1 (980) 737-1319";
 const supportEmail = process.env.MESSAGING_SUPPORT_EMAIL || "support@testmedical.com";
+const sendingPhone = process.env.MESSAGING_SMS_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER || "+1 980-737-1319";
+
+const smsConsentDisclosure = `By providing your mobile number, you agree to receive text messages from Perry Software LLC at ${sendingPhone} for appointment reminders, check-in links, billing/payment notifications, account alerts, prescription coordination, and support updates related to your dermatology care and account. Message frequency varies. Message and data rates may apply. Reply STOP to opt out and HELP for help. Consent is not a condition of purchase.`;
 
 function renderPage(title: string, body: string): string {
   return `<!DOCTYPE html>
@@ -65,6 +68,20 @@ function renderPage(title: string, body: string): string {
         border-radius: 14px;
         padding: 16px;
         background: #fbfdff;
+      }
+      .evidence-step {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+        background: #fbfdff;
+        margin: 14px 0;
+      }
+      .disclosure {
+        border-left: 4px solid var(--accent);
+        background: #eef7fc;
+        border-radius: 12px;
+        padding: 16px 18px;
+        margin: 18px 0;
       }
       .links {
         display: flex;
@@ -143,6 +160,7 @@ publicPagesRouter.get("/sms-consent", (req, res) => {
   const baseUrl = `${req.protocol}://${req.get("host")}`;
   const privacyUrl = `${baseUrl}/public/sms-privacy`;
   const termsUrl = `${baseUrl}/public/sms-terms`;
+  const evidenceUrl = `${baseUrl}/public/sms-opt-in-evidence`;
   const demoSubmitUrl = `${baseUrl}/public/sms-consent-demo`;
 
   res.type("html").send(
@@ -176,11 +194,7 @@ publicPagesRouter.get("/sms-consent", (req, res) => {
         </div>
 
         <h2>Consent language used in the product</h2>
-        <p>
-          By opting in, the patient agrees to receive SMS messages from ${practiceName} related to appointments,
-          billing, prescriptions, and care updates. Message frequency varies. Msg&amp;data rates may apply.
-          Reply HELP for help and STOP to opt out.
-        </p>
+        <p class="disclosure">${smsConsentDisclosure}</p>
 
         <h2>Public opt-in form</h2>
         <p class="muted">
@@ -198,7 +212,7 @@ publicPagesRouter.get("/sms-consent", (req, res) => {
             <span>
               I agree to receive text messages from ${practiceName} about appointments, billing, prescriptions, and care updates.
               Message frequency varies. Message and data rates may apply. Reply HELP for help and STOP to opt out.
-              Consent is not a condition of treatment. I agree to the <a href="${termsUrl}">Terms of Service</a> and
+              Consent is not a condition of treatment or purchase. I agree to the <a href="${termsUrl}">Terms of Service</a> and
               <a href="${privacyUrl}">Privacy Policy</a>.
             </span>
           </label>
@@ -207,12 +221,85 @@ publicPagesRouter.get("/sms-consent", (req, res) => {
         </form>
 
         <div class="links">
+          <a href="${evidenceUrl}">Opt-in Evidence</a>
           <a href="${privacyUrl}">Privacy Policy</a>
           <a href="${termsUrl}">Terms of Service</a>
         </div>
 
         <div class="foot">
           Questions about the texting program can be directed to ${supportPhone} or ${supportEmail}.
+        </div>
+      `
+    )
+  );
+});
+
+publicPagesRouter.get("/sms-opt-in-evidence", (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const privacyUrl = `${baseUrl}/public/sms-privacy`;
+  const termsUrl = `${baseUrl}/public/sms-terms`;
+  const consentUrl = `${baseUrl}/public/sms-consent`;
+
+  res.type("html").send(
+    renderPage(
+      `${practiceName} SMS Opt-In Evidence`,
+      `
+        <div class="eyebrow">Public Opt-In Evidence</div>
+        <h1>${practiceName} SMS Opt-In Flow Evidence</h1>
+        <p class="muted">
+          This public page documents the SMS consent language and the opt-in locations used by the Perry Software LLC
+          dermatology patient-notification program. It is provided so messaging reviewers can verify the call to action
+          without logging into the patient portal.
+        </p>
+
+        <h2>Where consent is captured</h2>
+        <div class="evidence-step">
+          <strong>1. Patient portal profile preferences</strong>
+          <p>
+            Authenticated patients can review their mobile number and enable appointment reminders from the portal
+            preferences screen. The SMS consent disclosure is displayed next to the reminder toggle before SMS reminders
+            are enabled.
+          </p>
+        </div>
+        <div class="evidence-step">
+          <strong>2. Patient check-in workflow</strong>
+          <p>
+            During electronic check-in, the patient reviews demographic/contact information, including the mobile phone
+            number used for appointment reminders and check-in links. SMS consent language is presented before consent is
+            captured.
+          </p>
+        </div>
+        <div class="evidence-step">
+          <strong>3. Intake form and staff-assisted registration</strong>
+          <p>
+            New or updated intake workflows allow staff or patients to record SMS consent after the patient provides a
+            mobile phone number and sees the same disclosure below.
+          </p>
+        </div>
+
+        <h2>Exact disclosure shown at consent</h2>
+        <p class="disclosure">${smsConsentDisclosure} Terms and Conditions: <a href="${termsUrl}">${termsUrl}</a>. Privacy Policy: <a href="${privacyUrl}">${privacyUrl}</a>.</p>
+
+        <h2>Public consent form</h2>
+        <p>
+          A public, unauthenticated consent form using the same disclosure is available here:
+          <a href="${consentUrl}">${consentUrl}</a>.
+        </p>
+
+        <h2>Program details</h2>
+        <ul>
+          <li>Business name shown in SMS samples: Perry Software LLC.</li>
+          <li>Sending number: ${sendingPhone}.</li>
+          <li>Use case: operational patient notifications for dermatology care and account workflows.</li>
+          <li>Message types: appointment reminders, check-in links, billing/payment notifications, account alerts, prescription coordination, and support updates.</li>
+          <li>Opt-out: reply STOP. Help: reply HELP or contact ${supportPhone}.</li>
+          <li>Consent is optional and is not required to receive treatment, schedule an appointment, make a payment, use the portal, or receive other office services.</li>
+        </ul>
+
+        <div class="links">
+          <a href="${consentUrl}">SMS Consent Form</a>
+          <a href="${privacyUrl}">Privacy Policy</a>
+          <a href="${termsUrl}">Terms of Service</a>
         </div>
       `
     )
@@ -270,8 +357,10 @@ publicPagesRouter.get("/sms-privacy", (_req, res) => {
 
         <h2>Sharing</h2>
         <p>
-          Mobile information will not be sold. It may be shared with service providers that enable message delivery,
-          platform operations, and compliance obligations, subject to applicable privacy and healthcare requirements.
+          Mobile information will not be sold, rented, or shared with third parties, affiliates, or business partners
+          for marketing or promotional purposes. Mobile information, SMS consent records, and opt-in status may be shared
+          only with service providers that enable message delivery, platform operations, security, and compliance
+          obligations, subject to applicable privacy and healthcare requirements.
         </p>
 
         <h2>Patient choices</h2>

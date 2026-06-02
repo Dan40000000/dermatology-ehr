@@ -1255,7 +1255,13 @@ export function PortalProfilePage() {
                 <div className="preference-item">
                   <div className="preference-info">
                     <h4>Appointment Reminders</h4>
-                    <p>Receive email and SMS reminders before appointments</p>
+                    <p>
+                      Receive email and SMS reminders before appointments. By enabling SMS reminders, you agree to receive
+                      text messages from Perry Software LLC for appointment reminders, check-in links, billing/payment
+                      notifications, account alerts, prescription coordination, and support updates related to your
+                      dermatology care and account. Message frequency varies. Message and data rates may apply. Reply STOP
+                      to opt out and HELP for help. Consent is not a condition of purchase.
+                    </p>
                   </div>
                   <button
                     type="button"

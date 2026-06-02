@@ -349,10 +349,11 @@ describe('SMS routes', () => {
       expect.objectContaining({
         hasEmbeddedLinks: false,
         hasEmbeddedPhone: false,
-        messageFlow: expect.stringContaining('optional'),
-        messageSamples: expect.arrayContaining([expect.stringContaining('Reply HELP')]),
+        messageFlow: expect.stringContaining('Public evidence of the opt-in flow'),
+        messageSamples: expect.arrayContaining([expect.stringContaining('Perry Software LLC')]),
       })
     );
+    expect(res.body.submission.evidenceUrl).toContain('/public/sms-opt-in-evidence');
     expect(JSON.stringify(res.body)).not.toContain('token');
   });
 

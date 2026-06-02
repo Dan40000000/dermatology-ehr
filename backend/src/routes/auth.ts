@@ -11,6 +11,7 @@ import { authLimiter } from "../middleware/rateLimiter";
 import { logger } from "../lib/logger";
 import { requireRoles } from "../middleware/rbac";
 import { validatePasswordPolicy } from "../middleware/security";
+import { buildEffectiveRoles } from "../lib/roles";
 import {
   clearStaffAuthCookies,
   isCookieAuthPlaceholder,
@@ -34,6 +35,20 @@ const changePasswordSchema = z.object({
 });
 
 export const authRouter = Router();
+
+const WORKFORCE_USER_ROLES = new Set([
+  "admin",
+  "provider",
+  "ma",
+  "front_desk",
+  "billing",
+  "nurse",
+  "manager",
+  "scheduler",
+  "hr",
+  "staff",
+  "compliance_officer",
+]);
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -59,6 +74,21 @@ function getRefreshTokenFromRequest(req: AuthedRequest): string | undefined {
     return rawToken;
   }
   return req.cookies?.[STAFF_REFRESH_COOKIE];
+}
+
+function isTruthyQueryFlag(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(isTruthyQueryFlag);
+  }
+  if (typeof value !== "string") {
+    return false;
+  }
+  return ["1", "true", "yes"].includes(value.trim().toLowerCase());
+}
+
+function isWorkforceUser(user: { role?: unknown; roles?: unknown; secondaryRoles?: unknown }): boolean {
+  const roles = buildEffectiveRoles(user.role, user.roles || user.secondaryRoles);
+  return roles.some((role) => WORKFORCE_USER_ROLES.has(role));
 }
 
 /**
@@ -330,6 +360,8 @@ authRouter.post("/change-password", requireAuth, async (req: AuthedRequest, res)
  */
 authRouter.get("/users", requireAuth, requireRoles(["admin", "manager", "compliance_officer"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
+  const workforceOnly = isTruthyQueryFlag(req.query.workforceOnly) || isTruthyQueryFlag(req.query.staffOnly);
   const users = await userStore.listByTenant(tenantId);
-  return res.json({ users: users.map(u => userStore.mask(u)) });
+  const visibleUsers = workforceOnly ? users.filter(isWorkforceUser) : users;
+  return res.json({ users: visibleUsers.map(u => userStore.mask(u)) });
 });

@@ -184,8 +184,21 @@ describe("Audit Routes", () => {
       await authGet("/audit?action=create");
 
       expect(queryMock).toHaveBeenCalledWith(
-        expect.stringContaining("action = $2"),
-        expect.arrayContaining(["tenant-1", "create"])
+        expect.stringContaining("al.action ILIKE $2"),
+        expect.arrayContaining(["tenant-1", "%create%"])
+      );
+    });
+
+    it("should filter exact custom action names", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ total: 5 }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await authGet("/audit?action=claim_coding_review_released");
+
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("al.action = $2"),
+        expect.arrayContaining(["tenant-1", "claim_coding_review_released"])
       );
     });
 
@@ -442,7 +455,7 @@ describe("Audit Routes", () => {
 
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("user_id = $2"),
-        expect.arrayContaining(["tenant-1", "user-2", "create", "2024-01-01"])
+        expect.arrayContaining(["tenant-1", "user-2", "%create%", "2024-01-01"])
       );
     });
 

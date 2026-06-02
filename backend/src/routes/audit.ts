@@ -31,6 +31,64 @@ function hasFilterValue(value: unknown): boolean {
   return value !== undefined && value !== null && value !== "";
 }
 
+function getStringFilterValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return getStringFilterValue(value[0]);
+  }
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim();
+}
+
+const AUDIT_ACTION_CATEGORY_PATTERNS: Record<string, string[]> = {
+  logout: ["%logout%"],
+  create: ["%create%"],
+  update: ["%update%", "%status_change%"],
+  delete: ["%delete%", "%deactivate%", "%void%"],
+  view: ["%view%"],
+  download: ["%download%"],
+  export: ["%export%"],
+};
+
+function addAuditActionCondition(conditions: string[], params: any[], actionFilter: unknown): void {
+  const action = getStringFilterValue(actionFilter);
+  if (!action) return;
+
+  const normalizedAction = action.toLowerCase();
+
+  if (normalizedAction === "login") {
+    params.push("%login%");
+    const loginParam = params.length;
+    params.push("%failed%");
+    const failedParam = params.length;
+    conditions.push(`(al.action ILIKE $${loginParam} AND al.action NOT ILIKE $${failedParam})`);
+    return;
+  }
+
+  if (normalizedAction === "failed_login") {
+    params.push("%failed%login%");
+    const failedLoginParam = params.length;
+    params.push("%login%failed%");
+    const loginFailedParam = params.length;
+    conditions.push(`(al.action ILIKE $${failedLoginParam} OR al.action ILIKE $${loginFailedParam})`);
+    return;
+  }
+
+  const categoryPatterns = AUDIT_ACTION_CATEGORY_PATTERNS[normalizedAction];
+  if (categoryPatterns) {
+    const clauses = categoryPatterns.map((pattern) => {
+      params.push(pattern);
+      return `al.action ILIKE $${params.length}`;
+    });
+    conditions.push(`(${clauses.join(" OR ")})`);
+    return;
+  }
+
+  params.push(action);
+  conditions.push(`al.action = $${params.length}`);
+}
+
 function collectUnsupportedAuditFilters(columnMap: Awaited<ReturnType<typeof getAuditSchemaInfo>>["columnMap"], filters: Record<string, unknown>): string[] {
   const unsupported: string[] = [];
   const columnRequirements: Array<[string, keyof typeof columnMap]> = [
@@ -332,11 +390,8 @@ auditRouter.get("/", requireAuth, requireRoles(["admin", "compliance_officer"]),
       params.push(userId);
     }
 
-    if (action) {
-      paramCount++;
-      conditions.push(`al.action = $${paramCount}`);
-      params.push(action);
-    }
+    addAuditActionCondition(conditions, params, action);
+    paramCount = params.length;
 
     if (resourceType && columnMap.resourceType) {
       paramCount++;
@@ -580,7 +635,7 @@ auditRouter.get("/summary", requireAuth, requireRoles(["admin", "compliance_offi
     const failedLoginsResult = await pool.query(
       `SELECT COUNT(*) as count FROM audit_log
        WHERE tenant_id = $1 AND created_at >= $2
-       AND action = 'failed_login'`,
+       AND (action ILIKE '%failed%login%' OR action ILIKE '%login%failed%')`,
       [tenantId, today],
     );
 
@@ -588,7 +643,7 @@ auditRouter.get("/summary", requireAuth, requireRoles(["admin", "compliance_offi
     const accessesResult = await pool.query(
       `SELECT COUNT(*) as count FROM audit_log
        WHERE tenant_id = $1 AND created_at >= $2
-       AND action IN ('view', 'download', 'export')`,
+       AND (action ILIKE '%view%' OR action ILIKE '%download%' OR action ILIKE '%export%')`,
       [tenantId, today],
     );
 
@@ -651,11 +706,8 @@ auditRouter.post("/export", requireAuth, requireRoles(["admin"]), async (req: Au
       params.push(normalizedFilters.userId);
     }
 
-    if (normalizedFilters.action) {
-      paramCount++;
-      conditions.push(`al.action = $${paramCount}`);
-      params.push(normalizedFilters.action);
-    }
+    addAuditActionCondition(conditions, params, normalizedFilters.action);
+    paramCount = params.length;
 
     if (normalizedFilters.resourceType && columnMap.resourceType) {
       paramCount++;

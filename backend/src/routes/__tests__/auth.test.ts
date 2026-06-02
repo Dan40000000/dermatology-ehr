@@ -192,4 +192,18 @@ describe("Auth routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.users).toHaveLength(1);
   });
+
+  it("GET /auth/users can return workforce users only", async () => {
+    listUsersMock.mockResolvedValueOnce([
+      { id: "user-1", tenantId: "tenant-1", email: "admin@example.com", role: "admin" },
+      { id: "user-2", tenantId: "tenant-1", email: "front@example.com", role: "front_desk" },
+      { id: "user-3", tenantId: "tenant-1", email: "patient@example.com", role: "patient_portal" },
+    ]);
+
+    const res = await request(app).get("/auth/users?workforceOnly=true");
+
+    expect(res.status).toBe(200);
+    expect(res.body.users).toHaveLength(2);
+    expect(res.body.users.map((user: any) => user.id)).toEqual(["user-1", "user-2"]);
+  });
 });

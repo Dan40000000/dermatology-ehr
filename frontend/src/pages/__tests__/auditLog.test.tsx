@@ -35,7 +35,7 @@ describe('AuditLogPage', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo) => {
       const url = typeof input === 'string' ? input : input.url;
       if (url.includes('/api/auth/users')) {
-        return buildResponse({ users: [{ id: 'user-1', fullName: 'Admin User', email: 'admin@example.com' }] });
+        return buildResponse({ users: [{ id: 'user-1', fullName: 'Admin User', email: 'admin@example.com', role: 'admin' }] });
       }
       if (url.includes('/api/audit/summary')) {
         return buildResponse({
@@ -117,7 +117,12 @@ describe('AuditLogPage', () => {
         });
       }
       if (url.includes('/api/auth/users')) {
-        return buildResponse({ users: [] });
+        return buildResponse({
+          users: [
+            { id: 'user-1', fullName: 'Admin User', email: 'admin@example.com', role: 'admin' },
+            { id: 'patient-user-1', fullName: 'Daniel Perry', email: 'daniel@example.com', role: 'patient_portal' },
+          ],
+        });
       }
       return buildResponse({ logs: [], total: 0 });
     });
@@ -129,12 +134,25 @@ describe('AuditLogPage', () => {
     );
 
     await screen.findByText('Audit Log Viewer');
-    fireEvent.change(screen.getByPlaceholderText('Search all fields...'), { target: { value: 'token' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Filters' }));
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    expect(screen.getByRole('option', { name: 'Admin User' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Daniel Perry' })).not.toBeInTheDocument();
 
+    fireEvent.change(screen.getByPlaceholderText('Search all fields...'), { target: { value: 'token' } });
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'create' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Filters' }));
+    await waitFor(() => {
+      expect(
+        fetchSpy.mock.calls.some(([input]) => {
+          const url = typeof input === 'string' ? input : input.url;
+          return url.includes('/api/audit?') && url.includes('search=token') && url.includes('action=create');
+        }),
+      ).toBe(true);
+    });
+
+    const callsBeforeClear = fetchSpy.mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: 'Clear Filters' }));
     expect(screen.getByPlaceholderText('Search all fields...')).toHaveValue('');
+    await waitFor(() => expect(fetchSpy.mock.calls.length).toBeGreaterThan(callsBeforeClear));
 
     fetchSpy.mockRestore();
   });

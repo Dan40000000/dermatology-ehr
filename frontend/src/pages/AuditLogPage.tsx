@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { API_BASE_URL } from "../utils/apiBase";
-import { hasRole } from "../utils/roles";
+import { buildEffectiveRoles, hasRole } from "../utils/roles";
 import "../App.css";
 
 interface AuditLog {
@@ -35,9 +35,29 @@ interface User {
   id: string;
   fullName: string;
   email: string;
+  role?: string;
+  secondaryRoles?: string[];
+  roles?: string[];
 }
 
 const TENANT_HEADER_NAME = "x-tenant-id";
+const WORKFORCE_AUDIT_ROLES = new Set([
+  "admin",
+  "provider",
+  "ma",
+  "front_desk",
+  "billing",
+  "nurse",
+  "manager",
+  "scheduler",
+  "hr",
+  "staff",
+  "compliance_officer",
+]);
+
+function isWorkforceAuditUser(user: User): boolean {
+  return buildEffectiveRoles(user.role, user.roles || user.secondaryRoles).some((role) => WORKFORCE_AUDIT_ROLES.has(role));
+}
 
 function toDateTimeLocalInput(date: Date): string {
   const year = date.getFullYear();
@@ -93,7 +113,7 @@ export function AuditLogPage() {
   const fetchUsers = async () => {
     if (!session) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/users`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/users?workforceOnly=true`, {
         headers: {
           Authorization: `Bearer ${session.accessToken}`,
           [TENANT_HEADER_NAME]: session.tenantId,
@@ -101,7 +121,7 @@ export function AuditLogPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        setUsers(data.users || []);
+        setUsers((data.users || []).filter(isWorkforceAuditUser));
       }
     } catch (err) {
       console.error("Error fetching users:", err);
@@ -229,7 +249,7 @@ export function AuditLogPage() {
   };
 
   const clearFilters = () => {
-    setFilters({
+    const nextFilters = {
       userId: "",
       action: "",
       resourceType: "",
@@ -240,26 +260,50 @@ export function AuditLogPage() {
       severity: "",
       status: "",
       search: "",
-    });
+    };
+    setFilters(nextFilters);
     setPage(0);
+    syncFiltersToUrl(nextFilters, 0);
   };
 
   const setTodayFilter = () => {
-    setFilters((prev) => ({
-      ...prev,
+    const nextFilters = {
+      ...filters,
       startDate: startOfTodayInput(),
       endDate: "",
-    }));
+    };
+    setFilters(nextFilters);
     setPage(0);
+    syncFiltersToUrl(nextFilters, 0);
   };
 
   const setAllTimeFilter = () => {
-    setFilters((prev) => ({
-      ...prev,
+    const nextFilters = {
+      ...filters,
       startDate: "",
       endDate: "",
-    }));
+    };
+    setFilters(nextFilters);
     setPage(0);
+    syncFiltersToUrl(nextFilters, 0);
+  };
+
+  const syncFiltersToUrl = (nextFilters: typeof filters, nextPage: number) => {
+    const next = new URLSearchParams();
+    Object.entries(nextFilters).forEach(([key, value]) => {
+      if (value) {
+        next.set(key, value);
+      }
+    });
+    if (nextPage > 0) {
+      next.set("page", String(nextPage));
+    }
+    setSearchParams(next);
+  };
+
+  const applyFilters = () => {
+    setPage(0);
+    syncFiltersToUrl(filters, 0);
   };
 
   const handlePageChange = (nextPage: number) => {
@@ -502,7 +546,7 @@ export function AuditLogPage() {
               Clear Filters
             </button>
             <button
-              onClick={fetchLogs}
+              onClick={applyFilters}
               style={{
                 padding: "0.5rem 1rem",
                 background: "#3b82f6",
@@ -528,7 +572,7 @@ export function AuditLogPage() {
               onChange={(e) => setFilters({ ...filters, userId: e.target.value })}
               style={{ width: "100%", padding: "0.5rem", border: "1px solid #d1d5db", borderRadius: "6px" }}
             >
-              <option value="">All Users</option>
+              <option value="">All Staff Users</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.fullName}
@@ -546,16 +590,16 @@ export function AuditLogPage() {
               onChange={(e) => setFilters({ ...filters, action: e.target.value })}
               style={{ width: "100%", padding: "0.5rem", border: "1px solid #d1d5db", borderRadius: "6px" }}
             >
-              <option value="">All Actions</option>
-              <option value="login">Login</option>
-              <option value="logout">Logout</option>
-              <option value="failed_login">Failed Login</option>
-              <option value="create">Create</option>
-              <option value="update">Update</option>
-              <option value="delete">Delete</option>
-              <option value="view">View</option>
-              <option value="download">Download</option>
-              <option value="export">Export</option>
+              <option value="">All Action Categories</option>
+              <option value="login">Logins</option>
+              <option value="failed_login">Failed logins</option>
+              <option value="logout">Logouts</option>
+              <option value="create">Creates</option>
+              <option value="update">Updates</option>
+              <option value="delete">Deletes / voids</option>
+              <option value="view">Views</option>
+              <option value="download">Downloads</option>
+              <option value="export">Exports</option>
             </select>
           </div>
 

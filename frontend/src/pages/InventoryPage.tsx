@@ -145,16 +145,7 @@ const EMPTY_ADD_ITEM_FORM: AddItemForm = {
   description: '',
 };
 
-const MOCK_CABINETS: Cabinet[] = [
-  { id: 'c1', name: 'Sample Closet', facility: 'Main Office', description: 'Medical samples and supplies' },
-  { id: 'c2', name: 'Meridian Lab Fridge', facility: 'Meridian Clinic', description: 'Temperature-controlled medications' },
-  { id: 'c3', name: 'Med Cabinet', facility: 'Main Office', description: 'General medications' },
-  { id: 'c4', name: 'Cosmetic Fridge', facility: 'Main Office', description: 'Cosmetic injectables' },
-  { id: 'c5', name: 'Supply Closet', facility: 'Main Office', description: 'General medical supplies' },
-  { id: 'c6', name: 'Procedure Room Cabinet', facility: 'Main Office', description: 'Procedure-specific equipment' },
-  { id: 'c7', name: 'Cryo Storage Tank', facility: 'Main Office', description: 'Liquid nitrogen storage' },
-  { id: 'c8', name: 'Laser Room Cabinet', facility: 'Main Office', description: 'Laser supplies and accessories' },
-];
+const EMPTY_CABINETS: Cabinet[] = [];
 
 function toFiniteInt(value: string, fallback = 0): number {
   const parsed = Number.parseInt(value, 10);
@@ -195,7 +186,7 @@ export function InventoryPage() {
   const [adjustReason, setAdjustReason] = useState<AdjustReason>('adjustment');
   const [addItemForm, setAddItemForm] = useState<AddItemForm>(EMPTY_ADD_ITEM_FORM);
 
-  const [allCabinets] = useState<Cabinet[]>(MOCK_CABINETS);
+  const allCabinets = EMPTY_CABINETS;
   const [preferredCabinetIds, setPreferredCabinetIds] = useState<string[]>([]);
   const [cabinetSearchTerm, setCabinetSearchTerm] = useState('');
   const [facilityFilter, setFacilityFilter] = useState<string>('all');
@@ -1079,38 +1070,40 @@ export function InventoryPage() {
 
       {viewMode === 'cabinets' && (
         <>
-          <div className="cabinet-filters">
-            <div className="search-box">
-              <input
-                id="cabinet-search"
-                name="cabinet-search"
-                type="text"
-                placeholder="Search cabinets..."
-                value={cabinetSearchTerm}
-                onChange={(event) => setCabinetSearchTerm(event.target.value)}
-              />
-            </div>
+          {allCabinets.length > 0 && (
+            <div className="cabinet-filters">
+              <div className="search-box">
+                <input
+                  id="cabinet-search"
+                  name="cabinet-search"
+                  type="text"
+                  placeholder="Search cabinets..."
+                  value={cabinetSearchTerm}
+                  onChange={(event) => setCabinetSearchTerm(event.target.value)}
+                />
+              </div>
 
-            <div className="filter-tabs">
-              <button
-                type="button"
-                className={`filter-tab ${facilityFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setFacilityFilter('all')}
-              >
-                All Facilities
-              </button>
-              {facilities.map((facility) => (
+              <div className="filter-tabs">
                 <button
-                  key={facility}
                   type="button"
-                  className={`filter-tab ${facilityFilter === facility ? 'active' : ''}`}
-                  onClick={() => setFacilityFilter(facility)}
+                  className={`filter-tab ${facilityFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setFacilityFilter('all')}
                 >
-                  {facility}
+                  All Facilities
                 </button>
-              ))}
+                {facilities.map((facility) => (
+                  <button
+                    key={facility}
+                    type="button"
+                    className={`filter-tab ${facilityFilter === facility ? 'active' : ''}`}
+                    onClick={() => setFacilityFilter(facility)}
+                  >
+                    {facility}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <Panel title="Preferred Cabinets">
             {preferredCabinets.length === 0 ? (
@@ -1151,7 +1144,7 @@ export function InventoryPage() {
 
           <Panel title="Available Cabinets">
             {filteredAvailableCabinets.length === 0 ? (
-              <div className="inventory-empty">No available cabinets found.</div>
+              <div className="inventory-empty">No cabinets configured yet.</div>
             ) : (
               <div className="cabinets-table">
                 <table>

@@ -60,4 +60,25 @@ describe('InventoryPage', () => {
     expect(screen.queryByText('Meridian Lab Fridge')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'All Facilities' })).not.toBeInTheDocument();
   });
+
+  it('keeps add-item draft values when the backdrop is clicked', async () => {
+    render(
+      <MemoryRouter initialEntries={['/inventory']}>
+        <InventoryPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.fetchInventoryItems).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Item' }));
+    const itemName = screen.getByLabelText('Item Name *');
+
+    fireEvent.change(itemName, { target: { value: 'Glycolic renewal pads' } });
+    fireEvent.click(screen.getByRole('presentation'));
+
+    expect(screen.getByText('Add Inventory Item')).toBeInTheDocument();
+    expect(screen.getByLabelText('Item Name *')).toHaveValue('Glycolic renewal pads');
+  });
 });

@@ -33,6 +33,7 @@ import {
   CheckCircle as CheckIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import { closeDialogByExplicitAction } from '../utils/dialogClose';
 import LabOrderForm from '../components/LabOrderForm';
 import { API_BASE_URL } from '../utils/apiBase';
 
@@ -354,7 +355,8 @@ const LabOrdersPage: React.FC = () => {
       {/* Create Order Dialog */}
       <Dialog
         open={createDialogOpen}
-        onClose={() => setCreateDialogOpen(false)}
+        onClose={closeDialogByExplicitAction(() => setCreateDialogOpen(false))}
+        disableEscapeKeyDown
         maxWidth="md"
         fullWidth
       >

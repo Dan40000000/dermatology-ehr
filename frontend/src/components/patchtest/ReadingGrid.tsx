@@ -31,6 +31,7 @@ import {
   PhotoCamera as PhotoIcon,
 } from '@mui/icons-material';
 import ReadingScale, { ReadingValue, READING_DEFINITIONS, ReadingBadge } from './ReadingScale';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 export interface AllergenResult {
   id: string;
@@ -209,7 +210,8 @@ const ReadingGrid: React.FC<ReadingGridProps> = ({
       {/* Allergen Details Dialog */}
       <Dialog
         open={!!selectedAllergen}
-        onClose={() => setSelectedAllergen(null)}
+        onClose={closeDialogByExplicitAction(() => setSelectedAllergen(null))}
+        disableEscapeKeyDown
         maxWidth="sm"
         fullWidth
       >

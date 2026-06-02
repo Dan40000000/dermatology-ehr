@@ -66,7 +66,7 @@ export const MessageAttachmentUpload: FC<MessageAttachmentUploadProps> = ({
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex items-center justify-center min-h-screen px-4">
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={onClose} />
+        <div className="fixed inset-0 bg-gray-500 bg-opacity-75" />
 
         <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4">Upload Attachment</h3>

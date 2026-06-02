@@ -44,6 +44,7 @@ import {
   Visibility as ViewIcon,
   WarningAmber as WarningIcon,
 } from '@mui/icons-material';
+import { closeDialogByExplicitAction } from '../utils/dialogClose';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -768,7 +769,7 @@ const BiopsyLogPage: React.FC = () => {
           />
         </Paper>
 
-        <Dialog open={showReviewDialog} onClose={closeReviewDialog} maxWidth="lg" fullWidth>
+        <Dialog open={showReviewDialog} onClose={closeDialogByExplicitAction(closeReviewDialog)} disableEscapeKeyDown maxWidth="lg" fullWidth>
           <DialogContent>
             {selectedBiopsyId && (
               <BiopsyResultReview

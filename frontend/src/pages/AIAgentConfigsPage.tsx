@@ -467,7 +467,7 @@ export function AIAgentConfigsPage() {
         )}
 
         {showCloneModal && (
-          <div style={modalOverlayStyle} onClick={() => setShowCloneModal(false)}>
+          <div style={modalOverlayStyle}>
             <div style={{ ...modalStyle, maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
               <h2 style={modalTitleStyle}>Clone Configuration</h2>
               <div style={formGroupStyle}>
@@ -582,7 +582,7 @@ function ConfigModal({
   });
 
   return (
-    <div style={modalOverlayStyle} onClick={onClose}>
+    <div style={modalOverlayStyle}>
       <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
         <h2 style={modalTitleStyle}>
           {config?.id ? 'Edit Configuration' : 'New AI Agent Configuration'}

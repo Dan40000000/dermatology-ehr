@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 // Common dermatology medications requiring PA
 const COMMON_BIOLOGICS = [
@@ -136,7 +137,7 @@ const PriorAuthForm: React.FC<PriorAuthFormProps> = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} onClose={closeDialogByExplicitAction(onClose)} disableEscapeKeyDown maxWidth="md" fullWidth>
       <DialogTitle>New Prior Authorization Request</DialogTitle>
       <DialogContent>
         <Grid container spacing={3} sx={{ mt: 0.5 }}>

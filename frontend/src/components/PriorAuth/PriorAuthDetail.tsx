@@ -34,6 +34,7 @@ import {
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 import PriorAuthStatusUpdate from './PriorAuthStatusUpdate';
 import PriorAuthAppeal from './PriorAuthAppeal';
 
@@ -129,7 +130,7 @@ const PriorAuthDetail: React.FC<PriorAuthDetailProps> = ({
 
   if (loading) {
     return (
-      <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
+      <Dialog open={open} onClose={closeDialogByExplicitAction(onClose)} disableEscapeKeyDown maxWidth="lg" fullWidth>
         <DialogContent>
           <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
             <CircularProgress />
@@ -143,7 +144,7 @@ const PriorAuthDetail: React.FC<PriorAuthDetailProps> = ({
 
   return (
     <>
-      <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
+      <Dialog open={open} onClose={closeDialogByExplicitAction(onClose)} disableEscapeKeyDown maxWidth="lg" fullWidth>
         <DialogTitle>
           <Box display="flex" justifyContent="space-between" alignItems="center">
             <Box>

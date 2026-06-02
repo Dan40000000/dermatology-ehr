@@ -574,7 +574,7 @@ function CreatePAModal({
   const canProceedStep2 = formData.insuranceName && formData.providerNpi;
 
   return (
-    <div className="epa-modal-overlay" onClick={onClose}>
+    <div className="epa-modal-overlay">
       <div className="epa-modal" onClick={(e) => e.stopPropagation()}>
         <div className="epa-modal-header">
           <h2>New Prior Authorization Request</h2>
@@ -916,7 +916,7 @@ function DetailPAModal({
   const isSubmitted = ['submitted', 'approved', 'denied'].includes(pa.status);
 
   return (
-    <div className="epa-modal-overlay" onClick={onClose}>
+    <div className="epa-modal-overlay">
       <div className="epa-modal epa-modal-large" onClick={(e) => e.stopPropagation()}>
         <div className="epa-modal-header">
           <div className="epa-modal-header-info">

@@ -27,6 +27,7 @@ import {
 } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { API_BASE_URL, TENANT_HEADER_NAME } from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface FeedbackFormProps {
   analysisId: string;
@@ -170,7 +171,7 @@ const FeedbackForm: React.FC<FeedbackFormProps> = ({
         Provide Feedback
       </Button>
 
-      <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
+      <Dialog open={open} onClose={closeDialogByExplicitAction(handleClose)} disableEscapeKeyDown maxWidth="md" fullWidth>
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <FeedbackIcon color="primary" />
           AI Analysis Feedback

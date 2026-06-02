@@ -816,7 +816,7 @@ export function PortalDocumentsPage() {
 
       {/* Document Detail Modal */}
       {viewingDocument && (
-        <div className="modal-overlay" onClick={() => setViewingDocument(null)}>
+        <div className="modal-overlay">
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title">{viewingDocument.title}</h3>

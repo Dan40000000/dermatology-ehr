@@ -1493,7 +1493,7 @@ function Modal({
   const title = item?.id ? `Edit ${titleLabel}` : `Add New ${titleLabel}`;
 
   return (
-    <div style={modalOverlayStyle} onClick={onClose}>
+    <div style={modalOverlayStyle}>
       <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
         <h2 style={modalTitleStyle}>{title}</h2>
 

@@ -13,6 +13,7 @@ import {
 import { Psychology as AIIcon } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { API_BASE_URL, TENANT_HEADER_NAME } from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface AIAnalysisButtonProps {
   imageId: string;
@@ -150,7 +151,8 @@ const AIAnalysisButton: React.FC<AIAnalysisButtonProps> = ({
 
       <Dialog
         open={showDisclaimer}
-        onClose={() => setShowDisclaimer(false)}
+        onClose={closeDialogByExplicitAction(() => setShowDisclaimer(false))}
+        disableEscapeKeyDown
         maxWidth="sm"
         fullWidth
       >

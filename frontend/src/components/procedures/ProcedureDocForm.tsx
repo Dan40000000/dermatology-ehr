@@ -35,6 +35,7 @@ import { BiopsyForm } from './BiopsyForm';
 import { ExcisionForm } from './ExcisionForm';
 import { BodyLocationPicker } from './BodyLocationPicker';
 import { ProcedureNote } from './ProcedureNote';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 // ============================================
 // TYPES
@@ -971,7 +972,8 @@ export const ProcedureDocForm: React.FC<ProcedureDocFormProps> = ({
       {/* Body Location Picker Dialog */}
       <Dialog
         open={showLocationPicker}
-        onClose={() => setShowLocationPicker(false)}
+        onClose={closeDialogByExplicitAction(() => setShowLocationPicker(false))}
+        disableEscapeKeyDown
         maxWidth="md"
         fullWidth
       >
@@ -987,7 +989,8 @@ export const ProcedureDocForm: React.FC<ProcedureDocFormProps> = ({
       {/* Note Preview Dialog */}
       <Dialog
         open={showNotePreview}
-        onClose={() => setShowNotePreview(false)}
+        onClose={closeDialogByExplicitAction(() => setShowNotePreview(false))}
+        disableEscapeKeyDown
         maxWidth="md"
         fullWidth
       >

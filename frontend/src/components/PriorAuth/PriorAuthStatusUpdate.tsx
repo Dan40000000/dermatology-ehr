@@ -15,6 +15,7 @@ import {
 } from '@mui/material';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface PriorAuthStatusUpdateProps {
   priorAuthId: string;
@@ -63,7 +64,7 @@ const PriorAuthStatusUpdate: React.FC<PriorAuthStatusUpdateProps> = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={closeDialogByExplicitAction(onClose)} disableEscapeKeyDown maxWidth="sm" fullWidth>
       <DialogTitle>Add Status Update</DialogTitle>
       <DialogContent>
         <Grid container spacing={2} sx={{ mt: 0.5 }}>

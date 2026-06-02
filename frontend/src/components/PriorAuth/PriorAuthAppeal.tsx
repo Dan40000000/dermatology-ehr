@@ -18,6 +18,7 @@ import {
 import { AutoAwesome as AIIcon } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface PriorAuthAppealProps {
   priorAuthId: string;
@@ -68,7 +69,7 @@ const PriorAuthAppeal: React.FC<PriorAuthAppealProps> = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} onClose={closeDialogByExplicitAction(onClose)} disableEscapeKeyDown maxWidth="md" fullWidth>
       <DialogTitle>File Prior Authorization Appeal</DialogTitle>
       <DialogContent>
         <Grid container spacing={3} sx={{ mt: 0.5 }}>

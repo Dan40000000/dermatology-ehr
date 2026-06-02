@@ -33,6 +33,7 @@ import {
   Visibility as ViewIcon
 } from '@mui/icons-material';
 import ResultViewer from '../components/ResultViewer';
+import { closeDialogByExplicitAction } from '../utils/dialogClose';
 import { API_BASE_URL } from '../utils/apiBase';
 
 interface LabResult {
@@ -355,7 +356,8 @@ const LabResultsPage: React.FC = () => {
       {/* Result Viewer Dialog */}
       <Dialog
         open={viewDialogOpen}
-        onClose={() => setViewDialogOpen(false)}
+        onClose={closeDialogByExplicitAction(() => setViewDialogOpen(false))}
+        disableEscapeKeyDown
         maxWidth="md"
         fullWidth
       >

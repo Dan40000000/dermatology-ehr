@@ -49,6 +49,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_BASE_URL, TENANT_HEADER_NAME } from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 import toast from 'react-hot-toast';
 
 // Types
@@ -662,7 +663,7 @@ const FieldEditDialog: React.FC<FieldEditDialogProps> = ({ open, field, onSave, 
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={closeDialogByExplicitAction(onClose)} disableEscapeKeyDown maxWidth="sm" fullWidth>
       <DialogTitle>{field ? 'Edit Field' : 'Add Field'}</DialogTitle>
       <DialogContent>
         <Grid container spacing={2} sx={{ mt: 1 }}>

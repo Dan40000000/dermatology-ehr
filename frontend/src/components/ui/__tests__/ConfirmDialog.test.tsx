@@ -112,7 +112,7 @@ describe('ConfirmDialog Component', () => {
     expect(handleCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onCancel when overlay clicked', async () => {
+  it('does not call onCancel when overlay clicked', async () => {
     const handleCancel = vi.fn();
     const user = userEvent.setup();
 
@@ -129,8 +129,26 @@ describe('ConfirmDialog Component', () => {
     const overlay = container.querySelector('.confirm-dialog-overlay');
     if (overlay) {
       await user.click(overlay);
-      expect(handleCancel).toHaveBeenCalledTimes(1);
+      expect(handleCancel).not.toHaveBeenCalled();
     }
+  });
+
+  it('does not call onCancel when Escape is pressed', async () => {
+    const handleCancel = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        title="Confirm"
+        message="Are you sure?"
+        onConfirm={vi.fn()}
+        onCancel={handleCancel}
+      />
+    );
+
+    await user.keyboard('{Escape}');
+    expect(handleCancel).not.toHaveBeenCalled();
   });
 
   it('does not call onCancel when dialog content clicked', async () => {
@@ -151,7 +169,7 @@ describe('ConfirmDialog Component', () => {
     expect(handleCancel).not.toHaveBeenCalled();
   });
 
-  it('calls onCancel when Escape key pressed', async () => {
+  it('does not call onCancel when Escape key pressed', async () => {
     const handleCancel = vi.fn();
     const user = userEvent.setup();
 
@@ -166,7 +184,7 @@ describe('ConfirmDialog Component', () => {
     );
 
     await user.keyboard('{Escape}');
-    expect(handleCancel).toHaveBeenCalledTimes(1);
+    expect(handleCancel).not.toHaveBeenCalled();
   });
 
   it('does not call onCancel on Escape when loading', async () => {

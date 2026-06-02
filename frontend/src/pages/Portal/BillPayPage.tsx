@@ -44,6 +44,7 @@ import {
   Star as StarIcon,
   Check as CheckIcon,
 } from '@mui/icons-material';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 import {
   fetchPortalBalance,
   fetchPortalCharges,
@@ -502,7 +503,7 @@ export default function BillPayPage({ tenantId, portalToken }: BillPayPageProps)
       </TabPanel>
 
       {/* Make Payment Dialog */}
-      <Dialog open={showPaymentDialog} onClose={() => setShowPaymentDialog(false)} maxWidth="sm" fullWidth>
+      <Dialog open={showPaymentDialog} onClose={closeDialogByExplicitAction(() => setShowPaymentDialog(false))} disableEscapeKeyDown maxWidth="sm" fullWidth>
         <DialogTitle>Make a Payment</DialogTitle>
         <DialogContent>
           <TextField
@@ -537,7 +538,7 @@ export default function BillPayPage({ tenantId, portalToken }: BillPayPageProps)
       </Dialog>
 
       {/* Add Payment Method Dialog */}
-      <Dialog open={showAddPaymentMethod} onClose={() => setShowAddPaymentMethod(false)} maxWidth="sm" fullWidth>
+      <Dialog open={showAddPaymentMethod} onClose={closeDialogByExplicitAction(() => setShowAddPaymentMethod(false))} disableEscapeKeyDown maxWidth="sm" fullWidth>
         <DialogTitle>Add Payment Method</DialogTitle>
         <DialogContent>
           <TextField

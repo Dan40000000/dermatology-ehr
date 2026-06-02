@@ -36,7 +36,7 @@ export function KeyboardShortcutsHelp({ shortcuts }: KeyboardShortcutsHelpProps)
   }, {} as Record<string, KeyboardShortcut[]>);
 
   return (
-    <div className="keyboard-shortcuts-overlay" onClick={() => setIsOpen(false)}>
+    <div className="keyboard-shortcuts-overlay">
       <div
         className="keyboard-shortcuts-dialog animate-scale-in"
         onClick={(e) => e.stopPropagation()}

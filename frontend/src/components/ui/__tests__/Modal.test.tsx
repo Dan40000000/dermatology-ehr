@@ -41,7 +41,7 @@ describe('Modal Component', () => {
     expect(handleClose).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onClose when backdrop is clicked', async () => {
+  it('does not call onClose when backdrop is clicked', async () => {
     const handleClose = vi.fn();
     const user = userEvent.setup();
 
@@ -54,7 +54,22 @@ describe('Modal Component', () => {
     const backdrop = screen.getByRole('presentation');
     await user.click(backdrop);
 
-    expect(handleClose).toHaveBeenCalledTimes(1);
+    expect(handleClose).not.toHaveBeenCalled();
+  });
+
+  it('does not close when Escape is pressed', async () => {
+    const handleClose = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <Modal isOpen={true} onClose={handleClose} title="Test Modal">
+        <p>Modal content</p>
+      </Modal>
+    );
+
+    await user.keyboard('{Escape}');
+
+    expect(handleClose).not.toHaveBeenCalled();
   });
 
   it('renders children content', () => {

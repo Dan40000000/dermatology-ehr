@@ -32,6 +32,7 @@ import {
   Warning as WarningIcon,
 } from '@mui/icons-material';
 import api from '../../api';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface Prescription {
   id: string;
@@ -417,7 +418,7 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
         )}
       </CardContent>
 
-      <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={addDialogOpen} onClose={closeDialogByExplicitAction(() => setAddDialogOpen(false))} disableEscapeKeyDown maxWidth="sm" fullWidth>
         <DialogTitle>Add Prescription</DialogTitle>
         <DialogContent>
           <Box display="flex" flexDirection="column" gap={2} mt={1}>
@@ -482,7 +483,7 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
         </DialogActions>
       </Dialog>
 
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+      <Dialog open={deleteDialogOpen} onClose={closeDialogByExplicitAction(() => setDeleteDialogOpen(false))} disableEscapeKeyDown>
         <DialogTitle>Cancel Prescription?</DialogTitle>
         <DialogContent>
           <Typography>Are you sure you want to cancel this prescription? This action cannot be undone.</Typography>

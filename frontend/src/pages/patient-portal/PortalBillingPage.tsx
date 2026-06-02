@@ -1467,7 +1467,7 @@ export function PortalBillingPage() {
 
       {/* Payment Modal */}
       {showPaymentModal && (
-        <div className="modal-overlay" onClick={closePaymentModal}>
+        <div className="modal-overlay">
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: paymentResult ? '400px' : '480px' }}>
             <div className="modal-header">
               <h3 className="modal-title">

@@ -33,6 +33,7 @@ import {
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import LesionCard from '../components/lesions/LesionCard';
+import { closeDialogByExplicitAction } from '../utils/dialogClose';
 import LesionTimeline from '../components/lesions/LesionTimeline';
 import BodyMapLesions from '../components/lesions/BodyMapLesions';
 import ChangeAlert from '../components/lesions/ChangeAlert';
@@ -405,7 +406,7 @@ const LesionTrackingPage: React.FC = () => {
       </TabPanel>
 
       {/* Add Lesion Dialog */}
-      <Dialog open={showAddDialog} onClose={() => setShowAddDialog(false)} maxWidth="sm" fullWidth>
+      <Dialog open={showAddDialog} onClose={closeDialogByExplicitAction(() => setShowAddDialog(false))} disableEscapeKeyDown maxWidth="sm" fullWidth>
         <DialogTitle>Track New Lesion</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -465,7 +466,8 @@ const LesionTrackingPage: React.FC = () => {
       {/* Timeline Dialog */}
       <Dialog
         open={showTimelineDialog}
-        onClose={() => setShowTimelineDialog(false)}
+        onClose={closeDialogByExplicitAction(() => setShowTimelineDialog(false))}
+        disableEscapeKeyDown
         maxWidth="lg"
         fullWidth
       >
@@ -488,7 +490,8 @@ const LesionTrackingPage: React.FC = () => {
       {/* Compare Dialog */}
       <Dialog
         open={showCompareDialog}
-        onClose={() => setShowCompareDialog(false)}
+        onClose={closeDialogByExplicitAction(() => setShowCompareDialog(false))}
+        disableEscapeKeyDown
         maxWidth="lg"
         fullWidth
       >
@@ -510,7 +513,8 @@ const LesionTrackingPage: React.FC = () => {
       {/* ABCDE Scorer Dialog */}
       <Dialog
         open={showABCDEDialog}
-        onClose={() => setShowABCDEDialog(false)}
+        onClose={closeDialogByExplicitAction(() => setShowABCDEDialog(false))}
+        disableEscapeKeyDown
         maxWidth="md"
         fullWidth
       >
@@ -536,7 +540,8 @@ const LesionTrackingPage: React.FC = () => {
       {/* Measurement Dialog */}
       <Dialog
         open={showMeasurementDialog}
-        onClose={() => setShowMeasurementDialog(false)}
+        onClose={closeDialogByExplicitAction(() => setShowMeasurementDialog(false))}
+        disableEscapeKeyDown
         maxWidth="sm"
         fullWidth
       >

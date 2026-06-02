@@ -41,6 +41,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { API_BASE_URL } from '../../utils/apiBase';
 import { formatDateOnly } from '../../utils/dateOnly';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface LabResultsViewProps {
   orderId: string;
@@ -429,7 +430,8 @@ export const LabResultsView: React.FC<LabResultsViewProps> = ({
       {/* Review Dialog */}
       <Dialog
         open={reviewDialogOpen}
-        onClose={() => setReviewDialogOpen(false)}
+        onClose={closeDialogByExplicitAction(() => setReviewDialogOpen(false))}
+        disableEscapeKeyDown
         maxWidth="sm"
         fullWidth
       >

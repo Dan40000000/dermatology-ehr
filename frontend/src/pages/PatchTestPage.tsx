@@ -53,6 +53,7 @@ import {
   Person as PersonIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
+import { closeDialogByExplicitAction } from '../utils/dialogClose';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -760,7 +761,8 @@ const PatchTestPage: React.FC = () => {
         {/* New Session Dialog */}
         <Dialog
           open={showNewSessionDialog}
-          onClose={() => setShowNewSessionDialog(false)}
+          onClose={closeDialogByExplicitAction(() => setShowNewSessionDialog(false))}
+          disableEscapeKeyDown
           maxWidth="md"
           fullWidth
         >

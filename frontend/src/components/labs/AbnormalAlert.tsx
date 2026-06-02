@@ -41,6 +41,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_BASE_URL } from '../../utils/apiBase';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface AbnormalAlertProps {
   onViewResult?: (orderId: string) => void;
@@ -334,7 +335,8 @@ export const AbnormalAlert: React.FC<AbnormalAlertProps> = ({
       {/* Review Dialog */}
       <Dialog
         open={reviewDialogOpen}
-        onClose={() => setReviewDialogOpen(false)}
+        onClose={closeDialogByExplicitAction(() => setReviewDialogOpen(false))}
+        disableEscapeKeyDown
         maxWidth="sm"
         fullWidth
       >

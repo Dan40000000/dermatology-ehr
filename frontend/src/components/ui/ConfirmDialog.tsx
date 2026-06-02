@@ -33,10 +33,11 @@ export function ConfirmDialog({
       // Prevent body scroll
       document.body.style.overflow = 'hidden';
 
-      // Handle escape key
+      // Escape and backdrop clicks are non-dismissive. Users must explicitly
+      // confirm or cancel so accidental clicks do not discard work.
       const handleEscape = (e: KeyboardEvent) => {
         if (e.key === 'Escape' && !loading) {
-          onCancel();
+          e.preventDefault();
         }
       };
       window.addEventListener('keydown', handleEscape);
@@ -63,7 +64,7 @@ export function ConfirmDialog({
   };
 
   return (
-    <div className="confirm-dialog-overlay" onClick={!loading ? onCancel : undefined}>
+    <div className="confirm-dialog-overlay">
       <div
         ref={dialogRef}
         className={`confirm-dialog animate-scale-in ${variantClasses[variant]}`}

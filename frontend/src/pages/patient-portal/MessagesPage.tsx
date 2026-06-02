@@ -455,7 +455,7 @@ const MessageComposer: FC<MessageComposerProps> = ({ messageUnlockToken, onLockR
   };
 
   return (
-    <div className="portal-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="portal-modal-overlay">
       <div className="portal-modal">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
           <h2 className="portal-modal-title" style={{ margin: 0 }}>New Message</h2>
@@ -768,7 +768,7 @@ const MessageThreadView: FC<MessageThreadViewProps> = ({
   };
 
   return (
-    <div className="portal-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="portal-modal-overlay">
       <div className="portal-modal portal-modal-lg" style={{ display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
         {/* Header */}
         <div style={{ flexShrink: 0, borderBottom: '1px solid #e5e7eb', paddingBottom: '1rem', marginBottom: '1rem' }}>

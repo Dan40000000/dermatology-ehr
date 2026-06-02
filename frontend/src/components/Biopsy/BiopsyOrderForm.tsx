@@ -30,6 +30,7 @@ import {
 } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { formatDateOnly } from '../../utils/dateOnly';
+import { closeDialogByExplicitAction } from '../../utils/dialogClose';
 
 interface BiopsyOrderFormProps {
   patientId: string;
@@ -723,7 +724,7 @@ const BiopsyOrderForm: React.FC<BiopsyOrderFormProps> = ({
       </Box>
 
       {/* Print Label Dialog */}
-      <Dialog open={showPrintDialog} onClose={handleClosePrintDialog} maxWidth="sm" fullWidth>
+      <Dialog open={showPrintDialog} onClose={closeDialogByExplicitAction(handleClosePrintDialog)} disableEscapeKeyDown maxWidth="sm" fullWidth>
         <DialogTitle>
           Biopsy Order Created Successfully
           <IconButton

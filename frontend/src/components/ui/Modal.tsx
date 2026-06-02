@@ -20,11 +20,12 @@ export function Modal({
   showClose = true,
   footer,
 }: ModalProps) {
-  // Close on escape key
+  // Escape and backdrop clicks are intentionally non-dismissive so in-progress form
+  // work is not lost accidentally. Use explicit Close/Cancel actions instead.
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        onClose();
+        e.preventDefault();
       }
     };
     document.addEventListener('keydown', handleEscape);
@@ -67,7 +68,7 @@ export function Modal({
 
   // Render via portal to escape any stacking context issues
   return createPortal(
-    <div className="modal-overlay" onClick={onClose} role="presentation">
+    <div className="modal-overlay" role="presentation">
       <div
         className={`modal ${sizeClasses[size]}`}
         onClick={(e) => e.stopPropagation()}

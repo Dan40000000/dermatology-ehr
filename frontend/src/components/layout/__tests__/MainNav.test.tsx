@@ -100,6 +100,39 @@ describe('MainNav role-based visibility', () => {
     );
   });
 
+  it('keeps the Admin dropdown inside the viewport when it opens near the right edge', async () => {
+    mockRole = 'admin';
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+
+    renderNav();
+
+    const adminMenuLink = screen.getByRole('link', { name: /Admin/ });
+    const adminMenuItem = adminMenuLink.closest('.ema-nav-item');
+    expect(adminMenuItem).not.toBeNull();
+
+    const rectSpy = vi.spyOn(adminMenuItem!, 'getBoundingClientRect').mockReturnValue({
+      bottom: 44,
+      height: 44,
+      left: 930,
+      right: 1000,
+      top: 0,
+      width: 70,
+      x: 930,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    await act(async () => {
+      fireEvent.mouseEnter(adminMenuItem!);
+    });
+
+    expect(screen.getByRole('menu')).toHaveStyle({ left: '732px', top: '44px' });
+
+    rectSpy.mockRestore();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
+  });
+
   it('does not fetch unread mail count for roles without mail access', () => {
     mockRole = 'compliance_officer';
     renderNav();

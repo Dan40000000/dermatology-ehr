@@ -10594,7 +10594,11 @@ pre {
 /* Dropdown rendered via portal (escapes scroll container) */
 .ema-nav-dropdown-portal {
   position: fixed;
-  min-width: 220px;
+  width: min(260px, calc(100vw - 16px));
+  min-width: min(220px, calc(100vw - 16px));
+  box-sizing: border-box;
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
   background: #ffffff;
   border-radius: 0 0 8px 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.08);

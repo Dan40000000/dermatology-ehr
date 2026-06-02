@@ -24,6 +24,9 @@ interface NavItem {
   dropdown?: DropdownItem[];
 }
 
+const NAV_DROPDOWN_WIDTH = 260;
+const NAV_DROPDOWN_VIEWPORT_MARGIN = 8;
+
 const navItems: NavItem[] = [
   {
     label: 'Home',
@@ -423,6 +426,11 @@ export function MainNav() {
   // Filter nav items based on user role
   const filteredNavItems = navItems.filter(item => canAccessAnyModule(item.module));
 
+  const getDropdownLeft = (rect: DOMRect) => {
+    const maxLeft = window.innerWidth - NAV_DROPDOWN_WIDTH - NAV_DROPDOWN_VIEWPORT_MARGIN;
+    return Math.max(NAV_DROPDOWN_VIEWPORT_MARGIN, Math.min(rect.left, maxLeft));
+  };
+
   // Hover handlers with position tracking for portal dropdown
   const handleMouseEnter = (itemPath: string, element: HTMLDivElement) => {
     // Cancel any pending close
@@ -432,7 +440,7 @@ export function MainNav() {
     }
     setHoveredItem(itemPath);
     const rect = element.getBoundingClientRect();
-    setDropdownPos({ top: rect.bottom, left: rect.left });
+    setDropdownPos({ top: rect.bottom, left: getDropdownLeft(rect) });
   };
 
   const handleMouseLeave = () => {

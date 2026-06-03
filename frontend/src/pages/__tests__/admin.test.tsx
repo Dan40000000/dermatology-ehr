@@ -44,8 +44,8 @@ const mockProviders = [
 ];
 
 const mockUsers = [
-  { id: 'user-1', email: 'admin@example.com', fullName: 'Admin User', role: 'admin' },
-  { id: 'user-2', email: 'provider@example.com', fullName: 'Provider User', role: 'provider' },
+  { id: 'user-1', email: 'admin@example.com', fullName: 'Admin User', role: 'admin', passwordResetRequired: false },
+  { id: 'user-2', email: 'provider@example.com', fullName: 'Provider User', role: 'provider', passwordResetRequired: true },
 ];
 
 vi.mock('react-router-dom', async () => {
@@ -510,7 +510,7 @@ describe('AdminPage', () => {
     expect(screen.getByText('Provider')).toBeInTheDocument();
   });
 
-  it('should show password field for new users only', async () => {
+  it('should show temporary password controls for new and existing users', async () => {
     const user = userEvent.setup();
 
     render(
@@ -529,17 +529,50 @@ describe('AdminPage', () => {
     const addButton = screen.getByRole('button', { name: /Add user/i });
     await user.click(addButton);
 
-    expect(screen.getByLabelText(/Password/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Temporary password/i)).toBeRequired();
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeInTheDocument();
 
     const cancelButton = screen.getByRole('button', { name: 'Cancel' });
     await user.click(cancelButton);
 
     // Open edit modal
-    const editButtons = screen.getAllByRole('button', { name: 'Edit' });
+    const editButtons = screen.getAllByRole('button', { name: 'Edit / Reset' });
     await user.click(editButtons[0]);
 
-    // Password field should not be present in edit mode
-    expect(screen.queryByLabelText(/Password/i)).not.toBeInTheDocument();
+    const resetPasswordField = screen.getByLabelText(/New temporary password/i);
+    expect(resetPasswordField).toBeInTheDocument();
+    expect(resetPasswordField).not.toBeRequired();
+    expect(screen.getByText(/Leave blank to keep the current password/i)).toBeInTheDocument();
+  });
+
+  it('should send an entered temporary password when resetting an existing user', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <BrowserRouter>
+        <AdminPage />
+      </BrowserRouter>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Users' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Admin User')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByRole('button', { name: 'Edit / Reset' })[0]);
+    await user.type(screen.getByLabelText(/New temporary password/i), 'TempStaff2026!');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/admin/users/user-1'),
+        expect.objectContaining({
+          method: 'PUT',
+          body: expect.stringContaining('"password":"TempStaff2026!"'),
+        }),
+      );
+    });
   });
 
   it('should include facility select in room modal', async () => {

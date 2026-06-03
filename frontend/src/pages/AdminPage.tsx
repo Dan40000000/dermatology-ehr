@@ -76,6 +76,7 @@ interface User {
   role: string;
   secondaryRoles?: string[];
   roles?: string[];
+  passwordResetRequired?: boolean;
 }
 
 const pageStyle: React.CSSProperties = {
@@ -414,6 +415,19 @@ function segmentedButtonStyle(active: boolean): React.CSSProperties {
     cursor: 'pointer',
     boxShadow: active ? '0 0 0 2px rgba(6, 182, 212, 0.12)' : 'none',
   };
+}
+
+function generateTemporaryPassword(): string {
+  const getRandomHex = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(6);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+    return Math.random().toString(16).slice(2, 14).padEnd(12, '0');
+  };
+
+  return `Temp-${getRandomHex()}-7!`;
 }
 
 export function AdminPage() {
@@ -1371,6 +1385,7 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
           <th style={thStyle}>Name</th>
           <th style={thStyle}>Email</th>
           <th style={thStyle}>Role</th>
+          <th style={thStyle}>Security</th>
           <th style={thStyle}>Actions</th>
         </tr>
       </thead>
@@ -1391,8 +1406,17 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
               </div>
             </td>
             <td style={tdStyle}>
+              {u.passwordResetRequired ? (
+                <span style={{ ...roleBadgeStyle('billing'), background: '#fef3c7', color: '#92400e' }}>
+                  Must reset password
+                </span>
+              ) : (
+                <span style={{ color: '#64748b', fontSize: '0.875rem' }}>Active</span>
+              )}
+            </td>
+            <td style={tdStyle}>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button onClick={() => onEdit(u)} style={btnSecondaryStyle}>Edit</button>
+                <button onClick={() => onEdit(u)} style={btnSecondaryStyle}>Edit / Reset</button>
                 <button onClick={() => onDelete(u.id)} style={btnDangerStyle}>Delete</button>
               </div>
             </td>
@@ -1433,7 +1457,16 @@ function Modal({
     if (type === 'users') {
       const primaryRole = typeof formData.role === 'string' ? formData.role : 'front_desk';
       const secondaryRoles = normalizeRoleArray(formData.secondaryRoles).filter((candidate) => candidate !== primaryRole);
-      onSave({ ...formData, role: primaryRole, secondaryRoles });
+      const payload = { ...formData, role: primaryRole, secondaryRoles };
+      if (typeof payload.password === 'string') {
+        const trimmedPassword = payload.password.trim();
+        if (trimmedPassword) {
+          payload.password = trimmedPassword;
+        } else {
+          delete payload.password;
+        }
+      }
+      onSave(payload);
       return;
     }
     onSave(formData);
@@ -1486,6 +1519,10 @@ function Modal({
       current.add(role);
     }
     handleChange('secondaryRoles', Array.from(current));
+  };
+
+  const generateAndSetTemporaryPassword = () => {
+    handleChange('password', generateTemporaryPassword());
   };
 
   const typeLabel = singularLabels[type] || type.slice(0, -1);
@@ -1909,20 +1946,31 @@ function Modal({
                   })}
                 </div>
               </div>
-              {!item?.id && (
-                <div style={formGroupStyle}>
-                  <label htmlFor="user-password" style={labelStyle}>Password *</label>
+              <div style={formGroupStyle}>
+                <label htmlFor="user-password" style={labelStyle}>
+                  {item?.id ? 'New temporary password' : 'Temporary password *'}
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <input
-                    type="password"
+                    type="text"
                     id="user-password"
                     value={formData.password || ''}
                     onChange={(e) => handleChange('password', e.target.value)}
-                    required
-                    style={inputStyle}
-                    placeholder="Password123!"
+                    required={!item?.id}
+                    style={{ ...inputStyle, flex: 1 }}
+                    placeholder="Temp-..."
+                    autoComplete="new-password"
                   />
+                  <button type="button" onClick={generateAndSetTemporaryPassword} style={btnSecondaryStyle}>
+                    Generate
+                  </button>
                 </div>
-              )}
+                <div style={{ marginTop: '0.5rem', color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
+                  {item?.id
+                    ? 'Leave blank to keep the current password. Enter a temporary password to force this staff member to set a new password at next login.'
+                    : 'Give this temporary password to the staff member. They will be required to set their own password at first login.'}
+                </div>
+              </div>
             </>
           )}
 

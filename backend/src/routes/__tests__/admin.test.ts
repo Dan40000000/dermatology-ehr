@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import adminRouter from "../admin";
 import { pool } from "../../db/pool";
+import { revokeRefreshTokensForUser } from "../../services/authService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -20,15 +21,21 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../services/authService", () => ({
+  revokeRefreshTokensForUser: jest.fn(),
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/admin", adminRouter);
 
 const queryMock = pool.query as jest.Mock;
+const revokeRefreshTokensForUserMock = revokeRefreshTokensForUser as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+  revokeRefreshTokensForUserMock.mockReset();
 });
 
 describe("Admin routes - Facilities", () => {
@@ -423,6 +430,25 @@ describe("Admin routes - Users", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it("PUT /admin/users/:id resets password, forces next-login change, and revokes sessions", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ role: "front_desk", secondaryRoles: [] }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const res = await request(app).put("/admin/users/user-1").send({
+      password: "TempStaff2026!",
+    });
+
+    expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[1][0]).toContain("password_hash");
+    expect(queryMock.mock.calls[1][0]).toContain("force_password_reset = true");
+    expect(queryMock.mock.calls[1][0]).toContain("password_changed_at = CURRENT_TIMESTAMP");
+    expect(revokeRefreshTokensForUserMock).toHaveBeenCalledWith("user-1", "tenant-1");
   });
 
   it("PUT /admin/users/:id rejects no updates", async () => {

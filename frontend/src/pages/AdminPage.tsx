@@ -73,6 +73,7 @@ interface Provider {
 interface User {
   id: string;
   email: string;
+  phone?: string | null;
   fullName: string;
   role: string;
   secondaryRoles?: string[];
@@ -439,6 +440,39 @@ function generateTemporaryPassword(): string {
   return `Temp-${getRandomHex()}-7!`;
 }
 
+function createUserDraft(item?: Partial<User> | null) {
+  if (item?.id) {
+    return {
+      ...item,
+      password: '',
+      sendTemporaryLoginSms: false,
+    };
+  }
+
+  return {
+    fullName: '',
+    email: '',
+    phone: '',
+    role: 'front_desk',
+    secondaryRoles: [],
+    password: generateTemporaryPassword(),
+    sendTemporaryLoginSms: false,
+  };
+}
+
+function describeTemporaryLoginDelivery(delivery: any): string | null {
+  if (!delivery) return null;
+  if (typeof delivery.message === 'string' && delivery.message.trim()) {
+    return delivery.message;
+  }
+  if (delivery.status === 'sent') return 'Temporary login text was sent.';
+  if (delivery.status === 'mocked') return 'Temporary login text was prepared in SMS test mode.';
+  if (delivery.status === 'not_configured') return 'Temporary login was created, but SMS is not active yet.';
+  if (delivery.status === 'invalid_phone') return 'Temporary login was created, but the staff mobile number is invalid.';
+  if (delivery.status === 'failed') return 'Temporary login was created, but the text failed to send.';
+  return null;
+}
+
 export function AdminPage() {
   const { session, user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -450,6 +484,8 @@ export function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const [downtimeDevice] = useState<DowntimeBrowserDevice>(() => getOrCreateDowntimeBrowserDevice());
 
@@ -546,17 +582,27 @@ export function AdminPage() {
       const method = editingItem?.id ? 'PUT' : 'POST';
       const url = editingItem?.id ? `${endpoint}/${editingItem.id}` : endpoint;
 
-      await fetch(url, {
+      const response = await fetch(url, {
         method,
         headers,
         body: JSON.stringify(data),
       });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to save changes');
+      }
+
+      const deliveryMessage = describeTemporaryLoginDelivery(payload.temporaryLoginDelivery);
+      const shouldShowUserPasswordMessage = activeTab === 'users' && typeof data.password === 'string' && data.password.trim();
+      setSaveMessage(deliveryMessage || (shouldShowUserPasswordMessage ? 'Temporary login is ready. Staff must create their own password at next login.' : null));
+      setSaveError(null);
 
       setShowModal(false);
       setEditingItem(null);
       void loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving:', err);
+      setSaveError(err?.message || 'Failed to save changes');
     }
   };
 
@@ -635,16 +681,20 @@ export function AdminPage() {
   }, [replaceFacility, session]);
 
   const openAddModal = () => {
+    setSaveError(null);
     setEditingItem(null);
     setShowModal(true);
   };
 
   const openEditModal = (item: any) => {
+    setSaveError(null);
     setEditingItem(item);
     setShowModal(true);
   };
 
   const setActiveTabWithUrl = useCallback((nextTab: AdminTab) => {
+    setSaveError(null);
+    setSaveMessage(null);
     setActiveTab(nextTab);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -831,6 +881,17 @@ export function AdminPage() {
               </button>
             ) : null}
           </div>
+
+          {saveError && (
+            <div role="alert" style={{ border: '1px solid #fecaca', borderRadius: '10px', padding: '0.8rem 1rem', background: '#fef2f2', color: '#991b1b', marginBottom: '1rem' }}>
+              {saveError}
+            </div>
+          )}
+          {saveMessage && (
+            <div role="status" style={{ border: '1px solid #bfdbfe', borderRadius: '10px', padding: '0.8rem 1rem', background: '#eff6ff', color: '#1e3a8a', marginBottom: '1rem' }}>
+              {saveMessage}
+            </div>
+          )}
 
           {loading ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>
@@ -1394,6 +1455,7 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
         <tr>
           <th style={thStyle}>Name</th>
           <th style={thStyle}>Email</th>
+          <th style={thStyle}>Mobile</th>
           <th style={thStyle}>Role</th>
           <th style={thStyle}>Security</th>
           <th style={thStyle}>Actions</th>
@@ -1406,6 +1468,7 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
           <tr key={u.id}>
             <td style={tdStyle}><strong>{u.fullName}</strong></td>
             <td style={tdStyle}>{u.email}</td>
+            <td style={tdStyle}>{u.phone || '—'}</td>
             <td style={tdStyle}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
                 {effectiveRoles.map((role) => (
@@ -1461,7 +1524,11 @@ function Modal({
   onClose: () => void;
   onSave: (data: any) => void;
 }) {
-  const [formData, setFormData] = useState<any>(type === 'facilities' ? createFacilityDraft(item) : item || {});
+  const [formData, setFormData] = useState<any>(() => {
+    if (type === 'facilities') return createFacilityDraft(item);
+    if (type === 'users') return createUserDraft(item);
+    return item || {};
+  });
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
   const [deviceActionMessage, setDeviceActionMessage] = useState<string | null>(null);
   const [deviceActionRunning, setDeviceActionRunning] = useState(false);
@@ -1479,6 +1546,9 @@ function Modal({
         } else {
           delete payload.password;
         }
+      }
+      if (typeof payload.phone === 'string') {
+        payload.phone = payload.phone.trim();
       }
       onSave(payload);
       return;
@@ -1920,6 +1990,17 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
+                <label htmlFor="user-phone" style={labelStyle}>Mobile phone</label>
+                <input
+                  type="tel"
+                  id="user-phone"
+                  value={formData.phone || ''}
+                  onChange={(e) => handleChange('phone', e.target.value)}
+                  style={inputStyle}
+                  placeholder="(555) 123-4567"
+                />
+              </div>
+              <div style={formGroupStyle}>
                 <label htmlFor="user-role" style={labelStyle}>Role *</label>
                 <select
                   id="user-role"
@@ -1983,6 +2064,21 @@ function Modal({
                   {item?.id
                     ? 'Leave blank to keep the current password. Enter a temporary password to force this staff member to set a new password at next login.'
                     : 'Give this temporary password to the staff member. They will be required to set their own password at first login.'}
+                </div>
+              </div>
+              <div style={{ ...formGroupStyle, padding: '0.85rem 1rem', borderRadius: '0.75rem', background: '#f8fafc', border: '1px solid #e5e7eb' }}>
+                <label htmlFor="send-temporary-login-sms" style={{ display: 'flex', gap: '0.65rem', alignItems: 'flex-start', color: '#111827', fontWeight: 700 }}>
+                  <input
+                    type="checkbox"
+                    id="send-temporary-login-sms"
+                    checked={formData.sendTemporaryLoginSms === true}
+                    onChange={(e) => handleChange('sendTemporaryLoginSms', e.target.checked)}
+                    style={{ marginTop: '0.2rem' }}
+                  />
+                  <span>Text this temporary login to the staff member</span>
+                </label>
+                <div style={{ marginTop: '0.45rem', color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
+                  Uses the mobile phone above. For existing users, enter a new temporary password before sending.
                 </div>
               </div>
             </>

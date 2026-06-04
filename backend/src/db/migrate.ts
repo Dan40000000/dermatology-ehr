@@ -131,6 +131,7 @@ const migrations: { name: string; sql: string }[] = [
       id text primary key,
       tenant_id text not null references tenants(id),
       email text not null,
+      phone text,
       full_name text not null,
       role text not null,
       password_hash text not null,
@@ -13785,6 +13786,17 @@ Consider age-appropriate treatments and include family counseling points.',
     CREATE INDEX IF NOT EXISTS idx_users_tenant_login_locked
       ON users(tenant_id, login_locked_at)
       WHERE login_locked_at IS NOT NULL;
+    `,
+  },
+  {
+    name: "201_staff_contact_temp_login_delivery",
+    sql: `
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS phone TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_users_tenant_phone
+      ON users(tenant_id, phone)
+      WHERE phone IS NOT NULL AND phone <> '';
     `,
   },
 

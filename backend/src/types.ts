@@ -17,6 +17,7 @@ export interface TenantUser {
   id: string;
   tenantId: string;
   email: string;
+  phone?: string | null;
   passwordHash: string;
   role: Role;
   secondaryRoles?: Role[];
@@ -38,6 +39,7 @@ export interface AuthenticatedRequestUser {
   secondaryRoles?: Role[];
   roles?: Role[];
   email: string;
+  phone?: string | null;
   fullName: string;
   passwordResetRequired?: boolean;
 }

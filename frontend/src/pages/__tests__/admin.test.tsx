@@ -44,11 +44,12 @@ const mockProviders = [
 ];
 
 const mockUsers = [
-  { id: 'user-1', email: 'admin@example.com', fullName: 'Admin User', role: 'admin', passwordResetRequired: false },
-  { id: 'user-2', email: 'provider@example.com', fullName: 'Provider User', role: 'provider', passwordResetRequired: true },
+  { id: 'user-1', email: 'admin@example.com', phone: '+1555010101', fullName: 'Admin User', role: 'admin', passwordResetRequired: false },
+  { id: 'user-2', email: 'provider@example.com', phone: '+1555010102', fullName: 'Provider User', role: 'provider', passwordResetRequired: true },
   {
     id: 'user-3',
     email: 'frontdesk@example.com',
+    phone: '+1555010103',
     fullName: 'Front Desk User',
     role: 'front_desk',
     passwordResetRequired: false,
@@ -83,29 +84,34 @@ describe('AdminPage', () => {
 
       if (urlString.includes('/facilities')) {
         return Promise.resolve({
+          ok: true,
           json: () => Promise.resolve({ facilities: mockFacilities }),
         });
       }
 
       if (urlString.includes('/rooms')) {
         return Promise.resolve({
+          ok: true,
           json: () => Promise.resolve({ rooms: mockRooms }),
         });
       }
 
       if (urlString.includes('/providers')) {
         return Promise.resolve({
+          ok: true,
           json: () => Promise.resolve({ providers: mockProviders }),
         });
       }
 
       if (urlString.includes('/users')) {
         return Promise.resolve({
+          ok: true,
           json: () => Promise.resolve({ users: mockUsers }),
         });
       }
 
       return Promise.resolve({
+        ok: true,
         json: () => Promise.resolve({}),
       });
     }) as any;
@@ -561,6 +567,8 @@ describe('AdminPage', () => {
     await user.click(addButton);
 
     expect(screen.getByLabelText(/Temporary password/i)).toBeRequired();
+    expect(screen.getByLabelText(/Mobile phone/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Text this temporary login/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Generate' })).toBeInTheDocument();
 
     const cancelButton = screen.getByRole('button', { name: 'Cancel' });
@@ -604,6 +612,44 @@ describe('AdminPage', () => {
         }),
       );
     });
+  });
+
+  it('should send staff mobile phone and text-login flag when creating a user', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <BrowserRouter>
+        <AdminPage />
+      </BrowserRouter>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Users' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Admin User')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /Add user/i }));
+    await user.type(screen.getByLabelText(/Full Name/i), 'Reset Staff');
+    await user.type(screen.getByLabelText(/Email/i), 'resetstaff@example.com');
+    await user.type(screen.getByLabelText(/Mobile phone/i), '(555) 321-7654');
+    await user.click(screen.getByLabelText(/Text this temporary login/i));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/admin/users'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"phone":"(555) 321-7654"'),
+        }),
+      );
+    });
+
+    const createCall = (global.fetch as any).mock.calls.find(([url, options]: [string, any]) =>
+      url.includes('/api/admin/users') && options?.method === 'POST'
+    );
+    expect(createCall?.[1]?.body).toContain('"sendTemporaryLoginSms":true');
   });
 
   it('should include facility select in room modal', async () => {

@@ -3,6 +3,7 @@ import express from "express";
 import adminRouter from "../admin";
 import { pool } from "../../db/pool";
 import { revokeRefreshTokensForUser } from "../../services/authService";
+import { createTwilioService } from "../../services/twilioService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -25,17 +26,26 @@ jest.mock("../../services/authService", () => ({
   revokeRefreshTokensForUser: jest.fn(),
 }));
 
+jest.mock("../../services/twilioService", () => ({
+  createTwilioService: jest.fn(),
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/admin", adminRouter);
 
 const queryMock = pool.query as jest.Mock;
 const revokeRefreshTokensForUserMock = revokeRefreshTokensForUser as jest.Mock;
+const createTwilioServiceMock = createTwilioService as jest.Mock;
+const sendSMSMock = jest.fn();
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   revokeRefreshTokensForUserMock.mockReset();
+  createTwilioServiceMock.mockReset();
+  sendSMSMock.mockReset();
+  createTwilioServiceMock.mockReturnValue({ sendSMS: sendSMSMock });
 });
 
 describe("Admin routes - Facilities", () => {
@@ -345,6 +355,7 @@ describe("Admin routes - Users", () => {
       rows: [{
         id: "user-1",
         email: "user@example.com",
+        phone: "+15551234567",
         fullName: "User Name",
         role: "front_desk",
         failedLoginAttempts: 5,
@@ -359,6 +370,7 @@ describe("Admin routes - Users", () => {
     expect(res.status).toBe(200);
     expect(res.body.users).toHaveLength(1);
     expect(res.body.users[0].email).toBe("user@example.com");
+    expect(res.body.users[0].phone).toBe("+15551234567");
     expect(res.body.users[0].failedLoginAttempts).toBe(5);
     expect(res.body.users[0].loginLockedAt).toBe("2026-06-03T12:00:00.000Z");
     expect(res.body.users[0].loginLockedReason).toBe("failed_login_attempts");
@@ -378,6 +390,41 @@ describe("Admin routes - Users", () => {
     expect(res.body.id).toBeTruthy();
     expect(res.body.email).toBe("newuser@example.com");
     expect(res.body.role).toBe("provider");
+    expect(res.body.passwordResetRequired).toBe(true);
+  });
+
+  it("POST /admin/users stores mobile phone and prepares a temporary login text", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{
+          twilio_phone_number: "+15550001111",
+          is_active: true,
+          is_test_mode: true,
+        }],
+        rowCount: 1,
+      });
+
+    const res = await request(app).post("/admin/users").send({
+      email: "newuser@example.com",
+      fullName: "New User",
+      phone: "(555) 123-4567",
+      password: "C0mpl3x!Health",
+      role: "front_desk",
+      sendTemporaryLoginSms: true,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.phone).toBe("+15551234567");
+    expect(res.body.temporaryLoginDelivery).toMatchObject({
+      method: "sms",
+      status: "mocked",
+      to: "+15551234567",
+    });
+    expect(queryMock.mock.calls[1][0]).toContain("phone");
+    expect(queryMock.mock.calls[1][1]).toContain("+15551234567");
+    expect(createTwilioServiceMock).not.toHaveBeenCalled();
   });
 
   it("POST /admin/users rejects missing required fields", async () => {
@@ -446,7 +493,7 @@ describe("Admin routes - Users", () => {
   it("PUT /admin/users/:id resets password, forces next-login change, and revokes sessions", async () => {
     queryMock
       .mockResolvedValueOnce({
-        rows: [{ role: "front_desk", secondaryRoles: [] }],
+        rows: [{ role: "front_desk", secondaryRoles: [], email: "staff@example.com", fullName: "Staff User", phone: "+15551234567" }],
         rowCount: 1,
       })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
@@ -464,6 +511,45 @@ describe("Admin routes - Users", () => {
     expect(queryMock.mock.calls[1][0]).toContain("login_locked_reason = NULL");
     expect(queryMock.mock.calls[1][0]).toContain("last_failed_login_at = NULL");
     expect(revokeRefreshTokensForUserMock).toHaveBeenCalledWith("user-1", "tenant-1");
+  });
+
+  it("PUT /admin/users/:id can reset a password and prepare the temporary login text", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ role: "front_desk", secondaryRoles: [], email: "staff@example.com", fullName: "Staff User", phone: "+15551234567" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{
+          twilio_phone_number: "+15550001111",
+          is_active: true,
+          is_test_mode: true,
+        }],
+        rowCount: 1,
+      });
+
+    const res = await request(app).put("/admin/users/user-1").send({
+      password: "TempStaff2026!",
+      sendTemporaryLoginSms: true,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.temporaryLoginDelivery).toMatchObject({
+      status: "mocked",
+      to: "+15551234567",
+    });
+    expect(revokeRefreshTokensForUserMock).toHaveBeenCalledWith("user-1", "tenant-1");
+  });
+
+  it("PUT /admin/users/:id rejects texting a temporary login without a new password", async () => {
+    const res = await request(app).put("/admin/users/user-1").send({
+      sendTemporaryLoginSms: true,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("temporary password");
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("PUT /admin/users/:id rejects no updates", async () => {

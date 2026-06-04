@@ -6,10 +6,13 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { validatePasswordPolicy } from "../middleware/security";
 import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
+import { env } from "../config/env";
 import { mapDowntimeSettings, parseDowntimeSettingsInput } from "../lib/downtimeSettings";
 import { mapDowntimePrimaryDevice } from "../lib/downtimePrimaryDevice";
 import { invalidateCache } from "../services/redisCache";
 import { revokeRefreshTokensForUser } from "../services/authService";
+import { createTwilioService } from "../services/twilioService";
+import { formatPhoneE164 } from "../utils/phone";
 
 const router = Router();
 
@@ -48,6 +51,117 @@ function mapFacilityRow(row: any) {
     downtimeSettings: mapDowntimeSettings(row),
     downtimePrimaryDevice: mapDowntimePrimaryDevice(row),
   };
+}
+
+function isSmsLiveSendEnabled(): boolean {
+  return env.nodeEnv !== "production" || process.env.SMS_LIVE_SEND_ENABLED === "true";
+}
+
+function calculateSmsSegments(body: string): number {
+  const hasUnicode = /[^\x00-\x7F]/.test(body);
+  return Math.max(1, Math.ceil(body.length / (hasUnicode ? 70 : 160)));
+}
+
+function buildStaffTemporaryLoginMessage(params: { fullName: string; email: string; temporaryPassword: string }) {
+  const firstName = String(params.fullName || "").trim().split(/\s+/)[0] || "there";
+  return [
+    `Staff login for ${firstName}:`,
+    `Email: ${params.email}`,
+    `Temporary password: ${params.temporaryPassword}`,
+    "Sign in and create your own password immediately. Contact your admin if this was unexpected.",
+  ].join("\n");
+}
+
+function normalizeOptionalStaffPhone(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  return formatPhoneE164(raw);
+}
+
+async function deliverStaffTemporaryLogin(params: {
+  tenantId: string;
+  phone?: string | null;
+  email: string;
+  fullName: string;
+  temporaryPassword: string;
+}) {
+  const toPhone = formatPhoneE164(params.phone);
+  if (!toPhone) {
+    return {
+      method: "sms",
+      status: "invalid_phone",
+      message: "Temporary login was created, but no valid staff mobile number was available for text delivery.",
+    };
+  }
+
+  const settingsResult = await pool.query(
+    `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active, is_test_mode
+     FROM sms_settings
+     WHERE tenant_id = $1`,
+    [params.tenantId]
+  );
+
+  const settings = settingsResult.rows[0];
+  if (!settings?.is_active) {
+    return {
+      method: "sms",
+      status: "not_configured",
+      to: toPhone,
+      message: "Temporary login was created, but SMS settings are not active. Share the temporary password manually.",
+    };
+  }
+
+  const body = buildStaffTemporaryLoginMessage(params);
+  const fromNumber = settings.twilio_phone_number || "+15555550100";
+  const useMockSms = settings.is_test_mode === true || !isSmsLiveSendEnabled();
+
+  if (useMockSms) {
+    return {
+      method: "sms",
+      status: "mocked",
+      to: toPhone,
+      twilioSid: `mock_sms_${randomUUID()}`,
+      segmentCount: calculateSmsSegments(body),
+      message: "Temporary login text was prepared in SMS test mode.",
+    };
+  }
+
+  if (!settings.twilio_account_sid || !settings.twilio_auth_token || !fromNumber) {
+    return {
+      method: "sms",
+      status: "not_configured",
+      to: toPhone,
+      message: "Temporary login was created, but Twilio credentials are incomplete. Share the temporary password manually.",
+    };
+  }
+
+  try {
+    const twilioResult = await createTwilioService(settings.twilio_account_sid, settings.twilio_auth_token).sendSMS({
+      to: toPhone,
+      from: fromNumber,
+      body,
+    });
+
+    return {
+      method: "sms",
+      status: "sent",
+      to: toPhone,
+      twilioSid: twilioResult.sid,
+      segmentCount: twilioResult.numSegments,
+      message: "Temporary login text was sent.",
+    };
+  } catch (err: any) {
+    return {
+      method: "sms",
+      status: "failed",
+      to: toPhone,
+      message: err?.message || "Temporary login was created, but the SMS send failed. Share the temporary password manually.",
+    };
+  }
 }
 
 // All admin routes require authentication and admin role
@@ -401,7 +515,7 @@ router.get("/users", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
 
   const result = await pool.query(
-    `SELECT id, email, full_name as "fullName", role,
+    `SELECT id, email, phone, full_name as "fullName", role,
             coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles",
             coalesce(force_password_reset, false) as "passwordResetRequired",
             coalesce(failed_login_attempts, 0) as "failedLoginAttempts",
@@ -429,10 +543,18 @@ router.get("/users", async (req: AuthedRequest, res) => {
 // Create user
 router.post("/users", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const { email, fullName, role, password, secondaryRoles } = req.body;
+  const { email, fullName, role, password, secondaryRoles, phone, sendTemporaryLoginSms } = req.body;
 
   if (!email || !fullName || !password) {
     return res.status(400).json({ error: "Email, name, and password are required" });
+  }
+
+  const normalizedPhone = normalizeOptionalStaffPhone(phone) ?? null;
+  if (phone !== undefined && String(phone ?? "").trim() && !normalizedPhone) {
+    return res.status(400).json({ error: "Enter a valid mobile phone number for this staff member" });
+  }
+  if (sendTemporaryLoginSms === true && !normalizedPhone) {
+    return res.status(400).json({ error: "A valid staff mobile phone number is required to text a temporary login" });
   }
 
   // Validate password strength
@@ -460,19 +582,31 @@ router.post("/users", async (req: AuthedRequest, res) => {
   const passwordHash = bcrypt.hashSync(password, 12); // Increased to 12 rounds for better security
 
   await pool.query(
-    `INSERT INTO users (id, tenant_id, email, full_name, role, secondary_roles, password_hash, force_password_reset, password_changed_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, true, CURRENT_TIMESTAMP)`,
-    [id, tenantId, email.toLowerCase(), fullName, primaryRole, normalizedSecondaryRoles, passwordHash]
+    `INSERT INTO users (id, tenant_id, email, phone, full_name, role, secondary_roles, password_hash, force_password_reset, password_changed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP)`,
+    [id, tenantId, email.toLowerCase(), normalizedPhone, fullName, primaryRole, normalizedSecondaryRoles, passwordHash]
   );
+
+  const temporaryLoginDelivery = sendTemporaryLoginSms === true
+    ? await deliverStaffTemporaryLogin({
+      tenantId,
+      phone: normalizedPhone,
+      email: email.toLowerCase(),
+      fullName,
+      temporaryPassword: password,
+    })
+    : null;
 
   res.status(201).json({
     id,
     email: email.toLowerCase(),
+    phone: normalizedPhone,
     fullName,
     role: primaryRole,
     secondaryRoles: normalizedSecondaryRoles,
     roles: buildEffectiveRoles(primaryRole, normalizedSecondaryRoles),
     passwordResetRequired: true,
+    temporaryLoginDelivery,
   });
 });
 
@@ -481,9 +615,13 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   if (!id) return res.status(400).json({ error: "Missing user id" });
-  const { email, fullName, role, password, secondaryRoles } = req.body;
+  const { email, fullName, role, password, secondaryRoles, phone, sendTemporaryLoginSms } = req.body;
 
-  if (!email && !fullName && !role && !password && secondaryRoles === undefined) {
+  if (sendTemporaryLoginSms === true && !password) {
+    return res.status(400).json({ error: "Enter a temporary password before texting a temporary login" });
+  }
+
+  if (!email && !fullName && !role && !password && secondaryRoles === undefined && phone === undefined) {
     return res.status(400).json({ error: "No fields to update" });
   }
 
@@ -493,7 +631,7 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
   let paramIndex = 1;
 
   const existingUserResult = await pool.query(
-    `SELECT role, coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles"
+    `SELECT email, phone, full_name as "fullName", role, coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles"
      FROM users WHERE id = $1 AND tenant_id = $2`,
     [id, tenantId]
   );
@@ -506,10 +644,24 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
   const nextPrimaryRole = role || existingUser.role;
   const requestedSecondaryRoles = secondaryRoles !== undefined ? secondaryRoles : existingUser.secondaryRoles;
   const normalizedSecondaryRoles = normalizeSecondaryRolesInput(requestedSecondaryRoles, nextPrimaryRole);
+  const normalizedPhone = normalizeOptionalStaffPhone(phone);
+
+  if (phone !== undefined && String(phone ?? "").trim() && !normalizedPhone) {
+    return res.status(400).json({ error: "Enter a valid mobile phone number for this staff member" });
+  }
+
+  const smsDestination = normalizedPhone !== undefined ? normalizedPhone : existingUser.phone;
+  if (sendTemporaryLoginSms === true && !formatPhoneE164(smsDestination)) {
+    return res.status(400).json({ error: "A valid staff mobile phone number is required to text a temporary login" });
+  }
 
   if (email) {
     updates.push(`email = $${paramIndex++}`);
     values.push(email.toLowerCase());
+  }
+  if (phone !== undefined) {
+    updates.push(`phone = $${paramIndex++}`);
+    values.push(normalizedPhone);
   }
   if (fullName) {
     updates.push(`full_name = $${paramIndex++}`);
@@ -556,7 +708,17 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
     await revokeRefreshTokensForUser(id, tenantId);
   }
 
-  res.json({ success: true });
+  const temporaryLoginDelivery = sendTemporaryLoginSms === true && password
+    ? await deliverStaffTemporaryLogin({
+      tenantId,
+      phone: smsDestination,
+      email: (email || existingUser.email).toLowerCase(),
+      fullName: fullName || existingUser.fullName,
+      temporaryPassword: password,
+    })
+    : null;
+
+  res.json({ success: true, temporaryLoginDelivery });
 });
 
 // Delete user

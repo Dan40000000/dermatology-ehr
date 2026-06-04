@@ -157,6 +157,21 @@ describe('AdminPage', () => {
     });
   });
 
+  it('should render settings tab from URL without crashing', async () => {
+    window.history.replaceState({}, '', '/admin?tab=settings');
+
+    render(
+      <BrowserRouter>
+        <AdminPage />
+      </BrowserRouter>
+    );
+
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByText('Administrative Workflow')).toBeInTheDocument();
+    expect(screen.getByText('Admin Quick Links')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Admin Settings' })).toBeInTheDocument();
+  });
+
   it('should load and display facilities by default', async () => {
     render(
       <BrowserRouter>

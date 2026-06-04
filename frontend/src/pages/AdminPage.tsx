@@ -1089,6 +1089,7 @@ function AccessControlPanel() {
 }
 
 function AdminSettingsPanel() {
+  const { user } = useAuth();
   const [workspaceSettings, setWorkspaceSettings] = useState(() => {
     const fallback = {
       requireCheckInCopayPrompt: true,

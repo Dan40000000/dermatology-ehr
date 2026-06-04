@@ -140,6 +140,7 @@ describe('AdminPage', () => {
 
     expect(screen.getByText('Admin Settings')).toBeInTheDocument();
     expect(screen.getByText(/Manage facilities, rooms, providers, and user accounts/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Stripe Payments/i })).toHaveAttribute('href', '/admin/integrations#stripe-payments');
 
     await waitFor(() => {
       expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
@@ -527,6 +528,46 @@ describe('AdminPage', () => {
 
     expect(screen.getAllByText('Dermatology').length).toBeGreaterThan(0);
     expect(screen.getByText('1234567890')).toBeInTheDocument();
+  });
+
+  it('should allow creating a linked login from the provider modal', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <BrowserRouter>
+        <AdminPage />
+      </BrowserRouter>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Providers' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Dr. John Smith')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /Add provider/i }));
+    await user.type(screen.getByLabelText(/Full Name/i), 'Dr. Linked Login');
+    await user.click(screen.getByLabelText(/Create provider login too/i));
+    await user.type(screen.getByLabelText(/Login email/i), 'linked.provider@example.com');
+    await user.type(screen.getByLabelText(/Mobile phone/i), '(555) 222-1212');
+    await user.click(screen.getByLabelText(/Text this temporary login to the provider/i));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/admin/providers'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"createLinkedUser":true'),
+        }),
+      );
+    });
+
+    const createCall = (global.fetch as any).mock.calls.find(([url, options]: [string, any]) =>
+      url.includes('/api/admin/providers') && options?.method === 'POST'
+    );
+    expect(createCall?.[1]?.body).toContain('"email":"linked.provider@example.com"');
+    expect(createCall?.[1]?.body).toContain('"sendTemporaryLoginSms":true');
   });
 
   it('should show user roles in users table', async () => {

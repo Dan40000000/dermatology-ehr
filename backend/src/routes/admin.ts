@@ -82,6 +82,101 @@ function normalizeOptionalStaffPhone(value: unknown): string | null | undefined 
   return formatPhoneE164(raw);
 }
 
+function userHasProviderRole(primaryRole: string, secondaryRoles: unknown): boolean {
+  return buildEffectiveRoles(primaryRole, normalizeRoleArray(secondaryRoles)).includes("provider");
+}
+
+async function findMatchingProviderUser(tenantId: string, fullName: string) {
+  const result = await pool.query(
+    `SELECT id, email, phone, full_name as "fullName"
+     FROM users
+     WHERE tenant_id = $1
+       AND lower(trim(full_name)) = lower(trim($2))
+       AND (role = 'provider' OR 'provider' = ANY(coalesce(secondary_roles, '{}'::text[])))
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [tenantId, fullName]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function syncProviderProfileForUser(params: {
+  tenantId: string;
+  userId: string;
+  fullName: string;
+  role: string;
+  secondaryRoles: unknown;
+}) {
+  if (!userHasProviderRole(params.role, params.secondaryRoles)) {
+    return null;
+  }
+
+  const existingLinkedProvider = await pool.query(
+    `SELECT id, full_name as "fullName", specialty, npi, tax_id as "taxId",
+            user_id as "linkedUserId", is_active as "isActive", created_at as "createdAt"
+     FROM providers
+     WHERE tenant_id = $1 AND user_id = $2
+     LIMIT 1`,
+    [params.tenantId, params.userId]
+  );
+
+  if (existingLinkedProvider.rows[0]) {
+    const updated = await pool.query(
+      `UPDATE providers
+       SET full_name = $1,
+           is_active = true
+       WHERE id = $2 AND tenant_id = $3
+       RETURNING id, full_name as "fullName", specialty, npi, tax_id as "taxId",
+                 user_id as "linkedUserId", is_active as "isActive", created_at as "createdAt"`,
+      [params.fullName, existingLinkedProvider.rows[0].id, params.tenantId]
+    );
+    return updated.rows[0] || existingLinkedProvider.rows[0];
+  }
+
+  const matchingUnlinkedProvider = await pool.query(
+    `SELECT id
+     FROM providers
+     WHERE tenant_id = $1
+       AND user_id IS NULL
+       AND lower(trim(full_name)) = lower(trim($2))
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [params.tenantId, params.fullName]
+  );
+
+  if (matchingUnlinkedProvider.rows[0]) {
+    const linked = await pool.query(
+      `UPDATE providers
+       SET user_id = $1,
+           full_name = $2,
+           is_active = true
+       WHERE id = $3 AND tenant_id = $4
+       RETURNING id, full_name as "fullName", specialty, npi, tax_id as "taxId",
+                 user_id as "linkedUserId", is_active as "isActive", created_at as "createdAt"`,
+      [params.userId, params.fullName, matchingUnlinkedProvider.rows[0].id, params.tenantId]
+    );
+    return linked.rows[0] || null;
+  }
+
+  const providerId = randomUUID();
+  await pool.query(
+    `INSERT INTO providers (id, tenant_id, full_name, specialty, is_active, user_id)
+     VALUES ($1, $2, $3, 'Dermatology', true, $4)`,
+    [providerId, params.tenantId, params.fullName, params.userId]
+  );
+
+  return {
+    id: providerId,
+    fullName: params.fullName,
+    specialty: "Dermatology",
+    npi: null,
+    taxId: null,
+    linkedUserId: params.userId,
+    isActive: true,
+  };
+}
+
 async function deliverStaffTemporaryLogin(params: {
   tenantId: string;
   phone?: string | null;
@@ -446,11 +541,13 @@ router.get("/providers", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
 
   const result = await pool.query(
-    `SELECT id, full_name as "fullName", specialty, npi, tax_id as "taxId",
-            is_active as "isActive", created_at as "createdAt"
-     FROM providers
-     WHERE tenant_id = $1
-     ORDER BY full_name`,
+    `SELECT p.id, p.full_name as "fullName", p.specialty, p.npi, p.tax_id as "taxId",
+            p.user_id as "linkedUserId", p.is_active as "isActive", p.created_at as "createdAt",
+            u.email as "linkedUserEmail"
+     FROM providers p
+     LEFT JOIN users u ON u.id = p.user_id AND u.tenant_id = p.tenant_id
+     WHERE p.tenant_id = $1
+     ORDER BY p.full_name`,
     [tenantId]
   );
 
@@ -460,20 +557,91 @@ router.get("/providers", async (req: AuthedRequest, res) => {
 // Create provider
 router.post("/providers", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const { fullName, specialty, npi } = req.body;
+  const { fullName, specialty, npi, email, phone, password, sendTemporaryLoginSms, createLinkedUser } = req.body;
 
   if (!fullName) {
     return res.status(400).json({ error: "Provider name is required" });
   }
 
+  const wantsLinkedUser = createLinkedUser === true || Boolean(email || password || sendTemporaryLoginSms);
+  let linkedUser: any = null;
+  let temporaryLoginDelivery: any = null;
+
+  if (wantsLinkedUser) {
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and temporary password are required to create a provider login" });
+    }
+
+    const normalizedPhone = normalizeOptionalStaffPhone(phone) ?? null;
+    if (phone !== undefined && String(phone ?? "").trim() && !normalizedPhone) {
+      return res.status(400).json({ error: "Enter a valid mobile phone number for this provider login" });
+    }
+    if (sendTemporaryLoginSms === true && !normalizedPhone) {
+      return res.status(400).json({ error: "A valid mobile phone number is required to text a temporary login" });
+    }
+
+    const passwordValidation = validatePasswordPolicy(password);
+    if (!passwordValidation.isValid) {
+      return res.status(400).json({
+        error: "Password does not meet security requirements",
+        details: passwordValidation.errors,
+      });
+    }
+
+    const existingUser = await pool.query(
+      `SELECT id FROM users WHERE email = $1 AND tenant_id = $2`,
+      [email.toLowerCase(), tenantId]
+    );
+
+    if (existingUser.rowCount && existingUser.rowCount > 0) {
+      return res.status(400).json({ error: "A user with this email already exists" });
+    }
+
+    const userId = randomUUID();
+    const passwordHash = bcrypt.hashSync(password, 12);
+    await pool.query(
+      `INSERT INTO users (id, tenant_id, email, phone, full_name, role, secondary_roles, password_hash, force_password_reset, password_changed_at)
+       VALUES ($1, $2, $3, $4, $5, 'provider', '{}'::text[], $6, true, CURRENT_TIMESTAMP)`,
+      [userId, tenantId, email.toLowerCase(), normalizedPhone, fullName, passwordHash]
+    );
+
+    linkedUser = {
+      id: userId,
+      email: email.toLowerCase(),
+      phone: normalizedPhone,
+      fullName,
+    };
+
+    temporaryLoginDelivery = sendTemporaryLoginSms === true
+      ? await deliverStaffTemporaryLogin({
+        tenantId,
+        phone: normalizedPhone,
+        email: email.toLowerCase(),
+        fullName,
+        temporaryPassword: password,
+      })
+      : null;
+  } else {
+    linkedUser = await findMatchingProviderUser(tenantId, fullName);
+  }
+
   const id = randomUUID();
   await pool.query(
-    `INSERT INTO providers (id, tenant_id, full_name, specialty, npi, is_active)
-     VALUES ($1, $2, $3, $4, $5, true)`,
-    [id, tenantId, fullName, specialty || "Dermatology", npi || null]
+    `INSERT INTO providers (id, tenant_id, full_name, specialty, npi, is_active, user_id)
+     VALUES ($1, $2, $3, $4, $5, true, $6)`,
+    [id, tenantId, fullName, specialty || "Dermatology", npi || null, linkedUser?.id || null]
   );
 
-  res.status(201).json({ id, fullName, specialty: specialty || "Dermatology", npi, isActive: true });
+  res.status(201).json({
+    id,
+    fullName,
+    specialty: specialty || "Dermatology",
+    npi,
+    isActive: true,
+    linkedUserId: linkedUser?.id || null,
+    linkedUserEmail: linkedUser?.email || null,
+    temporaryLoginDelivery,
+  });
 });
 
 // Update provider
@@ -491,6 +659,19 @@ router.put("/providers/:id", async (req: AuthedRequest, res) => {
      WHERE id = $5 AND tenant_id = $6`,
     [fullName, specialty, npi, isActive, id, tenantId]
   );
+
+  if (fullName) {
+    await pool.query(
+      `UPDATE users u
+       SET full_name = $1
+       FROM providers p
+       WHERE p.id = $2
+         AND p.tenant_id = $3
+         AND p.user_id = u.id
+         AND u.tenant_id = p.tenant_id`,
+      [fullName, id, tenantId]
+    );
+  }
 
   res.json({ success: true });
 });
@@ -597,6 +778,14 @@ router.post("/users", async (req: AuthedRequest, res) => {
     })
     : null;
 
+  const linkedProvider = await syncProviderProfileForUser({
+    tenantId,
+    userId: id,
+    fullName,
+    role: primaryRole,
+    secondaryRoles: normalizedSecondaryRoles,
+  });
+
   res.status(201).json({
     id,
     email: email.toLowerCase(),
@@ -607,6 +796,7 @@ router.post("/users", async (req: AuthedRequest, res) => {
     roles: buildEffectiveRoles(primaryRole, normalizedSecondaryRoles),
     passwordResetRequired: true,
     temporaryLoginDelivery,
+    linkedProvider,
   });
 });
 
@@ -708,6 +898,14 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
     await revokeRefreshTokensForUser(id, tenantId);
   }
 
+  const linkedProvider = await syncProviderProfileForUser({
+    tenantId,
+    userId: id,
+    fullName: fullName || existingUser.fullName,
+    role: nextPrimaryRole,
+    secondaryRoles: normalizedSecondaryRoles,
+  });
+
   const temporaryLoginDelivery = sendTemporaryLoginSms === true && password
     ? await deliverStaffTemporaryLogin({
       tenantId,
@@ -718,7 +916,7 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
     })
     : null;
 
-  res.json({ success: true, temporaryLoginDelivery });
+  res.json({ success: true, temporaryLoginDelivery, linkedProvider });
 });
 
 // Delete user

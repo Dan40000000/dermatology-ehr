@@ -67,6 +67,8 @@ interface Provider {
   specialty?: string;
   npi?: string;
   email?: string;
+  linkedUserId?: string | null;
+  linkedUserEmail?: string | null;
   isActive: boolean;
 }
 
@@ -460,6 +462,17 @@ function createUserDraft(item?: Partial<User> | null) {
   };
 }
 
+function createProviderDraft(item?: Partial<Provider> | null) {
+  return {
+    ...(item || {}),
+    createLinkedUser: false,
+    email: '',
+    phone: '',
+    password: '',
+    sendTemporaryLoginSms: false,
+  };
+}
+
 function describeTemporaryLoginDelivery(delivery: any): string | null {
   if (!delivery) return null;
   if (typeof delivery.message === 'string' && delivery.message.trim()) {
@@ -828,6 +841,30 @@ export function AdminPage() {
               <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>AI Agents</div>
               <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
                 Configure AI assistants
+              </div>
+            </div>
+          </Link>
+          <Link to="/admin/integrations#stripe-payments" style={{ textDecoration: 'none' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #2563eb 0%, #0f766e 100%)',
+              padding: '1.5rem',
+              borderRadius: '12px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 6px rgba(37, 99, 235, 0.28)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 8px 16px rgba(37, 99, 235, 0.36)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 6px rgba(37, 99, 235, 0.28)';
+            }}>
+              <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Stripe Payments</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
+                Connect payout, subscriptions, and checkout
               </div>
             </div>
           </Link>
@@ -1247,6 +1284,9 @@ function AdminSettingsPanel() {
           <Link to="/admin/integrations" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
             Integrations
           </Link>
+          <Link to="/admin/integrations#stripe-payments" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            Stripe / Payments
+          </Link>
           <Link to="/admin/fee-schedules" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
             Fee Schedules
           </Link>
@@ -1390,6 +1430,7 @@ function ProvidersTable({ providers, onEdit, onDelete }: { providers: Provider[]
           <th style={thStyle}>Name</th>
           <th style={thStyle}>Specialty</th>
           <th style={thStyle}>NPI</th>
+          <th style={thStyle}>Login</th>
           <th style={thStyle}>Status</th>
           <th style={thStyle}>Actions</th>
         </tr>
@@ -1400,6 +1441,7 @@ function ProvidersTable({ providers, onEdit, onDelete }: { providers: Provider[]
             <td style={tdStyle}><strong>{p.fullName}</strong></td>
             <td style={tdStyle}>{p.specialty || 'Dermatology'}</td>
             <td style={tdStyle}>{p.npi || '—'}</td>
+            <td style={tdStyle}>{p.linkedUserEmail || '—'}</td>
             <td style={tdStyle}>
               <span style={p.isActive !== false ? badgeActiveStyle : badgeInactiveStyle}>
                 {p.isActive !== false ? 'Active' : 'Inactive'}
@@ -1526,6 +1568,7 @@ function Modal({
 }) {
   const [formData, setFormData] = useState<any>(() => {
     if (type === 'facilities') return createFacilityDraft(item);
+    if (type === 'providers') return createProviderDraft(item);
     if (type === 'users') return createUserDraft(item);
     return item || {};
   });
@@ -1549,6 +1592,21 @@ function Modal({
       }
       if (typeof payload.phone === 'string') {
         payload.phone = payload.phone.trim();
+      }
+      onSave(payload);
+      return;
+    }
+    if (type === 'providers') {
+      const payload = { ...formData };
+      if (typeof payload.email === 'string') payload.email = payload.email.trim();
+      if (typeof payload.phone === 'string') payload.phone = payload.phone.trim();
+      if (typeof payload.password === 'string') {
+        const trimmedPassword = payload.password.trim();
+        if (trimmedPassword) {
+          payload.password = trimmedPassword;
+        } else {
+          delete payload.password;
+        }
       }
       onSave(payload);
       return;
@@ -1959,6 +2017,98 @@ function Modal({
                   style={inputStyle}
                   placeholder="1234567890"
                 />
+              </div>
+              <div style={{ ...formGroupStyle, padding: '0.85rem 1rem', borderRadius: '0.75rem', background: '#f8fafc', border: '1px solid #e5e7eb' }}>
+                {item?.id ? (
+                  <>
+                    <div style={{ color: '#111827', fontWeight: 700, marginBottom: '0.35rem' }}>
+                      Provider Login
+                    </div>
+                    <div style={{ color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
+                      {item.linkedUserEmail
+                        ? `Linked to ${item.linkedUserEmail}. Name changes here will keep the linked login name in sync.`
+                        : 'No linked login yet. Create a provider-role user with the same name to link it automatically.'}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="provider-create-login" style={{ display: 'flex', gap: '0.65rem', alignItems: 'flex-start', color: '#111827', fontWeight: 700 }}>
+                      <input
+                        type="checkbox"
+                        id="provider-create-login"
+                        checked={formData.createLinkedUser === true}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setFormData({
+                            ...formData,
+                            createLinkedUser: checked,
+                            password: checked && !formData.password ? generateTemporaryPassword() : formData.password,
+                          });
+                        }}
+                        style={{ marginTop: '0.2rem' }}
+                      />
+                      <span>Create provider login too</span>
+                    </label>
+                    <div style={{ marginTop: '0.45rem', color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
+                      Adds the provider profile and a linked provider-role user in one step.
+                    </div>
+                    {formData.createLinkedUser === true && (
+                      <div style={{ display: 'grid', gap: '1rem', marginTop: '1rem' }}>
+                        <div style={formGroupStyle}>
+                          <label htmlFor="provider-login-email" style={labelStyle}>Login email *</label>
+                          <input
+                            type="email"
+                            id="provider-login-email"
+                            value={formData.email || ''}
+                            onChange={(e) => handleChange('email', e.target.value)}
+                            required={formData.createLinkedUser === true}
+                            style={inputStyle}
+                            placeholder="provider@practice.com"
+                          />
+                        </div>
+                        <div style={formGroupStyle}>
+                          <label htmlFor="provider-login-phone" style={labelStyle}>Mobile phone</label>
+                          <input
+                            type="tel"
+                            id="provider-login-phone"
+                            value={formData.phone || ''}
+                            onChange={(e) => handleChange('phone', e.target.value)}
+                            style={inputStyle}
+                            placeholder="(555) 123-4567"
+                          />
+                        </div>
+                        <div style={formGroupStyle}>
+                          <label htmlFor="provider-login-password" style={labelStyle}>Temporary password *</label>
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <input
+                              type="text"
+                              id="provider-login-password"
+                              value={formData.password || ''}
+                              onChange={(e) => handleChange('password', e.target.value)}
+                              required={formData.createLinkedUser === true}
+                              style={{ ...inputStyle, flex: 1 }}
+                              placeholder="Temp-..."
+                              autoComplete="new-password"
+                            />
+                            <button type="button" onClick={generateAndSetTemporaryPassword} style={btnSecondaryStyle}>
+                              Generate
+                            </button>
+                          </div>
+                        </div>
+                        <label htmlFor="provider-send-temporary-login-sms" style={{ display: 'flex', gap: '0.65rem', alignItems: 'flex-start', color: '#111827', fontWeight: 700 }}>
+                          <input
+                            type="checkbox"
+                            id="provider-send-temporary-login-sms"
+                            checked={formData.sendTemporaryLoginSms === true}
+                            onChange={(e) => handleChange('sendTemporaryLoginSms', e.target.checked)}
+                            style={{ marginTop: '0.2rem' }}
+                          />
+                          <span>Text this temporary login to the provider</span>
+                        </label>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </>
           )}

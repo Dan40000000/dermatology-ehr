@@ -313,6 +313,28 @@ describe("Admin routes - Providers", () => {
     expect(res.body.fullName).toBe("Dr. Jones");
   });
 
+  it("POST /admin/providers can create a linked provider login", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const res = await request(app).post("/admin/providers").send({
+      fullName: "Dr. Linked Provider",
+      specialty: "Dermatology",
+      email: "linked.provider@example.com",
+      password: "TempStaff2026!",
+      createLinkedUser: true,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.linkedUserId).toBeTruthy();
+    expect(res.body.linkedUserEmail).toBe("linked.provider@example.com");
+    expect(queryMock.mock.calls[1][0]).toContain("INSERT INTO users");
+    expect(queryMock.mock.calls[2][0]).toContain("INSERT INTO providers");
+    expect(queryMock.mock.calls[2][1]).toContain(res.body.linkedUserId);
+  });
+
   it("POST /admin/providers rejects missing name", async () => {
     const res = await request(app).post("/admin/providers").send({
       specialty: "Dermatology",
@@ -391,6 +413,31 @@ describe("Admin routes - Users", () => {
     expect(res.body.email).toBe("newuser@example.com");
     expect(res.body.role).toBe("provider");
     expect(res.body.passwordResetRequired).toBe(true);
+  });
+
+  it("POST /admin/users creates a linked provider profile for provider-role users", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const res = await request(app).post("/admin/users").send({
+      email: "provider.user@example.com",
+      fullName: "Provider User",
+      password: "C0mpl3x!Health",
+      role: "provider",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.linkedProvider).toMatchObject({
+      fullName: "Provider User",
+      specialty: "Dermatology",
+      linkedUserId: res.body.id,
+      isActive: true,
+    });
+    expect(queryMock.mock.calls[4][0]).toContain("INSERT INTO providers");
   });
 
   it("POST /admin/users stores mobile phone and prepares a temporary login text", async () => {

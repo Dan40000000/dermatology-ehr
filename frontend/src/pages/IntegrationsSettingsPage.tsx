@@ -125,12 +125,12 @@ const notificationTypeLabels: Record<string, string> = {
 const allNotificationTypes = Object.keys(notificationTypeLabels);
 
 const externalTypeOrder: ExternalIntegrationType[] = [
+  "payment",
   "clearinghouse",
   "eligibility",
   "eprescribe",
   "lab",
   "ambient_transcription",
-  "payment",
   "fax",
 ];
 
@@ -1298,6 +1298,7 @@ export default function IntegrationsSettingsPage() {
             return (
               <div
                 key={integration.type}
+                id={integration.type === "payment" ? "stripe-payments" : undefined}
                 className="bg-white border border-gray-200 rounded-lg shadow-sm"
               >
                 <div className="p-6 space-y-4">

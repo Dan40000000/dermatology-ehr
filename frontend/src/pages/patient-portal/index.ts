@@ -7,6 +7,8 @@ export { PortalDocumentsPage } from './PortalDocumentsPage';
 export { PortalHealthRecordPage } from './PortalHealthRecordPage';
 export { PortalProfilePage } from './PortalProfilePage';
 export { PortalRegisterPage } from './PortalRegisterPage';
+export { PortalForgotPasswordPage } from './PortalForgotPasswordPage';
+export { PortalResetPasswordPage } from './PortalResetPasswordPage';
 export { PortalBillingPage } from './PortalBillingPage';
 export { PortalBookAppointmentPage } from './PortalBookAppointmentPage';
 export { PublicBookAppointmentPage } from './PublicBookAppointmentPage';

@@ -13773,6 +13773,20 @@ Consider age-appropriate treatments and include family counseling points.',
       ON claims(tenant_id, service_date DESC);
     `,
   },
+  {
+    name: "200_staff_login_lockout",
+    sql: `
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS last_failed_login_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS login_locked_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS login_locked_reason TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_users_tenant_login_locked
+      ON users(tenant_id, login_locked_at)
+      WHERE login_locked_at IS NOT NULL;
+    `,
+  },
 
 ];
 

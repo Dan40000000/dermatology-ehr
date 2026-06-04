@@ -5,10 +5,14 @@ import crypto from "crypto";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { env } from "../config/env";
+import { config } from "../config";
 import { rateLimit } from "../middleware/rateLimit";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import { validatePasswordPolicy } from "../middleware/security";
 import { logger } from "../lib/logger";
+import { getEmailService } from "../lib/container";
+import { createTwilioService } from "../services/twilioService";
+import { formatPhoneDisplay, formatPhoneE164 } from "../utils/phone";
 import {
   COOKIE_AUTH_TOKEN_PLACEHOLDER,
   clearPatientPortalSessionCookie,
@@ -42,12 +46,32 @@ const verifyEmailSchema = z.object({
   token: z.string().min(10),
 });
 
+const passwordResetDeliveryMethods = ["email", "sms"] as const;
+
 const forgotPasswordSchema = z.object({
-  email: z.string().email(),
+  deliveryMethod: z.enum(passwordResetDeliveryMethods).default("email"),
+  email: z.string().email().optional(),
+  phone: z.string().min(7).optional(),
+}).superRefine((data, ctx) => {
+  if (data.deliveryMethod === "email" && !data.email) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["email"],
+      message: "Email is required",
+    });
+  }
+
+  if (data.deliveryMethod === "sms" && !data.phone) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["phone"],
+      message: "Phone number is required",
+    });
+  }
 });
 
 const resetPasswordSchema = z.object({
-  token: z.string().min(10),
+  token: z.string().min(6).max(128),
   password: z.string()
     .min(8)
     .regex(/[a-z]/)
@@ -117,6 +141,190 @@ function toSafeErrorMessage(error: unknown): string {
 function logPatientPortalError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
+  });
+}
+
+function isSmsLiveSendEnabled(): boolean {
+  return env.nodeEnv !== "production" || process.env.SMS_LIVE_SEND_ENABLED === "true";
+}
+
+function buildPortalPasswordResetUrl(tenantId: string, token: string): string {
+  const baseUrl = (config.frontendUrl || process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+  const params = new URLSearchParams({ tenantId, token });
+  return `${baseUrl}/portal/reset-password?${params.toString()}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildPatientPortalResetEmail(patientName: string, resetUrl: string): { subject: string; text: string; html: string } {
+  const subject = "Patient portal password reset";
+  const safePatientName = escapeHtml(patientName);
+  const safeResetUrl = escapeHtml(resetUrl);
+  const text = [
+    `Hi ${patientName},`,
+    "",
+    "We received a request to reset your patient portal password.",
+    `Use this secure link to set a new password: ${resetUrl}`,
+    "",
+    "This link expires in 1 hour. If you did not request this, please contact the office.",
+  ].join("\n");
+
+  const html = `
+    <p>Hi ${safePatientName},</p>
+    <p>We received a request to reset your patient portal password.</p>
+    <p><a href="${safeResetUrl}">Set a new password</a></p>
+    <p>This link expires in 1 hour. If you did not request this, please contact the office.</p>
+  `;
+
+  return { subject, text, html };
+}
+
+function buildPatientPortalResetSms(practiceName: string, resetCode: string): string {
+  return `${practiceName}: Your patient portal password reset code is ${resetCode}. It expires in 15 minutes.`;
+}
+
+function normalizePatientName(row: { first_name?: string | null; last_name?: string | null }): string {
+  return [row.first_name || "", row.last_name || ""].join(" ").replace(/\s+/g, " ").trim() || "Patient";
+}
+
+async function findPortalAccountForPasswordReset(
+  tenantId: string,
+  deliveryMethod: "email" | "sms",
+  contactValue: string
+): Promise<any | null> {
+  if (deliveryMethod === "email") {
+    const result = await pool.query(
+      `SELECT a.id,
+              a.patient_id,
+              a.email,
+              p.first_name,
+              p.last_name,
+              p.phone,
+              t.name as practice_name
+       FROM patient_portal_accounts a
+       JOIN patients p ON p.id = a.patient_id AND p.tenant_id = a.tenant_id
+       LEFT JOIN tenants t ON t.id = a.tenant_id
+       WHERE a.tenant_id = $1
+         AND LOWER(a.email) = LOWER($2)
+         AND COALESCE(a.is_active, true) = true
+       LIMIT 1`,
+      [tenantId, contactValue.trim().toLowerCase()]
+    );
+
+    return result.rows[0] || null;
+  }
+
+  const normalizedPhone = formatPhoneE164(contactValue);
+  const phoneDigits = (normalizedPhone || contactValue).replace(/\D/g, "");
+  const lastTenDigits = phoneDigits.slice(-10);
+  if (lastTenDigits.length !== 10) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `SELECT a.id,
+            a.patient_id,
+            a.email,
+            p.first_name,
+            p.last_name,
+            p.phone,
+            t.name as practice_name
+     FROM patient_portal_accounts a
+     JOIN patients p ON p.id = a.patient_id AND p.tenant_id = a.tenant_id
+     LEFT JOIN tenants t ON t.id = a.tenant_id
+     WHERE a.tenant_id = $1
+       AND RIGHT(REGEXP_REPLACE(COALESCE(p.phone, ''), '\\D', '', 'g'), 10) = $2
+       AND COALESCE(a.is_active, true) = true
+     LIMIT 2`,
+    [tenantId, lastTenDigits]
+  );
+
+  if (result.rows.length !== 1) {
+    return null;
+  }
+
+  return result.rows[0];
+}
+
+async function sendPatientPortalPasswordResetEmail(
+  tenantId: string,
+  account: any,
+  resetToken: string
+): Promise<void> {
+  const patientName = normalizePatientName(account);
+  const resetUrl = buildPortalPasswordResetUrl(tenantId, resetToken);
+  const email = buildPatientPortalResetEmail(patientName, resetUrl);
+
+  await getEmailService().sendEmail({
+    to: account.email,
+    subject: email.subject,
+    text: email.text,
+    html: email.html,
+  });
+}
+
+async function sendPatientPortalPasswordResetSms(
+  tenantId: string,
+  account: any,
+  resetCode: string
+): Promise<void> {
+  const toPhone = formatPhoneE164(account.phone);
+  if (!toPhone) {
+    throw new Error("Patient phone number is missing or invalid");
+  }
+
+  const settingsResult = await pool.query(
+    `SELECT twilio_account_sid,
+            twilio_auth_token,
+            twilio_phone_number,
+            is_test_mode,
+            clinic_name
+     FROM sms_settings
+     WHERE tenant_id = $1
+       AND is_active = true`,
+    [tenantId]
+  );
+  const settings = settingsResult.rows[0];
+  const fromPhone = formatPhoneE164(settings?.twilio_phone_number || process.env.TWILIO_PHONE_NUMBER || "");
+  if (!fromPhone) {
+    throw new Error("SMS sender phone number is not configured");
+  }
+
+  const practiceName = settings?.clinic_name || account.practice_name || "Patient Portal";
+  const body = buildPatientPortalResetSms(practiceName, resetCode);
+  const useMockSms =
+    settings?.is_test_mode === true ||
+    !isSmsLiveSendEnabled() ||
+    !settings?.twilio_account_sid ||
+    !settings?.twilio_auth_token;
+
+  const sendResult = useMockSms
+    ? {
+        sid: `mock_sms_${crypto.randomUUID()}`,
+        status: "sent",
+        numSegments: Math.max(1, Math.ceil(body.length / 160)),
+      }
+    : await createTwilioService(settings.twilio_account_sid, settings.twilio_auth_token).sendSMS({
+        to: toPhone,
+        from: fromPhone,
+        body,
+      });
+
+  logger.info("Patient portal password reset SMS prepared", {
+    tenantId,
+    accountId: account.id,
+    patientId: account.patient_id,
+    to: formatPhoneDisplay(toPhone),
+    status: sendResult.status,
+    sid: sendResult.sid,
+    mock: useMockSms,
   });
 }
 
@@ -679,29 +887,75 @@ patientPortalRouter.post(
       return res.status(400).json({ error: parsed.error.format() });
     }
 
-    const { email } = parsed.data;
+    const { deliveryMethod } = parsed.data;
+    const contactValue = deliveryMethod === "email" ? parsed.data.email! : parsed.data.phone!;
 
     try {
-      // Generate reset token
-      const resetToken = crypto.randomBytes(32).toString('hex');
+      const account = await findPortalAccountForPasswordReset(tenantId, deliveryMethod, contactValue);
+
+      // Always return success even when no unique account/contact exists.
+      if (!account) {
+        return res.json({
+          message: "If an account exists for that contact, password reset instructions have been sent.",
+        });
+      }
+
+      const resetToken = deliveryMethod === "sms"
+        ? crypto.randomInt(10_000_000, 100_000_000).toString()
+        : crypto.randomBytes(32).toString('hex');
       const resetExpires = new Date();
-      resetExpires.setHours(resetExpires.getHours() + 1); // 1 hour expiry
+      if (deliveryMethod === "sms") {
+        resetExpires.setMinutes(resetExpires.getMinutes() + 15);
+      } else {
+        resetExpires.setHours(resetExpires.getHours() + 1);
+      }
 
       const result = await pool.query(
         `UPDATE patient_portal_accounts
          SET reset_token = $1,
              reset_token_expires = $2
-         WHERE tenant_id = $3 AND email = $4
+         WHERE tenant_id = $3 AND id = $4
          RETURNING id`,
-        [resetToken, resetExpires, tenantId, email.toLowerCase()]
+        [resetToken, resetExpires, tenantId, account.id]
       );
 
-      // Always return success even if email doesn't exist (security best practice)
-      // TODO: Send reset email with token
+      if (result.rows.length > 0) {
+        try {
+          if (deliveryMethod === "sms") {
+            await sendPatientPortalPasswordResetSms(tenantId, account, resetToken);
+          } else {
+            await sendPatientPortalPasswordResetEmail(tenantId, account, resetToken);
+          }
+        } catch (deliveryError) {
+          logger.error("Patient portal password reset delivery failed", {
+            tenantId,
+            accountId: account.id,
+            patientId: account.patient_id,
+            deliveryMethod,
+            error: toSafeErrorMessage(deliveryError),
+          });
+        }
+
+        await pool.query(
+          `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, severity, status, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            crypto.randomUUID(),
+            tenantId,
+            null,
+            "patient_portal_password_reset_requested",
+            "patient_portal_account",
+            account.patient_id,
+            "info",
+            "success",
+            JSON.stringify({ accountId: account.id, deliveryMethod }),
+          ]
+        );
+      }
 
       return res.json({
-        message: "If an account exists with this email, a password reset link has been sent.",
-        // Remove this in production - only send via email
+        message: "If an account exists for that contact, password reset instructions have been sent.",
+        deliveryMethod,
         resetToken: env.nodeEnv === 'development' && result.rows.length > 0 ? resetToken : undefined
       });
     } catch (error) {

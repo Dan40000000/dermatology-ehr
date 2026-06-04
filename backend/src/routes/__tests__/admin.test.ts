@@ -342,7 +342,15 @@ describe("Admin routes - Providers", () => {
 describe("Admin routes - Users", () => {
   it("GET /admin/users returns users", async () => {
     queryMock.mockResolvedValueOnce({
-      rows: [{ id: "user-1", email: "user@example.com", fullName: "User Name", role: "front_desk" }],
+      rows: [{
+        id: "user-1",
+        email: "user@example.com",
+        fullName: "User Name",
+        role: "front_desk",
+        failedLoginAttempts: 5,
+        loginLockedAt: "2026-06-03T12:00:00.000Z",
+        loginLockedReason: "failed_login_attempts",
+      }],
       rowCount: 1,
     });
 
@@ -351,6 +359,9 @@ describe("Admin routes - Users", () => {
     expect(res.status).toBe(200);
     expect(res.body.users).toHaveLength(1);
     expect(res.body.users[0].email).toBe("user@example.com");
+    expect(res.body.users[0].failedLoginAttempts).toBe(5);
+    expect(res.body.users[0].loginLockedAt).toBe("2026-06-03T12:00:00.000Z");
+    expect(res.body.users[0].loginLockedReason).toBe("failed_login_attempts");
   });
 
   it("POST /admin/users creates user", async () => {
@@ -448,6 +459,10 @@ describe("Admin routes - Users", () => {
     expect(queryMock.mock.calls[1][0]).toContain("password_hash");
     expect(queryMock.mock.calls[1][0]).toContain("force_password_reset = true");
     expect(queryMock.mock.calls[1][0]).toContain("password_changed_at = CURRENT_TIMESTAMP");
+    expect(queryMock.mock.calls[1][0]).toContain("failed_login_attempts = 0");
+    expect(queryMock.mock.calls[1][0]).toContain("login_locked_at = NULL");
+    expect(queryMock.mock.calls[1][0]).toContain("login_locked_reason = NULL");
+    expect(queryMock.mock.calls[1][0]).toContain("last_failed_login_at = NULL");
     expect(revokeRefreshTokensForUserMock).toHaveBeenCalledWith("user-1", "tenant-1");
   });
 

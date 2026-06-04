@@ -77,6 +77,9 @@ interface User {
   secondaryRoles?: string[];
   roles?: string[];
   passwordResetRequired?: boolean;
+  failedLoginAttempts?: number;
+  loginLockedAt?: string | null;
+  loginLockedReason?: string | null;
 }
 
 const pageStyle: React.CSSProperties = {
@@ -359,10 +362,13 @@ const modalOverlayStyle: React.CSSProperties = {
   bottom: 0,
   background: 'rgba(0, 0, 0, 0.6)',
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   justifyContent: 'center',
-  zIndex: 1000,
+  zIndex: 10000,
   backdropFilter: 'blur(4px)',
+  boxSizing: 'border-box',
+  overflowY: 'auto',
+  padding: '5rem 1rem 2rem',
 };
 
 const modalStyle: React.CSSProperties = {
@@ -371,6 +377,8 @@ const modalStyle: React.CSSProperties = {
   padding: '2rem',
   width: '100%',
   maxWidth: '640px',
+  maxHeight: 'calc(100vh - 7rem)',
+  overflowY: 'auto',
   boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
 };
 
@@ -1406,7 +1414,11 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
               </div>
             </td>
             <td style={tdStyle}>
-              {u.passwordResetRequired ? (
+              {u.loginLockedAt ? (
+                <span style={{ ...roleBadgeStyle('billing'), background: '#fee2e2', color: '#991b1b' }}>
+                  Locked after failed logins
+                </span>
+              ) : u.passwordResetRequired ? (
                 <span style={{ ...roleBadgeStyle('billing'), background: '#fef3c7', color: '#92400e' }}>
                   Must reset password
                 </span>

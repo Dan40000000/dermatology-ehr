@@ -46,6 +46,16 @@ const mockProviders = [
 const mockUsers = [
   { id: 'user-1', email: 'admin@example.com', fullName: 'Admin User', role: 'admin', passwordResetRequired: false },
   { id: 'user-2', email: 'provider@example.com', fullName: 'Provider User', role: 'provider', passwordResetRequired: true },
+  {
+    id: 'user-3',
+    email: 'frontdesk@example.com',
+    fullName: 'Front Desk User',
+    role: 'front_desk',
+    passwordResetRequired: false,
+    failedLoginAttempts: 5,
+    loginLockedAt: '2026-06-03T12:00:00.000Z',
+    loginLockedReason: 'failed_login_attempts',
+  },
 ];
 
 vi.mock('react-router-dom', async () => {
@@ -218,6 +228,8 @@ describe('AdminPage', () => {
 
     expect(screen.getByText('Provider User')).toBeInTheDocument();
     expect(screen.getByText('admin@example.com')).toBeInTheDocument();
+    expect(screen.getByText('Front Desk User')).toBeInTheDocument();
+    expect(screen.getByText('Locked after failed logins')).toBeInTheDocument();
   });
 
   it('should show loading state while fetching data', async () => {

@@ -27,6 +27,8 @@ import {
   fetchPortalCheckinSession,
   updatePortalCheckinSession,
   uploadPortalInsuranceCard,
+  requestPortalPasswordReset,
+  resetPortalPassword,
 } from '../portalApi';
 import { API_BASE_URL } from '../utils/apiBase';
 
@@ -251,7 +253,25 @@ describe('portalApi', () => {
       body: JSON.stringify({ frontImageUrl: 'front', backImageUrl: 'back' }),
       contentType: true,
     },
-  ])('calls $name with expected request details', async ({ call, url, method, body, contentType }) => {
+    {
+      name: 'requestPortalPasswordReset',
+      call: () => requestPortalPasswordReset(tenantId, { deliveryMethod: 'sms', phone: '5412318693' }),
+      url: `${API_BASE_URL}/api/patient-portal/forgot-password`,
+      method: 'POST',
+      body: JSON.stringify({ deliveryMethod: 'sms', phone: '5412318693' }),
+      contentType: true,
+      noAuth: true,
+    },
+    {
+      name: 'resetPortalPassword',
+      call: () => resetPortalPassword(tenantId, { token: '12345678', password: 'Portal123!' }),
+      url: `${API_BASE_URL}/api/patient-portal/reset-password`,
+      method: 'POST',
+      body: JSON.stringify({ token: '12345678', password: 'Portal123!' }),
+      contentType: true,
+      noAuth: true,
+    },
+  ])('calls $name with expected request details', async ({ call, url, method, body, contentType, noAuth }) => {
     fetchMock.mockResolvedValueOnce(okResponse({}));
 
     await call();
@@ -272,7 +292,11 @@ describe('portalApi', () => {
     }
 
     const headers = options?.headers as Record<string, string>;
-    expect(headers.Authorization).toBe(`Bearer ${token}`);
+    if (noAuth) {
+      expect(headers.Authorization).toBeUndefined();
+    } else {
+      expect(headers.Authorization).toBe(`Bearer ${token}`);
+    }
     expect(headers['x-tenant-id']).toBe(tenantId);
     if (contentType) {
       expect(headers['Content-Type']).toBe('application/json');

@@ -327,6 +327,48 @@ export async function changePortalPassword(
   return res.json();
 }
 
+export async function requestPortalPasswordReset(
+  tenantId: string,
+  data:
+    | { deliveryMethod: 'email'; email: string }
+    | { deliveryMethod: 'sms'; phone: string }
+): Promise<{ message: string; deliveryMethod?: 'email' | 'sms'; resetToken?: string }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/forgot-password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ error: 'Password reset request failed' }));
+    throw new Error(payload.error || 'Password reset request failed');
+  }
+  return res.json();
+}
+
+export async function resetPortalPassword(
+  tenantId: string,
+  data: { token: string; password: string }
+): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/reset-password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ error: 'Password reset failed' }));
+    throw new Error(payload.error || 'Password reset failed');
+  }
+  return res.json();
+}
+
 // Get patient balance
 export async function fetchPortalBalance(
   tenantId: string,

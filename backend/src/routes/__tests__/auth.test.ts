@@ -5,6 +5,7 @@ import { userStore } from "../../services/userStore";
 import { issueTokens, rotateRefreshToken } from "../../services/authService";
 import bcrypt from "bcryptjs";
 import { logger } from "../../lib/logger";
+import { pool } from "../../db/pool";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -39,6 +40,12 @@ jest.mock("../../services/authService", () => ({
   rotateRefreshToken: jest.fn(),
 }));
 
+jest.mock("../../db/pool", () => ({
+  pool: {
+    query: jest.fn(),
+  },
+}));
+
 jest.mock("bcryptjs", () => ({
   compareSync: jest.fn(),
 }));
@@ -62,6 +69,7 @@ const issueTokensMock = issueTokens as jest.Mock;
 const rotateRefreshMock = rotateRefreshToken as jest.Mock;
 const compareMock = bcrypt.compareSync as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
+const queryMock = pool.query as jest.Mock;
 
 beforeEach(() => {
   findUserMock.mockReset();
@@ -69,6 +77,8 @@ beforeEach(() => {
   issueTokensMock.mockReset();
   rotateRefreshMock.mockReset();
   compareMock.mockReset();
+  queryMock.mockReset();
+  queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   loggerMock.error.mockReset();
 });
 
@@ -103,6 +113,37 @@ describe("Auth routes", () => {
       .set("x-tenant-id", "tenant-1")
       .send({ email: "a@b.com", password: "Password123!" });
     expect(res.status).toBe(401);
+  });
+
+  it("POST /auth/login locks staff after the fifth failed password attempt", async () => {
+    findUserMock.mockResolvedValueOnce({ id: "user-1", tenantId: "tenant-1", email: "a@b.com", role: "admin", passwordHash: "hash" });
+    compareMock.mockReturnValueOnce(false);
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ failedLoginAttempts: 4, lockedAt: null }] })
+      .mockResolvedValueOnce({ rows: [{ failedLoginAttempts: 5, lockedAt: "2026-06-03T12:00:00.000Z" }] });
+
+    const res = await request(app)
+      .post("/auth/login")
+      .set("x-tenant-id", "tenant-1")
+      .send({ email: "a@b.com", password: "Password123!" });
+
+    expect(res.status).toBe(423);
+    expect(res.body.adminResetRequired).toBe(true);
+    expect(queryMock.mock.calls[1][0]).toContain("login_locked_at");
+  });
+
+  it("POST /auth/login rejects staff accounts already locked by failed attempts", async () => {
+    findUserMock.mockResolvedValueOnce({ id: "user-1", tenantId: "tenant-1", email: "a@b.com", role: "admin", passwordHash: "hash" });
+    queryMock.mockResolvedValueOnce({ rows: [{ failedLoginAttempts: 5, lockedAt: "2026-06-03T12:00:00.000Z" }] });
+
+    const res = await request(app)
+      .post("/auth/login")
+      .set("x-tenant-id", "tenant-1")
+      .send({ email: "a@b.com", password: "Password123!" });
+
+    expect(res.status).toBe(423);
+    expect(res.body.locked).toBe(true);
+    expect(compareMock).not.toHaveBeenCalled();
   });
 
   it("POST /auth/login returns tokens", async () => {

@@ -6,6 +6,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { logger } from "../../lib/logger";
 
+const mockSendEmail = jest.fn();
+const mockSendSms = jest.fn();
+
 jest.mock("../../config/env", () => ({
   env: {
     jwtSecret: "test-secret",
@@ -33,6 +36,24 @@ jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
   },
+}));
+
+jest.mock("../../config", () => ({
+  config: {
+    frontendUrl: "https://portal.example.test",
+  },
+}));
+
+jest.mock("../../lib/container", () => ({
+  getEmailService: () => ({
+    sendEmail: mockSendEmail,
+  }),
+}));
+
+jest.mock("../../services/twilioService", () => ({
+  createTwilioService: jest.fn(() => ({
+    sendSMS: mockSendSms,
+  })),
 }));
 
 jest.mock("../../lib/logger", () => ({
@@ -72,6 +93,9 @@ beforeEach(() => {
   compareMock.mockReset();
   jwtSignMock.mockReset();
   loggerMock.error.mockReset();
+  loggerMock.info.mockReset();
+  mockSendEmail.mockReset().mockResolvedValue(undefined);
+  mockSendSms.mockReset().mockResolvedValue({ sid: "SM123", status: "sent", numSegments: 1 });
   queryMock.mockResolvedValue({ rows: [] });
   hashMock.mockResolvedValue("hashed-password");
   compareMock.mockResolvedValue(true);
@@ -468,7 +492,20 @@ describe("Patient portal routes", () => {
   });
 
   it("POST /patient-portal/forgot-password returns token in development", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "account-1" }] });
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "account-1",
+          patient_id: "patient-1",
+          email: "patient@example.com",
+          first_name: "Pat",
+          last_name: "Ent",
+          phone: "555-123-4567",
+          practice_name: "Demo Dermatology",
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "account-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
       .post("/patient-portal/forgot-password")
@@ -477,6 +514,76 @@ describe("Patient portal routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.resetToken).toBeDefined();
+    expect(res.body.deliveryMethod).toBe("email");
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: "patient@example.com",
+      subject: "Patient portal password reset",
+      text: expect.stringContaining("https://portal.example.test/portal/reset-password"),
+    }));
+    expect(queryMock.mock.calls[1][0]).toContain("reset_token");
+    expect(queryMock.mock.calls[2][1][3]).toBe("patient_portal_password_reset_requested");
+  });
+
+  it("POST /patient-portal/forgot-password can send an SMS reset code", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "account-1",
+          patient_id: "patient-1",
+          email: "patient@example.com",
+          first_name: "Pat",
+          last_name: "Ent",
+          phone: "(555) 123-4567",
+          practice_name: "Demo Dermatology",
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "account-1" }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          twilio_account_sid: null,
+          twilio_auth_token: null,
+          twilio_phone_number: "+15550001111",
+          is_test_mode: true,
+          clinic_name: "Demo Dermatology",
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/patient-portal/forgot-password")
+      .set(tenantHeader, "tenant-1")
+      .send({ deliveryMethod: "sms", phone: "555-123-4567" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.deliveryMethod).toBe("sms");
+    expect(res.body.resetToken).toMatch(/^\d{8}$/);
+    expect(mockSendSms).not.toHaveBeenCalled();
+    expect(loggerMock.info).toHaveBeenCalledWith("Patient portal password reset SMS prepared", expect.objectContaining({
+      tenantId: "tenant-1",
+      accountId: "account-1",
+      patientId: "patient-1",
+      mock: true,
+    }));
+  });
+
+  it("POST /patient-portal/forgot-password hides missing or ambiguous phone matches", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: "account-1" },
+        { id: "account-2" },
+      ],
+    });
+
+    const res = await request(app)
+      .post("/patient-portal/forgot-password")
+      .set(tenantHeader, "tenant-1")
+      .send({ deliveryMethod: "sms", phone: "555-123-4567" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.resetToken).toBeUndefined();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockSendSms).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
   it("POST /patient-portal/reset-password rejects invalid token", async () => {

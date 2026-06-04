@@ -404,6 +404,9 @@ router.get("/users", async (req: AuthedRequest, res) => {
     `SELECT id, email, full_name as "fullName", role,
             coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles",
             coalesce(force_password_reset, false) as "passwordResetRequired",
+            coalesce(failed_login_attempts, 0) as "failedLoginAttempts",
+            login_locked_at as "loginLockedAt",
+            login_locked_reason as "loginLockedReason",
             created_at as "createdAt"
      FROM users
      WHERE tenant_id = $1
@@ -533,6 +536,10 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
     values.push(bcrypt.hashSync(password, 12)); // Increased to 12 rounds for better security
     updates.push(`force_password_reset = true`);
     updates.push(`password_changed_at = CURRENT_TIMESTAMP`);
+    updates.push(`failed_login_attempts = 0`);
+    updates.push(`login_locked_at = NULL`);
+    updates.push(`login_locked_reason = NULL`);
+    updates.push(`last_failed_login_at = NULL`);
   }
 
   if (updates.length === 0) {

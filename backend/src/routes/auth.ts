@@ -49,6 +49,7 @@ const WORKFORCE_USER_ROLES = new Set([
   "staff",
   "compliance_officer",
 ]);
+const STAFF_LOGIN_LOCK_THRESHOLD = 5;
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -89,6 +90,108 @@ function isTruthyQueryFlag(value: unknown): boolean {
 function isWorkforceUser(user: { role?: unknown; roles?: unknown; secondaryRoles?: unknown }): boolean {
   const roles = buildEffectiveRoles(user.role, user.roles || user.secondaryRoles);
   return roles.some((role) => WORKFORCE_USER_ROLES.has(role));
+}
+
+function isMissingStaffLockoutColumn(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = "code" in error ? String((error as { code?: string }).code || "") : "";
+  const message = "message" in error ? String((error as { message?: string }).message || "") : "";
+
+  return code === "42703" && /(failed_login_attempts|login_locked_at|login_locked_reason|last_failed_login_at)/i.test(message);
+}
+
+async function getStaffLoginSecurity(userId: string, tenantId: string): Promise<{
+  failedLoginAttempts: number;
+  lockedAt: string | null;
+} | null> {
+  try {
+    const result = await pool.query(
+      `SELECT COALESCE(failed_login_attempts, 0) as "failedLoginAttempts",
+              login_locked_at as "lockedAt"
+       FROM users
+       WHERE id = $1 AND tenant_id = $2`,
+      [userId, tenantId]
+    );
+
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      failedLoginAttempts: Number(row.failedLoginAttempts || 0),
+      lockedAt: row.lockedAt || null,
+    };
+  } catch (error) {
+    if (isMissingStaffLockoutColumn(error)) {
+      logger.warn("Staff login lockout columns are missing; continuing without persistent lockout", {
+        userId,
+        tenantId,
+      });
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function recordStaffFailedLogin(userId: string, tenantId: string): Promise<{
+  failedLoginAttempts: number;
+  lockedAt: string | null;
+} | null> {
+  try {
+    const result = await pool.query(
+      `UPDATE users
+       SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1,
+           last_failed_login_at = CURRENT_TIMESTAMP,
+           login_locked_at = CASE
+             WHEN COALESCE(failed_login_attempts, 0) + 1 >= $1 THEN COALESCE(login_locked_at, CURRENT_TIMESTAMP)
+             ELSE login_locked_at
+           END,
+           login_locked_reason = CASE
+             WHEN COALESCE(failed_login_attempts, 0) + 1 >= $1 THEN 'failed_login_attempts'
+             ELSE login_locked_reason
+           END
+       WHERE id = $2 AND tenant_id = $3
+       RETURNING failed_login_attempts as "failedLoginAttempts",
+                 login_locked_at as "lockedAt"`,
+      [STAFF_LOGIN_LOCK_THRESHOLD, userId, tenantId]
+    );
+
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      failedLoginAttempts: Number(row.failedLoginAttempts || 0),
+      lockedAt: row.lockedAt || null,
+    };
+  } catch (error) {
+    if (isMissingStaffLockoutColumn(error)) {
+      logger.warn("Staff login lockout columns are missing; failed attempt was not persisted", {
+        userId,
+        tenantId,
+      });
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function clearStaffFailedLoginState(userId: string, tenantId: string): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE users
+       SET failed_login_attempts = 0,
+           login_locked_at = NULL,
+           login_locked_reason = NULL,
+           last_failed_login_at = NULL
+       WHERE id = $1 AND tenant_id = $2`,
+      [userId, tenantId]
+    );
+  } catch (error) {
+    if (isMissingStaffLockoutColumn(error)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -159,11 +262,34 @@ authRouter.post("/login", authLimiter, async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const ok = bcrypt.compareSync(password, user.passwordHash);
-    if (!ok) {
-      return res.status(401).json({ error: "Invalid credentials" });
+    const loginSecurity = await getStaffLoginSecurity(user.id, tenantId);
+    if (loginSecurity?.lockedAt) {
+      return res.status(423).json({
+        error: "Account locked after multiple failed login attempts. An admin must reset this password.",
+        locked: true,
+        adminResetRequired: true,
+      });
     }
 
+    const ok = bcrypt.compareSync(password, user.passwordHash);
+    if (!ok) {
+      const failedState = await recordStaffFailedLogin(user.id, tenantId);
+      const failedLoginAttempts = failedState?.failedLoginAttempts ?? 0;
+      if (failedState?.lockedAt || failedLoginAttempts >= STAFF_LOGIN_LOCK_THRESHOLD) {
+        return res.status(423).json({
+          error: "Account locked after multiple failed login attempts. An admin must reset this password.",
+          locked: true,
+          adminResetRequired: true,
+        });
+      }
+
+      return res.status(401).json({
+        error: "Invalid credentials",
+        attemptsRemaining: Math.max(STAFF_LOGIN_LOCK_THRESHOLD - failedLoginAttempts, 0),
+      });
+    }
+
+    await clearStaffFailedLoginState(user.id, tenantId);
     const tokens = await issueTokens(user);
     setStaffAuthCookies(res, tokens);
     return res.json({ user: userStore.mask(user), tokens: publicCookieTokens(tokens), tenantId });

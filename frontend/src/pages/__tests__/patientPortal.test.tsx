@@ -10,6 +10,8 @@ import { PortalDocumentsPage } from '../patient-portal/PortalDocumentsPage';
 import { PortalHealthRecordPage } from '../patient-portal/PortalHealthRecordPage';
 import { PortalProfilePage } from '../patient-portal/PortalProfilePage';
 import { PortalVisitSummariesPage } from '../patient-portal/PortalVisitSummariesPage';
+import { PortalForgotPasswordPage } from '../patient-portal/PortalForgotPasswordPage';
+import { PortalResetPasswordPage } from '../patient-portal/PortalResetPasswordPage';
 import { PublicBookAppointmentPage } from '../patient-portal/PublicBookAppointmentPage';
 import { PublicGuestBookAppointmentPage } from '../patient-portal/PublicGuestBookAppointmentPage';
 import { PatientPortalMessagesPage } from '../patient-portal/MessagesPage';
@@ -50,6 +52,8 @@ const portalApiMocks = vi.hoisted(() => ({
   updatePortalProfile: vi.fn(),
   fetchPortalPreferences: vi.fn(),
   updatePortalPreferences: vi.fn(),
+  requestPortalPasswordReset: vi.fn(),
+  resetPortalPassword: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -100,6 +104,8 @@ beforeEach(() => {
   portalApiMocks.updatePortalProfile.mockReset();
   portalApiMocks.fetchPortalPreferences.mockReset();
   portalApiMocks.updatePortalPreferences.mockReset();
+  portalApiMocks.requestPortalPasswordReset.mockReset();
+  portalApiMocks.resetPortalPassword.mockReset();
   toastMocks.showSuccess.mockReset();
   toastMocks.showError.mockReset();
 });
@@ -187,6 +193,76 @@ describe('Patient portal pages', () => {
     fireEvent.click(screen.getByRole('button', { name: /Sign In/i }));
 
     expect(await screen.findByText('Bad credentials')).toBeInTheDocument();
+  });
+
+  it('requests a patient portal password reset by email', async () => {
+    portalApiMocks.requestPortalPasswordReset.mockResolvedValueOnce({
+      message: 'If an account exists for that contact, password reset instructions have been sent.',
+    });
+
+    renderWithRouter(<PortalForgotPasswordPage />, ['/portal/forgot-password?tenantId=tenant-west']);
+
+    fireEvent.change(screen.getByLabelText(/Email address/i), {
+      target: { value: 'patient@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Send Reset/i }));
+
+    await waitFor(() =>
+      expect(portalApiMocks.requestPortalPasswordReset).toHaveBeenCalledWith('tenant-west', {
+        deliveryMethod: 'email',
+        email: 'patient@example.com',
+      })
+    );
+    expect(await screen.findByText(/password reset instructions have been sent/i)).toBeInTheDocument();
+  });
+
+  it('requests a patient portal password reset by text message', async () => {
+    portalApiMocks.requestPortalPasswordReset.mockResolvedValueOnce({
+      message: 'If an account exists for that contact, password reset instructions have been sent.',
+      deliveryMethod: 'sms',
+      resetToken: '12345678',
+    });
+
+    renderWithRouter(<PortalForgotPasswordPage />, ['/portal/forgot-password?tenantId=tenant-west']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.change(screen.getByLabelText(/Phone number/i), {
+      target: { value: '5412318693' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Send Reset/i }));
+
+    await waitFor(() =>
+      expect(portalApiMocks.requestPortalPasswordReset).toHaveBeenCalledWith('tenant-west', {
+        deliveryMethod: 'sms',
+        phone: '5412318693',
+      })
+    );
+    expect(screen.getByText(/Development reset token:/i)).toBeInTheDocument();
+    expect(screen.getByText('12345678')).toBeInTheDocument();
+  });
+
+  it('submits a patient portal password reset code', async () => {
+    portalApiMocks.resetPortalPassword.mockResolvedValueOnce({
+      message: 'Password reset successfully',
+    });
+
+    renderWithRouter(<PortalResetPasswordPage />, ['/portal/reset-password?tenantId=tenant-west&token=12345678']);
+
+    fireEvent.change(screen.getByLabelText(/^New password$/i), {
+      target: { value: 'Portal123!' },
+    });
+    fireEvent.change(screen.getByLabelText(/Confirm password/i), {
+      target: { value: 'Portal123!' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Update Password/i }));
+
+    await waitFor(() =>
+      expect(portalApiMocks.resetPortalPassword).toHaveBeenCalledWith('tenant-west', {
+        token: '12345678',
+        password: 'Portal123!',
+      })
+    );
+    expect(await screen.findByText('Password reset successfully')).toBeInTheDocument();
   });
 
   it('renders the registration page', () => {

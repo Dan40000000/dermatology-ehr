@@ -13,6 +13,8 @@ import { PatientPortalAuthProvider, usePatientPortalAuth } from '../contexts/Pat
 import {
   PortalLoginPage,
   PortalRegisterPage,
+  PortalForgotPasswordPage,
+  PortalResetPasswordPage,
   PortalDashboardPage,
   PortalAppointmentsPage,
   PortalVisitSummariesPage,
@@ -181,6 +183,8 @@ export const routes: RouteObject[] = [
     children: [
       { path: 'login', element: <PortalLoginPage /> },
       { path: 'register', element: <PortalRegisterPage /> },
+      { path: 'forgot-password', element: <PortalForgotPasswordPage /> },
+      { path: 'reset-password', element: <PortalResetPasswordPage /> },
       {
         element: <RequirePortalAuth />,
         children: [

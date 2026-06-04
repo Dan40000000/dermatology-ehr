@@ -288,7 +288,11 @@ describe('AdminPage', () => {
     const addButton = screen.getByRole('button', { name: /Add facilit/i });
     fireEvent.click(addButton);
 
-    expect(screen.getByText('Add New Facility')).toBeInTheDocument();
+    const heading = screen.getByText('Add New Facility');
+    const overlay = heading.parentElement?.parentElement as HTMLElement;
+    expect(heading).toBeInTheDocument();
+    expect(overlay.parentElement).toBe(document.body);
+    expect(overlay.style.zIndex).toBe('2147483647');
     expect(screen.getByLabelText(/Facility Name/i)).toBeInTheDocument();
   });
 

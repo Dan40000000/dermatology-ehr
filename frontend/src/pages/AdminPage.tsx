@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useAccessControl } from '../contexts/AccessControlContext';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
@@ -364,7 +365,7 @@ const modalOverlayStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
   justifyContent: 'center',
-  zIndex: 10000,
+  zIndex: 2147483647,
   backdropFilter: 'blur(4px)',
   boxSizing: 'border-box',
   overflowY: 'auto',
@@ -1542,7 +1543,7 @@ function Modal({
   const titleLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
   const title = item?.id ? `Edit ${titleLabel}` : `Add New ${titleLabel}`;
 
-  return (
+  const modalContent = (
     <div style={modalOverlayStyle}>
       <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
         <h2 style={modalTitleStyle}>{title}</h2>
@@ -1999,4 +2000,6 @@ function Modal({
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 }

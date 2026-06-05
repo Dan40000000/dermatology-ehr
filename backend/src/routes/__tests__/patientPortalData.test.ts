@@ -141,6 +141,8 @@ describe("Patient portal data routes", () => {
     expect(res.body.appointments).toHaveLength(1);
     expect(queryMock).toHaveBeenCalledTimes(2);
     expect(queryMock.mock.calls[1][0]).toContain("NULL::text as \"providerName\"");
+    expect(queryMock.mock.calls[1][0]).toContain("NULL::text as notes");
+    expect(queryMock.mock.calls[1][0]).not.toContain("a.notes");
   });
 
   it("GET /patient-portal-data/visit-summaries returns summaries", async () => {

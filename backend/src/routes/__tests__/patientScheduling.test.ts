@@ -335,6 +335,33 @@ describe("Patient scheduling portal routes", () => {
     expect(res.body.message).toBe("Appointment booked successfully");
   });
 
+  it("POST /patient-portal/scheduling/book succeeds when optional history and audit inserts fail", async () => {
+    const client = buildClient();
+    connectMock.mockResolvedValueOnce(client);
+    const start = "2024-01-02T09:00:00.000Z";
+    calculateSlotsMock.mockResolvedValueOnce([{ startTime: start, isAvailable: true }]);
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "loc-1" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(new Error("history table unavailable"))
+      .mockRejectedValueOnce(new Error("audit table unavailable"))
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/patient-portal/scheduling/book").send({
+      providerId,
+      appointmentTypeId,
+      scheduledStart: start,
+      scheduledEnd: "2024-01-02T09:30:00.000Z",
+      reason: "Consult",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.message).toBe("Appointment booked successfully");
+    expect(client.query.mock.calls.some((call) => String(call[0]) === "COMMIT")).toBe(true);
+  });
+
   it("POST /patient-portal/scheduling/public/book-guest creates appointment with guarantee", async () => {
     const client = buildClient();
     connectMock.mockResolvedValueOnce(client);

@@ -699,53 +699,65 @@ patientSchedulingRouter.post(
         ]
       );
 
-      // Log booking history
-      await client.query(
-        `INSERT INTO appointment_booking_history (
-          id, tenant_id, appointment_id, patient_id, action,
-          new_scheduled_start, new_scheduled_end, reason,
-          booked_via, ip_address, user_agent, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [
-          crypto.randomUUID(),
-          req.patient!.tenantId,
+      try {
+        await client.query(
+          `INSERT INTO appointment_booking_history (
+            id, tenant_id, appointment_id, patient_id, action,
+            new_scheduled_start, new_scheduled_end, reason,
+            booked_via, ip_address, user_agent, created_by
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [
+            crypto.randomUUID(),
+            req.patient!.tenantId,
+            appointmentId,
+            req.patient!.patientId,
+            "booked",
+            scheduledStart,
+            scheduledEnd,
+            reason || null,
+            "patient_portal",
+            req.ip,
+            req.get("user-agent"),
+            req.patient!.accountId,
+          ]
+        );
+      } catch (error) {
+        logger.warn("Patient portal booking history was not recorded", {
           appointmentId,
-          req.patient!.patientId,
-          "booked",
-          scheduledStart,
-          scheduledEnd,
-          reason || null,
-          "patient_portal",
-          req.ip,
-          req.get("user-agent"),
-          req.patient!.accountId,
-        ]
-      );
+          error: toSafeErrorMessage(error),
+        });
+      }
 
-      // Audit log
-      await client.query(
-        `INSERT INTO audit_log (
-          id, tenant_id, user_id, action, resource_type, resource_id,
-          ip_address, user_agent, metadata, severity, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [
-          crypto.randomUUID(),
-          req.patient!.tenantId,
-          null,
-          "patient_portal_book_appointment",
-          "appointment",
+      try {
+        await client.query(
+          `INSERT INTO audit_log (
+            id, tenant_id, user_id, action, resource_type, resource_id,
+            ip_address, user_agent, metadata, severity, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [
+            crypto.randomUUID(),
+            req.patient!.tenantId,
+            null,
+            "patient_portal_book_appointment",
+            "appointment",
+            appointmentId,
+            req.ip,
+            req.get("user-agent"),
+            JSON.stringify({
+              source: "patient_portal",
+              patientPortalAccountId: req.patient!.accountId,
+              patientId: req.patient!.patientId,
+            }),
+            "info",
+            "success",
+          ]
+        );
+      } catch (error) {
+        logger.warn("Patient portal booking audit log was not recorded", {
           appointmentId,
-          req.ip,
-          req.get("user-agent"),
-          JSON.stringify({
-            source: "patient_portal",
-            patientPortalAccountId: req.patient!.accountId,
-            patientId: req.patient!.patientId,
-          }),
-          "info",
-          "success",
-        ]
-      );
+          error: toSafeErrorMessage(error),
+        });
+      }
 
       await client.query("COMMIT");
 

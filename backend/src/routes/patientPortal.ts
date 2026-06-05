@@ -540,28 +540,21 @@ patientPortalRouter.post(
       // Hash password (12 rounds for enhanced security)
       const passwordHash = await bcrypt.hash(password, 12);
 
-      // Generate verification token
-      const verificationToken = crypto.randomBytes(32).toString('hex');
-      const verificationExpires = new Date();
-      verificationExpires.setHours(verificationExpires.getHours() + 24); // 24 hour expiry
-
       // Create account
       const accountId = crypto.randomUUID();
       await pool.query(
         `INSERT INTO patient_portal_accounts (
           id, tenant_id, patient_id, email, password_hash,
-          verification_token, verification_token_expires, is_active, email_verified
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          is_active, email_verified
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           accountId,
           tenantId,
           patient.id,
           email.toLowerCase(),
           passwordHash,
-          verificationToken,
-          verificationExpires,
           true,
-          false // Require email verification
+          true
         ]
       );
 
@@ -581,14 +574,9 @@ patientPortalRouter.post(
         ]
       );
 
-      // TODO: Send verification email with token
-      // For now, return the token (in production, only send via email)
-
       return res.status(201).json({
-        message: "Account created successfully. Please verify your email.",
+        message: "Account created successfully. You can now sign in.",
         accountId,
-        // Remove this in production - only send via email
-        verificationToken: env.nodeEnv === 'development' ? verificationToken : undefined
       });
     } catch (error) {
       logPatientPortalError("Registration error", error);
@@ -849,10 +837,17 @@ patientPortalRouter.post(
         `UPDATE patient_portal_accounts
          SET email_verified = true,
              verification_token = NULL,
-             verification_token_expires = NULL
+             verification_token_expires = NULL,
+             email_verification_token = NULL,
+             email_verification_sent_at = NULL
          WHERE tenant_id = $1
-         AND verification_token = $2
-         AND verification_token_expires > CURRENT_TIMESTAMP
+         AND (
+           (
+             verification_token = $2
+             AND verification_token_expires > CURRENT_TIMESTAMP
+           )
+           OR email_verification_token = $2
+         )
          RETURNING id`,
         [tenantId, token]
       );

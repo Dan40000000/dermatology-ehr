@@ -13849,6 +13849,37 @@ Consider age-appropriate treatments and include family counseling points.',
       );
     `,
   },
+  {
+    name: "203_patient_portal_auth_schema_alignment",
+    sql: `
+    ALTER TABLE patient_portal_accounts
+      ADD COLUMN IF NOT EXISTS verification_token TEXT,
+      ADD COLUMN IF NOT EXISTS verification_token_expires TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS reset_token TEXT,
+      ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+    CREATE TABLE IF NOT EXISTS patient_portal_sessions (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES patient_portal_accounts(id) ON DELETE CASCADE,
+      session_token TEXT NOT NULL UNIQUE,
+      ip_address TEXT,
+      user_agent TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      last_activity TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_sessions_token
+      ON patient_portal_sessions(session_token);
+    CREATE INDEX IF NOT EXISTS idx_portal_sessions_account
+      ON patient_portal_sessions(account_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_sessions_expires
+      ON patient_portal_sessions(expires_at);
+    `,
+  },
 
 ];
 

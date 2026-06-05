@@ -274,11 +274,15 @@ describe("Patient portal routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.accountId).toBeDefined();
-    expect(res.body.verificationToken).toBeDefined();
+    expect(res.body.verificationToken).toBeUndefined();
+    expect(res.body.message).toBe("Account created successfully. You can now sign in.");
     const identityRecheckQuery = queryMock.mock.calls[1]?.[0] as string;
     expect(identityRecheckQuery).toContain("AND (ssn_last4 = $5");
     expect(identityRecheckQuery).toContain("REGEXP_REPLACE(COALESCE(phone, '')");
     expect(identityRecheckQuery).not.toContain("RIGHT(ssn, 4)");
+    const insertQuery = queryMock.mock.calls[2]?.[0] as string;
+    expect(insertQuery).toContain("email_verified");
+    expect(queryMock.mock.calls[2]?.[1]).toContain(true);
   });
 
   it("POST /patient-portal/login rejects missing tenant header", async () => {

@@ -653,7 +653,7 @@ export function PortalRegisterPage() {
                   </svg>
                 </div>
                 <h2>Account Created Successfully!</h2>
-                <p>Your patient portal account has been created. Please check your email to verify your account before signing in.</p>
+                <p>Your identity has been verified and your patient portal account is ready to use.</p>
 
                 <div className="success-info">
                   <div className="info-item">
@@ -661,14 +661,14 @@ export function PortalRegisterPage() {
                       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                       <polyline points="22,6 12,13 2,6"/>
                     </svg>
-                    <span>Verification email sent to <strong>{email}</strong></span>
+                    <span>Login email: <strong>{email}</strong></span>
                   </div>
                   <div className="info-item">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="12" cy="12" r="10"/>
                       <polyline points="12,6 12,12 16,14"/>
                     </svg>
-                    <span>Link expires in 24 hours</span>
+                    <span>You can sign in now with the password you created</span>
                   </div>
                 </div>
 
@@ -690,9 +690,7 @@ export function PortalRegisterPage() {
                   </svg>
                 </button>
 
-                <p className="resend-text">
-                  Didn't receive the email? <button className="resend-link">Resend verification email</button>
-                </p>
+                <p className="resend-text">Need help signing in? Contact the office or use password reset.</p>
               </div>
             )}
 

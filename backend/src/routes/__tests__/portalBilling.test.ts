@@ -54,6 +54,10 @@ beforeEach(() => {
 });
 
 describe("Portal Billing routes", () => {
+  const missingRelation = () => Object.assign(new Error('relation "portal_payment_methods" does not exist'), {
+    code: "42P01",
+  });
+
   describe("GET /portal-billing/balance", () => {
     it("returns patient balance", async () => {
       queryMock.mockResolvedValueOnce({
@@ -98,6 +102,22 @@ describe("Portal Billing routes", () => {
         expect.stringContaining("INSERT INTO portal_patient_balances"),
         ["tenant-1", "patient-1", 0, 0, 0, null, null]
       );
+    });
+
+    it("returns an empty balance when optional billing tables are missing in a clean database", async () => {
+      queryMock.mockRejectedValueOnce(missingRelation());
+
+      const res = await request(app).get("/portal-billing/balance");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        totalCharges: 0,
+        totalPayments: 0,
+        totalAdjustments: 0,
+        currentBalance: 0,
+        lastPaymentDate: null,
+        lastPaymentAmount: null,
+      });
     });
 
     it("reconciles portal totals when payments cover the balance", async () => {
@@ -179,6 +199,15 @@ describe("Portal Billing routes", () => {
       expect(res.body.charges).toHaveLength(0);
     });
 
+    it("returns empty charges when optional billing tables are missing in a clean database", async () => {
+      queryMock.mockRejectedValueOnce(missingRelation());
+
+      const res = await request(app).get("/portal-billing/charges");
+
+      expect(res.status).toBe(200);
+      expect(res.body.charges).toEqual([]);
+    });
+
     it("returns 500 on database error", async () => {
       queryMock.mockRejectedValueOnce(new Error("Database error"));
 
@@ -232,6 +261,15 @@ describe("Portal Billing routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.paymentMethods).toHaveLength(0);
+    });
+
+    it("returns empty payment methods when optional billing tables are missing in a clean database", async () => {
+      queryMock.mockRejectedValueOnce(missingRelation());
+
+      const res = await request(app).get("/portal-billing/payment-methods");
+
+      expect(res.status).toBe(200);
+      expect(res.body.paymentMethods).toEqual([]);
     });
 
     it("returns 500 on database error", async () => {
@@ -735,6 +773,15 @@ describe("Portal Billing routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.payments).toHaveLength(0);
+    });
+
+    it("returns empty payment history when optional billing tables are missing in a clean database", async () => {
+      queryMock.mockRejectedValueOnce(missingRelation());
+
+      const res = await request(app).get("/portal-billing/payment-history");
+
+      expect(res.status).toBe(200);
+      expect(res.body.payments).toEqual([]);
     });
 
     it("returns 500 on database error", async () => {

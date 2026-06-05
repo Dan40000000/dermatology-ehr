@@ -26,6 +26,26 @@ function logPortalBillingError(message: string, error: unknown): void {
   });
 }
 
+function isMissingOptionalPortalBillingData(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code || "")
+    : "";
+  const message = toSafeErrorMessage(error).toLowerCase();
+
+  return code === "42P01" || code === "42703" || message.includes("does not exist");
+}
+
+function emptyPortalBalance() {
+  return {
+    totalCharges: 0,
+    totalPayments: 0,
+    totalAdjustments: 0,
+    currentBalance: 0,
+    lastPaymentDate: null,
+    lastPaymentAmount: null,
+  };
+}
+
 // ============================================================================
 // MOCK STRIPE INTEGRATION (similar to Twilio/Surescripts pattern)
 // ============================================================================
@@ -98,8 +118,10 @@ const mockStripe = {
 // ============================================================================
 
 export async function getLivePortalBalance(tenantId: string, patientId: string) {
-  const summaryResult = await pool.query(
-    `WITH bill_summary AS (
+  let summaryResult;
+  try {
+    summaryResult = await pool.query(
+      `WITH bill_summary AS (
        SELECT
          COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN total_charges_cents ELSE 0 END), 0)::int AS bill_total_charges_cents,
          COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN patient_responsibility_cents ELSE 0 END), 0)::int AS bill_patient_responsibility_cents,
@@ -214,8 +236,20 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
      CROSS JOIN payment_summary ps
      CROSS JOIN portal_payment_summary pps
      LEFT JOIN last_payment lp ON TRUE`,
-    [tenantId, patientId],
-  );
+      [tenantId, patientId],
+    );
+  } catch (error) {
+    if (!isMissingOptionalPortalBillingData(error)) {
+      throw error;
+    }
+
+    logger.warn("Optional patient portal billing balance data unavailable", {
+      tenantId,
+      patientId,
+      error: toSafeErrorMessage(error),
+    });
+    return emptyPortalBalance();
+  }
 
   const row = summaryResult.rows[0] || {};
   const toCents = (value: unknown) => Math.max(0, Number(value || 0));
@@ -246,8 +280,9 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
   };
 
   // current_balance is generated as total_charges - total_payments - total_adjustments.
-  await pool.query(
-    `INSERT INTO portal_patient_balances (
+  try {
+    await pool.query(
+      `INSERT INTO portal_patient_balances (
        tenant_id, patient_id, total_charges, total_payments, total_adjustments,
        last_payment_date, last_payment_amount, last_updated
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
@@ -260,16 +295,27 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
        last_payment_date = EXCLUDED.last_payment_date,
        last_payment_amount = EXCLUDED.last_payment_amount,
        last_updated = CURRENT_TIMESTAMP`,
-    [
+      [
+        tenantId,
+        patientId,
+        portalLedgerChargesCents / 100,
+        result.totalPayments,
+        result.totalAdjustments,
+        result.lastPaymentDate,
+        result.lastPaymentAmount,
+      ],
+    );
+  } catch (error) {
+    if (!isMissingOptionalPortalBillingData(error)) {
+      throw error;
+    }
+
+    logger.warn("Optional patient portal balance cache unavailable", {
       tenantId,
       patientId,
-      portalLedgerChargesCents / 100,
-      result.totalPayments,
-      result.totalAdjustments,
-      result.lastPaymentDate,
-      result.lastPaymentAmount,
-    ],
-  );
+      error: toSafeErrorMessage(error),
+    });
+  }
 
   return result;
 }
@@ -286,6 +332,9 @@ portalBillingRouter.get(
       const { patientId, tenantId } = req.patient!;
       return res.json(await getLivePortalBalance(tenantId, patientId));
     } catch (error) {
+      if (isMissingOptionalPortalBillingData(error)) {
+        return res.json(emptyPortalBalance());
+      }
       logPortalBillingError("Get balance error", error);
       return res.status(500).json({ error: "Failed to get balance" });
     }
@@ -334,6 +383,9 @@ portalBillingRouter.get(
 
       return res.json({ charges: result.rows });
     } catch (error) {
+      if (isMissingOptionalPortalBillingData(error)) {
+        return res.json({ charges: [] });
+      }
       logPortalBillingError("Get charges error", error);
       return res.status(500).json({ error: "Failed to get charges" });
     }
@@ -376,6 +428,9 @@ portalBillingRouter.get(
 
       return res.json({ statements: result.rows });
     } catch (error) {
+      if (isMissingOptionalPortalBillingData(error)) {
+        return res.json({ statements: [] });
+      }
       logPortalBillingError("Get statements error", error);
       return res.status(500).json({ error: "Failed to get statements" });
     }
@@ -476,6 +531,9 @@ portalBillingRouter.get(
 
       return res.json({ paymentMethods: result.rows });
     } catch (error) {
+      if (isMissingOptionalPortalBillingData(error)) {
+        return res.json({ paymentMethods: [] });
+      }
       logPortalBillingError("Get payment methods error", error);
       return res.status(500).json({ error: "Failed to get payment methods" });
     }
@@ -899,6 +957,9 @@ portalBillingRouter.get(
 
       return res.json({ payments: result.rows });
     } catch (error) {
+      if (isMissingOptionalPortalBillingData(error)) {
+        return res.json({ payments: [] });
+      }
       logPortalBillingError("Get payment history error", error);
       return res.status(500).json({ error: "Failed to get payment history" });
     }

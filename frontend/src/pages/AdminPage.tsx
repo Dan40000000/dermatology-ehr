@@ -69,6 +69,7 @@ interface Provider {
   email?: string;
   linkedUserId?: string | null;
   linkedUserEmail?: string | null;
+  linkedUserPhone?: string | null;
   isActive: boolean;
 }
 
@@ -463,12 +464,13 @@ function createUserDraft(item?: Partial<User> | null) {
 }
 
 function createProviderDraft(item?: Partial<Provider> | null) {
+  const hasLinkedLogin = Boolean(item?.linkedUserId || item?.linkedUserEmail);
   return {
     ...(item || {}),
-    createLinkedUser: false,
-    email: '',
-    phone: '',
-    password: '',
+    createLinkedUser: !item?.id,
+    email: item?.linkedUserEmail || '',
+    phone: item?.linkedUserPhone || '',
+    password: !item?.id && !hasLinkedLogin ? generateTemporaryPassword() : '',
     sendTemporaryLoginSms: false,
   };
 }
@@ -607,7 +609,8 @@ export function AdminPage() {
 
       const deliveryMessage = describeTemporaryLoginDelivery(payload.temporaryLoginDelivery);
       const shouldShowUserPasswordMessage = activeTab === 'users' && typeof data.password === 'string' && data.password.trim();
-      setSaveMessage(deliveryMessage || (shouldShowUserPasswordMessage ? 'Temporary login is ready. Staff must create their own password at next login.' : null));
+      const shouldShowProviderPasswordMessage = activeTab === 'providers' && data.createLinkedUser === true && typeof data.password === 'string' && data.password.trim();
+      setSaveMessage(deliveryMessage || (shouldShowUserPasswordMessage || shouldShowProviderPasswordMessage ? 'Temporary login is ready. Staff must create their own password at next login.' : null));
       setSaveError(null);
 
       setShowModal(false);
@@ -1608,6 +1611,12 @@ function Modal({
           delete payload.password;
         }
       }
+      if (payload.createLinkedUser !== true) {
+        delete payload.email;
+        delete payload.phone;
+        delete payload.password;
+        delete payload.sendTemporaryLoginSms;
+      }
       onSave(payload);
       return;
     }
@@ -1670,6 +1679,7 @@ function Modal({
   const typeLabel = singularLabels[type] || type.slice(0, -1);
   const titleLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
   const title = item?.id ? `Edit ${titleLabel}` : `Add New ${titleLabel}`;
+  const providerHasLinkedLogin = type === 'providers' && Boolean(item?.linkedUserId || item?.linkedUserEmail);
 
   const modalContent = (
     <div style={modalOverlayStyle}>
@@ -2019,15 +2029,14 @@ function Modal({
                 />
               </div>
               <div style={{ ...formGroupStyle, padding: '0.85rem 1rem', borderRadius: '0.75rem', background: '#f8fafc', border: '1px solid #e5e7eb' }}>
-                {item?.id ? (
+                {providerHasLinkedLogin ? (
                   <>
                     <div style={{ color: '#111827', fontWeight: 700, marginBottom: '0.35rem' }}>
                       Provider Login
                     </div>
                     <div style={{ color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
-                      {item.linkedUserEmail
-                        ? `Linked to ${item.linkedUserEmail}. Name changes here will keep the linked login name in sync.`
-                        : 'No linked login yet. Create a provider-role user with the same name to link it automatically.'}
+                      Linked to {item.linkedUserEmail || 'this provider account'}
+                      {item.linkedUserPhone ? ` with mobile backup ${item.linkedUserPhone}` : ''}. Name changes here keep the linked login name in sync. Use Users to reset the password or update recovery contact details.
                     </div>
                   </>
                 ) : (
@@ -2047,15 +2056,15 @@ function Modal({
                         }}
                         style={{ marginTop: '0.2rem' }}
                       />
-                      <span>Create provider login too</span>
+                      <span>Create first-time provider login</span>
                     </label>
                     <div style={{ marginTop: '0.45rem', color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
-                      Adds the provider profile and a linked provider-role user in one step.
+                      Creates a linked provider-role user. The email is their sign-in and backup contact, the mobile number can receive the temporary login, and they must create their own password at first login.
                     </div>
                     {formData.createLinkedUser === true && (
                       <div style={{ display: 'grid', gap: '1rem', marginTop: '1rem' }}>
                         <div style={formGroupStyle}>
-                          <label htmlFor="provider-login-email" style={labelStyle}>Login email *</label>
+                          <label htmlFor="provider-login-email" style={labelStyle}>Login / backup email *</label>
                           <input
                             type="email"
                             id="provider-login-email"
@@ -2067,7 +2076,7 @@ function Modal({
                           />
                         </div>
                         <div style={formGroupStyle}>
-                          <label htmlFor="provider-login-phone" style={labelStyle}>Mobile phone</label>
+                          <label htmlFor="provider-login-phone" style={labelStyle}>Mobile phone backup</label>
                           <input
                             type="tel"
                             id="provider-login-phone"
@@ -2094,17 +2103,25 @@ function Modal({
                               Generate
                             </button>
                           </div>
+                          <div style={{ marginTop: '0.5rem', color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
+                            Give this temporary password to the provider. They will be blocked from the app until they create their own password.
+                          </div>
                         </div>
-                        <label htmlFor="provider-send-temporary-login-sms" style={{ display: 'flex', gap: '0.65rem', alignItems: 'flex-start', color: '#111827', fontWeight: 700 }}>
-                          <input
-                            type="checkbox"
-                            id="provider-send-temporary-login-sms"
-                            checked={formData.sendTemporaryLoginSms === true}
-                            onChange={(e) => handleChange('sendTemporaryLoginSms', e.target.checked)}
-                            style={{ marginTop: '0.2rem' }}
-                          />
-                          <span>Text this temporary login to the provider</span>
-                        </label>
+                        <div style={{ ...formGroupStyle, padding: '0.85rem 1rem', borderRadius: '0.75rem', background: '#fff', border: '1px solid #e5e7eb' }}>
+                          <label htmlFor="provider-send-temporary-login-sms" style={{ display: 'flex', gap: '0.65rem', alignItems: 'flex-start', color: '#111827', fontWeight: 700 }}>
+                            <input
+                              type="checkbox"
+                              id="provider-send-temporary-login-sms"
+                              checked={formData.sendTemporaryLoginSms === true}
+                              onChange={(e) => handleChange('sendTemporaryLoginSms', e.target.checked)}
+                              style={{ marginTop: '0.2rem' }}
+                            />
+                            <span>Text this temporary login to the provider</span>
+                          </label>
+                          <div style={{ marginTop: '0.45rem', color: '#64748b', fontSize: '0.85rem', lineHeight: 1.4 }}>
+                            Uses the mobile backup above. If texting is not active, the login is still created so the admin can share the temporary password manually.
+                          </div>
+                        </div>
                       </div>
                     )}
                   </>

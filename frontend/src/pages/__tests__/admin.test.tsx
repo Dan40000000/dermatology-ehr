@@ -547,8 +547,8 @@ describe('AdminPage', () => {
 
     await user.click(screen.getByRole('button', { name: /Add provider/i }));
     await user.type(screen.getByLabelText(/Full Name/i), 'Dr. Linked Login');
-    await user.click(screen.getByLabelText(/Create provider login too/i));
-    await user.type(screen.getByLabelText(/Login email/i), 'linked.provider@example.com');
+    expect(screen.getByLabelText(/Create first-time provider login/i)).toBeChecked();
+    await user.type(screen.getByLabelText(/Login \/ backup email/i), 'linked.provider@example.com');
     await user.type(screen.getByLabelText(/Mobile phone/i), '(555) 222-1212');
     await user.click(screen.getByLabelText(/Text this temporary login to the provider/i));
     await user.click(screen.getByRole('button', { name: 'Create' }));
@@ -568,6 +568,44 @@ describe('AdminPage', () => {
     );
     expect(createCall?.[1]?.body).toContain('"email":"linked.provider@example.com"');
     expect(createCall?.[1]?.body).toContain('"sendTemporaryLoginSms":true');
+  });
+
+  it('should create a provider login from an existing unlinked provider', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <BrowserRouter>
+        <AdminPage />
+      </BrowserRouter>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Providers' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Dr. John Smith')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByRole('button', { name: 'Edit' })[0]);
+    await user.click(screen.getByLabelText(/Create first-time provider login/i));
+    await user.type(screen.getByLabelText(/Login \/ backup email/i), 'john.provider@example.com');
+    await user.type(screen.getByLabelText(/Mobile phone backup/i), '(555) 444-1010');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/admin/providers/prov-1'),
+        expect.objectContaining({
+          method: 'PUT',
+          body: expect.stringContaining('"createLinkedUser":true'),
+        }),
+      );
+    });
+
+    const updateCall = (global.fetch as any).mock.calls.find(([url, options]: [string, any]) =>
+      url.includes('/api/admin/providers/prov-1') && options?.method === 'PUT'
+    );
+    expect(updateCall?.[1]?.body).toContain('"email":"john.provider@example.com"');
+    expect(updateCall?.[1]?.body).toContain('"phone":"(555) 444-1010"');
   });
 
   it('should show user roles in users table', async () => {

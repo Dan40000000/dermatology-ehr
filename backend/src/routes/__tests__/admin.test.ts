@@ -354,6 +354,11 @@ describe("Admin routes - Providers", () => {
   });
 
   it("PUT /admin/providers/:id updates provider", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "provider-1", fullName: "Dr. Smith", linkedUserId: "user-1" }],
+      rowCount: 1,
+    });
+
     const res = await request(app).put("/admin/providers/provider-1").send({
       fullName: "Dr. Smith Updated",
       isActive: false,
@@ -361,6 +366,32 @@ describe("Admin routes - Providers", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it("PUT /admin/providers/:id can create a first-time login for an unlinked provider", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ id: "provider-1", fullName: "Dr. Smith", linkedUserId: null }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const res = await request(app).put("/admin/providers/provider-1").send({
+      createLinkedUser: true,
+      email: "smith.provider@example.com",
+      phone: "(555) 333-1212",
+      password: "TempStaff2026!",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.linkedUserId).toBeTruthy();
+    expect(res.body.linkedUserEmail).toBe("smith.provider@example.com");
+    expect(res.body.linkedUserPhone).toBe("+15553331212");
+    expect(queryMock.mock.calls[2][0]).toContain("INSERT INTO users");
+    expect(queryMock.mock.calls[3][0]).toContain("user_id = COALESCE");
+    expect(queryMock.mock.calls[3][1]).toContain(res.body.linkedUserId);
   });
 
   it("DELETE /admin/providers/:id deletes provider", async () => {

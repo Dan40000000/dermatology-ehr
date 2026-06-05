@@ -101,6 +101,86 @@ async function findMatchingProviderUser(tenantId: string, fullName: string) {
   return result.rows[0] || null;
 }
 
+class AdminRouteError extends Error {
+  status: number;
+  details?: unknown;
+
+  constructor(status: number, message: string, details?: unknown) {
+    super(message);
+    this.status = status;
+    this.details = details;
+  }
+}
+
+function badRequest(message: string, details?: unknown): never {
+  throw new AdminRouteError(400, message, details);
+}
+
+async function createProviderLoginUser(params: {
+  tenantId: string;
+  fullName: string;
+  email: unknown;
+  phone?: unknown;
+  password: unknown;
+  sendTemporaryLoginSms?: boolean;
+}) {
+  const email = String(params.email ?? "").trim().toLowerCase();
+  const password = String(params.password ?? "").trim();
+
+  if (!email || !password) {
+    badRequest("Email and temporary password are required to create a provider login");
+  }
+
+  const normalizedPhone = normalizeOptionalStaffPhone(params.phone) ?? null;
+  if (params.phone !== undefined && String(params.phone ?? "").trim() && !normalizedPhone) {
+    badRequest("Enter a valid mobile phone number for this provider login");
+  }
+  if (params.sendTemporaryLoginSms === true && !normalizedPhone) {
+    badRequest("A valid mobile phone number is required to text a temporary login");
+  }
+
+  const passwordValidation = validatePasswordPolicy(password);
+  if (!passwordValidation.isValid) {
+    badRequest("Password does not meet security requirements", passwordValidation.errors);
+  }
+
+  const existingUser = await pool.query(
+    `SELECT id FROM users WHERE email = $1 AND tenant_id = $2`,
+    [email, params.tenantId]
+  );
+
+  if (existingUser.rowCount && existingUser.rowCount > 0) {
+    badRequest("A user with this email already exists");
+  }
+
+  const userId = randomUUID();
+  const passwordHash = bcrypt.hashSync(password, 12);
+  await pool.query(
+    `INSERT INTO users (id, tenant_id, email, phone, full_name, role, secondary_roles, password_hash, force_password_reset, password_changed_at)
+     VALUES ($1, $2, $3, $4, $5, 'provider', '{}'::text[], $6, true, CURRENT_TIMESTAMP)`,
+    [userId, params.tenantId, email, normalizedPhone, params.fullName, passwordHash]
+  );
+
+  const linkedUser = {
+    id: userId,
+    email,
+    phone: normalizedPhone,
+    fullName: params.fullName,
+  };
+
+  const temporaryLoginDelivery = params.sendTemporaryLoginSms === true
+    ? await deliverStaffTemporaryLogin({
+      tenantId: params.tenantId,
+      phone: normalizedPhone,
+      email,
+      fullName: params.fullName,
+      temporaryPassword: password,
+    })
+    : null;
+
+  return { linkedUser, temporaryLoginDelivery };
+}
+
 async function syncProviderProfileForUser(params: {
   tenantId: string;
   userId: string;
@@ -543,7 +623,7 @@ router.get("/providers", async (req: AuthedRequest, res) => {
   const result = await pool.query(
     `SELECT p.id, p.full_name as "fullName", p.specialty, p.npi, p.tax_id as "taxId",
             p.user_id as "linkedUserId", p.is_active as "isActive", p.created_at as "createdAt",
-            u.email as "linkedUserEmail"
+            u.email as "linkedUserEmail", u.phone as "linkedUserPhone"
      FROM providers p
      LEFT JOIN users u ON u.id = p.user_id AND u.tenant_id = p.tenant_id
      WHERE p.tenant_id = $1
@@ -567,62 +647,26 @@ router.post("/providers", async (req: AuthedRequest, res) => {
   let linkedUser: any = null;
   let temporaryLoginDelivery: any = null;
 
-  if (wantsLinkedUser) {
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and temporary password are required to create a provider login" });
-    }
-
-    const normalizedPhone = normalizeOptionalStaffPhone(phone) ?? null;
-    if (phone !== undefined && String(phone ?? "").trim() && !normalizedPhone) {
-      return res.status(400).json({ error: "Enter a valid mobile phone number for this provider login" });
-    }
-    if (sendTemporaryLoginSms === true && !normalizedPhone) {
-      return res.status(400).json({ error: "A valid mobile phone number is required to text a temporary login" });
-    }
-
-    const passwordValidation = validatePasswordPolicy(password);
-    if (!passwordValidation.isValid) {
-      return res.status(400).json({
-        error: "Password does not meet security requirements",
-        details: passwordValidation.errors,
-      });
-    }
-
-    const existingUser = await pool.query(
-      `SELECT id FROM users WHERE email = $1 AND tenant_id = $2`,
-      [email.toLowerCase(), tenantId]
-    );
-
-    if (existingUser.rowCount && existingUser.rowCount > 0) {
-      return res.status(400).json({ error: "A user with this email already exists" });
-    }
-
-    const userId = randomUUID();
-    const passwordHash = bcrypt.hashSync(password, 12);
-    await pool.query(
-      `INSERT INTO users (id, tenant_id, email, phone, full_name, role, secondary_roles, password_hash, force_password_reset, password_changed_at)
-       VALUES ($1, $2, $3, $4, $5, 'provider', '{}'::text[], $6, true, CURRENT_TIMESTAMP)`,
-      [userId, tenantId, email.toLowerCase(), normalizedPhone, fullName, passwordHash]
-    );
-
-    linkedUser = {
-      id: userId,
-      email: email.toLowerCase(),
-      phone: normalizedPhone,
-      fullName,
-    };
-
-    temporaryLoginDelivery = sendTemporaryLoginSms === true
-      ? await deliverStaffTemporaryLogin({
+  try {
+    if (wantsLinkedUser) {
+      const createdLogin = await createProviderLoginUser({
         tenantId,
-        phone: normalizedPhone,
-        email: email.toLowerCase(),
         fullName,
-        temporaryPassword: password,
-      })
-      : null;
-  } else {
-    linkedUser = await findMatchingProviderUser(tenantId, fullName);
+        email,
+        phone,
+        password,
+        sendTemporaryLoginSms,
+      });
+      linkedUser = createdLogin.linkedUser;
+      temporaryLoginDelivery = createdLogin.temporaryLoginDelivery;
+    } else {
+      linkedUser = await findMatchingProviderUser(tenantId, fullName);
+    }
+  } catch (error) {
+    if (error instanceof AdminRouteError) {
+      return res.status(error.status).json({ error: error.message, details: error.details });
+    }
+    throw error;
   }
 
   const id = randomUUID();
@@ -640,6 +684,7 @@ router.post("/providers", async (req: AuthedRequest, res) => {
     isActive: true,
     linkedUserId: linkedUser?.id || null,
     linkedUserEmail: linkedUser?.email || null,
+    linkedUserPhone: linkedUser?.phone || null,
     temporaryLoginDelivery,
   });
 });
@@ -648,19 +693,60 @@ router.post("/providers", async (req: AuthedRequest, res) => {
 router.put("/providers/:id", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
-  const { fullName, specialty, npi, isActive } = req.body;
+  const { fullName, specialty, npi, isActive, email, phone, password, sendTemporaryLoginSms, createLinkedUser } = req.body;
+  const wantsLinkedUser = createLinkedUser === true || Boolean(email || password || sendTemporaryLoginSms);
+
+  const existingProviderResult = await pool.query(
+    `SELECT id, full_name as "fullName", user_id as "linkedUserId"
+     FROM providers
+     WHERE id = $1 AND tenant_id = $2`,
+    [id, tenantId]
+  );
+
+  const existingProvider = existingProviderResult.rows[0];
+  if (!existingProvider) {
+    return res.status(404).json({ error: "Provider not found" });
+  }
+
+  let linkedUser: any = null;
+  let temporaryLoginDelivery: any = null;
+
+  if (wantsLinkedUser) {
+    if (existingProvider.linkedUserId) {
+      return res.status(400).json({ error: "This provider already has a linked login. Use Users to reset the password." });
+    }
+
+    try {
+      const createdLogin = await createProviderLoginUser({
+        tenantId,
+        fullName: fullName || existingProvider.fullName,
+        email,
+        phone,
+        password,
+        sendTemporaryLoginSms,
+      });
+      linkedUser = createdLogin.linkedUser;
+      temporaryLoginDelivery = createdLogin.temporaryLoginDelivery;
+    } catch (error) {
+      if (error instanceof AdminRouteError) {
+        return res.status(error.status).json({ error: error.message, details: error.details });
+      }
+      throw error;
+    }
+  }
 
   await pool.query(
     `UPDATE providers
      SET full_name = COALESCE($1, full_name),
          specialty = COALESCE($2, specialty),
          npi = COALESCE($3, npi),
-         is_active = COALESCE($4, is_active)
-     WHERE id = $5 AND tenant_id = $6`,
-    [fullName, specialty, npi, isActive, id, tenantId]
+         is_active = COALESCE($4, is_active),
+         user_id = COALESCE($5, user_id)
+     WHERE id = $6 AND tenant_id = $7`,
+    [fullName, specialty, npi, isActive, linkedUser?.id || null, id, tenantId]
   );
 
-  if (fullName) {
+  if (fullName && existingProvider.linkedUserId) {
     await pool.query(
       `UPDATE users u
        SET full_name = $1
@@ -673,7 +759,13 @@ router.put("/providers/:id", async (req: AuthedRequest, res) => {
     );
   }
 
-  res.json({ success: true });
+  res.json({
+    success: true,
+    linkedUserId: linkedUser?.id || existingProvider.linkedUserId || null,
+    linkedUserEmail: linkedUser?.email || null,
+    linkedUserPhone: linkedUser?.phone || null,
+    temporaryLoginDelivery,
+  });
 });
 
 // Delete provider

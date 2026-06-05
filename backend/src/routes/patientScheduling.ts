@@ -655,6 +655,9 @@ patientSchedulingRouter.post(
          WHERE tenant_id = $1
            AND provider_id = $2
            AND status IN ('scheduled', 'confirmed', 'checked_in')
+           AND scheduled_start IS NOT NULL
+           AND scheduled_end IS NOT NULL
+           AND scheduled_start <= scheduled_end
            AND tstzrange(scheduled_start, scheduled_end, '[)') &&
                tstzrange($3::timestamptz, $4::timestamptz, '[)')
          LIMIT 1`,
@@ -844,6 +847,9 @@ patientSchedulingRouter.post(
          WHERE tenant_id = $1
            AND provider_id = $2
            AND status IN ('scheduled', 'confirmed', 'checked_in')
+           AND scheduled_start IS NOT NULL
+           AND scheduled_end IS NOT NULL
+           AND scheduled_start <= scheduled_end
            AND tstzrange(scheduled_start, scheduled_end, '[)') &&
                tstzrange($3::timestamptz, $4::timestamptz, '[)')
          LIMIT 1`,
@@ -1094,6 +1100,9 @@ patientSchedulingRouter.put(
            AND provider_id = $2
            AND id != $3
            AND status IN ('scheduled', 'confirmed', 'checked_in')
+           AND scheduled_start IS NOT NULL
+           AND scheduled_end IS NOT NULL
+           AND scheduled_start <= scheduled_end
            AND tstzrange(scheduled_start, scheduled_end, '[)') &&
                tstzrange($4::timestamptz, $5::timestamptz, '[)')
          LIMIT 1`,

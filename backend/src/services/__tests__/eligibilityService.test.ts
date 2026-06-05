@@ -165,6 +165,40 @@ describe("eligibilityService", () => {
     expect(result.issueNotes).toBe("Patient has no insurance information on file");
   });
 
+  it("creates error verification when payer id is missing", async () => {
+    const patientRow = {
+      id: "patient-1",
+      first_name: "Jane",
+      last_name: "Doe",
+      date_of_birth: "1980-01-01",
+      insurance_provider: "UMR",
+      insurance_member_id: "MEM123",
+      insurance_group_number: "GRP1",
+      insurance_payer_id: null,
+    };
+
+    (pool.query as jest.Mock)
+      .mockResolvedValueOnce({ rows: [patientRow] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "ver-1",
+            verification_status: "error",
+            verified_at: new Date(),
+            payer_name: "Unknown",
+            has_issues: true,
+            issue_notes: "Patient insurance is missing the payer ID required for live eligibility checks",
+          },
+        ],
+      });
+
+    const result = await verifyPatientEligibility("patient-1", "tenant-1", "user-1", "appt-1");
+
+    expect(checkEligibilityMock).not.toHaveBeenCalled();
+    expect(result.verificationStatus).toBe("error");
+    expect(result.issueNotes).toBe("Patient insurance is missing the payer ID required for live eligibility checks");
+  });
+
   it("stores eligibility verification results when insurance exists", async () => {
     const patientRow = {
       id: "patient-1",
@@ -221,6 +255,14 @@ describe("eligibilityService", () => {
         insurance_payer_id: "BCBS",
       },
       {
+        id: "patient-missing-payer",
+        first_name: "Skip",
+        last_name: "Payer",
+        date_of_birth: "1991-01-01",
+        insurance_member_id: "MEM999",
+        insurance_payer_id: null,
+      },
+      {
         id: "patient-verified",
         first_name: "Veri",
         last_name: "Fied",
@@ -266,7 +308,7 @@ describe("eligibilityService", () => {
     });
 
     const result = await batchVerifyEligibility({
-      patientIds: ["patient-no-insurance", "patient-verified"],
+      patientIds: ["patient-no-insurance", "patient-missing-payer", "patient-verified"],
       tenantId: "tenant-1",
       initiatedBy: "user-1",
       batchName: "Batch 1",

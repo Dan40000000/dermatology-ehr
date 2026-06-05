@@ -114,10 +114,20 @@ export async function verifyPatientEligibility(
       );
     }
 
+    if (!patient.insurance_payer_id) {
+      return await createErrorVerification(
+        patientId,
+        tenantId,
+        'Patient insurance is missing the payer ID required for live eligibility checks',
+        verifiedBy,
+        appointmentId
+      );
+    }
+
     // Build eligibility request
     const eligibilityRequest: EligibilityRequest = {
       patientId,
-      payerId: patient.insurance_payer_id || 'BCBS',
+      payerId: patient.insurance_payer_id,
       memberId: patient.insurance_member_id,
       patientFirstName: patient.first_name,
       patientLastName: patient.last_name,
@@ -206,10 +216,10 @@ export async function batchVerifyEligibility(
     const patients = patientsResult.rows;
 
     // Build eligibility requests
-    const eligiblePatients = patients.filter(p => p.insurance_member_id); // Only verify patients with insurance
+    const eligiblePatients = patients.filter(p => p.insurance_member_id && p.insurance_payer_id); // Only verify patients with complete payer/member data
     const eligibilityRequests: EligibilityRequest[] = eligiblePatients.map(p => ({
         patientId: p.id,
-        payerId: p.insurance_payer_id || 'BCBS',
+        payerId: p.insurance_payer_id,
         memberId: p.insurance_member_id,
         patientFirstName: p.first_name,
         patientLastName: p.last_name,

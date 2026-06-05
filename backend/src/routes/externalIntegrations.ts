@@ -565,11 +565,19 @@ router.post('/eligibility/check', requireAuth, async (req: AuthedRequest, res) =
     const patient = patientResult.rows[0];
     const service = getIntegrationService(tenantId);
     const adapter = await service.getEligibilityAdapter();
+    const payerId = data.payerId || patient.insurance_payer_id;
+    const memberId = data.memberId || patient.insurance_member_id;
+
+    if (!payerId || !memberId) {
+      return res.status(400).json({
+        error: 'Patient insurance is missing the payer ID or member ID required for live eligibility checks',
+      });
+    }
 
     const result = await adapter.checkEligibility({
       patientId: patient.id,
-      payerId: data.payerId || patient.insurance_payer_id || 'UNKNOWN',
-      memberId: data.memberId || patient.insurance_member_id || '',
+      payerId,
+      memberId,
       patientFirstName: patient.first_name,
       patientLastName: patient.last_name,
       patientDob: patient.dob?.toISOString().split('T')[0] || '',

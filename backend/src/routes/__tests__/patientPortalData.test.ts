@@ -330,4 +330,35 @@ describe("Patient portal data routes", () => {
       actionNeededCount: 8,
     });
   });
+
+  it("GET /patient-portal-data/dashboard stays usable when optional clean-db portal tables are missing", async () => {
+    const missingRelation = Object.assign(new Error('relation "patient_message_threads" does not exist'), {
+      code: "42P01",
+    });
+
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: "0" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(missingRelation)
+      .mockRejectedValueOnce(missingRelation)
+      .mockRejectedValueOnce(missingRelation)
+      .mockRejectedValueOnce(missingRelation)
+      .mockRejectedValueOnce(missingRelation);
+
+    const res = await request(app).get("/patient-portal-data/dashboard");
+
+    expect(res.status).toBe(200);
+    expect(res.body.dashboard).toMatchObject({
+      upcomingAppointments: 0,
+      nextAppointment: null,
+      newDocuments: 0,
+      newVisits: 0,
+      activePrescriptions: 0,
+      unreadMessages: 0,
+      currentBalance: 0,
+      preCheckinAvailable: false,
+      nextCheckinAppointment: null,
+      actionNeededCount: 0,
+    });
+  });
 });

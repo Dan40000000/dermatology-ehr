@@ -36,6 +36,67 @@ function logPatientPortalDataError(message: string, error: unknown): void {
   });
 }
 
+function isMissingOptionalPortalData(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code || "")
+    : "";
+  const message = toSafeErrorMessage(error).toLowerCase();
+
+  return code === "42P01" || code === "42703" || message.includes("does not exist");
+}
+
+async function queryOptionalPortalRows<T = any>(
+  label: string,
+  sql: string,
+  params: unknown[],
+  fallbackRows: T[] = []
+): Promise<T[]> {
+  try {
+    const result = await pool.query(sql, params);
+    return result.rows as T[];
+  } catch (error) {
+    if (!isMissingOptionalPortalData(error)) {
+      throw error;
+    }
+
+    logger.warn("Optional patient portal dashboard data unavailable", {
+      label,
+      error: toSafeErrorMessage(error),
+    });
+    return fallbackRows;
+  }
+}
+
+async function getOptionalDashboardMedicationCount(tenantId: string, patientId: string): Promise<number> {
+  try {
+    return (await getPatientMedicationSummaries(tenantId, patientId)).length;
+  } catch (error) {
+    if (!isMissingOptionalPortalData(error)) {
+      throw error;
+    }
+
+    logger.warn("Optional patient portal medication data unavailable", {
+      error: toSafeErrorMessage(error),
+    });
+    return 0;
+  }
+}
+
+async function getOptionalDashboardBalance(tenantId: string, patientId: string): Promise<{ currentBalance: number }> {
+  try {
+    return await getLivePortalBalance(tenantId, patientId);
+  } catch (error) {
+    if (!isMissingOptionalPortalData(error)) {
+      throw error;
+    }
+
+    logger.warn("Optional patient portal billing data unavailable", {
+      error: toSafeErrorMessage(error),
+    });
+    return { currentBalance: 0 };
+  }
+}
+
 const checkinStartSchema = z.object({
   appointmentId: z.string().uuid().optional(),
 });
@@ -1234,7 +1295,8 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
     );
 
     // Get unread documents count (not viewed). Visit summaries live in the dedicated Visits page.
-    const documentsResult = await pool.query(
+    const documentRows = await queryOptionalPortalRows<{ count: string }>(
+      "documents",
       `SELECT COUNT(*) as count
        FROM patient_document_shares ds
        WHERE ds.patient_id = $1 AND ds.tenant_id = $2
@@ -1244,7 +1306,8 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
     );
 
     // Get visit summaries the patient has not opened in the portal yet.
-    const visitsResult = await pool.query(
+    const visitRows = await queryOptionalPortalRows<{ count: string }>(
+      "visit_summaries",
       `SELECT COUNT(*) as count
        FROM visit_summaries
        WHERE patient_id = $1 AND tenant_id = $2
@@ -1260,9 +1323,10 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
-    const activeMedications = await getPatientMedicationSummaries(tenantId, patientId);
+    const activePrescriptions = await getOptionalDashboardMedicationCount(tenantId, patientId);
 
-    const unreadMessagesResult = await pool.query(
+    const messageRows = await queryOptionalPortalRows<{ count: string }>(
+      "messages",
       `SELECT COUNT(*) as count
        FROM patient_message_threads
        WHERE patient_id = $1 AND tenant_id = $2
@@ -1271,9 +1335,10 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
-    const balance = await getLivePortalBalance(tenantId, patientId);
+    const balance = await getOptionalDashboardBalance(tenantId, patientId);
 
-    const preCheckinResult = await pool.query(
+    const preCheckinRows = await queryOptionalPortalRows(
+      "pre_checkin",
       `SELECT a.id as "appointmentId",
               a.scheduled_start::date as "appointmentDate",
               to_char(a.scheduled_start, 'HH24:MI') as "appointmentTime",
@@ -1299,11 +1364,11 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
-    const unreadMessages = parseInt(unreadMessagesResult.rows[0]?.count || "0", 10);
-    const newDocuments = parseInt(documentsResult.rows[0]?.count || "0", 10);
-    const newVisits = parseInt(visitsResult.rows[0]?.count || "0", 10);
+    const unreadMessages = parseInt(messageRows[0]?.count || "0", 10);
+    const newDocuments = parseInt(documentRows[0]?.count || "0", 10);
+    const newVisits = parseInt(visitRows[0]?.count || "0", 10);
     const currentBalance = Number(balance.currentBalance || 0);
-    const preCheckinAvailable = preCheckinResult.rows.length > 0;
+    const preCheckinAvailable = preCheckinRows.length > 0;
     const actionNeededCount =
       unreadMessages +
       newDocuments +
@@ -1317,11 +1382,11 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
         nextAppointment: nextAppointmentResult.rows[0] || null,
         newDocuments,
         newVisits,
-        activePrescriptions: activeMedications.length,
+        activePrescriptions,
         unreadMessages,
         currentBalance,
         preCheckinAvailable,
-        nextCheckinAppointment: preCheckinResult.rows[0] || null,
+        nextCheckinAppointment: preCheckinRows[0] || null,
         actionNeededCount,
       }
     });

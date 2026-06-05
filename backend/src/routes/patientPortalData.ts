@@ -726,7 +726,16 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
     const tenantId = req.patient!.tenantId;
     const practiceTimeZone = getPracticeTimeZone();
 
-    let query = `
+    const statusFilter = status === 'upcoming'
+      ? `AND a.scheduled_start >= NOW()
+         AND a.status NOT IN ('cancelled', 'no_show', 'checkout', 'completed')`
+      : `AND (a.scheduled_start < NOW()
+              OR a.status IN ('cancelled', 'no_show', 'checkout', 'completed'))`;
+    const orderBy = status === 'upcoming'
+      ? `ORDER BY a.scheduled_start ASC`
+      : `ORDER BY a.scheduled_start DESC`;
+
+    const query = `
       SELECT a.id,
              to_char(a.scheduled_start AT TIME ZONE $3, 'YYYY-MM-DD') as "appointmentDate",
              to_char(a.scheduled_start AT TIME ZONE $3, 'HH24:MI') as "appointmentTime",
@@ -735,29 +744,48 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
              a.status, at.name as "appointmentType",
              a.notes, a.reason,
              pr.full_name as "providerName",
-             pr.specialty as "providerSpecialty",
+             NULL::text as "providerSpecialty",
              l.name as "locationName",
-             l.address as "locationAddress"
+             NULL::text as "locationAddress"
       FROM appointments a
-      LEFT JOIN appointment_types at ON a.appointment_type_id = at.id
-      LEFT JOIN providers pr ON a.provider_id = pr.id
-      LEFT JOIN locations l ON a.location_id = l.id
+      LEFT JOIN appointment_types at ON a.appointment_type_id = at.id AND at.tenant_id = a.tenant_id
+      LEFT JOIN providers pr ON a.provider_id = pr.id AND pr.tenant_id = a.tenant_id
+      LEFT JOIN locations l ON a.location_id = l.id AND l.tenant_id = a.tenant_id
       WHERE a.patient_id = $1 AND a.tenant_id = $2
+      ${statusFilter}
+      ${orderBy}
+      LIMIT 100
     `;
 
-    if (status === 'upcoming') {
-      query += ` AND a.scheduled_start >= NOW()
-                 AND a.status NOT IN ('cancelled', 'no_show', 'checkout', 'completed')
-                 ORDER BY a.scheduled_start ASC`;
-    } else {
-      query += ` AND (a.scheduled_start < NOW()
-                      OR a.status IN ('cancelled', 'no_show', 'checkout', 'completed'))
-                 ORDER BY a.scheduled_start DESC`;
+    let result;
+    try {
+      result = await pool.query(query, [patientId, tenantId, practiceTimeZone]);
+    } catch (error) {
+      logger.warn("Portal appointments detail query failed; retrying with minimal fields", {
+        error: toSafeErrorMessage(error),
+      });
+      result = await pool.query(
+        `SELECT a.id,
+                to_char(a.scheduled_start AT TIME ZONE $3, 'YYYY-MM-DD') as "appointmentDate",
+                to_char(a.scheduled_start AT TIME ZONE $3, 'HH24:MI') as "appointmentTime",
+                a.scheduled_start as "scheduledStart",
+                a.scheduled_end as "scheduledEnd",
+                a.status,
+                NULL::text as "appointmentType",
+                a.notes,
+                a.reason,
+                NULL::text as "providerName",
+                NULL::text as "providerSpecialty",
+                NULL::text as "locationName",
+                NULL::text as "locationAddress"
+         FROM appointments a
+         WHERE a.patient_id = $1 AND a.tenant_id = $2
+         ${statusFilter}
+         ${orderBy}
+         LIMIT 100`,
+        [patientId, tenantId, practiceTimeZone]
+      );
     }
-
-    query += ` LIMIT 100`;
-
-    const result = await pool.query(query, [patientId, tenantId, practiceTimeZone]);
 
     return res.json({ appointments: result.rows });
   } catch (error) {

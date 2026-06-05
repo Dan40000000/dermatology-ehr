@@ -130,6 +130,19 @@ describe("Patient portal data routes", () => {
     expect(res.body.appointments).toHaveLength(1);
   });
 
+  it("GET /patient-portal-data/appointments retries with minimal fields when detail query fails", async () => {
+    queryMock
+      .mockRejectedValueOnce(Object.assign(new Error("column l.address does not exist"), { code: "42703" }))
+      .mockResolvedValueOnce({ rows: [{ id: "appt-1", providerName: null }] });
+
+    const res = await request(app).get("/patient-portal-data/appointments");
+
+    expect(res.status).toBe(200);
+    expect(res.body.appointments).toHaveLength(1);
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(queryMock.mock.calls[1][0]).toContain("NULL::text as \"providerName\"");
+  });
+
   it("GET /patient-portal-data/visit-summaries returns summaries", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "summary-1" }] });
 

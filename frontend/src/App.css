@@ -14231,6 +14231,7 @@ kbd {
 .store-ops-deal-list button,
 .store-ops-template-list button,
 .store-ops-shipping-list button,
+.store-ops-tracking-link,
 .store-ops-payment-grid button,
 .store-ops-notice-list button {
   display: inline-flex;
@@ -14579,6 +14580,7 @@ kbd {
 .store-ops-product-table input,
 .store-ops-product-table select,
 .store-ops-shipping-list select,
+.store-ops-shipping-list input,
 .store-ops-payment-grid input,
 .store-ops-notice-list select {
   border: 1px solid #d1d5db;
@@ -14618,6 +14620,10 @@ kbd {
   width: 100%;
   min-height: 2.35rem;
   padding: 0 0.6rem;
+}
+
+.store-ops-tracking-link {
+  text-decoration: none;
 }
 
 .store-ops-form textarea {

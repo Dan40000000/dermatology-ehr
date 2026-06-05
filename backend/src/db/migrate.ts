@@ -13349,6 +13349,7 @@ Consider age-appropriate treatments and include family counseling points.',
       shipping_fee integer NOT NULL DEFAULT 0,
       carrier text,
       tracking_number text,
+      tracking_url text,
       shipping_address jsonb NOT NULL DEFAULT '{}'::jsonb,
       notification_email text,
       notification_status text NOT NULL DEFAULT 'queued',
@@ -13361,7 +13362,8 @@ Consider age-appropriate treatments and include family counseling points.',
     );
 
     ALTER TABLE store_order_fulfillments
-      ADD COLUMN IF NOT EXISTS shipping_discount integer NOT NULL DEFAULT 0;
+      ADD COLUMN IF NOT EXISTS shipping_discount integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS tracking_url text;
 
     CREATE TABLE IF NOT EXISTS store_promotions (
       id text PRIMARY KEY DEFAULT gen_random_uuid()::text,

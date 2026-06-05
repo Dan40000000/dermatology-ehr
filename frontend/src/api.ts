@@ -10501,6 +10501,7 @@ export async function updateStoreOrderFulfillment(
     shippingFee?: number;
     carrier?: string | null;
     trackingNumber?: string | null;
+    trackingUrl?: string | null;
     notificationEmail?: string | null;
     notificationStatus?: StoreNotificationStatus;
     stripePaymentIntentId?: string | null;

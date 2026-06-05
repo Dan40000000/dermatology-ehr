@@ -1583,6 +1583,7 @@ export interface StoreOrder extends Sale {
   shippingDiscount?: number;
   carrier?: string;
   trackingNumber?: string;
+  trackingUrl?: string;
   shippingAddress?: StoreShippingAddress | Record<string, unknown>;
   notificationEmail?: string;
   notificationStatus: StoreNotificationStatus;

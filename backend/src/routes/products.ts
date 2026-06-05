@@ -79,6 +79,7 @@ const updateStoreFulfillmentSchema = z.object({
   shippingFee: z.number().int().min(0).optional(),
   carrier: z.string().max(100).nullable().optional(),
   trackingNumber: z.string().max(120).nullable().optional(),
+  trackingUrl: z.string().url().max(500).nullable().optional(),
   notificationEmail: z.string().email().nullable().optional(),
   notificationStatus: storeNotificationStatusSchema.optional(),
   stripeCheckoutSessionId: z.string().max(255).nullable().optional(),

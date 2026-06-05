@@ -174,6 +174,7 @@ export interface StoreOrder extends Sale {
   shippingDiscount?: number;
   carrier?: string;
   trackingNumber?: string;
+  trackingUrl?: string;
   shippingAddress?: StoreShippingAddress | Record<string, unknown>;
   notificationEmail?: string;
   notificationStatus: StoreNotificationStatus;
@@ -193,6 +194,7 @@ export interface StoreFulfillmentInput {
   shippingDiscount?: number;
   carrier?: string | null;
   trackingNumber?: string | null;
+  trackingUrl?: string | null;
   shippingAddress?: StoreShippingAddress | Record<string, unknown>;
   notificationEmail?: string | null;
   notificationStatus?: StoreNotificationStatus;
@@ -677,6 +679,7 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
         shipping_fee INTEGER NOT NULL DEFAULT 0,
         carrier TEXT,
         tracking_number TEXT,
+        tracking_url TEXT,
         shipping_address JSONB NOT NULL DEFAULT '{}'::jsonb,
         notification_email TEXT,
         notification_status TEXT NOT NULL DEFAULT 'queued',
@@ -690,7 +693,8 @@ async function ensureStoreSchemaAndCatalogInternal(tenantId: string): Promise<vo
     `);
     await client.query(`
       ALTER TABLE store_order_fulfillments
-        ADD COLUMN IF NOT EXISTS shipping_discount INTEGER NOT NULL DEFAULT 0
+        ADD COLUMN IF NOT EXISTS shipping_discount INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS tracking_url TEXT
     `);
     await client.query(`
       CREATE TABLE IF NOT EXISTS store_promotions (
@@ -2083,6 +2087,7 @@ function normalizeStoreOrderRow(row: any): StoreOrder {
     shippingDiscount: Number(row.shippingDiscount) || 0,
     carrier: row.carrier || undefined,
     trackingNumber: row.trackingNumber || undefined,
+    trackingUrl: row.trackingUrl || undefined,
     shippingAddress: row.shippingAddress || {},
     notificationEmail: row.notificationEmail || undefined,
     notificationStatus: row.notificationStatus || 'queued',
@@ -2181,7 +2186,7 @@ async function getStoreOrdersWithoutFulfillment(
        p.first_name as "patientFirstName", p.last_name as "patientLastName",
        'staff' as channel, 'paid' as "fulfillmentStatus",
        'standard' as "shippingMethod", NULL as carrier,
-       NULL as "trackingNumber", '{}'::jsonb as "shippingAddress",
+       NULL as "trackingNumber", NULL as "trackingUrl", '{}'::jsonb as "shippingAddress",
        p.email as "notificationEmail", 'queued' as "notificationStatus",
        NULL as "lastNotificationAt", NULL as "stripeCheckoutSessionId", ps.payment_reference as "stripePaymentIntentId",
        CASE WHEN ps.status = 'completed' THEN 'paid' ELSE ps.status END as "stripePaymentStatus",
@@ -2269,6 +2274,7 @@ export async function getStoreOrders(
          COALESCE(sof.fulfillment_status, 'paid') as "fulfillmentStatus",
          COALESCE(sof.shipping_method, 'standard') as "shippingMethod",
          sof.carrier, sof.tracking_number as "trackingNumber",
+         sof.tracking_url as "trackingUrl",
          COALESCE(sof.shipping_address, '{}'::jsonb) as "shippingAddress",
          COALESCE(sof.notification_email, p.email) as "notificationEmail",
          COALESCE(sof.notification_status, 'queued') as "notificationStatus",
@@ -2308,13 +2314,13 @@ export async function createStoreFulfillment(
     await pool.query(
       `INSERT INTO store_order_fulfillments (
        id, tenant_id, sale_id, patient_id, channel, fulfillment_status,
-         shipping_method, shipping_fee, shipping_discount, carrier, tracking_number, shipping_address,
-         notification_email, notification_status, last_notification_at,
+         shipping_method, shipping_fee, shipping_discount, carrier, tracking_number, tracking_url,
+         shipping_address, notification_email, notification_status, last_notification_at,
          stripe_checkout_session_id, stripe_payment_intent_id, stripe_payment_status
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14,
-         CASE WHEN $14 IN ('sent', 'failed') THEN NOW() ELSE NULL END,
-         $15, $16, $17
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14,
+         $15, CASE WHEN $15 IN ('sent', 'failed') THEN NOW() ELSE NULL END,
+         $16, $17, $18
        )
        ON CONFLICT (sale_id) DO UPDATE SET
          channel = EXCLUDED.channel,
@@ -2324,6 +2330,7 @@ export async function createStoreFulfillment(
          shipping_discount = EXCLUDED.shipping_discount,
          carrier = EXCLUDED.carrier,
          tracking_number = EXCLUDED.tracking_number,
+         tracking_url = EXCLUDED.tracking_url,
          shipping_address = EXCLUDED.shipping_address,
          notification_email = EXCLUDED.notification_email,
          notification_status = EXCLUDED.notification_status,
@@ -2347,6 +2354,7 @@ export async function createStoreFulfillment(
         Math.max(0, data.shippingDiscount || 0),
         data.carrier || null,
         data.trackingNumber || null,
+        data.trackingUrl || null,
         JSON.stringify(data.shippingAddress || {}),
         data.notificationEmail || null,
         data.notificationStatus || 'queued',
@@ -2394,6 +2402,7 @@ export async function updateStoreFulfillment(
     if (data.shippingDiscount !== undefined) addUpdate('shipping_discount', Math.max(0, data.shippingDiscount));
     if (data.carrier !== undefined) addUpdate('carrier', data.carrier);
     if (data.trackingNumber !== undefined) addUpdate('tracking_number', data.trackingNumber);
+    if (data.trackingUrl !== undefined) addUpdate('tracking_url', data.trackingUrl);
     if (data.shippingAddress !== undefined) addUpdate('shipping_address', JSON.stringify(data.shippingAddress), '::jsonb');
     if (data.notificationEmail !== undefined) addUpdate('notification_email', data.notificationEmail);
     if (data.notificationStatus !== undefined) {

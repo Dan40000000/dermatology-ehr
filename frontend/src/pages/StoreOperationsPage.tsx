@@ -8,6 +8,7 @@ import {
   ChevronDown,
   CreditCard,
   DollarSign,
+  ExternalLink,
   Percent,
   Loader2,
   PackageCheck,
@@ -108,6 +109,7 @@ interface OrderDraft {
   shippingMethod: StoreShippingMethod;
   carrier: string;
   trackingNumber: string;
+  trackingUrl: string;
   notificationEmail: string;
   notificationStatus: StoreNotificationStatus;
   stripePaymentStatus: string;
@@ -360,6 +362,7 @@ function buildOrderDraft(order: StoreOrder): OrderDraft {
     shippingMethod: order.shippingMethod || 'standard',
     carrier: order.carrier || '',
     trackingNumber: order.trackingNumber || '',
+    trackingUrl: order.trackingUrl || '',
     notificationEmail: order.notificationEmail || '',
     notificationStatus: order.notificationStatus || 'queued',
     stripePaymentStatus: order.stripePaymentStatus || 'paid',
@@ -390,6 +393,13 @@ function readImageFile(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Failed to read image file'));
     reader.readAsDataURL(file);
   });
+}
+
+function normalizeTrackingUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
 }
 
 function ProductThumb({ product, compact = false }: { product: Pick<Product, 'name' | 'brand' | 'category' | 'sku' | 'imageUrl'>; compact?: boolean }) {
@@ -535,6 +545,7 @@ export function StoreOperationsPage() {
       patientName(order),
       order.paymentReference,
       order.trackingNumber,
+      order.trackingUrl,
       order.fulfillmentStatus,
       ...(order.items || []).map((item) => item.productName),
     ].filter(Boolean).some((value) => String(value).toLowerCase().includes(q)));
@@ -824,6 +835,7 @@ export function StoreOperationsPage() {
         shippingMethod: draft.shippingMethod,
         carrier: draft.carrier.trim() || null,
         trackingNumber: draft.trackingNumber.trim() || null,
+        trackingUrl: normalizeTrackingUrl(draft.trackingUrl) || null,
         notificationEmail: draft.notificationEmail.trim() || null,
         notificationStatus: draft.notificationStatus,
         stripePaymentStatus: draft.stripePaymentStatus.trim() || 'paid',
@@ -832,6 +844,34 @@ export function StoreOperationsPage() {
       setOrderHistory((current) => current.map((item) => item.id === order.id ? response.order : item));
       setOrderDrafts((current) => ({ ...current, [order.id]: buildOrderDraft(response.order) }));
       showSuccess('Store order updated');
+    } catch (error) {
+      console.error('Failed to update store order:', error);
+      showError(error instanceof Error ? error.message : 'Failed to update store order');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleQuickFulfillment = async (order: StoreOrder, fulfillmentStatus: StoreFulfillmentStatus) => {
+    if (!session || saving) return;
+    const draft = orderDrafts[order.id] || buildOrderDraft(order);
+
+    try {
+      setSaving(true);
+      const response = await updateStoreOrderFulfillment(session.tenantId, session.accessToken, order.id, {
+        fulfillmentStatus,
+        shippingMethod: draft.shippingMethod,
+        carrier: draft.carrier.trim() || null,
+        trackingNumber: draft.trackingNumber.trim() || null,
+        trackingUrl: normalizeTrackingUrl(draft.trackingUrl) || null,
+        notificationEmail: draft.notificationEmail.trim() || null,
+        notificationStatus: draft.notificationStatus,
+        stripePaymentStatus: draft.stripePaymentStatus.trim() || 'paid',
+      });
+      setOrders((current) => current.map((item) => item.id === order.id ? response.order : item));
+      setOrderHistory((current) => current.map((item) => item.id === order.id ? response.order : item));
+      setOrderDrafts((current) => ({ ...current, [order.id]: buildOrderDraft(response.order) }));
+      showSuccess(fulfillmentStatus === 'delivered' ? 'Order marked delivered' : 'Order marked shipped');
     } catch (error) {
       console.error('Failed to update store order:', error);
       showError(error instanceof Error ? error.message : 'Failed to update store order');
@@ -1114,6 +1154,44 @@ export function StoreOperationsPage() {
                                 placeholder="Tracking number"
                               />
                             </label>
+                            <label>
+                              Tracking Link
+                              <input
+                                aria-label={`Tracking link for ${patientName(order)}`}
+                                value={draft.trackingUrl}
+                                onChange={(event) => updateOrderDraft(order.id, { trackingUrl: event.target.value })}
+                                placeholder="https://www.fedex.com/fedextrack/..."
+                              />
+                            </label>
+                            {draft.trackingUrl.trim() ? (
+                              <a
+                                className="store-ops-tracking-link"
+                                href={normalizeTrackingUrl(draft.trackingUrl)}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <ExternalLink size={14} />
+                                Track
+                              </a>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => handleQuickFulfillment(order, 'shipped')}
+                              disabled={saving}
+                              aria-label={`Mark shipped for ${patientName(order)}`}
+                            >
+                              <Truck size={16} />
+                              Shipped
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleQuickFulfillment(order, 'delivered')}
+                              disabled={saving}
+                              aria-label={`Mark delivered for ${patientName(order)}`}
+                            >
+                              <PackageCheck size={16} />
+                              Delivered
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleSaveOrder(order)}
@@ -1574,9 +1652,31 @@ export function StoreOperationsPage() {
                           <option value="priority">Priority</option>
                           <option value="pickup">Pickup</option>
                         </select>
-                        <button type="button" onClick={() => handleSaveOrder(order)} disabled={saving}>
+                        <input
+                          aria-label={`Shipping carrier for ${patientName(order)}`}
+                          value={draft.carrier}
+                          onChange={(event) => updateOrderDraft(order.id, { carrier: event.target.value })}
+                          placeholder="Carrier"
+                        />
+                        <input
+                          aria-label={`Shipping tracking number for ${patientName(order)}`}
+                          value={draft.trackingNumber}
+                          onChange={(event) => updateOrderDraft(order.id, { trackingNumber: event.target.value })}
+                          placeholder="Tracking #"
+                        />
+                        <input
+                          aria-label={`Shipping tracking link for ${patientName(order)}`}
+                          value={draft.trackingUrl}
+                          onChange={(event) => updateOrderDraft(order.id, { trackingUrl: event.target.value })}
+                          placeholder="Tracking link"
+                        />
+                        <button type="button" onClick={() => handleQuickFulfillment(order, 'shipped')} disabled={saving}>
                           <Truck size={16} />
-                          Update
+                          Shipped
+                        </button>
+                        <button type="button" onClick={() => handleQuickFulfillment(order, 'delivered')} disabled={saving}>
+                          <PackageCheck size={16} />
+                          Delivered
                         </button>
                       </article>
                     );

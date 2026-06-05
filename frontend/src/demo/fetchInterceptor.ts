@@ -4606,6 +4606,7 @@ function handlePortalRoute(
       shippingMethod: body?.shippingMethod || 'standard',
       carrier: '',
       trackingNumber: '',
+      trackingUrl: '',
       shippingAddress: body?.shippingAddress || {},
       notificationEmail: body?.notificationEmail || data.profile.email,
       notificationStatus: 'queued',

@@ -16,6 +16,7 @@ interface StoreOrderConfirmation {
   total: number;
   fulfillmentStatus?: string;
   trackingNumber?: string;
+  trackingUrl?: string;
 }
 
 const TAX_RATE = 0.0825;
@@ -145,6 +146,7 @@ export function PortalStorePage() {
             total: order.total || 0,
             fulfillmentStatus: order.fulfillmentStatus,
             trackingNumber: order.trackingNumber,
+            trackingUrl: order.trackingUrl,
           });
           const refreshed = await patientPortalFetch('/api/patient-portal-data/store/products');
           if (!cancelled) {
@@ -327,6 +329,7 @@ export function PortalStorePage() {
         total: order.total || total,
         fulfillmentStatus: order.fulfillmentStatus,
         trackingNumber: order.trackingNumber,
+        trackingUrl: order.trackingUrl,
       });
       setCart([]);
       setPromotionCode('');

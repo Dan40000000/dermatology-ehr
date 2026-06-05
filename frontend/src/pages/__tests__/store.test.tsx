@@ -196,6 +196,7 @@ beforeEach(() => {
       ...demoOrder,
       fulfillmentStatus: 'shipped',
       trackingNumber: '1Z999',
+      trackingUrl: 'https://www.ups.com/track?tracknum=1Z999',
     },
   });
 });
@@ -215,7 +216,10 @@ describe('Store flows', () => {
     fireEvent.change(screen.getByLabelText('Tracking number for Jamie Lee'), {
       target: { value: '1Z999' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save order update for Jamie Lee' }));
+    fireEvent.change(screen.getByLabelText('Tracking link for Jamie Lee'), {
+      target: { value: 'www.ups.com/track?tracknum=1Z999' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark shipped for Jamie Lee' }));
 
     await waitFor(() =>
       expect(apiMocks.updateStoreOrderFulfillment).toHaveBeenCalledWith(
@@ -225,6 +229,7 @@ describe('Store flows', () => {
         expect.objectContaining({
           fulfillmentStatus: 'shipped',
           trackingNumber: '1Z999',
+          trackingUrl: 'https://www.ups.com/track?tracknum=1Z999',
           stripePaymentStatus: 'paid',
         })
       )

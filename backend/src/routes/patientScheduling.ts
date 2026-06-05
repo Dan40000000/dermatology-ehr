@@ -612,6 +612,32 @@ async function runBookingSideEffects(params: {
   }
 }
 
+async function saveOptionalAppointmentReasonNotes(params: {
+  tenantId: string;
+  appointmentId: string;
+  reason?: string | null;
+  notes?: string | null;
+}) {
+  if (!params.reason && !params.notes) {
+    return;
+  }
+
+  try {
+    await pool.query(
+      `UPDATE appointments
+       SET reason = $1,
+           notes = $2
+       WHERE id = $3 AND tenant_id = $4`,
+      [params.reason || null, params.notes || null, params.appointmentId, params.tenantId],
+    );
+  } catch (error) {
+    logger.warn("Appointment reason/notes were not saved", {
+      appointmentId: params.appointmentId,
+      error: toSafeErrorMessage(error),
+    });
+  }
+}
+
 patientSchedulingRouter.post(
   "/book",
   requirePatientAuth,
@@ -686,8 +712,8 @@ patientSchedulingRouter.post(
       await client.query(
         `INSERT INTO appointments (
           id, tenant_id, patient_id, provider_id, location_id,
-          appointment_type_id, scheduled_start, scheduled_end, status, reason, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          appointment_type_id, scheduled_start, scheduled_end, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           appointmentId,
           req.patient!.tenantId,
@@ -698,8 +724,6 @@ patientSchedulingRouter.post(
           scheduledStart,
           scheduledEnd,
           "scheduled",
-          reason || null,
-          notes || null,
         ]
       );
 
@@ -711,6 +735,13 @@ patientSchedulingRouter.post(
     } finally {
       client.release();
     }
+
+    await saveOptionalAppointmentReasonNotes({
+      tenantId: req.patient!.tenantId,
+      appointmentId,
+      reason,
+      notes,
+    });
 
     try {
       await pool.query(
@@ -884,8 +915,8 @@ patientSchedulingRouter.post(
       await client.query(
         `INSERT INTO appointments (
           id, tenant_id, patient_id, provider_id, location_id,
-          appointment_type_id, scheduled_start, scheduled_end, status, reason, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          appointment_type_id, scheduled_start, scheduled_end, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           appointmentId,
           tenantId,
@@ -896,8 +927,6 @@ patientSchedulingRouter.post(
           scheduledStart,
           scheduledEnd,
           "scheduled",
-          reason,
-          notes || null,
         ]
       );
 
@@ -991,6 +1020,13 @@ patientSchedulingRouter.post(
       );
 
       await client.query("COMMIT");
+
+      await saveOptionalAppointmentReasonNotes({
+        tenantId,
+        appointmentId,
+        reason,
+        notes,
+      });
 
       await runBookingSideEffects({
         tenantId,

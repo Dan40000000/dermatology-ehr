@@ -346,9 +346,15 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({ rows: [{ id: "loc-1" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
-    queryMock
-      .mockRejectedValueOnce(new Error("history table unavailable"))
-      .mockRejectedValueOnce(new Error("audit table unavailable"));
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes("appointment_booking_history")) {
+        return Promise.reject(new Error("history table unavailable"));
+      }
+      if (sql.includes("INSERT INTO audit_log")) {
+        return Promise.reject(new Error("audit table unavailable"));
+      }
+      return Promise.resolve({ rows: [] });
+    });
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
       providerId,

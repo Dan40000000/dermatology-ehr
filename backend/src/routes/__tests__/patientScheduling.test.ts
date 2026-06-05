@@ -345,9 +345,10 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "loc-1" }] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockRejectedValueOnce(new Error("history table unavailable"))
-      .mockRejectedValueOnce(new Error("audit table unavailable"))
       .mockResolvedValueOnce({ rows: [] });
+    queryMock
+      .mockRejectedValueOnce(new Error("history table unavailable"))
+      .mockRejectedValueOnce(new Error("audit table unavailable"));
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
       providerId,
@@ -360,6 +361,8 @@ describe("Patient scheduling portal routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.message).toBe("Appointment booked successfully");
     expect(client.query.mock.calls.some((call) => String(call[0]) === "COMMIT")).toBe(true);
+    expect(queryMock.mock.calls.some((call) => String(call[0]).includes("appointment_booking_history"))).toBe(true);
+    expect(queryMock.mock.calls.some((call) => String(call[0]).includes("INSERT INTO audit_log"))).toBe(true);
   });
 
   it("POST /patient-portal/scheduling/public/book-guest creates appointment with guarantee", async () => {
@@ -468,7 +471,10 @@ describe("Patient scheduling portal routes", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(client.query.mock.calls[4][1][7]).toBeNull();
+    const bookingHistoryCall = queryMock.mock.calls.find((call) =>
+      String(call[0]).includes("appointment_booking_history")
+    );
+    expect(bookingHistoryCall?.[1][7]).toBeNull();
   });
 
   it("PUT /patient-portal/scheduling/reschedule returns 403 when blocked", async () => {

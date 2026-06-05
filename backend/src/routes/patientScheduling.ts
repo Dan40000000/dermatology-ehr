@@ -626,6 +626,8 @@ patientSchedulingRouter.post(
       parsed.data;
 
     const client = await pool.connect();
+    const appointmentId = crypto.randomUUID();
+    let scheduledEnd = parsed.data.scheduledEnd;
 
     try {
       await client.query("BEGIN");
@@ -645,7 +647,7 @@ patientSchedulingRouter.post(
         return res.status(409).json({ error: "Time slot is no longer available" });
       }
 
-      const scheduledEnd = requestedSlot.endTime;
+      scheduledEnd = requestedSlot.endTime;
 
       // Check for double-booking (race condition protection)
       const conflictCheck = await client.query(
@@ -678,7 +680,6 @@ patientSchedulingRouter.post(
       const locationId = locationResult.rows[0].id;
 
       // Create appointment
-      const appointmentId = crypto.randomUUID();
       await client.query(
         `INSERT INTO appointments (
           id, tenant_id, patient_id, provider_id, location_id,
@@ -699,81 +700,7 @@ patientSchedulingRouter.post(
         ]
       );
 
-      try {
-        await client.query(
-          `INSERT INTO appointment_booking_history (
-            id, tenant_id, appointment_id, patient_id, action,
-            new_scheduled_start, new_scheduled_end, reason,
-            booked_via, ip_address, user_agent, created_by
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-          [
-            crypto.randomUUID(),
-            req.patient!.tenantId,
-            appointmentId,
-            req.patient!.patientId,
-            "booked",
-            scheduledStart,
-            scheduledEnd,
-            reason || null,
-            "patient_portal",
-            req.ip,
-            req.get("user-agent"),
-            req.patient!.accountId,
-          ]
-        );
-      } catch (error) {
-        logger.warn("Patient portal booking history was not recorded", {
-          appointmentId,
-          error: toSafeErrorMessage(error),
-        });
-      }
-
-      try {
-        await client.query(
-          `INSERT INTO audit_log (
-            id, tenant_id, user_id, action, resource_type, resource_id,
-            ip_address, user_agent, metadata, severity, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [
-            crypto.randomUUID(),
-            req.patient!.tenantId,
-            null,
-            "patient_portal_book_appointment",
-            "appointment",
-            appointmentId,
-            req.ip,
-            req.get("user-agent"),
-            JSON.stringify({
-              source: "patient_portal",
-              patientPortalAccountId: req.patient!.accountId,
-              patientId: req.patient!.patientId,
-            }),
-            "info",
-            "success",
-          ]
-        );
-      } catch (error) {
-        logger.warn("Patient portal booking audit log was not recorded", {
-          appointmentId,
-          error: toSafeErrorMessage(error),
-        });
-      }
-
       await client.query("COMMIT");
-
-      await runBookingSideEffects({
-        tenantId: req.patient!.tenantId,
-        appointmentId,
-        userId: req.patient!.accountId,
-        source: "patient_portal",
-      });
-
-      return res.status(201).json({
-        appointmentId,
-        scheduledStart,
-        scheduledEnd,
-        message: "Appointment booked successfully",
-      });
     } catch (error) {
       await client.query("ROLLBACK");
       logPatientSchedulingError("Book appointment error", error);
@@ -781,6 +708,80 @@ patientSchedulingRouter.post(
     } finally {
       client.release();
     }
+
+    try {
+      await pool.query(
+        `INSERT INTO appointment_booking_history (
+          id, tenant_id, appointment_id, patient_id, action,
+          new_scheduled_start, new_scheduled_end, reason,
+          booked_via, ip_address, user_agent, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          crypto.randomUUID(),
+          req.patient!.tenantId,
+          appointmentId,
+          req.patient!.patientId,
+          "booked",
+          scheduledStart,
+          scheduledEnd,
+          reason || null,
+          "patient_portal",
+          req.ip,
+          req.get("user-agent"),
+          req.patient!.accountId,
+        ]
+      );
+    } catch (error) {
+      logger.warn("Patient portal booking history was not recorded", {
+        appointmentId,
+        error: toSafeErrorMessage(error),
+      });
+    }
+
+    try {
+      await pool.query(
+        `INSERT INTO audit_log (
+          id, tenant_id, user_id, action, resource_type, resource_id,
+          ip_address, user_agent, metadata, severity, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          crypto.randomUUID(),
+          req.patient!.tenantId,
+          null,
+          "patient_portal_book_appointment",
+          "appointment",
+          appointmentId,
+          req.ip,
+          req.get("user-agent"),
+          JSON.stringify({
+            source: "patient_portal",
+            patientPortalAccountId: req.patient!.accountId,
+            patientId: req.patient!.patientId,
+          }),
+          "info",
+          "success",
+        ]
+      );
+    } catch (error) {
+      logger.warn("Patient portal booking audit log was not recorded", {
+        appointmentId,
+        error: toSafeErrorMessage(error),
+      });
+    }
+
+    await runBookingSideEffects({
+      tenantId: req.patient!.tenantId,
+      appointmentId,
+      userId: req.patient!.accountId,
+      source: "patient_portal",
+    });
+
+    return res.status(201).json({
+      appointmentId,
+      scheduledStart,
+      scheduledEnd,
+      message: "Appointment booked successfully",
+    });
   }
 );
 

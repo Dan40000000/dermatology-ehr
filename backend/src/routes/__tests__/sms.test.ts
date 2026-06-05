@@ -353,7 +353,7 @@ describe('SMS routes', () => {
         messageSamples: expect.arrayContaining([expect.stringContaining('Perry Software LLC')]),
       })
     );
-    expect(res.body.submission.evidenceUrl).toContain('/public/sms-opt-in-evidence');
+    expect(res.body.submission.evidenceUrl).toContain('/sms-opt-in-evidence.html');
     expect(JSON.stringify(res.body)).not.toContain('token');
   });
 

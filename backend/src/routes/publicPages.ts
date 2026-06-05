@@ -177,7 +177,7 @@ publicPagesRouter.get("/sms-consent", (req, res) => {
         <div class="grid">
           <div class="panel">
             <strong>How patients opt in</strong>
-            <p>Patients opt in by checking the SMS consent box during intake, portal registration, or staff-assisted registration, or by texting <code>START</code> to the practice messaging number.</p>
+            <p>Patients opt in by checking the optional SMS consent box during intake, portal registration, or staff-assisted registration, or by texting <code>START</code> to the practice messaging number.</p>
           </div>
           <div class="panel">
             <strong>Message types</strong>
@@ -208,7 +208,7 @@ publicPagesRouter.get("/sms-consent", (req, res) => {
           <input id="phone" name="phone" type="tel" autocomplete="tel" />
 
           <label class="checkbox" for="sms-consent">
-            <input id="sms-consent" name="smsConsent" type="checkbox" value="yes" required />
+            <input id="sms-consent" name="smsConsent" type="checkbox" value="yes" />
             <span>
               I agree to receive text messages from ${practiceName} about appointments, billing, prescriptions, and care updates.
               Message frequency varies. Message and data rates may apply. Reply HELP for help and STOP to opt out.
@@ -217,7 +217,7 @@ publicPagesRouter.get("/sms-consent", (req, res) => {
             </span>
           </label>
 
-          <button type="submit">Submit SMS Consent</button>
+          <button type="submit">Submit Optional SMS Preference</button>
         </form>
 
         <div class="links">
@@ -311,15 +311,15 @@ publicPagesRouter.post("/sms-consent-demo", (req, res) => {
 
   res.type("html").send(
     renderPage(
-      `${practiceName} SMS Consent Submitted`,
+      `${practiceName} SMS Preference Submitted`,
       `
         <div class="eyebrow">SMS Program Disclosure</div>
-        <h1>Consent Form Submitted</h1>
+        <h1>SMS Preference Submitted</h1>
         <p class="muted">
-          This public page is used to display the SMS consent call-to-action and required legal disclosures.
+          This public page is used to display the optional SMS consent call-to-action and legal disclosures.
         </p>
         <p>
-          The patient acknowledged the SMS consent disclosure for ${practiceName}, including message frequency,
+          The patient submitted an optional SMS preference for ${practiceName} after seeing message frequency,
           message and data rates, HELP support, STOP opt-out instructions, and the linked Terms of Service and Privacy Policy.
         </p>
         <div class="links">

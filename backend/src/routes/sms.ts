@@ -47,12 +47,12 @@ const SMS_A2P_BRAND_NAME = 'Perry Software LLC';
 const SMS_A2P_PRACTICE_NUMBER = '+1 980-737-1319';
 const SMS_A2P_PUBLIC_BASE_URL = (
   process.env.SMS_PUBLIC_BASE_URL ||
-  'https://derm-api-pilot-live.up.railway.app'
+  'https://perry-software-site.vercel.app'
 ).replace(/\/+$/, '');
-const SMS_A2P_CONSENT_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-consent`;
-const SMS_A2P_EVIDENCE_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-opt-in-evidence`;
-const SMS_A2P_TERMS_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-terms`;
-const SMS_A2P_PRIVACY_URL = `${SMS_A2P_PUBLIC_BASE_URL}/public/sms-privacy`;
+const SMS_A2P_CONSENT_URL = process.env.SMS_A2P_CONSENT_URL || `${SMS_A2P_PUBLIC_BASE_URL}/sms-consent.html`;
+const SMS_A2P_EVIDENCE_URL = process.env.SMS_A2P_EVIDENCE_URL || `${SMS_A2P_PUBLIC_BASE_URL}/sms-opt-in-evidence.html`;
+const SMS_A2P_TERMS_URL = process.env.SMS_A2P_TERMS_URL || `${SMS_A2P_PUBLIC_BASE_URL}/sms-terms.html`;
+const SMS_A2P_PRIVACY_URL = process.env.SMS_A2P_PRIVACY_URL || `${SMS_A2P_PUBLIC_BASE_URL}/sms-privacy.html`;
 
 function isInboundSimulationEnabled(isTestMode: boolean): boolean {
   return (

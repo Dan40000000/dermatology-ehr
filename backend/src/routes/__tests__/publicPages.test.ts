@@ -13,7 +13,8 @@ describe('Public SMS compliance pages', () => {
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.text).toContain('Text Messaging Consent');
     expect(res.text).toContain('Reply <code>HELP</code> for help and <code>STOP</code> to opt out');
-    expect(res.text).toContain('Submit SMS Consent');
+    expect(res.text).toContain('Submit Optional SMS Preference');
+    expect(res.text).not.toContain('name="smsConsent" type="checkbox" value="yes" required');
     expect(res.text).toContain('/public/sms-opt-in-evidence');
     expect(res.text).toContain('/public/sms-privacy');
     expect(res.text).toContain('/public/sms-terms');
@@ -38,7 +39,7 @@ describe('Public SMS compliance pages', () => {
       .send({ name: 'Dan Perry', phone: '5412318693', smsConsent: 'yes' });
 
     expect(res.status).toBe(200);
-    expect(res.text).toContain('Consent Form Submitted');
+    expect(res.text).toContain('SMS Preference Submitted');
     expect(res.text).toContain('/public/sms-consent');
   });
 

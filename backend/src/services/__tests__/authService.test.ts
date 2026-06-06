@@ -62,17 +62,11 @@ describe('authService', () => {
     ]);
   });
 
-  it('issues tokens when refresh_tokens table is missing', async () => {
+  it('refuses to issue tokens when refresh_tokens table is missing', async () => {
     signMock.mockReturnValueOnce('access-token').mockReturnValueOnce('refresh-token');
     queryMock.mockRejectedValueOnce({ code: '42P01', message: 'relation "refresh_tokens" does not exist' });
 
-    const tokens = await issueTokens(user as any);
-
-    expect(tokens).toEqual({
-      accessToken: 'access-token',
-      refreshToken: 'refresh-token',
-      expiresIn: env.accessTokenTtlSec,
-    });
+    await expect(issueTokens(user as any)).rejects.toThrow("Refresh token store is unavailable");
   });
 
   it('returns null when refresh token is invalid', async () => {
@@ -181,6 +175,7 @@ describe('authService', () => {
         roles: ['admin', 'billing'],
         email: user.email,
         fullName: user.fullName,
+        passwordResetRequired: false,
       },
     });
     expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('update refresh_tokens'), ['old-token']);
@@ -192,7 +187,7 @@ describe('authService', () => {
     ]);
   });
 
-  it('rotates refresh tokens in stateless mode when refresh_tokens table is missing', async () => {
+  it('refuses refresh rotation when refresh_tokens table is missing', async () => {
     verifyMock.mockReturnValueOnce({
       type: 'refresh',
       sub: user.id,
@@ -204,22 +199,8 @@ describe('authService', () => {
 
     const result = await rotateRefreshToken('stateless-token');
 
-    expect(result).toEqual({
-      tokens: {
-        accessToken: 'access-new',
-        refreshToken: 'refresh-new',
-        expiresIn: env.accessTokenTtlSec,
-      },
-      user: {
-        id: user.id,
-        tenantId: user.tenantId,
-        role: user.role,
-        secondaryRoles: ['billing'],
-        roles: ['admin', 'billing'],
-        email: user.email,
-        fullName: user.fullName,
-      },
-    });
+    expect(result).toBeNull();
+    expect(findByIdMock).not.toHaveBeenCalled();
   });
 
   it('returns null when verification throws', async () => {

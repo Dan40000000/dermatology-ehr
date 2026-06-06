@@ -97,7 +97,8 @@ describe('config validation', () => {
     process.env.ENCRYPTION_KEY = 'x'.repeat(32);
     process.env.PHI_ENCRYPTION_ENABLED = 'true';
     process.env.SENTRY_DSN = 'https://example.com/123';
-    process.env.STORAGE_PROVIDER = 'local';
+    process.env.STORAGE_PROVIDER = 's3';
+    process.env.AWS_S3_BUCKET = 'derm-prod-documents';
     process.env.API_URL = 'https://example.com';
     process.env.CORS_ORIGIN = 'https://app.example.com';
     process.env.SSL_ENABLED = 'false';
@@ -120,7 +121,8 @@ describe('config validation', () => {
     process.env.ENCRYPTION_KEY = 'x'.repeat(32);
     process.env.PHI_ENCRYPTION_ENABLED = 'true';
     process.env.SENTRY_DSN = '';
-    process.env.STORAGE_PROVIDER = 'local';
+    process.env.STORAGE_PROVIDER = 's3';
+    process.env.AWS_S3_BUCKET = 'derm-prod-documents';
     process.env.CORS_ORIGIN = 'https://app.example.com';
 
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -170,7 +172,8 @@ describe('config validation', () => {
     process.env.API_URL = 'https://api.staging.dermapp.example';
     process.env.ENABLE_API_DOCS = 'false';
     process.env.ENABLE_PLAYGROUND = 'false';
-    process.env.STORAGE_PROVIDER = 'local';
+    process.env.STORAGE_PROVIDER = 's3';
+    process.env.AWS_S3_BUCKET = 'derm-staging-documents';
 
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const config = loadConfig();
@@ -178,11 +181,27 @@ describe('config validation', () => {
     expect(config.runtimeEnvironment).toBe('staging');
     expect(config.isProductionLike).toBe(true);
     expect(config.isDevelopment).toBe(false);
+    expect(config.storage.provider).toBe('s3');
     expect(config.cors.origin).toEqual(['https://staging.dermapp.example']);
     expect(warnSpy).toHaveBeenCalledWith(
       'WARNING: DEPLOYMENT_ENV=staging is using a local database target; DB TLS cannot be validated locally.'
     );
 
     warnSpy.mockRestore();
+  });
+
+  it('throws when production-like environments use local storage', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.DATABASE_URL = 'postgres://demo:demo@db.example.com:5432/derm?sslmode=require';
+    process.env.JWT_SECRET = 'x'.repeat(32);
+    process.env.CSRF_SECRET = 'x'.repeat(32);
+    process.env.SESSION_SECRET = 'x'.repeat(32);
+    process.env.ENCRYPTION_KEY = 'x'.repeat(32);
+    process.env.PHI_ENCRYPTION_ENABLED = 'true';
+    process.env.SENTRY_DSN = 'https://example.com/123';
+    process.env.STORAGE_PROVIDER = 'local';
+    process.env.CORS_ORIGIN = 'https://app.example.com';
+
+    expect(() => loadConfig()).toThrow(/STORAGE_PROVIDER must be s3/);
   });
 });

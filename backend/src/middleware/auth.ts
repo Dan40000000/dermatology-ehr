@@ -38,7 +38,7 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
     };
     req.tenantId = tenantId;
 
-    const originalUrl = req.originalUrl || req.path;
+    const originalUrl = req.originalUrl || req.path || "";
     const passwordResetAllowed =
       originalUrl.includes("/api/auth/me") ||
       originalUrl.includes("/api/auth/refresh") ||

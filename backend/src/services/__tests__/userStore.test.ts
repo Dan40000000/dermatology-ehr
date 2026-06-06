@@ -31,7 +31,7 @@ describe('userStore', () => {
     const result = await userStore.findByEmailAndTenant('legacy@example.com', 'tenant-legacy');
 
     expect(queryMock).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ id: 'legacy-user', secondaryRoles: [], roles: [] });
+    expect(result).toEqual({ id: 'legacy-user', secondaryRoles: [], roles: [], forcePasswordReset: false });
   });
 
   it('finds users by id', async () => {
@@ -65,6 +65,7 @@ describe('userStore', () => {
       role: 'provider',
       secondaryRoles: ['admin'],
       roles: ['provider', 'admin'],
+      passwordResetRequired: false,
     });
   });
 

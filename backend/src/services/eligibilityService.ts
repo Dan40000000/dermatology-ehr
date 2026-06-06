@@ -15,6 +15,7 @@ import {
   type EligibilityRequest,
   type EligibilityResponse,
 } from '../integrations/eligibilityAdapter';
+import { normalizeInsuranceFields } from './insuranceNormalization';
 import { getIntegrationService } from './integrationService';
 
 export interface Patient {
@@ -102,9 +103,18 @@ export async function verifyPatientEligibility(
     }
 
     const patient = patientResult.rows[0];
+    const normalizedInsurance = await normalizeInsuranceFields(tenantId, {
+      insurance: patient.insurance_provider,
+      insuranceMemberId: patient.insurance_member_id,
+      insuranceGroupNumber: patient.insurance_group_number,
+      insurancePayerId: patient.insurance_payer_id,
+    });
+    const insuranceMemberId = normalizedInsurance.insuranceMemberId;
+    const insurancePayerId = normalizedInsurance.insurancePayerId;
+    const insuranceGroupNumber = normalizedInsurance.insuranceGroupNumber;
 
     // Validate insurance information
-    if (!patient.insurance_member_id) {
+    if (!insuranceMemberId) {
       return await createErrorVerification(
         patientId,
         tenantId,
@@ -114,7 +124,7 @@ export async function verifyPatientEligibility(
       );
     }
 
-    if (!patient.insurance_payer_id) {
+    if (!insurancePayerId) {
       return await createErrorVerification(
         patientId,
         tenantId,
@@ -124,11 +134,26 @@ export async function verifyPatientEligibility(
       );
     }
 
+    if (
+      insuranceMemberId !== patient.insurance_member_id ||
+      insurancePayerId !== patient.insurance_payer_id ||
+      (insuranceGroupNumber || null) !== (patient.insurance_group_number || null)
+    ) {
+      await pool.query(
+        `UPDATE patients
+         SET insurance_member_id = COALESCE($1, insurance_member_id),
+             insurance_payer_id = COALESCE($2, insurance_payer_id),
+             insurance_group_number = COALESCE($3, insurance_group_number)
+         WHERE id = $4 AND tenant_id = $5`,
+        [insuranceMemberId, insurancePayerId, insuranceGroupNumber || null, patientId, tenantId]
+      );
+    }
+
     // Build eligibility request
     const eligibilityRequest: EligibilityRequest = {
       patientId,
-      payerId: patient.insurance_payer_id,
-      memberId: patient.insurance_member_id,
+      payerId: insurancePayerId,
+      memberId: insuranceMemberId,
       patientFirstName: patient.first_name,
       patientLastName: patient.last_name,
       patientDob: formatDateForApi(patient.date_of_birth),
@@ -216,11 +241,20 @@ export async function batchVerifyEligibility(
     const patients = patientsResult.rows;
 
     // Build eligibility requests
-    const eligiblePatients = patients.filter(p => p.insurance_member_id && p.insurance_payer_id); // Only verify patients with complete payer/member data
+    const normalizedPatients = await Promise.all(patients.map(async (p) => ({
+      ...p,
+      normalizedInsurance: await normalizeInsuranceFields(request.tenantId, {
+        insurance: p.insurance_provider,
+        insuranceMemberId: p.insurance_member_id,
+        insuranceGroupNumber: p.insurance_group_number,
+        insurancePayerId: p.insurance_payer_id,
+      }),
+    })));
+    const eligiblePatients = normalizedPatients.filter(p => p.normalizedInsurance.insuranceMemberId && p.normalizedInsurance.insurancePayerId); // Only verify patients with complete payer/member data
     const eligibilityRequests: EligibilityRequest[] = eligiblePatients.map(p => ({
         patientId: p.id,
-        payerId: p.insurance_payer_id,
-        memberId: p.insurance_member_id,
+        payerId: p.normalizedInsurance.insurancePayerId!,
+        memberId: p.normalizedInsurance.insuranceMemberId!,
         patientFirstName: p.first_name,
         patientLastName: p.last_name,
         patientDob: formatDateForApi(p.date_of_birth),

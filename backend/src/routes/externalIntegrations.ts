@@ -23,6 +23,7 @@ import {
   getIntegrationService,
   IntegrationType,
 } from '../services/integrationService';
+import { normalizeInsuranceFields } from '../services/insuranceNormalization';
 
 const router = Router();
 
@@ -553,7 +554,7 @@ router.post('/eligibility/check', requireAuth, async (req: AuthedRequest, res) =
 
     // Get patient details
     const patientResult = await pool.query(
-      `SELECT id, first_name, last_name, dob, insurance_payer_id, insurance_member_id
+      `SELECT id, first_name, last_name, dob, insurance, insurance_payer_id, insurance_member_id, insurance_group_number
        FROM patients WHERE id = $1 AND tenant_id = $2`,
       [data.patientId, tenantId]
     );
@@ -565,8 +566,14 @@ router.post('/eligibility/check', requireAuth, async (req: AuthedRequest, res) =
     const patient = patientResult.rows[0];
     const service = getIntegrationService(tenantId);
     const adapter = await service.getEligibilityAdapter();
-    const payerId = data.payerId || patient.insurance_payer_id;
-    const memberId = data.memberId || patient.insurance_member_id;
+    const normalizedInsurance = await normalizeInsuranceFields(tenantId, {
+      insurance: patient.insurance,
+      insurancePayerId: data.payerId || patient.insurance_payer_id,
+      insuranceMemberId: data.memberId || patient.insurance_member_id,
+      insuranceGroupNumber: patient.insurance_group_number,
+    });
+    const payerId = normalizedInsurance.insurancePayerId;
+    const memberId = normalizedInsurance.insuranceMemberId;
 
     if (!payerId || !memberId) {
       return res.status(400).json({

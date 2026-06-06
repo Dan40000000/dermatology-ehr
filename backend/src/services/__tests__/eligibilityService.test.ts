@@ -19,6 +19,7 @@ jest.mock("../../db/pool", () => ({
 jest.mock("../../lib/logger", () => ({
   logger: {
     info: jest.fn(),
+    warn: jest.fn(),
     error: jest.fn(),
   },
 }));
@@ -171,7 +172,7 @@ describe("eligibilityService", () => {
       first_name: "Jane",
       last_name: "Doe",
       date_of_birth: "1980-01-01",
-      insurance_provider: "UMR",
+      insurance_provider: "Unknown Local Plan",
       insurance_member_id: "MEM123",
       insurance_group_number: "GRP1",
       insurance_payer_id: null,
@@ -179,6 +180,8 @@ describe("eligibilityService", () => {
 
     (pool.query as jest.Mock)
       .mockResolvedValueOnce({ rows: [patientRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
           {

@@ -2235,11 +2235,13 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
 function PatientEligibilitySummary({
   patientId,
   carrier,
+  payerId,
   memberId,
   groupNumber,
 }: {
   patientId: string;
   carrier?: string;
+  payerId?: string;
   memberId?: string;
   groupNumber?: string;
 }) {
@@ -2319,7 +2321,7 @@ function PatientEligibilitySummary({
       )}
       <InsuranceLookupPanel
         patientId={patientId}
-        payerId={latest?.payer_id || carrier || ''}
+        payerId={latest?.payer_id || payerId || ''}
         payerName={latest?.payer_name || carrier || ''}
         memberId={latest?.member_id || memberId || ''}
         onChecked={loadLatest}
@@ -2336,6 +2338,7 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
   const insuranceObject = typeof rawInsurance === 'object' && rawInsurance !== null ? rawInsurance : null;
   const insuranceData = {
     primaryCarrier: insuranceObject?.planName || rawInsurance || insuranceDetails.primaryCarrier,
+    primaryPayerId: (patient as any).insurancePayerId || insuranceObject?.payerId || insuranceDetails.primaryPayerId,
     primaryPolicyNumber: (patient as any).insuranceId || insuranceObject?.memberId || insuranceDetails.primaryPolicyNumber,
     primaryGroupNumber: (patient as any).insuranceGroupNumber || insuranceObject?.groupNumber || insuranceDetails.primaryGroupNumber,
     primarySubscriberName: insuranceDetails.primarySubscriberName,
@@ -2370,6 +2373,7 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
             <InfoRow label="Insurance Carrier" value={insuranceData.primaryCarrier || 'Not provided'} />
+            <InfoRow label="Payer ID" value={insuranceData.primaryPayerId || 'Not provided'} />
             <InfoRow label="Policy Number" value={insuranceData.primaryPolicyNumber || 'Not provided'} />
             <InfoRow label="Group Number" value={insuranceData.primaryGroupNumber || 'Not provided'} />
             <InfoRow label="Subscriber Name" value={insuranceData.primarySubscriberName || patient.firstName + ' ' + patient.lastName} />
@@ -2431,6 +2435,7 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
           <PatientEligibilitySummary
             patientId={patient.id}
             carrier={insuranceData.primaryCarrier || undefined}
+            payerId={insuranceData.primaryPayerId || undefined}
             memberId={insuranceData.primaryPolicyNumber || undefined}
             groupNumber={insuranceData.primaryGroupNumber || undefined}
           />

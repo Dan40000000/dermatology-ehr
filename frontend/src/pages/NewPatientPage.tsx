@@ -26,6 +26,7 @@ interface PatientFormData {
   state: string;
   zipCode: string;
   insuranceProvider: string;
+  insurancePayerId: string;
   insuranceId: string;
   insuranceGroupNumber: string;
   emergencyContactName: string;
@@ -100,6 +101,7 @@ export function NewPatientPage() {
     state: '',
     zipCode: '',
     insuranceProvider: '',
+    insurancePayerId: '',
     insuranceId: '',
     insuranceGroupNumber: '',
     emergencyContactName: '',
@@ -185,6 +187,7 @@ export function NewPatientPage() {
         pharmacyAddress: formData.pharmacyAddress || undefined,
         primaryCarePhysician: formData.primaryCarePhysician || undefined,
         referralSource: formData.referralSource || undefined,
+        insurancePayerId: formData.insurancePayerId || undefined,
         insuranceId: formData.insuranceId || undefined,
         insuranceGroupNumber: formData.insuranceGroupNumber || undefined,
         accessibilityProfile: normalizeAccessibilityProfile({
@@ -713,7 +716,7 @@ export function NewPatientPage() {
         {activeSection === 'insurance' && (
           <div>
             <div className="ema-section-header" style={{ marginBottom: '1rem' }}>Insurance Information</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
               <div className="form-field">
                 <label htmlFor="insurance-provider" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Insurance Provider
@@ -724,6 +727,25 @@ export function NewPatientPage() {
                   value={formData.insuranceProvider}
                   onChange={(e) => updateField('insuranceProvider', e.target.value)}
                   placeholder="e.g., Blue Cross Blue Shield"
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '4px',
+                    fontSize: '0.875rem'
+                  }}
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="insurance-payer-id" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                  Payer ID
+                </label>
+                <input
+                  id="insurance-payer-id"
+                  type="text"
+                  value={formData.insurancePayerId}
+                  onChange={(e) => updateField('insurancePayerId', e.target.value)}
+                  placeholder="Eligibility payer ID"
                   style={{
                     width: '100%',
                     padding: '0.5rem 0.75rem',

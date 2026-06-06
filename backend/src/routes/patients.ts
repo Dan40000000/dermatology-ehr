@@ -13,6 +13,7 @@ import { emitPatientUpdated } from "../websocket/emitter";
 import { logger } from "../lib/logger";
 import { buildSsnFields } from "../security/encryption";
 import { auditPatientDataAccess } from "../services/audit";
+import { normalizeInsuranceFields } from "../services/insuranceNormalization";
 import { getPatientAllergySummaries, getPatientMedicationSummaries } from "../services/patientHealthRecord";
 
 const ssnInputSchema = z.string().refine((value) => {
@@ -255,6 +256,9 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
     state: "state",
     zip: "zip",
     insurance: "insurance",
+    insuranceId: `COALESCE(NULLIF(insurance_id, ''), NULLIF(insurance_member_id, '')) as "insuranceId"`,
+    insurancePayerId: `NULLIF(insurance_payer_id, '') as "insurancePayerId"`,
+    insuranceGroupNumber: `NULLIF(insurance_group_number, '') as "insuranceGroupNumber"`,
     allergies: "allergies",
     medications: "medications",
     pharmacyId: `pharmacy_id as "pharmacyId"`,
@@ -282,6 +286,9 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
     "state",
     "zip",
     "insurance",
+    "insuranceId",
+    "insurancePayerId",
+    "insuranceGroupNumber",
     "allergies",
     "medications",
     "pharmacyId",
@@ -400,6 +407,13 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
   } = parsed.data;
   const { ssnLast4, ssnEncrypted } = buildSsnFields(ssn);
   const accountNumber = `ACCT-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+  const normalizedInsurance = await normalizeInsuranceFields(tenantId, {
+    insurance,
+    insuranceId,
+    insuranceMemberId,
+    insurancePayerId,
+    insuranceGroupNumber,
+  });
 
   await pool.query(
     `insert into patients(
@@ -417,7 +431,9 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
       emergencyContactName || null, emergencyContactRelationship || null, emergencyContactPhone || null,
       pharmacyId || null, pharmacyNcpdp || null, pharmacyName || null, pharmacyPhone || null, pharmacyAddress || null,
       primaryCarePhysician || null, referralSource || null, insuranceId || null,
-      insuranceMemberId || insuranceId || null, insurancePayerId || null, insuranceGroupNumber || null,
+      normalizedInsurance.insuranceMemberId || null,
+      normalizedInsurance.insurancePayerId || null,
+      normalizedInsurance.insuranceGroupNumber || null,
       accountNumber, accessibilityProfile || {}
     ],
   );
@@ -521,6 +537,7 @@ patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (
                 nullif(to_jsonb(p)->>'insurance_id', ''),
                 nullif(to_jsonb(p)->>'insurance_member_id', '')
               ) as "insuranceId",
+              nullif(to_jsonb(p)->>'insurance_payer_id', '') as "insurancePayerId",
               nullif(to_jsonb(p)->>'insurance_group_number', '') as "insuranceGroupNumber",
               nullif(to_jsonb(p)->>'primary_care_physician', '') as "primaryCarePhysician",
               nullif(to_jsonb(p)->>'referral_source', '') as "referralSource",
@@ -678,6 +695,34 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
   }
 
   const { ssn, ...patientUpdates } = parsed.data;
+  const hasInsuranceUpdates = [
+    patientUpdates.insurance,
+    patientUpdates.insuranceId,
+    patientUpdates.insuranceMemberId,
+    patientUpdates.insurancePayerId,
+    patientUpdates.insuranceGroupNumber,
+  ].some((value) => value !== undefined);
+
+  if (hasInsuranceUpdates) {
+    const normalizedInsurance = await normalizeInsuranceFields(tenantId, {
+      insurance: patientUpdates.insurance,
+      insuranceId: patientUpdates.insuranceId,
+      insuranceMemberId: patientUpdates.insuranceMemberId,
+      insurancePayerId: patientUpdates.insurancePayerId,
+      insuranceGroupNumber: patientUpdates.insuranceGroupNumber,
+    });
+
+    if (normalizedInsurance.insuranceMemberId && !patientUpdates.insuranceMemberId) {
+      patientUpdates.insuranceMemberId = normalizedInsurance.insuranceMemberId;
+    }
+    if (normalizedInsurance.insurancePayerId && !patientUpdates.insurancePayerId) {
+      patientUpdates.insurancePayerId = normalizedInsurance.insurancePayerId;
+    }
+    if (normalizedInsurance.insuranceGroupNumber && !patientUpdates.insuranceGroupNumber) {
+      patientUpdates.insuranceGroupNumber = normalizedInsurance.insuranceGroupNumber;
+    }
+  }
+
   if (patientUpdates.insuranceId && !patientUpdates.insuranceMemberId) {
     patientUpdates.insuranceMemberId = patientUpdates.insuranceId;
   }

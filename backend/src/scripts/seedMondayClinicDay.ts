@@ -7,6 +7,7 @@ const TIME_ZONE_OFFSET = process.env.MONDAY_SEED_TZ_OFFSET || "-06:00";
 const SNAPSHOT_THROUGH_TIME = process.env.MONDAY_SEED_THROUGH_TIME || "";
 const SNAPSHOT_WAITING_CASE_ID = process.env.MONDAY_SEED_WAITING_CASE_ID || "";
 const SNAPSHOT_WAITING_CHECKIN_TIME = process.env.MONDAY_SEED_WAITING_CHECKIN_TIME || "";
+const FORCE_COMPLETE_OPEN_APPOINTMENTS = process.env.MONDAY_SEED_FORCE_COMPLETE_OPEN === "true";
 const PREFIX = `monday-${CLINIC_DATE}`;
 const CREATED_BY = "monday-clinic-day-seed";
 
@@ -1301,7 +1302,14 @@ function statusAtSnapshot(caseItem: MondayCase): AppointmentStatus {
 }
 
 function caseForSnapshot(caseItem: MondayCase): MondayCase {
-  return { ...caseItem, status: statusAtSnapshot(caseItem) };
+  const status = statusAtSnapshot(caseItem);
+  if (
+    FORCE_COMPLETE_OPEN_APPOINTMENTS &&
+    ["scheduled", "checked_in", "in_room", "with_provider", "checkout"].includes(status)
+  ) {
+    return { ...caseItem, status: "completed" };
+  }
+  return { ...caseItem, status };
 }
 
 async function insertAppointment(
@@ -2203,6 +2211,9 @@ async function seedMondayClinicDay(): Promise<void> {
   }
 
   console.log(`Seeding simulated Monday clinic day ${CLINIC_DATE} for tenant ${TENANT_ID}`);
+  if (FORCE_COMPLETE_OPEN_APPOINTMENTS) {
+    console.log("Completing all open demo appointments while preserving cancellations and no-shows.");
+  }
   if (SNAPSHOT_THROUGH_TIME) {
     console.log(
       `Applying live-day snapshot through ${SNAPSHOT_THROUGH_TIME}`

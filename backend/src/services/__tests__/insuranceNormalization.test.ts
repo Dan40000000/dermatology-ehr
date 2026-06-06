@@ -50,4 +50,20 @@ describe("insuranceNormalization", () => {
       insuranceGroupNumber: "G456",
     });
   });
+
+  it("ignores placeholder payer names and falls back to the insurance label", async () => {
+    (pool.query as jest.Mock).mockResolvedValue({ rows: [] });
+
+    const normalized = await normalizeInsuranceFields("tenant-1", {
+      insurance: "Blue Cross Blue Shield",
+      insuranceProvider: "Unknown",
+      insuranceId: "M123",
+    });
+
+    expect(normalized).toMatchObject({
+      payerName: "Blue Cross Blue Shield",
+      insurancePayerId: "BCBS",
+      insuranceMemberId: "M123",
+    });
+  });
 });

@@ -87,7 +87,10 @@ export async function verifyPatientEligibility(
               dob as date_of_birth,
               coalesce(
                 nullif(to_jsonb(patients)->>'insurance_provider', ''),
-                nullif(insurance_plan_name, ''),
+                case
+                  when lower(trim(coalesce(insurance_plan_name, ''))) in ('', 'unknown', 'n/a', 'na', 'none', 'null') then null
+                  else insurance_plan_name
+                end,
                 nullif(insurance, '')
               ) as insurance_provider,
               insurance_member_id,
@@ -227,7 +230,10 @@ export async function batchVerifyEligibility(
               dob as date_of_birth,
               coalesce(
                 nullif(to_jsonb(patients)->>'insurance_provider', ''),
-                nullif(insurance_plan_name, ''),
+                case
+                  when lower(trim(coalesce(insurance_plan_name, ''))) in ('', 'unknown', 'n/a', 'na', 'none', 'null') then null
+                  else insurance_plan_name
+                end,
                 nullif(insurance, '')
               ) as insurance_provider,
               insurance_member_id,

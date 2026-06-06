@@ -41,6 +41,7 @@ function cleanString(value: unknown): string | undefined {
       : String(value);
   if (raw === undefined) return undefined;
   const trimmed = raw.replace(/\s+/g, " ").trim();
+  if (/^(unknown|n\/a|na|none|null)$/i.test(trimmed)) return undefined;
   return trimmed || undefined;
 }
 
@@ -144,20 +145,14 @@ export async function resolveInsurancePayer(tenantId: string, query?: unknown): 
   try {
     const knownResult = await pool.query(
       `SELECT payer_id as "payerId", payer_name as "payerName"
-       FROM known_payers
-       WHERE coalesce(to_jsonb(known_payers)->>'is_active', 'true') <> 'false'
+       FROM known_payers kp
+       WHERE coalesce(to_jsonb(kp)->>'is_active', 'true') <> 'false'
          AND (
            lower(payer_id) = lower($1)
            OR lower(payer_name) = lower($1)
            OR lower(payer_name) LIKE '%' || lower($1) || '%'
            OR lower($1) LIKE '%' || lower(payer_name) || '%'
-           OR EXISTS (
-             SELECT 1
-             FROM unnest(coalesce(payer_aliases, '{}'::text[])) alias
-             WHERE lower(alias) = lower($1)
-                OR lower(alias) LIKE '%' || lower($1) || '%'
-                OR lower($1) LIKE '%' || lower(alias) || '%'
-           )
+           OR lower(coalesce(to_jsonb(kp)->>'payer_aliases', '')) LIKE '%' || lower($1) || '%'
          )
        ORDER BY CASE
          WHEN lower(payer_id) = lower($1) THEN 0

@@ -3,8 +3,8 @@ import type { Page, Route } from '@playwright/test';
 
 const demoSession = {
   tenantId: 'tenant-demo',
-  accessToken: 'playwright-token',
-  refreshToken: 'playwright-refresh',
+  accessToken: '__http_only_cookie__',
+  refreshToken: '__http_only_cookie__',
   user: {
     id: 'user-1',
     email: 'admin@demo.practice',
@@ -156,7 +156,8 @@ test.describe('Labs + Radiology Flows', () => {
     await page.goto('/labs');
 
     await expect(page.getByRole('heading', { name: 'Pathology & Lab Orders' })).toBeVisible();
-    await expect(page.getByText('Verified Active')).toBeVisible();
+    await expect(page.getByText('Shave Biopsy')).toBeVisible();
+    await expect(page.getByText('CBC with differential')).toBeVisible();
 
     await page.getByRole('button', { name: 'Lab' }).click();
     await expect(page.getByRole('button', { name: 'Lab' })).toBeVisible();
@@ -196,7 +197,7 @@ test.describe('Labs + Radiology Flows', () => {
     await page.goto('/radiology');
 
     await expect(page.getByRole('heading', { name: 'Results' })).toBeVisible();
-    await expect(page.getByText('Verified Active')).toBeVisible();
+    await expect(page.getByText('Chest X-Ray')).toBeVisible();
 
     await page.getByRole('button', { name: /New Order/i }).click();
     const dialog = page.getByRole('dialog');

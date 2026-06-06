@@ -13,6 +13,84 @@ const router = Router();
 // All routes require authentication
 router.use(requireAuth);
 
+function isMissingLegacyLabSchema(error: any): boolean {
+  return error?.code === '42P01' || error?.code === '42703';
+}
+
+async function fetchDermLabCatalogFallback(req: AuthedRequest) {
+  const { category, search, active_only = 'true' } = req.query;
+
+  let query = `
+    SELECT
+      id,
+      tenant_id,
+      NULL::uuid as vendor_id,
+      test_code,
+      loinc_code,
+      cpt_code,
+      test_name,
+      test_name as short_name,
+      test_category as category,
+      NULL::varchar as subcategory,
+      specimen_type,
+      NULL::varchar as specimen_volume,
+      NULL::varchar as specimen_container,
+      special_instructions as collection_instructions,
+      description,
+      NULL::varchar as methodology,
+      CASE
+        WHEN turnaround_days IS NULL THEN NULL
+        WHEN turnaround_days = 1 THEN '1 day'
+        ELSE turnaround_days::text || ' days'
+      END as turnaround_time,
+      NULL::text as clinical_indications,
+      reference_ranges::text as reference_range_text,
+      NULL::text as interpretation_guide,
+      fasting_required as requires_fasting,
+      false as requires_prior_auth,
+      false as is_sendout,
+      is_active,
+      test_category = 'pathology' as is_dermpath,
+      test_code ILIKE '%IF%' as is_immunofluorescence,
+      test_category = 'microbiology' as is_culture,
+      false as is_patch_test,
+      test_category in ('molecular', 'pharmacogenomics') as is_molecular,
+      CASE WHEN is_common THEN 10 ELSE 100 END as order_priority,
+      created_at,
+      NULL::timestamp as updated_at,
+      NULL::varchar as vendor_name,
+      NULL::varchar as vendor_type
+    FROM derm_lab_catalog
+    WHERE (tenant_id = $1 OR tenant_id IS NULL)
+  `;
+
+  const params: any[] = [req.user!.tenantId];
+  let paramIndex = 2;
+
+  if (active_only === 'true') {
+    query += ` AND is_active = true`;
+  }
+
+  if (category) {
+    query += ` AND test_category = $${paramIndex}`;
+    params.push(category);
+    paramIndex++;
+  }
+
+  if (search) {
+    query += ` AND (
+      test_name ILIKE $${paramIndex} OR
+      test_code ILIKE $${paramIndex} OR
+      test_category ILIKE $${paramIndex}
+    )`;
+    params.push(`%${search}%`);
+    paramIndex++;
+  }
+
+  query += ` ORDER BY is_common DESC, test_name ASC`;
+  return pool.query(query, params);
+}
+
 /**
  * GET /api/lab-vendors
  * Get all lab vendors
@@ -46,6 +124,12 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingLegacyLabSchema(error)) {
+      logger.warn('Legacy lab vendors table unavailable; returning empty vendor list', {
+        error: error.message,
+      });
+      return res.json([]);
+    }
     logger.error('Error fetching lab vendors', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch lab vendors' });
   }
@@ -110,6 +194,14 @@ router.get('/catalog', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingLegacyLabSchema(error)) {
+      try {
+        const fallback = await fetchDermLabCatalogFallback(req);
+        return res.json(fallback.rows);
+      } catch (fallbackError: any) {
+        logger.error('Error fetching fallback derm lab catalog', { error: fallbackError.message });
+      }
+    }
     logger.error('Error fetching lab test catalog', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch test catalog' });
   }
@@ -165,6 +257,12 @@ router.get('/order-sets', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingLegacyLabSchema(error)) {
+      logger.warn('Legacy lab order sets unavailable; returning empty order set list', {
+        error: error.message,
+      });
+      return res.json([]);
+    }
     logger.error('Error fetching lab order sets', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch order sets' });
   }
@@ -187,6 +285,21 @@ router.get('/categories', async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error: any) {
+    if (isMissingLegacyLabSchema(error)) {
+      try {
+        const result = await pool.query(
+          `SELECT test_category as category, COUNT(*) as test_count
+          FROM derm_lab_catalog
+          WHERE (tenant_id = $1 OR tenant_id IS NULL) AND is_active = true
+          GROUP BY test_category
+          ORDER BY test_category`,
+          [req.user!.tenantId]
+        );
+        return res.json(result.rows);
+      } catch (fallbackError: any) {
+        logger.error('Error fetching fallback lab categories', { error: fallbackError.message });
+      }
+    }
     logger.error('Error fetching test categories', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch categories' });
   }

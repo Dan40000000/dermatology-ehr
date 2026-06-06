@@ -79,11 +79,28 @@ describe("Lab vendors routes", () => {
     expect(res.status).toBe(500);
   });
 
+  it("GET /lab-vendors returns empty list when legacy table is missing", async () => {
+    queryMock.mockRejectedValueOnce(Object.assign(new Error("missing relation"), { code: "42P01" }));
+    const res = await request(app).get("/lab-vendors");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
   it("GET /lab-vendors/catalog returns list", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "test-1" }] });
     const res = await request(app).get("/lab-vendors/catalog?search=cbc&active_only=true");
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
+  });
+
+  it("GET /lab-vendors/catalog falls back to derm lab catalog when legacy table is missing", async () => {
+    queryMock
+      .mockRejectedValueOnce(Object.assign(new Error("missing relation"), { code: "42P01" }))
+      .mockResolvedValueOnce({ rows: [{ id: "derm-test-1", test_code: "CBC" }] });
+    const res = await request(app).get("/lab-vendors/catalog?search=cbc&active_only=true");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(queryMock).toHaveBeenLastCalledWith(expect.stringContaining("FROM derm_lab_catalog"), expect.any(Array));
   });
 
   it("GET /lab-vendors/catalog returns 500 on error", async () => {
@@ -99,11 +116,28 @@ describe("Lab vendors routes", () => {
     expect(res.body).toHaveLength(1);
   });
 
+  it("GET /lab-vendors/order-sets returns empty list when legacy table is missing", async () => {
+    queryMock.mockRejectedValueOnce(Object.assign(new Error("missing relation"), { code: "42P01" }));
+    const res = await request(app).get("/lab-vendors/order-sets?category=Derm");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
   it("GET /lab-vendors/categories returns list", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ category: "Derm" }] });
     const res = await request(app).get("/lab-vendors/categories");
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
+  });
+
+  it("GET /lab-vendors/categories falls back to derm lab catalog when legacy table is missing", async () => {
+    queryMock
+      .mockRejectedValueOnce(Object.assign(new Error("missing relation"), { code: "42P01" }))
+      .mockResolvedValueOnce({ rows: [{ category: "pathology", test_count: "3" }] });
+    const res = await request(app).get("/lab-vendors/categories");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(queryMock).toHaveBeenLastCalledWith(expect.stringContaining("FROM derm_lab_catalog"), ["tenant-1"]);
   });
 
   it("POST /lab-vendors/order-sets creates order set", async () => {

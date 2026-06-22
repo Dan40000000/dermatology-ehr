@@ -142,6 +142,30 @@ function toIsoDate(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
 }
 
+function daysSince(value: unknown): number | null {
+  if (!value) return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - date.getTime()) / 86_400_000));
+}
+
+function ageLabel(days: number | null): string {
+  if (days === null) return "Unknown";
+  if (days < 1) return "Today";
+  if (days < 31) return `${days} day${days === 1 ? "" : "s"}`;
+  if (days < 365) {
+    const months = Math.max(1, Math.floor(days / 30));
+    return `${months} month${months === 1 ? "" : "s"}`;
+  }
+  const years = Math.floor(days / 365);
+  const remainingMonths = Math.floor((days % 365) / 30);
+  return remainingMonths ? `${years}y ${remainingMonths}m` : `${years} year${years === 1 ? "" : "s"}`;
+}
+
+function isRetainedStatus(status: string): boolean {
+  return ["active", "pilot", "onboarding", "at_risk"].includes(status);
+}
+
 function mapClient(row: any) {
   return {
     id: row.id,
@@ -196,7 +220,7 @@ async function getClientsWithDetails(clientId?: string) {
   const clientIds = clients.map((client) => client.id);
   const tenantIds = Array.from(new Set(clients.map((client) => client.linkedTenantId).filter(Boolean))) as string[];
 
-  const [subscriptionsResult, aiKeysResult, usageResult] = await Promise.all([
+  const [subscriptionsResult, aiKeysResult, usageResult, providerCountsResult] = await Promise.all([
     pool.query(
       `SELECT *
        FROM crm_client_subscriptions
@@ -225,6 +249,18 @@ async function getClientsWithDetails(clientId?: string) {
            WHERE tenant_id = ANY($1::text[])
              AND created_at >= date_trunc('month', NOW())
            GROUP BY tenant_id, provider`,
+          [tenantIds]
+        )
+      : Promise.resolve({ rows: [] } as any),
+    tenantIds.length
+      ? pool.query(
+          `SELECT
+             tenant_id,
+             COUNT(*)::int AS provider_count,
+             COUNT(*) FILTER (WHERE COALESCE(is_active, TRUE))::int AS active_provider_count
+           FROM providers
+           WHERE tenant_id = ANY($1::text[])
+           GROUP BY tenant_id`,
           [tenantIds]
         )
       : Promise.resolve({ rows: [] } as any),
@@ -280,10 +316,22 @@ async function getClientsWithDetails(clientId?: string) {
     usageByTenant.set(row.tenant_id, list);
   }
 
+  const providerCountsByTenant = new Map<string, { providerCount: number; activeProviderCount: number }>();
+  for (const row of providerCountsResult.rows) {
+    providerCountsByTenant.set(row.tenant_id, {
+      providerCount: cents(row.provider_count),
+      activeProviderCount: cents(row.active_provider_count),
+    });
+  }
+
   return clients.map((client) => {
     const subscriptions = subscriptionsByClient.get(client.id) || [];
     const aiKeys = aiKeysByClient.get(client.id) || [];
     const aiUsage = client.linkedTenantId ? usageByTenant.get(client.linkedTenantId) || [] : [];
+    const providerCounts = client.linkedTenantId
+      ? providerCountsByTenant.get(client.linkedTenantId) || { providerCount: 0, activeProviderCount: 0 }
+      : { providerCount: 0, activeProviderCount: 0 };
+    const accountAgeDays = daysSince(client.createdAt);
     const perryPaidSubscriptionCents = subscriptions
       .filter((item) => item.paidBy === "perry_software" && item.status !== "cancelled")
       .reduce((sum, item) => sum + item.amountCents, 0);
@@ -300,6 +348,12 @@ async function getClientsWithDetails(clientId?: string) {
         amazonVoiceSpendCents: aiUsage.filter((item) => item.provider === "aws_healthscribe").reduce((sum, item) => sum + item.estimatedCostCents, 0),
         activeSubscriptions: subscriptions.filter((item) => item.status === "active" || item.status === "trialing").length,
         activeAiKeys: aiKeys.filter((item) => item.status === "active").length,
+        providerCount: providerCounts.providerCount,
+        activeProviderCount: providerCounts.activeProviderCount,
+        accountAgeDays,
+        accountAgeLabel: ageLabel(accountAgeDays),
+        isNewClient: accountAgeDays !== null && accountAgeDays <= 30,
+        isRetainedClient: isRetainedStatus(client.status),
       },
     };
   });
@@ -307,14 +361,51 @@ async function getClientsWithDetails(clientId?: string) {
 
 async function getOverview() {
   const clients = await getClientsWithDetails();
+  const retainedClients = clients.filter((client: any) => client.metrics.isRetainedClient);
+  const totalProviderCount = Array.from(
+    clients.reduce((map: Map<string, number>, client: any) => {
+      const key = client.linkedTenantId || client.id;
+      map.set(key, Math.max(map.get(key) || 0, client.metrics.providerCount || 0));
+      return map;
+    }, new Map<string, number>()).values()
+  ).reduce((sum: number, count: number) => sum + count, 0);
+  const activeProviderCount = Array.from(
+    clients.reduce((map: Map<string, number>, client: any) => {
+      const key = client.linkedTenantId || client.id;
+      map.set(key, Math.max(map.get(key) || 0, client.metrics.activeProviderCount || 0));
+      return map;
+    }, new Map<string, number>()).values()
+  ).reduce((sum: number, count: number) => sum + count, 0);
+  const knownAges = clients
+    .map((client: any) => client.metrics.accountAgeDays)
+    .filter((days: number | null) => typeof days === "number") as number[];
+  const statusCounts = clients.reduce((counts: Record<string, number>, client: any) => {
+    counts[client.status] = (counts[client.status] || 0) + 1;
+    return counts;
+  }, {});
+
   return {
     clients,
     summary: {
       totalClients: clients.length,
-      activeClients: clients.filter((client: any) => client.status === "active" || client.status === "pilot" || client.status === "onboarding").length,
+      activeClients: retainedClients.length,
+      newClients30d: clients.filter((client: any) => client.metrics.isNewClient && client.status !== "cancelled").length,
+      retainingClients: retainedClients.length,
+      atRiskClients: clients.filter((client: any) => client.status === "at_risk").length,
+      pausedClients: clients.filter((client: any) => client.status === "paused").length,
+      cancelledClients: clients.filter((client: any) => client.status === "cancelled").length,
+      totalProviders: totalProviderCount,
+      activeProviders: activeProviderCount,
+      averageClientAgeDays: knownAges.length ? Math.round(knownAges.reduce((sum, days) => sum + days, 0) / knownAges.length) : null,
+      averageClientAgeLabel: knownAges.length ? ageLabel(Math.round(knownAges.reduce((sum, days) => sum + days, 0) / knownAges.length)) : "Unknown",
+      averageProvidersPerClient: clients.length ? Number((clients.reduce((sum: number, client: any) => sum + (client.metrics.providerCount || 0), 0) / clients.length).toFixed(1)) : 0,
+      statusCounts,
       monthlyRecurringRevenueCents: clients
         .filter((client: any) => client.status !== "cancelled")
         .reduce((sum: number, client: any) => sum + client.monthlyFeeCents, 0),
+      annualRunRateCents: clients
+        .filter((client: any) => client.status !== "cancelled")
+        .reduce((sum: number, client: any) => sum + client.monthlyFeeCents, 0) * 12,
       perryPaidSubscriptionCents: clients.reduce((sum: number, client: any) => sum + client.metrics.perryPaidSubscriptionCents, 0),
       aiSpendCents: clients.reduce((sum: number, client: any) => sum + client.metrics.aiSpendCents, 0),
       openAiSpendCents: clients.reduce((sum: number, client: any) => sum + client.metrics.openAiSpendCents, 0),

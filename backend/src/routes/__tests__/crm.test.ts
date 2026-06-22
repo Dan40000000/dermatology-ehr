@@ -198,6 +198,19 @@ const usageRows = [
   },
 ];
 
+const providerCountRows = [
+  {
+    tenant_id: "tenant-demo",
+    provider_count: 3,
+    active_provider_count: 2,
+  },
+  {
+    tenant_id: "tenant-demo-test",
+    provider_count: 5,
+    active_provider_count: 4,
+  },
+];
+
 function installCrmQueryMock(loginUser = ownerRow) {
   queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
     if (sql.includes("FROM crm_client_users") && sql.includes("lower(email)")) {
@@ -234,6 +247,11 @@ function installCrmQueryMock(loginUser = ownerRow) {
     if (sql.includes("FROM openai_usage_audit")) {
       const tenantIds = (params?.[0] as string[]) || [];
       const rows = usageRows.filter((row) => tenantIds.includes(row.tenant_id));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.includes("FROM providers")) {
+      const tenantIds = (params?.[0] as string[]) || [];
+      const rows = providerCountRows.filter((row) => tenantIds.includes(row.tenant_id));
       return { rows, rowCount: rows.length };
     }
     return { rows: [], rowCount: 0 };
@@ -282,8 +300,15 @@ describe("CRM routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe("owner");
     expect(res.body.clients).toHaveLength(2);
+    expect(res.body.summary.newClients30d).toEqual(expect.any(Number));
+    expect(res.body.summary.retainingClients).toBe(2);
+    expect(res.body.summary.totalProviders).toBe(8);
+    expect(res.body.summary.activeProviders).toBe(6);
+    expect(res.body.summary.averageProvidersPerClient).toBe(4);
     expect(res.body.summary.openAiSpendCents).toBe(42);
     expect(res.body.summary.amazonVoiceSpendCents).toBe(36);
+    expect(res.body.clients[0].metrics.providerCount).toBe(3);
+    expect(res.body.clients[0].metrics.accountAgeLabel).toEqual(expect.any(String));
     expect(res.body.clients[0].aiKeys[0].maskedKey).toBe("sk-...railway");
   });
 
@@ -301,6 +326,7 @@ describe("CRM routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe("client");
     expect(res.body.client.id).toBe("crm-client-clean");
+    expect(res.body.client.metrics.providerCount).toBe(3);
     expect(res.body.client.metrics.openAiSpendCents).toBe(42);
     expect(res.body.client.metrics.amazonVoiceSpendCents).toBe(36);
   });

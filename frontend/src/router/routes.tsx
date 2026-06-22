@@ -100,7 +100,6 @@ const IntegrationsSettingsPage = lazy(() => import('../pages/IntegrationsSetting
 const AIAgentConfigsPage = lazy(() => import('../pages/AIAgentConfigsPage').then(m => ({ default: m.AIAgentConfigsPage })));
 const OpenAiAuditPage = lazy(() => import('../pages/OpenAiAuditPage').then(m => ({ default: m.OpenAiAuditPage })));
 const CrmDashboardPage = lazy(() => import('../pages/CrmDashboardPage').then(m => ({ default: m.CrmDashboardPage })));
-const ClientAccountPage = lazy(() => import('../pages/ClientAccountPage').then(m => ({ default: m.ClientAccountPage })));
 const ProfessionalFeedbackPage = lazy(() => import('../pages/ProfessionalFeedbackPage').then(m => ({ default: m.ProfessionalFeedbackPage })));
 const ReferralsPage = lazy(() => import('../pages/ReferralsPage').then(m => ({ default: m.ReferralsPage })));
 const ProtocolsPage = lazy(() => import('../pages/ProtocolsPage').then(m => ({ default: m.ProtocolsPage })));
@@ -173,14 +172,6 @@ export const routes: RouteObject[] = [
   {
     path: '/login',
     element: <LoginPage />,
-  },
-  {
-    path: '/client/login',
-    element: lazyWithSuspense(ClientAccountPage),
-  },
-  {
-    path: '/client/account',
-    element: lazyWithSuspense(ClientAccountPage),
   },
   // Patient Portal Routes
   {

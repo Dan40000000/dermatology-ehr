@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Perry Software Client Account</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-account-page>
+    <main class="account-shell">
+      <section class="card account-card">
+        <div class="account-topbar">
+          <a href="/" class="back-link">Perry Software</a>
+          <button id="logoutButton" class="button button-secondary hidden" type="button">Sign out</button>
+        </div>
+
+        <div id="loginView">
+          <div class="eyebrow">Client Account</div>
+          <h1>Sign in to your account</h1>
+          <p class="muted">View account status, subscriptions, AI usage, and managed vendor connections.</p>
+
+          <div id="loginError" class="alert alert-error hidden" role="alert"></div>
+
+          <form id="loginForm" class="account-form">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="username" required />
+
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+            <button id="loginButton" class="button" type="submit">Sign in</button>
+          </form>
+        </div>
+
+        <div id="accountView" class="hidden">
+          <div class="account-header">
+            <div>
+              <div class="eyebrow">Account Management</div>
+              <h1 id="accountTitle">Perry Software CRM</h1>
+              <p id="accountSubtitle" class="muted"></p>
+            </div>
+            <button id="refreshButton" class="button button-secondary" type="button">Refresh</button>
+          </div>
+
+          <div id="accountError" class="alert alert-error hidden" role="alert"></div>
+          <div id="summaryGrid" class="metric-grid"></div>
+          <div id="clientList" class="account-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const API_BASE = "https://derm-api-production.up.railway.app";
+      const TOKEN_KEY = "perry_crm_token";
+      const USER_KEY = "perry_crm_user";
+
+      const state = {
+        token: localStorage.getItem(TOKEN_KEY) || "",
+        user: readStoredUser(),
+        account: null,
+      };
+
+      const loginView = document.getElementById("loginView");
+      const accountView = document.getElementById("accountView");
+      const loginForm = document.getElementById("loginForm");
+      const loginButton = document.getElementById("loginButton");
+      const logoutButton = document.getElementById("logoutButton");
+      const refreshButton = document.getElementById("refreshButton");
+      const loginError = document.getElementById("loginError");
+      const accountError = document.getElementById("accountError");
+      const accountTitle = document.getElementById("accountTitle");
+      const accountSubtitle = document.getElementById("accountSubtitle");
+      const summaryGrid = document.getElementById("summaryGrid");
+      const clientList = document.getElementById("clientList");
+
+      function readStoredUser() {
+        try {
+          const raw = localStorage.getItem(USER_KEY);
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function showError(element, message) {
+        element.textContent = message || "";
+        element.classList.toggle("hidden", !message);
+      }
+
+      function setLoading(isLoading) {
+        loginButton.disabled = isLoading;
+        refreshButton.disabled = isLoading;
+        loginButton.textContent = isLoading ? "Signing in..." : "Sign in";
+      }
+
+      function formatMoney(cents) {
+        return new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+        }).format((Number(cents) || 0) / 100);
+      }
+
+      function labelize(value) {
+        return String(value || "-").replace(/_/g, " ");
+      }
+
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function metric(label, value, detail) {
+        const node = el("div", "metric");
+        node.append(el("div", "metric-label", label));
+        node.append(el("div", "metric-value", value));
+        node.append(el("div", "metric-detail", detail));
+        return node;
+      }
+
+      function badge(text) {
+        return el("span", "status-badge", labelize(text));
+      }
+
+      async function api(path, options = {}) {
+        const res = await fetch(`${API_BASE}${path}`, {
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+            ...(options.headers || {}),
+          },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error || "Request failed");
+        }
+        return body;
+      }
+
+      async function login(email, password) {
+        const body = await api("/api/crm/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
+        state.token = body.token;
+        state.user = body.user;
+        localStorage.setItem(TOKEN_KEY, body.token);
+        localStorage.setItem(USER_KEY, JSON.stringify(body.user));
+        await loadAccount();
+      }
+
+      async function loadAccount() {
+        if (!state.token) return;
+        setLoading(true);
+        showError(accountError, "");
+        try {
+          state.account = await api("/api/crm/client/account");
+          render();
+        } catch (error) {
+          logout(false);
+          showError(loginError, error.message || "Please sign in again.");
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      function logout(renderLogin = true) {
+        state.token = "";
+        state.user = null;
+        state.account = null;
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        if (renderLogin) render();
+      }
+
+      function renderTable(title, headers, rows, emptyText) {
+        const section = el("section", "data-section");
+        section.append(el("h3", "", title));
+        if (!rows.length) {
+          section.append(el("p", "muted", emptyText));
+          return section;
+        }
+
+        const wrap = el("div", "table-wrap");
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        headers.forEach((header) => headRow.append(el("th", "", header)));
+        thead.append(headRow);
+        table.append(thead);
+
+        const tbody = document.createElement("tbody");
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          row.forEach((cell) => {
+            const td = document.createElement("td");
+            if (cell instanceof Node) {
+              td.append(cell);
+            } else {
+              td.textContent = cell;
+            }
+            tr.append(td);
+          });
+          tbody.append(tr);
+        });
+        table.append(tbody);
+        wrap.append(table);
+        section.append(wrap);
+        return section;
+      }
+
+      function renderClient(client, compact = false) {
+        const card = el("article", "client-card");
+        const header = el("div", "client-card-header");
+        const titleWrap = el("div");
+        titleWrap.append(el("h2", "", client.accountName));
+        titleWrap.append(el("p", "muted", client.implementationStage || ""));
+        header.append(titleWrap);
+
+        const statuses = el("div", "status-row");
+        statuses.append(badge(client.status));
+        statuses.append(badge(client.subscriptionStatus));
+        header.append(statuses);
+        card.append(header);
+
+        if (client.productUrl) {
+          const link = el("a", "button button-secondary client-app-link", "Open client app");
+          link.href = client.productUrl;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          card.append(link);
+        }
+
+        const metrics = el("div", "metric-grid");
+        metrics.append(metric("OpenAI", formatMoney(client.metrics.openAiSpendCents), "Month-to-date"));
+        metrics.append(metric("Amazon Voice", formatMoney(client.metrics.amazonVoiceSpendCents), "Month-to-date"));
+        metrics.append(metric("Plan", client.planName, `${formatMoney(client.monthlyFeeCents)} / month`));
+        metrics.append(metric("Active AI Keys", String(client.metrics.activeAiKeys), "Masked records only"));
+        card.append(metrics);
+
+        if (!compact) {
+          card.append(renderClientTables(client));
+        }
+        return card;
+      }
+
+      function renderClientTables(client) {
+        const wrap = el("div", "tables-grid");
+        wrap.append(renderTable(
+          "Subscriptions",
+          ["Vendor", "Description", "Paid By", "Amount", "Status"],
+          client.subscriptions.map((item) => [
+            item.vendor,
+            item.description,
+            labelize(item.paidBy),
+            formatMoney(item.amountCents),
+            labelize(item.status),
+          ]),
+          "No subscriptions."
+        ));
+        wrap.append(renderTable(
+          "AI Keys",
+          ["Provider", "Label", "Environment", "Masked Key", "Status"],
+          client.aiKeys.map((item) => [
+            item.provider,
+            item.label,
+            item.environment,
+            item.maskedKey || "-",
+            labelize(item.status),
+          ]),
+          "No AI key records."
+        ));
+        wrap.append(renderTable(
+          "AI Usage",
+          ["Provider", "Requests", "Audio", "Spend", "Last Used"],
+          client.aiUsage.map((item) => [
+            item.provider === "aws_healthscribe" ? "Amazon Voice" : item.provider,
+            String(item.requests),
+            `${Math.round(item.estimatedAudioSeconds || 0)}s`,
+            formatMoney(item.estimatedCostCents),
+            item.lastUsedAt ? new Date(item.lastUsedAt).toLocaleString() : "-",
+          ]),
+          "No AI usage this month."
+        ));
+        return wrap;
+      }
+
+      function render() {
+        const signedIn = Boolean(state.token && state.account);
+        loginView.classList.toggle("hidden", signedIn);
+        accountView.classList.toggle("hidden", !signedIn);
+        logoutButton.classList.toggle("hidden", !signedIn);
+        showError(loginError, "");
+
+        if (!signedIn) return;
+
+        summaryGrid.replaceChildren();
+        clientList.replaceChildren();
+        accountSubtitle.textContent = `${state.user.fullName} - ${labelize(state.user.role)}`;
+
+        if (state.account.mode === "owner") {
+          accountTitle.textContent = "Perry Software CRM";
+          const summary = state.account.summary;
+          summaryGrid.append(metric("Clients", String(summary.totalClients), `${summary.activeClients} active or pilot`));
+          summaryGrid.append(metric("AI Spend MTD", formatMoney(summary.aiSpendCents), `${formatMoney(summary.openAiSpendCents)} OpenAI`));
+          summaryGrid.append(metric("Amazon Voice", formatMoney(summary.amazonVoiceSpendCents), "Voice/transcription"));
+          summaryGrid.append(metric("Perry-paid Tools", formatMoney(summary.perryPaidSubscriptionCents), "Tracked vendors"));
+          state.account.clients.forEach((client) => {
+            clientList.append(renderClient(client, false));
+          });
+          return;
+        }
+
+        const client = state.account.client;
+        accountTitle.textContent = client.accountName;
+        summaryGrid.append(metric("OpenAI", formatMoney(client.metrics.openAiSpendCents), "Month-to-date"));
+        summaryGrid.append(metric("Amazon Voice", formatMoney(client.metrics.amazonVoiceSpendCents), "Month-to-date"));
+        clientList.append(renderClient(client, false));
+      }
+
+      loginForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setLoading(true);
+        showError(loginError, "");
+        try {
+          const data = new FormData(loginForm);
+          await login(String(data.get("email") || ""), String(data.get("password") || ""));
+        } catch (error) {
+          showError(loginError, error.message || "Unable to sign in.");
+        } finally {
+          setLoading(false);
+        }
+      });
+
+      logoutButton.addEventListener("click", () => logout(true));
+      refreshButton.addEventListener("click", () => loadAccount());
+
+      if (state.token) {
+        loadAccount();
+      } else {
+        render();
+      }
+    </script>
+  </body>
+</html>

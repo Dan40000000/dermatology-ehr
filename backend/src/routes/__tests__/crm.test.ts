@@ -177,6 +177,84 @@ const aiKeyRows = [
   },
 ];
 
+const invoiceRows = [
+  {
+    id: "invoice-clean-open",
+    client_id: "crm-client-clean",
+    invoice_number: "INV-CLEAN-001",
+    description: "Pilot account",
+    amount_cents: 0,
+    status: "open",
+    due_date: "2026-06-30",
+    paid_at: null,
+    stripe_invoice_url: null,
+    notes: "Pilot bill.",
+    created_at: "2026-06-01T12:00:00.000Z",
+    updated_at: "2026-06-01T12:00:00.000Z",
+  },
+  {
+    id: "invoice-test-overdue",
+    client_id: "crm-client-test-data",
+    invoice_number: "INV-DATA-001",
+    description: "Test data account",
+    amount_cents: 12500,
+    status: "overdue",
+    due_date: "2026-06-10",
+    paid_at: null,
+    stripe_invoice_url: "https://pay.stripe.test/inv-data",
+    notes: "Synthetic overdue balance.",
+    created_at: "2026-06-01T12:00:00.000Z",
+    updated_at: "2026-06-01T12:00:00.000Z",
+  },
+];
+
+const requestRows = [
+  {
+    id: "request-clean-provider",
+    client_id: "crm-client-clean",
+    requested_by_user_id: "crm-user-clean",
+    requested_by_name: "Clean Pilot Admin",
+    requested_by_email: "pilot-empty@perrysoftwarellc.com",
+    client_name: "Derm Pilot - Clean Environment",
+    category: "provider_onboarding",
+    title: "Add provider: Dr. New Provider",
+    description: "New provider needs access.",
+    priority: "normal",
+    status: "new",
+    provider_full_name: "Dr. New Provider",
+    provider_specialty: "Dermatology",
+    provider_email: "new.provider@example.com",
+    provider_phone: "5415551212",
+    requested_start_date: "2026-07-01",
+    owner_notes: null,
+    completed_at: null,
+    created_at: "2026-06-20T12:00:00.000Z",
+    updated_at: "2026-06-20T12:00:00.000Z",
+  },
+  {
+    id: "request-test-integration",
+    client_id: "crm-client-test-data",
+    requested_by_user_id: "crm-user-test",
+    requested_by_name: "Test Data Pilot Client",
+    requested_by_email: "pilot-testdata@perrysoftwarellc.com",
+    client_name: "Derm Pilot - Test Data Environment",
+    category: "integration",
+    title: "Monitor Twilio A2P verification",
+    description: "Carrier registration watch item.",
+    priority: "high",
+    status: "waiting_on_client",
+    provider_full_name: null,
+    provider_specialty: null,
+    provider_email: null,
+    provider_phone: null,
+    requested_start_date: null,
+    owner_notes: "Waiting on carrier approval.",
+    completed_at: null,
+    created_at: "2026-06-19T12:00:00.000Z",
+    updated_at: "2026-06-19T12:00:00.000Z",
+  },
+];
+
 const usageRows = [
   {
     tenant_id: "tenant-demo",
@@ -244,6 +322,52 @@ function installCrmQueryMock(loginUser = ownerRow) {
       const rows = aiKeyRows.filter((row) => clientIds.includes(row.client_id));
       return { rows, rowCount: rows.length };
     }
+    if (sql.includes("FROM crm_client_invoices")) {
+      const clientIds = (params?.[0] as string[]) || [];
+      const rows = invoiceRows.filter((row) => clientIds.includes(row.client_id));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.includes("FROM crm_client_requests")) {
+      const clientIds = (params?.[0] as string[]) || [];
+      const rows = requestRows.filter((row) => clientIds.includes(row.client_id));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.includes("INSERT INTO crm_client_requests")) {
+      const [
+        id,
+        clientId,
+        requestedByUserId,
+        title,
+        description,
+        providerFullName,
+        providerSpecialty,
+        providerEmail,
+        providerPhone,
+        requestedStartDate,
+      ] = (params || []) as string[];
+      return {
+        rows: [{
+          id,
+          client_id: clientId,
+          requested_by_user_id: requestedByUserId,
+          category: "provider_onboarding",
+          title,
+          description,
+          priority: "normal",
+          status: "new",
+          provider_full_name: providerFullName,
+          provider_specialty: providerSpecialty,
+          provider_email: providerEmail,
+          provider_phone: providerPhone,
+          requested_start_date: requestedStartDate,
+          owner_notes: null,
+          completed_at: null,
+          created_at: "2026-06-22T12:00:00.000Z",
+          updated_at: "2026-06-22T12:00:00.000Z",
+        }],
+        rowCount: 1,
+      };
+    }
     if (sql.includes("FROM openai_usage_audit")) {
       const tenantIds = (params?.[0] as string[]) || [];
       const rows = usageRows.filter((row) => tenantIds.includes(row.tenant_id));
@@ -307,7 +431,15 @@ describe("CRM routes", () => {
     expect(res.body.summary.averageProvidersPerClient).toBe(4);
     expect(res.body.summary.openAiSpendCents).toBe(42);
     expect(res.body.summary.amazonVoiceSpendCents).toBe(36);
+    expect(res.body.summary.openRequestCount).toBe(2);
+    expect(res.body.summary.providerOnboardingRequests).toBe(1);
+    expect(res.body.summary.highPriorityRequests).toBe(1);
+    expect(res.body.summary.openInvoiceCents).toBe(12500);
+    expect(res.body.summary.overdueInvoiceCents).toBe(12500);
+    expect(res.body.requests).toHaveLength(2);
+    expect(res.body.invoices).toHaveLength(2);
     expect(res.body.clients[0].metrics.providerCount).toBe(3);
+    expect(res.body.clients[0].metrics.openRequestCount).toBe(1);
     expect(res.body.clients[0].metrics.accountAgeLabel).toEqual(expect.any(String));
     expect(res.body.clients[0].aiKeys[0].maskedKey).toBe("sk-...railway");
   });
@@ -329,5 +461,34 @@ describe("CRM routes", () => {
     expect(res.body.client.metrics.providerCount).toBe(3);
     expect(res.body.client.metrics.openAiSpendCents).toBe(42);
     expect(res.body.client.metrics.amazonVoiceSpendCents).toBe(36);
+    expect(res.body.client.invoices).toHaveLength(1);
+    expect(res.body.client.requests).toHaveLength(1);
+    expect(res.body.client.metrics.openRequestCount).toBe(1);
+  });
+
+  it("lets a client submit an add-provider request", async () => {
+    installCrmQueryMock(clientUserRow);
+
+    const login = await request(app)
+      .post("/api/crm/auth/login")
+      .send({ email: "pilot-empty@perrysoftwarellc.com", password: "PilotCRM-2026!" });
+
+    const res = await request(app)
+      .post("/api/crm/client/provider-requests")
+      .set("Authorization", `Bearer ${login.body.token}`)
+      .send({
+        providerFullName: "Dr. Jordan Lee",
+        providerSpecialty: "Dermatology",
+        providerEmail: "jordan.lee@example.com",
+        providerPhone: "5415550000",
+        requestedStartDate: "2026-07-15",
+        notes: "Needs first-time login and schedule access.",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.request.category).toBe("provider_onboarding");
+    expect(res.body.request.status).toBe("new");
+    expect(res.body.request.providerFullName).toBe("Dr. Jordan Lee");
+    expect(res.body.request.title).toBe("Add provider: Dr. Jordan Lee");
   });
 });

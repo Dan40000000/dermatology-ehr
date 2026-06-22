@@ -14152,6 +14152,151 @@ Consider age-appropriate treatments and include family counseling points.',
       updated_at = NOW();
     `,
   },
+  {
+    name: "205_perry_crm_operations",
+    sql: `
+    CREATE TABLE IF NOT EXISTS crm_client_invoices (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES crm_clients(id) ON DELETE CASCADE,
+      invoice_number TEXT NOT NULL,
+      description TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('draft', 'open', 'paid', 'overdue', 'void')),
+      due_date DATE,
+      paid_at TIMESTAMPTZ,
+      stripe_invoice_url TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_crm_client_invoices_number
+      ON crm_client_invoices(invoice_number);
+    CREATE INDEX IF NOT EXISTS idx_crm_client_invoices_client
+      ON crm_client_invoices(client_id);
+    CREATE INDEX IF NOT EXISTS idx_crm_client_invoices_status
+      ON crm_client_invoices(status);
+
+    CREATE TABLE IF NOT EXISTS crm_client_requests (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES crm_clients(id) ON DELETE CASCADE,
+      requested_by_user_id TEXT REFERENCES crm_client_users(id) ON DELETE SET NULL,
+      category TEXT NOT NULL DEFAULT 'support'
+        CHECK (category IN ('provider_onboarding', 'billing', 'support', 'implementation', 'access', 'integration')),
+      title TEXT NOT NULL,
+      description TEXT,
+      priority TEXT NOT NULL DEFAULT 'normal'
+        CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+      status TEXT NOT NULL DEFAULT 'new'
+        CHECK (status IN ('new', 'in_review', 'waiting_on_client', 'scheduled', 'completed', 'cancelled')),
+      provider_full_name TEXT,
+      provider_specialty TEXT,
+      provider_email TEXT,
+      provider_phone TEXT,
+      requested_start_date DATE,
+      owner_notes TEXT,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crm_client_requests_client
+      ON crm_client_requests(client_id);
+    CREATE INDEX IF NOT EXISTS idx_crm_client_requests_status
+      ON crm_client_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_crm_client_requests_category
+      ON crm_client_requests(category);
+
+    INSERT INTO crm_client_invoices (
+      id,
+      client_id,
+      invoice_number,
+      description,
+      amount_cents,
+      status,
+      due_date,
+      paid_at,
+      stripe_invoice_url,
+      notes
+    ) VALUES
+      (
+        'crm-invoice-empty-pilot-june',
+        'crm-client-pilot-empty',
+        'INV-PILOT-CLEAN-2026-06',
+        'Pilot validation account - June',
+        0,
+        'open',
+        '2026-06-30',
+        NULL,
+        NULL,
+        'Pilot billing record for client portal validation.'
+      ),
+      (
+        'crm-invoice-test-pilot-june',
+        'crm-client-pilot-test-data',
+        'INV-PILOT-DATA-2026-06',
+        'Pilot validation account - June',
+        0,
+        'open',
+        '2026-06-30',
+        NULL,
+        NULL,
+        'Pilot billing record for client portal validation.'
+      )
+    ON CONFLICT (invoice_number) DO UPDATE SET
+      description = EXCLUDED.description,
+      amount_cents = EXCLUDED.amount_cents,
+      status = EXCLUDED.status,
+      due_date = EXCLUDED.due_date,
+      paid_at = EXCLUDED.paid_at,
+      stripe_invoice_url = EXCLUDED.stripe_invoice_url,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+
+    INSERT INTO crm_client_requests (
+      id,
+      client_id,
+      requested_by_user_id,
+      category,
+      title,
+      description,
+      priority,
+      status,
+      owner_notes
+    ) VALUES
+      (
+        'crm-request-empty-stripe-setup',
+        'crm-client-pilot-empty',
+        'crm-user-pilot-empty-client',
+        'billing',
+        'Connect Stripe billing for clean pilot',
+        'Client needs a production-ready Stripe billing link and invoice setup before go-live.',
+        'high',
+        'in_review',
+        'Verify Stripe mode and client-owned payment account before moving to active.'
+      ),
+      (
+        'crm-request-test-twilio-watch',
+        'crm-client-pilot-test-data',
+        'crm-user-pilot-test-data-client',
+        'integration',
+        'Monitor Twilio A2P verification',
+        'Track campaign approval and keep SMS live-send gated until Twilio returns verified.',
+        'high',
+        'waiting_on_client',
+        'Waiting on carrier/Twilio campaign approval response.'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      category = EXCLUDED.category,
+      title = EXCLUDED.title,
+      description = EXCLUDED.description,
+      priority = EXCLUDED.priority,
+      status = EXCLUDED.status,
+      owner_notes = EXCLUDED.owner_notes,
+      updated_at = NOW();
+    `,
+  },
 
 ];
 

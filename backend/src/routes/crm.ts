@@ -72,6 +72,15 @@ const aiKeySchema = z.object({
   notes: z.string().trim().max(1000).nullable().optional(),
 });
 
+const providerRequestSchema = z.object({
+  providerFullName: z.string().trim().min(2).max(160),
+  providerSpecialty: z.string().trim().min(1).max(120),
+  providerEmail: z.string().trim().email().nullable().optional(),
+  providerPhone: z.string().trim().max(40).nullable().optional(),
+  requestedStartDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
 function mapCrmUser(row: any): CrmUser {
   return {
     id: row.id,
@@ -190,6 +199,48 @@ function mapClient(row: any) {
   };
 }
 
+function mapInvoice(row: any) {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    invoiceNumber: row.invoice_number,
+    description: row.description,
+    amountCents: cents(row.amount_cents),
+    status: row.status,
+    dueDate: toIsoDate(row.due_date),
+    paidAt: row.paid_at ? new Date(row.paid_at).toISOString() : null,
+    stripeInvoiceUrl: row.stripe_invoice_url || null,
+    notes: row.notes || null,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+  };
+}
+
+function mapClientRequest(row: any) {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    requestedByUserId: row.requested_by_user_id || null,
+    requestedByName: row.requested_by_name || null,
+    requestedByEmail: row.requested_by_email || null,
+    clientName: row.client_name || null,
+    category: row.category,
+    title: row.title,
+    description: row.description || null,
+    priority: row.priority,
+    status: row.status,
+    providerFullName: row.provider_full_name || null,
+    providerSpecialty: row.provider_specialty || null,
+    providerEmail: row.provider_email || null,
+    providerPhone: row.provider_phone || null,
+    requestedStartDate: toIsoDate(row.requested_start_date),
+    ownerNotes: row.owner_notes || null,
+    completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+  };
+}
+
 async function getClientsWithDetails(clientId?: string) {
   const clientParams: unknown[] = [];
   let clientWhere = "";
@@ -220,7 +271,7 @@ async function getClientsWithDetails(clientId?: string) {
   const clientIds = clients.map((client) => client.id);
   const tenantIds = Array.from(new Set(clients.map((client) => client.linkedTenantId).filter(Boolean))) as string[];
 
-  const [subscriptionsResult, aiKeysResult, usageResult, providerCountsResult] = await Promise.all([
+  const [subscriptionsResult, aiKeysResult, invoicesResult, requestsResult, usageResult, providerCountsResult] = await Promise.all([
     pool.query(
       `SELECT *
        FROM crm_client_subscriptions
@@ -233,6 +284,50 @@ async function getClientsWithDetails(clientId?: string) {
        FROM crm_client_ai_keys
        WHERE client_id = ANY($1::text[])
        ORDER BY provider, environment, label`,
+      [clientIds]
+    ),
+    pool.query(
+      `SELECT *
+       FROM crm_client_invoices
+       WHERE client_id = ANY($1::text[])
+       ORDER BY
+         CASE status
+           WHEN 'overdue' THEN 1
+           WHEN 'open' THEN 2
+           WHEN 'draft' THEN 3
+           WHEN 'paid' THEN 4
+           ELSE 5
+         END,
+         due_date NULLS LAST,
+         created_at DESC`,
+      [clientIds]
+    ),
+    pool.query(
+      `SELECT
+         r.*,
+         u.full_name AS requested_by_name,
+         u.email AS requested_by_email,
+         c.account_name AS client_name
+       FROM crm_client_requests r
+       LEFT JOIN crm_client_users u ON u.id = r.requested_by_user_id
+       LEFT JOIN crm_clients c ON c.id = r.client_id
+       WHERE r.client_id = ANY($1::text[])
+       ORDER BY
+         CASE r.status
+           WHEN 'new' THEN 1
+           WHEN 'in_review' THEN 2
+           WHEN 'waiting_on_client' THEN 3
+           WHEN 'scheduled' THEN 4
+           WHEN 'completed' THEN 5
+           ELSE 6
+         END,
+         CASE r.priority
+           WHEN 'urgent' THEN 1
+           WHEN 'high' THEN 2
+           WHEN 'normal' THEN 3
+           ELSE 4
+         END,
+         r.created_at DESC`,
       [clientIds]
     ),
     tenantIds.length
@@ -302,6 +397,20 @@ async function getClientsWithDetails(clientId?: string) {
     aiKeysByClient.set(row.client_id, list);
   }
 
+  const invoicesByClient = new Map<string, any[]>();
+  for (const row of invoicesResult.rows) {
+    const list = invoicesByClient.get(row.client_id) || [];
+    list.push(mapInvoice(row));
+    invoicesByClient.set(row.client_id, list);
+  }
+
+  const requestsByClient = new Map<string, any[]>();
+  for (const row of requestsResult.rows) {
+    const list = requestsByClient.get(row.client_id) || [];
+    list.push(mapClientRequest(row));
+    requestsByClient.set(row.client_id, list);
+  }
+
   const usageByTenant = new Map<string, any[]>();
   for (const row of usageResult.rows) {
     const list = usageByTenant.get(row.tenant_id) || [];
@@ -327,6 +436,8 @@ async function getClientsWithDetails(clientId?: string) {
   return clients.map((client) => {
     const subscriptions = subscriptionsByClient.get(client.id) || [];
     const aiKeys = aiKeysByClient.get(client.id) || [];
+    const invoices = invoicesByClient.get(client.id) || [];
+    const requests = requestsByClient.get(client.id) || [];
     const aiUsage = client.linkedTenantId ? usageByTenant.get(client.linkedTenantId) || [] : [];
     const providerCounts = client.linkedTenantId
       ? providerCountsByTenant.get(client.linkedTenantId) || { providerCount: 0, activeProviderCount: 0 }
@@ -336,10 +447,14 @@ async function getClientsWithDetails(clientId?: string) {
       .filter((item) => item.paidBy === "perry_software" && item.status !== "cancelled")
       .reduce((sum, item) => sum + item.amountCents, 0);
     const aiSpendCents = aiUsage.reduce((sum, item) => sum + item.estimatedCostCents, 0);
+    const openInvoices = invoices.filter((item) => item.status === "open" || item.status === "overdue");
+    const openRequests = requests.filter((item) => item.status !== "completed" && item.status !== "cancelled");
     return {
       ...client,
       subscriptions,
       aiKeys,
+      invoices,
+      requests,
       aiUsage,
       metrics: {
         perryPaidSubscriptionCents,
@@ -348,6 +463,12 @@ async function getClientsWithDetails(clientId?: string) {
         amazonVoiceSpendCents: aiUsage.filter((item) => item.provider === "aws_healthscribe").reduce((sum, item) => sum + item.estimatedCostCents, 0),
         activeSubscriptions: subscriptions.filter((item) => item.status === "active" || item.status === "trialing").length,
         activeAiKeys: aiKeys.filter((item) => item.status === "active").length,
+        openInvoiceCents: openInvoices.reduce((sum, item) => sum + item.amountCents, 0),
+        overdueInvoiceCents: invoices.filter((item) => item.status === "overdue").reduce((sum, item) => sum + item.amountCents, 0),
+        paidInvoiceCents: invoices.filter((item) => item.status === "paid").reduce((sum, item) => sum + item.amountCents, 0),
+        openRequestCount: openRequests.length,
+        providerRequestCount: openRequests.filter((item) => item.category === "provider_onboarding").length,
+        highPriorityRequestCount: openRequests.filter((item) => item.priority === "high" || item.priority === "urgent").length,
         providerCount: providerCounts.providerCount,
         activeProviderCount: providerCounts.activeProviderCount,
         accountAgeDays,
@@ -361,6 +482,20 @@ async function getClientsWithDetails(clientId?: string) {
 
 async function getOverview() {
   const clients = await getClientsWithDetails();
+  const requests = clients.flatMap((client: any) =>
+    client.requests.map((request: any) => ({
+      ...request,
+      clientName: request.clientName || client.accountName,
+    }))
+  );
+  const invoices = clients.flatMap((client: any) =>
+    client.invoices.map((invoice: any) => ({
+      ...invoice,
+      clientName: client.accountName,
+    }))
+  );
+  const openRequests = requests.filter((request: any) => request.status !== "completed" && request.status !== "cancelled");
+  const openInvoices = invoices.filter((invoice: any) => invoice.status === "open" || invoice.status === "overdue");
   const retainedClients = clients.filter((client: any) => client.metrics.isRetainedClient);
   const totalProviderCount = Array.from(
     clients.reduce((map: Map<string, number>, client: any) => {
@@ -386,6 +521,8 @@ async function getOverview() {
 
   return {
     clients,
+    requests,
+    invoices,
     summary: {
       totalClients: clients.length,
       activeClients: retainedClients.length,
@@ -411,6 +548,11 @@ async function getOverview() {
       openAiSpendCents: clients.reduce((sum: number, client: any) => sum + client.metrics.openAiSpendCents, 0),
       amazonVoiceSpendCents: clients.reduce((sum: number, client: any) => sum + client.metrics.amazonVoiceSpendCents, 0),
       activeAiKeys: clients.reduce((sum: number, client: any) => sum + client.metrics.activeAiKeys, 0),
+      openRequestCount: openRequests.length,
+      providerOnboardingRequests: openRequests.filter((request: any) => request.category === "provider_onboarding").length,
+      highPriorityRequests: openRequests.filter((request: any) => request.priority === "high" || request.priority === "urgent").length,
+      openInvoiceCents: openInvoices.reduce((sum: number, invoice: any) => sum + invoice.amountCents, 0),
+      overdueInvoiceCents: invoices.filter((invoice: any) => invoice.status === "overdue").reduce((sum: number, invoice: any) => sum + invoice.amountCents, 0),
     },
   };
 }
@@ -463,6 +605,64 @@ router.get("/client/account", requireCrmAuth, async (req: CrmAuthedRequest, res)
   }
 
   res.json({ mode: "client", client });
+});
+
+router.post("/client/provider-requests", requireCrmAuth, async (req: CrmAuthedRequest, res) => {
+  if (req.crmUser?.role === "owner") {
+    return res.status(403).json({ error: "Owner accounts cannot create client provider requests" });
+  }
+
+  if (!req.crmUser?.clientId) {
+    return res.status(403).json({ error: "No client account linked" });
+  }
+
+  const parsed = providerRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid provider request payload", details: parsed.error.format() });
+  }
+
+  const data = parsed.data;
+  const id = randomUUID();
+  const title = `Add provider: ${data.providerFullName}`;
+  const description = [
+    `${data.providerFullName} needs to be added to the account.`,
+    `Specialty / role: ${data.providerSpecialty}.`,
+    data.requestedStartDate ? `Requested start date: ${data.requestedStartDate}.` : null,
+    data.notes || null,
+  ].filter(Boolean).join("\n");
+
+  const result = await pool.query(
+    `INSERT INTO crm_client_requests (
+       id,
+       client_id,
+       requested_by_user_id,
+       category,
+       title,
+       description,
+       priority,
+       status,
+       provider_full_name,
+       provider_specialty,
+       provider_email,
+       provider_phone,
+       requested_start_date
+     ) VALUES ($1, $2, $3, 'provider_onboarding', $4, $5, 'normal', 'new', $6, $7, $8, $9, $10::date)
+     RETURNING *`,
+    [
+      id,
+      req.crmUser.clientId,
+      req.crmUser.id,
+      title,
+      description,
+      data.providerFullName,
+      data.providerSpecialty,
+      data.providerEmail || null,
+      data.providerPhone || null,
+      data.requestedStartDate || null,
+    ]
+  );
+
+  res.status(201).json({ request: mapClientRequest(result.rows[0]) });
 });
 
 router.get("/admin/overview", requireAuth, requireRoles(["admin"]), async (_req: AuthedRequest, res) => {

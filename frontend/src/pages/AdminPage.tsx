@@ -847,6 +847,31 @@ export function AdminPage() {
               </div>
             </div>
           </Link>
+          <Link to="/admin/crm" style={{ textDecoration: 'none' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #0f766e 0%, #155e75 100%)',
+              padding: '1.5rem',
+              borderRadius: '12px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 6px rgba(15, 118, 110, 0.3)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 8px 16px rgba(15, 118, 110, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 6px rgba(15, 118, 110, 0.3)';
+            }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>CRM</div>
+              <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Client Accounts</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
+                Subscriptions, AI keys, and usage
+              </div>
+            </div>
+          </Link>
           <Link to="/admin/integrations#stripe-payments" style={{ textDecoration: 'none' }}>
             <div style={{
               background: 'linear-gradient(135deg, #2563eb 0%, #0f766e 100%)',
@@ -1298,6 +1323,9 @@ function AdminSettingsPanel() {
           </Link>
           <Link to="/admin/ai-agents" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
             AI Agents
+          </Link>
+          <Link to="/admin/crm" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            Client Accounts CRM
           </Link>
           {canViewProfessionalFeedback(user) && (
             <Link to="/admin/feedback" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>

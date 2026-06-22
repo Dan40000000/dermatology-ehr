@@ -11005,4 +11005,138 @@ export async function updateOpenAiUsageSettings(
   return res.json();
 }
 
+export interface CrmSubscription {
+  id: string;
+  vendor: string;
+  description: string;
+  category: string;
+  amountCents: number;
+  billingCycle: 'monthly' | 'annual' | 'usage' | 'one_time';
+  paidBy: 'perry_software' | 'client' | 'included';
+  status: 'active' | 'trialing' | 'paused' | 'cancelled';
+  nextRenewalDate: string | null;
+  notes: string | null;
+}
+
+export interface CrmAiKey {
+  id: string;
+  provider: string;
+  label: string;
+  keyReference: string | null;
+  maskedKey: string | null;
+  environment: string;
+  status: 'active' | 'needs_rotation' | 'disabled' | 'not_configured';
+  monthlyBudgetCents: number | null;
+  lastRotatedAt: string | null;
+  notes: string | null;
+}
+
+export interface CrmAiUsageRollup {
+  provider: string;
+  requests: number;
+  totalTokens: number;
+  estimatedAudioSeconds: number;
+  estimatedCostCents: number;
+  lastUsedAt: string | null;
+}
+
+export interface CrmClient {
+  id: string;
+  linkedTenantId: string | null;
+  accountName: string;
+  legalName: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  status: 'lead' | 'pilot' | 'onboarding' | 'active' | 'at_risk' | 'paused' | 'cancelled';
+  planName: string;
+  monthlyFeeCents: number;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  subscriptionStatus: string;
+  implementationStage: string;
+  environmentName: string | null;
+  productUrl: string | null;
+  notes: string | null;
+  subscriptions: CrmSubscription[];
+  aiKeys: CrmAiKey[];
+  aiUsage: CrmAiUsageRollup[];
+  metrics: {
+    perryPaidSubscriptionCents: number;
+    aiSpendCents: number;
+    openAiSpendCents: number;
+    amazonVoiceSpendCents: number;
+    activeSubscriptions: number;
+    activeAiKeys: number;
+  };
+}
+
+export interface CrmOverview {
+  clients: CrmClient[];
+  summary: {
+    totalClients: number;
+    activeClients: number;
+    monthlyRecurringRevenueCents: number;
+    perryPaidSubscriptionCents: number;
+    aiSpendCents: number;
+    openAiSpendCents: number;
+    amazonVoiceSpendCents: number;
+    activeAiKeys: number;
+  };
+}
+
+export interface CrmUser {
+  id: string;
+  clientId: string | null;
+  email: string;
+  fullName: string;
+  phone: string | null;
+  role: 'owner' | 'client_admin' | 'client_user';
+  forcePasswordReset: boolean;
+}
+
+export async function fetchCrmOverview(tenantId: string, accessToken: string): Promise<CrmOverview> {
+  const res = await fetch(`${API_BASE}/api/crm/admin/overview`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch CRM overview');
+  }
+  return res.json();
+}
+
+export async function crmLogin(email: string, password: string): Promise<{ token: string; user: CrmUser }> {
+  const res = await fetch(`${API_BASE}/api/crm/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to sign in');
+  }
+  return res.json();
+}
+
+export async function fetchCrmAccount(token: string): Promise<
+  | ({ mode: 'owner' } & CrmOverview)
+  | { mode: 'client'; client: CrmClient }
+> {
+  const res = await fetch(`${API_BASE}/api/crm/client/account`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch account');
+  }
+  return res.json();
+}
+
 export default apiClient;

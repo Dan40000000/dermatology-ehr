@@ -13882,6 +13882,276 @@ Consider age-appropriate treatments and include family counseling points.',
       ON patient_portal_sessions(expires_at);
     `,
   },
+  {
+    name: "204_perry_crm_dashboard",
+    sql: `
+    CREATE TABLE IF NOT EXISTS crm_clients (
+      id TEXT PRIMARY KEY,
+      linked_tenant_id TEXT REFERENCES tenants(id) ON DELETE SET NULL,
+      account_name TEXT NOT NULL,
+      legal_name TEXT,
+      contact_name TEXT,
+      contact_email TEXT,
+      contact_phone TEXT,
+      status TEXT NOT NULL DEFAULT 'pilot'
+        CHECK (status IN ('lead', 'pilot', 'onboarding', 'active', 'at_risk', 'paused', 'cancelled')),
+      plan_name TEXT NOT NULL DEFAULT 'Pilot',
+      monthly_fee_cents INTEGER NOT NULL DEFAULT 0,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      subscription_status TEXT NOT NULL DEFAULT 'trialing',
+      implementation_stage TEXT NOT NULL DEFAULT 'Pilot testing',
+      environment_name TEXT,
+      product_url TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crm_clients_status
+      ON crm_clients(status);
+    CREATE INDEX IF NOT EXISTS idx_crm_clients_tenant
+      ON crm_clients(linked_tenant_id);
+
+    CREATE TABLE IF NOT EXISTS crm_client_users (
+      id TEXT PRIMARY KEY,
+      client_id TEXT REFERENCES crm_clients(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      phone TEXT,
+      role TEXT NOT NULL DEFAULT 'client_admin'
+        CHECK (role IN ('owner', 'client_admin', 'client_user')),
+      password_hash TEXT NOT NULL,
+      force_password_reset BOOLEAN NOT NULL DEFAULT false,
+      last_login_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_crm_client_users_email_lower
+      ON crm_client_users(lower(email));
+    CREATE INDEX IF NOT EXISTS idx_crm_client_users_client
+      ON crm_client_users(client_id);
+
+    CREATE TABLE IF NOT EXISTS crm_client_subscriptions (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES crm_clients(id) ON DELETE CASCADE,
+      vendor TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'software',
+      amount_cents INTEGER NOT NULL DEFAULT 0,
+      billing_cycle TEXT NOT NULL DEFAULT 'monthly'
+        CHECK (billing_cycle IN ('monthly', 'annual', 'usage', 'one_time')),
+      paid_by TEXT NOT NULL DEFAULT 'perry_software'
+        CHECK (paid_by IN ('perry_software', 'client', 'included')),
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'trialing', 'paused', 'cancelled')),
+      next_renewal_date DATE,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crm_client_subscriptions_client
+      ON crm_client_subscriptions(client_id);
+
+    CREATE TABLE IF NOT EXISTS crm_client_ai_keys (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES crm_clients(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL DEFAULT 'openai',
+      label TEXT NOT NULL,
+      key_reference TEXT,
+      masked_key TEXT,
+      environment TEXT NOT NULL DEFAULT 'production',
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'needs_rotation', 'disabled', 'not_configured')),
+      monthly_budget_cents INTEGER,
+      last_rotated_at TIMESTAMPTZ,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crm_client_ai_keys_client
+      ON crm_client_ai_keys(client_id);
+
+    INSERT INTO crm_clients (
+      id,
+      linked_tenant_id,
+      account_name,
+      legal_name,
+      contact_name,
+      contact_email,
+      contact_phone,
+      status,
+      plan_name,
+      monthly_fee_cents,
+      stripe_customer_id,
+      stripe_subscription_id,
+      subscription_status,
+      implementation_stage,
+      environment_name,
+      product_url,
+      notes
+    ) VALUES
+      (
+        'crm-client-pilot-empty',
+        'tenant-demo',
+        'Derm Pilot - Clean Environment',
+        'Dermatology Demo Office',
+        'Daniel Perry',
+        'dan@perrysoftwarellc.com',
+        '+15412318693',
+        'pilot',
+        'Pilot Test',
+        0,
+        'stripe_customer_pending',
+        'stripe_subscription_pending',
+        'trialing',
+        'Clean pilot validation',
+        'pilot-live',
+        'https://derm-frontend-pilot-live.up.railway.app',
+        'Clean Railway environment used for live-style testing with minimal data.'
+      ),
+      (
+        'crm-client-pilot-test-data',
+        'tenant-demo',
+        'Derm Pilot - Test Data Environment',
+        'Dermatology Demo Office',
+        'Daniel Perry',
+        'dan@perrysoftwarellc.com',
+        '+15412318693',
+        'pilot',
+        'Pilot Test',
+        0,
+        'stripe_customer_pending',
+        'stripe_subscription_pending',
+        'trialing',
+        'Full test-data validation',
+        'production',
+        'https://derm-frontend-production.up.railway.app',
+        'Seeded Railway environment used for full workflow testing with synthetic data.'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      linked_tenant_id = EXCLUDED.linked_tenant_id,
+      account_name = EXCLUDED.account_name,
+      legal_name = EXCLUDED.legal_name,
+      contact_name = EXCLUDED.contact_name,
+      contact_email = EXCLUDED.contact_email,
+      contact_phone = EXCLUDED.contact_phone,
+      status = EXCLUDED.status,
+      plan_name = EXCLUDED.plan_name,
+      monthly_fee_cents = EXCLUDED.monthly_fee_cents,
+      stripe_customer_id = EXCLUDED.stripe_customer_id,
+      stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+      subscription_status = EXCLUDED.subscription_status,
+      implementation_stage = EXCLUDED.implementation_stage,
+      environment_name = EXCLUDED.environment_name,
+      product_url = EXCLUDED.product_url,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+
+    INSERT INTO crm_client_users (id, client_id, email, full_name, phone, role, password_hash, force_password_reset)
+    VALUES
+      (
+        'crm-user-perry-owner',
+        NULL,
+        'dan@perrysoftwarellc.com',
+        'Daniel Perry',
+        '+15412318693',
+        'owner',
+        '$2b$10$2YHWFqOIeZ9BzxPuHVggFOLjlRXThZJVPBxZi1odUtYjORWFPiIY6',
+        false
+      ),
+      (
+        'crm-user-pilot-empty-client',
+        'crm-client-pilot-empty',
+        'pilot-empty@perrysoftwarellc.com',
+        'Clean Pilot Client',
+        '+15412318693',
+        'client_admin',
+        '$2b$10$ds8Wz3BqDGVH417ZLQfCLezjdzYsefS12XCl20vxTHSk4NjMM0Hxa',
+        false
+      ),
+      (
+        'crm-user-pilot-test-data-client',
+        'crm-client-pilot-test-data',
+        'pilot-testdata@perrysoftwarellc.com',
+        'Test Data Pilot Client',
+        '+15412318693',
+        'client_admin',
+        '$2b$10$ds8Wz3BqDGVH417ZLQfCLezjdzYsefS12XCl20vxTHSk4NjMM0Hxa',
+        false
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      client_id = EXCLUDED.client_id,
+      email = EXCLUDED.email,
+      full_name = EXCLUDED.full_name,
+      phone = EXCLUDED.phone,
+      role = EXCLUDED.role,
+      updated_at = NOW();
+
+    INSERT INTO crm_client_subscriptions (
+      id,
+      client_id,
+      vendor,
+      description,
+      category,
+      amount_cents,
+      billing_cycle,
+      paid_by,
+      status,
+      next_renewal_date,
+      notes
+    ) VALUES
+      ('crm-sub-empty-openai', 'crm-client-pilot-empty', 'OpenAI', 'Shared OpenAI API usage budget', 'ai', 0, 'usage', 'perry_software', 'active', NULL, 'Usage tracked in AI audit log.'),
+      ('crm-sub-empty-aws-voice', 'crm-client-pilot-empty', 'Amazon Voice', 'HealthScribe / transcription usage', 'voice_ai', 0, 'usage', 'perry_software', 'active', NULL, 'Usage tracked separately from OpenAI.'),
+      ('crm-sub-empty-twilio', 'crm-client-pilot-empty', 'Twilio', 'SMS messaging phone number and A2P campaign', 'messaging', 0, 'usage', 'perry_software', 'active', NULL, 'A2P campaign verified; one shared phone number.'),
+      ('crm-sub-empty-stripe', 'crm-client-pilot-empty', 'Stripe', 'Payment processing account', 'payments', 0, 'usage', 'client', 'trialing', NULL, 'Stripe account pending client setup.'),
+      ('crm-sub-test-openai', 'crm-client-pilot-test-data', 'OpenAI', 'Shared OpenAI API usage budget', 'ai', 0, 'usage', 'perry_software', 'active', NULL, 'Usage tracked in AI audit log.'),
+      ('crm-sub-test-aws-voice', 'crm-client-pilot-test-data', 'Amazon Voice', 'HealthScribe / transcription usage', 'voice_ai', 0, 'usage', 'perry_software', 'active', NULL, 'Usage tracked separately from OpenAI.'),
+      ('crm-sub-test-twilio', 'crm-client-pilot-test-data', 'Twilio', 'SMS messaging phone number and A2P campaign', 'messaging', 0, 'usage', 'perry_software', 'active', NULL, 'A2P campaign verified; inbound replies route to production.'),
+      ('crm-sub-test-stripe', 'crm-client-pilot-test-data', 'Stripe', 'Payment processing account', 'payments', 0, 'usage', 'client', 'trialing', NULL, 'Stripe account pending client setup.')
+    ON CONFLICT (id) DO UPDATE SET
+      vendor = EXCLUDED.vendor,
+      description = EXCLUDED.description,
+      category = EXCLUDED.category,
+      amount_cents = EXCLUDED.amount_cents,
+      billing_cycle = EXCLUDED.billing_cycle,
+      paid_by = EXCLUDED.paid_by,
+      status = EXCLUDED.status,
+      next_renewal_date = EXCLUDED.next_renewal_date,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+
+    INSERT INTO crm_client_ai_keys (
+      id,
+      client_id,
+      provider,
+      label,
+      key_reference,
+      masked_key,
+      environment,
+      status,
+      monthly_budget_cents,
+      notes
+    ) VALUES
+      ('crm-key-empty-openai', 'crm-client-pilot-empty', 'openai', 'OpenAI project key', 'Railway env OPENAI_API_KEY', 'sk-...managed-in-railway', 'pilot-live', 'active', NULL, 'Never expose the raw key in CRM.'),
+      ('crm-key-empty-aws', 'crm-client-pilot-empty', 'aws_healthscribe', 'Amazon Voice credentials', 'Railway AWS env vars', 'aws-...managed-in-railway', 'pilot-live', 'active', NULL, 'Tracked as Amazon Voice expense.'),
+      ('crm-key-test-openai', 'crm-client-pilot-test-data', 'openai', 'OpenAI project key', 'Railway env OPENAI_API_KEY', 'sk-...managed-in-railway', 'production', 'active', NULL, 'Never expose the raw key in CRM.'),
+      ('crm-key-test-aws', 'crm-client-pilot-test-data', 'aws_healthscribe', 'Amazon Voice credentials', 'Railway AWS env vars', 'aws-...managed-in-railway', 'production', 'active', NULL, 'Tracked as Amazon Voice expense.')
+    ON CONFLICT (id) DO UPDATE SET
+      provider = EXCLUDED.provider,
+      label = EXCLUDED.label,
+      key_reference = EXCLUDED.key_reference,
+      masked_key = EXCLUDED.masked_key,
+      environment = EXCLUDED.environment,
+      status = EXCLUDED.status,
+      monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+    `,
+  },
 
 ];
 

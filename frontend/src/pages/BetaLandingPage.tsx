@@ -107,6 +107,31 @@ export function BetaLandingPage() {
             </div>
             <div className="lp-card-accent lp-card-accent--indigo" />
           </Link>
+
+          {/* Client Account */}
+          <Link to="/client/login" className="lp-card lp-card--teal">
+            <div className="lp-card-bg" />
+            <div className="lp-card-shimmer" />
+            <div className="lp-card-inner">
+              <div className="lp-card-icon lp-card-icon--teal">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 7.5h16M6 4.5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                  <path d="M8 12h4M8 15.5h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <div className="lp-card-body">
+                <span className="lp-card-label">Client Account</span>
+                <span className="lp-card-desc">Billing, subscriptions &amp; AI usage</span>
+              </div>
+              <div className="lp-card-cta lp-card-cta--teal">
+                Enter
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+            </div>
+            <div className="lp-card-accent lp-card-accent--teal" />
+          </Link>
         </div>
 
         <p className="lp-footer">Beta v0.1 &nbsp;·&nbsp; Authorized testers only &nbsp;·&nbsp; Not for clinical use</p>
@@ -453,6 +478,24 @@ export function BetaLandingPage() {
             inset 0 1px 0 rgba(255, 255, 255, 0.9);
         }
 
+        .lp-card--teal {
+          border-color: rgba(255, 255, 255, 0.8);
+          box-shadow:
+            0 2px 8px rgba(0, 0, 0, 0.06),
+            0 8px 30px rgba(14, 116, 144, 0.12),
+            inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
+
+        .lp-card--teal:hover {
+          transform: translateY(-6px) scale(1.015);
+          border-color: rgba(14, 116, 144, 0.5);
+          box-shadow:
+            0 4px 12px rgba(0, 0, 0, 0.06),
+            0 20px 60px rgba(14, 116, 144, 0.25),
+            0 0 0 1px rgba(14, 116, 144, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
+
         /* Card background tint */
         .lp-card-bg {
           position: absolute;
@@ -466,6 +509,10 @@ export function BetaLandingPage() {
 
         .lp-card--indigo .lp-card-bg {
           background: linear-gradient(135deg, rgba(255,255,255,0.92) 0%, rgba(238,242,255,0.88) 100%);
+        }
+
+        .lp-card--teal .lp-card-bg {
+          background: linear-gradient(135deg, rgba(255,255,255,0.92) 0%, rgba(236,254,255,0.9) 100%);
         }
 
         /* Shimmer on hover */
@@ -483,6 +530,10 @@ export function BetaLandingPage() {
 
         .lp-card--indigo .lp-card-shimmer {
           background: radial-gradient(ellipse 80% 120% at 0% 50%, rgba(99, 102, 241, 0.1), transparent);
+        }
+
+        .lp-card--teal .lp-card-shimmer {
+          background: radial-gradient(ellipse 80% 120% at 0% 50%, rgba(14, 116, 144, 0.1), transparent);
         }
 
         .lp-card:hover .lp-card-shimmer { opacity: 1; }
@@ -504,6 +555,10 @@ export function BetaLandingPage() {
 
         .lp-card-accent--indigo {
           background: linear-gradient(90deg, #4f46e5, #818cf8, #6366f1);
+        }
+
+        .lp-card-accent--teal {
+          background: linear-gradient(90deg, #0e7490, #22d3ee, #06b6d4);
         }
 
         .lp-card:hover .lp-card-accent { transform: scaleX(1); }
@@ -542,6 +597,12 @@ export function BetaLandingPage() {
           background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.12));
           color: #4f46e5;
           box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18), inset 0 1px 0 rgba(255,255,255,0.6);
+        }
+
+        .lp-card-icon--teal {
+          background: linear-gradient(135deg, rgba(14, 116, 144, 0.16), rgba(34, 211, 238, 0.12));
+          color: #0e7490;
+          box-shadow: 0 4px 14px rgba(14, 116, 144, 0.16), inset 0 1px 0 rgba(255,255,255,0.6);
         }
 
         /* Text */
@@ -598,6 +659,15 @@ export function BetaLandingPage() {
 
         .lp-card--indigo:hover .lp-card-cta--indigo {
           background: rgba(99, 102, 241, 0.16);
+        }
+
+        .lp-card-cta--teal {
+          background: rgba(14, 116, 144, 0.1);
+          color: #0e7490;
+        }
+
+        .lp-card--teal:hover .lp-card-cta--teal {
+          background: rgba(14, 116, 144, 0.16);
         }
 
         /* ── Footer ── */

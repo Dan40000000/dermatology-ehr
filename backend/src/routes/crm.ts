@@ -81,6 +81,12 @@ const providerRequestSchema = z.object({
   notes: z.string().trim().max(2000).nullable().optional(),
 });
 
+const requestUpdateSchema = z.object({
+  status: z.enum(["new", "in_review", "waiting_on_client", "scheduled", "completed", "cancelled"]).optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+  ownerNotes: z.string().trim().max(2000).nullable().optional(),
+}).refine((data) => Object.keys(data).length > 0, { message: "At least one field is required" });
+
 function mapCrmUser(row: any): CrmUser {
   return {
     id: row.id,
@@ -663,6 +669,45 @@ router.post("/client/provider-requests", requireCrmAuth, async (req: CrmAuthedRe
   );
 
   res.status(201).json({ request: mapClientRequest(result.rows[0]) });
+});
+
+router.patch("/owner/requests/:id", requireCrmAuth, async (req: CrmAuthedRequest, res) => {
+  if (req.crmUser?.role !== "owner") {
+    return res.status(403).json({ error: "Owner access required" });
+  }
+
+  const parsed = requestUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request update payload", details: parsed.error.format() });
+  }
+
+  const data = parsed.data;
+  const result = await pool.query(
+    `UPDATE crm_client_requests
+     SET status = COALESCE($1, status),
+         priority = COALESCE($2, priority),
+         owner_notes = COALESCE($3, owner_notes),
+         completed_at = CASE
+           WHEN $1 = 'completed' THEN NOW()
+           WHEN $1 IS NOT NULL AND $1 <> 'completed' THEN NULL
+           ELSE completed_at
+         END,
+         updated_at = NOW()
+     WHERE id = $4
+     RETURNING *`,
+    [
+      data.status ?? null,
+      data.priority ?? null,
+      data.ownerNotes ?? null,
+      req.params.id,
+    ]
+  );
+
+  if (!result.rowCount) {
+    return res.status(404).json({ error: "Client request not found" });
+  }
+
+  res.json({ request: mapClientRequest(result.rows[0]) });
 });
 
 router.get("/admin/overview", requireAuth, requireRoles(["admin"]), async (_req: AuthedRequest, res) => {

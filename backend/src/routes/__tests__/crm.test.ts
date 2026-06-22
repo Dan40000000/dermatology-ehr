@@ -368,6 +368,21 @@ function installCrmQueryMock(loginUser = ownerRow) {
         rowCount: 1,
       };
     }
+    if (sql.includes("UPDATE crm_client_requests")) {
+      const [status, priority, ownerNotes, requestId] = (params || []) as string[];
+      const base = requestRows.find((row) => row.id === requestId) || requestRows[0];
+      return {
+        rows: [{
+          ...base,
+          status: status || base.status,
+          priority: priority || base.priority,
+          owner_notes: ownerNotes || base.owner_notes,
+          completed_at: status === "completed" ? "2026-06-22T12:30:00.000Z" : null,
+          updated_at: "2026-06-22T12:30:00.000Z",
+        }],
+        rowCount: 1,
+      };
+    }
     if (sql.includes("FROM openai_usage_audit")) {
       const tenantIds = (params?.[0] as string[]) || [];
       const rows = usageRows.filter((row) => tenantIds.includes(row.tenant_id));
@@ -490,5 +505,23 @@ describe("CRM routes", () => {
     expect(res.body.request.status).toBe("new");
     expect(res.body.request.providerFullName).toBe("Dr. Jordan Lee");
     expect(res.body.request.title).toBe("Add provider: Dr. Jordan Lee");
+  });
+
+  it("lets the Perry owner update a client request status", async () => {
+    const login = await request(app)
+      .post("/api/crm/auth/login")
+      .send({ email: "dan@perrysoftwarellc.com", password: "PerryCRM-2026!" });
+
+    const res = await request(app)
+      .patch("/api/crm/owner/requests/request-clean-provider")
+      .set("Authorization", `Bearer ${login.body.token}`)
+      .send({
+        status: "scheduled",
+        ownerNotes: "Provider kickoff scheduled.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.request.status).toBe("scheduled");
+    expect(res.body.request.ownerNotes).toBe("Provider kickoff scheduled.");
   });
 });

@@ -65,6 +65,17 @@ const latestConsentSelect = `
   LIMIT 1
 `;
 
+function isMissingConsentSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const code = 'code' in error ? String((error as { code?: string }).code || '') : '';
+  const message = 'message' in error ? String((error as { message?: string }).message || '') : '';
+
+  return code === '42P01' || code === '42703' || /sms_consent|patient_sms_preferences/i.test(message);
+}
+
 function calculateDaysUntilExpiration(expirationDate?: string | null): number | null {
   if (!expirationDate) {
     return null;
@@ -90,9 +101,18 @@ export async function getSMSConsentState(
   patientId: string,
   client: QueryableClient
 ): Promise<SMSConsentState> {
-  const [consentResult, prefsResult] = await Promise.all([
-    client.query(latestConsentSelect, [tenantId, patientId]),
-    client.query(
+  let consentRows: any[] = [];
+
+  try {
+    const consentResult = await client.query(latestConsentSelect, [tenantId, patientId]);
+    consentRows = consentResult.rows;
+  } catch (error) {
+    if (!isMissingConsentSchemaError(error)) {
+      throw error;
+    }
+  }
+
+  const prefsResult = await client.query(
       `SELECT
          opted_in as "optedIn",
          consent_date as "consentDate",
@@ -103,10 +123,9 @@ export async function getSMSConsentState(
        WHERE tenant_id = $1 AND patient_id = $2
        LIMIT 1`,
       [tenantId, patientId]
-    ),
-  ]);
+  );
 
-  const rawConsent = consentResult.rows[0] || undefined;
+  const rawConsent = consentRows[0] || undefined;
   const consent = rawConsent
     ? ({
         ...rawConsent,

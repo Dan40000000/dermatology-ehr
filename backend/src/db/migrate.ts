@@ -14297,6 +14297,39 @@ Consider age-appropriate treatments and include family counseling points.',
       updated_at = NOW();
     `,
   },
+  {
+    name: "206_sms_consent_table",
+    sql: `
+    CREATE TABLE IF NOT EXISTS sms_consent (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      consent_given BOOLEAN NOT NULL DEFAULT false,
+      consent_date TIMESTAMPTZ,
+      consent_method TEXT,
+      obtained_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      obtained_by_name TEXT,
+      expiration_date DATE,
+      consent_revoked BOOLEAN NOT NULL DEFAULT false,
+      revoked_date TIMESTAMPTZ,
+      revoked_reason TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sms_consent_patient
+      ON sms_consent(tenant_id, patient_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sms_consent_pending
+      ON sms_consent(tenant_id, patient_id)
+      WHERE consent_given = false AND consent_revoked = false;
+
+    ALTER TABLE patient_sms_preferences
+      ADD COLUMN IF NOT EXISTS consent_date TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS consent_method TEXT,
+      ADD COLUMN IF NOT EXISTS opted_out_via TEXT;
+    `,
+  },
 
 ];
 

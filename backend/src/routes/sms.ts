@@ -32,8 +32,15 @@ import { assertSmsContentSafe, SmsPrivacyBlockError } from '../utils/smsPrivacyG
 
 const router = Router();
 const textMessagesModuleAccess = requireModuleAccess('text_messages');
+const publicSmsWebhookPaths = new Set([
+  '/webhook/incoming',
+  '/webhook/status',
+  '/webhook/incoming-relay',
+  '/webhook/status-relay',
+]);
+
 router.use((req, res, next) => {
-  if (req.path === '/webhook/incoming' || req.path === '/webhook/status') {
+  if (publicSmsWebhookPaths.has(req.path)) {
     return next();
   }
 
@@ -2641,6 +2648,200 @@ function classifySmsStatusTransition(
   return 'apply';
 }
 
+const SMS_WEBHOOK_RELAY_SECRET_HEADER = 'x-sms-webhook-relay-secret';
+
+type SmsWebhookRelayKind = 'incoming' | 'status';
+
+function getSmsWebhookRelaySecret(): string {
+  return String(process.env.SMS_WEBHOOK_RELAY_SECRET || '').trim();
+}
+
+function isSmsWebhookRelayAuthorized(req: Request): boolean {
+  const secret = getSmsWebhookRelaySecret();
+  const provided = String(req.get(SMS_WEBHOOK_RELAY_SECRET_HEADER) || '').trim();
+
+  if (!secret || !provided) {
+    return false;
+  }
+
+  const secretBuffer = Buffer.from(secret);
+  const providedBuffer = Buffer.from(provided);
+
+  return (
+    secretBuffer.length === providedBuffer.length &&
+    crypto.timingSafeEqual(secretBuffer, providedBuffer)
+  );
+}
+
+function parseSmsWebhookRelayUrls(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(/[\n,;]/)
+    .map((url) => url.trim())
+    .filter(Boolean);
+}
+
+function getSmsWebhookRelayUrls(kind: SmsWebhookRelayKind): string[] {
+  const specificEnv =
+    kind === 'incoming'
+      ? process.env.SMS_WEBHOOK_RELAY_INBOUND_URLS
+      : process.env.SMS_WEBHOOK_RELAY_STATUS_URLS;
+
+  return Array.from(
+    new Set([
+      ...parseSmsWebhookRelayUrls(process.env.SMS_WEBHOOK_RELAY_URLS),
+      ...parseSmsWebhookRelayUrls(specificEnv),
+    ])
+  );
+}
+
+function buildRelayWebhookBody(body: Record<string, unknown>): string {
+  const params = new URLSearchParams();
+
+  Object.entries(body || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item !== undefined && item !== null) {
+          params.append(key, String(item));
+        }
+      });
+      return;
+    }
+
+    if (value !== undefined && value !== null) {
+      params.append(key, String(value));
+    }
+  });
+
+  return params.toString();
+}
+
+async function forwardSmsWebhookRelays(
+  kind: SmsWebhookRelayKind,
+  body: Record<string, unknown>
+): Promise<{ attempted: number; successes: number; failures: number }> {
+  const urls = getSmsWebhookRelayUrls(kind);
+  const secret = getSmsWebhookRelaySecret();
+
+  if (urls.length === 0) {
+    return { attempted: 0, successes: 0, failures: 0 };
+  }
+
+  if (!secret) {
+    logger.warn('SMS webhook relay URLs configured without SMS_WEBHOOK_RELAY_SECRET', {
+      kind,
+      relayCount: urls.length,
+    });
+    return { attempted: urls.length, successes: 0, failures: urls.length };
+  }
+
+  const relayBody = buildRelayWebhookBody(body);
+  let successes = 0;
+  let failures = 0;
+
+  await Promise.all(
+    urls.map(async (url) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            [SMS_WEBHOOK_RELAY_SECRET_HEADER]: secret,
+          },
+          body: relayBody,
+          signal: controller.signal,
+        });
+
+        if (response.ok) {
+          successes += 1;
+          return;
+        }
+
+        failures += 1;
+        logger.warn('SMS webhook relay target returned non-2xx', {
+          kind,
+          relayUrl: url,
+          status: response.status,
+        });
+      } catch (error: any) {
+        failures += 1;
+        logger.warn('SMS webhook relay target failed', {
+          kind,
+          relayUrl: url,
+          error: error.message,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    })
+  );
+
+  return { attempted: urls.length, successes, failures };
+}
+
+async function isInboundWebhookAlreadyProcessed(messageSid: string): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1
+     FROM sms_messages
+     WHERE twilio_message_sid = $1
+       AND direction = 'inbound'
+     LIMIT 1`,
+    [messageSid]
+  );
+
+  return result.rows.length > 0;
+}
+
+async function applySmsStatusWebhookUpdate(
+  messageSid: string,
+  messageStatus: string,
+  errorCode: string | undefined,
+  errorMessage: string | undefined,
+  knownCurrentStatus?: unknown
+): Promise<{ handled: boolean; decision?: string }> {
+  let currentStatus = knownCurrentStatus;
+
+  if (knownCurrentStatus === undefined) {
+    const tenantResult = await pool.query(
+      `SELECT m.tenant_id, m.status as current_status
+       FROM sms_messages m
+       WHERE m.twilio_message_sid = $1
+       LIMIT 1`,
+      [messageSid]
+    );
+
+    if (tenantResult.rows.length === 0) {
+      return { handled: false };
+    }
+
+    currentStatus = tenantResult.rows[0].current_status;
+  }
+
+  const transitionDecision = classifySmsStatusTransition(
+    currentStatus,
+    messageStatus
+  );
+
+  if (transitionDecision !== 'apply') {
+    logger.info('Ignoring SMS status webhook event', {
+      messageSid,
+      currentStatus,
+      incomingStatus: messageStatus,
+      transitionDecision,
+    });
+    return { handled: true, decision: transitionDecision };
+  }
+
+  await updateSMSStatus(messageSid, messageStatus, errorCode, errorMessage);
+  return { handled: true, decision: 'applied' };
+}
+
 /**
  * POST /api/sms/webhook/incoming
  * Twilio webhook for incoming SMS messages
@@ -2650,6 +2851,11 @@ router.post('/webhook/incoming', async (req: Request, res: Response) => {
     // Extract Twilio signature for validation
     const signature = req.headers['x-twilio-signature'] as string;
     const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    const messageSid = String(req.body.MessageSid || '').trim();
+
+    if (!messageSid) {
+      return res.status(400).send('Missing MessageSid');
+    }
 
     // Get tenant from Twilio phone number (To field)
     const toNumber = formatPhoneE164(req.body.To);
@@ -2681,23 +2887,49 @@ router.post('/webhook/incoming', async (req: Request, res: Response) => {
       return res.status(403).send('Invalid signature');
     }
 
-    // Process incoming SMS
-    const result = await processIncomingSMS(
-      {
-        messageSid: req.body.MessageSid,
-        from: req.body.From,
-        to: req.body.To,
-        body: req.body.Body,
-        numMedia: parseInt(req.body.NumMedia || '0'),
-        mediaUrls: [], // TODO: Handle MMS media URLs
-        tenantId: tenant.tenant_id,
-      },
-      twilioService
-    );
+    const relayResult = await forwardSmsWebhookRelays('incoming', req.body);
+    const alreadyProcessed = await isInboundWebhookAlreadyProcessed(messageSid);
+    let result:
+      | Awaited<ReturnType<typeof processIncomingSMS>>
+      | null = null;
+    let localProcessingError: Error | null = null;
+
+    if (alreadyProcessed) {
+      logger.info('Ignoring duplicate incoming SMS webhook event', { messageSid });
+    } else {
+      try {
+        // Process incoming SMS
+        result = await processIncomingSMS(
+          {
+            messageSid,
+            from: req.body.From,
+            to: req.body.To,
+            body: req.body.Body,
+            numMedia: parseInt(req.body.NumMedia || '0'),
+            mediaUrls: [], // TODO: Handle MMS media URLs
+            tenantId: tenant.tenant_id,
+          },
+          twilioService
+        );
+      } catch (error: any) {
+        localProcessingError = error;
+        logger.error('Local incoming SMS processing failed', {
+          error: error.message,
+          messageSid,
+          relaySuccesses: relayResult.successes,
+        });
+      }
+    }
+
+    if (!alreadyProcessed && !result && relayResult.successes === 0 && localProcessingError) {
+      throw localProcessingError;
+    }
 
     logger.info('Incoming SMS processed', {
-      messageId: result.messageId,
-      autoResponseSent: result.autoResponseSent,
+      messageId: result?.messageId || null,
+      autoResponseSent: result?.autoResponseSent || false,
+      relaysAttempted: relayResult.attempted,
+      relaysSucceeded: relayResult.successes,
     });
 
     // Respond to Twilio with TwiML (empty response)
@@ -2709,6 +2941,74 @@ router.post('/webhook/incoming', async (req: Request, res: Response) => {
       messageSid: req.body?.MessageSid,
     });
     res.status(500).send('Error processing message');
+  }
+});
+
+/**
+ * POST /api/sms/webhook/incoming-relay
+ * Internal relay endpoint for mirroring Twilio inbound events into another Railway environment.
+ */
+router.post('/webhook/incoming-relay', async (req: Request, res: Response) => {
+  try {
+    if (!isSmsWebhookRelayAuthorized(req)) {
+      return res.status(403).json({ error: 'Invalid relay secret' });
+    }
+
+    const messageSid = String(req.body.MessageSid || '').trim();
+    if (!messageSid) {
+      return res.status(400).json({ error: 'Missing MessageSid' });
+    }
+
+    const toNumber = formatPhoneE164(req.body.To);
+    const tenantResult = await pool.query(
+      `SELECT tenant_id, twilio_account_sid, twilio_auth_token
+       FROM sms_settings
+       WHERE twilio_phone_number = $1 AND is_active = true
+       LIMIT 1`,
+      [toNumber]
+    );
+
+    if (tenantResult.rows.length === 0) {
+      logger.warn('Relayed incoming SMS to unknown number', { toNumber, messageSid });
+      return res.status(404).json({ error: 'Number not configured' });
+    }
+
+    if (await isInboundWebhookAlreadyProcessed(messageSid)) {
+      return res.json({ success: true, duplicate: true });
+    }
+
+    const tenant = tenantResult.rows[0];
+    const twilioService = createTwilioService(
+      tenant.twilio_account_sid,
+      tenant.twilio_auth_token
+    );
+
+    const result = await processIncomingSMS(
+      {
+        messageSid,
+        from: req.body.From,
+        to: req.body.To,
+        body: req.body.Body,
+        numMedia: parseInt(req.body.NumMedia || '0'),
+        mediaUrls: [],
+        tenantId: tenant.tenant_id,
+      },
+      twilioService,
+      { suppressAutoResponses: true }
+    );
+
+    res.json({
+      success: true,
+      messageId: result.messageId,
+      autoResponseSent: result.autoResponseSent || false,
+      actionPerformed: result.actionPerformed || null,
+    });
+  } catch (error: any) {
+    logger.error('Error processing relayed incoming SMS webhook', {
+      error: error.message,
+      messageSid: req.body?.MessageSid,
+    });
+    res.status(500).json({ error: 'Error processing relayed message' });
   }
 });
 
@@ -2743,6 +3043,10 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
 
     if (tenantResult.rows.length === 0) {
       logger.warn('SMS status webhook for unknown message', { messageSid });
+      const relayResult = await forwardSmsWebhookRelays('status', req.body);
+      if (relayResult.successes > 0) {
+        return res.status(200).send('OK');
+      }
       return res.status(404).send('Message not found');
     }
 
@@ -2764,39 +3068,14 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
       errorCode,
     });
 
-    const transitionDecision = classifySmsStatusTransition(
-      tenant.current_status,
-      messageStatus
+    await applySmsStatusWebhookUpdate(
+      messageSid,
+      messageStatus,
+      errorCode,
+      errorMessage,
+      tenant.current_status
     );
-
-    if (transitionDecision === 'duplicate') {
-      logger.info('Ignoring duplicate SMS status webhook event', {
-        messageSid,
-        status: messageStatus,
-      });
-      return res.status(200).send('OK');
-    }
-
-    if (transitionDecision === 'locked') {
-      logger.warn('Ignoring SMS status webhook after terminal status set', {
-        messageSid,
-        currentStatus: tenant.current_status,
-        incomingStatus: messageStatus,
-      });
-      return res.status(200).send('OK');
-    }
-
-    if (transitionDecision === 'stale') {
-      logger.warn('Ignoring stale SMS status webhook event', {
-        messageSid,
-        currentStatus: tenant.current_status,
-        incomingStatus: messageStatus,
-      });
-      return res.status(200).send('OK');
-    }
-
-    // Update message status in database
-    await updateSMSStatus(messageSid, messageStatus, errorCode, errorMessage);
+    await forwardSmsWebhookRelays('status', req.body);
 
     res.status(200).send('OK');
   } catch (error: any) {
@@ -2805,6 +3084,53 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
       messageSid: req.body?.MessageSid,
     });
     res.status(500).send('Error processing status');
+  }
+});
+
+/**
+ * POST /api/sms/webhook/status-relay
+ * Internal relay endpoint for mirroring Twilio delivery callbacks into another Railway environment.
+ */
+router.post('/webhook/status-relay', async (req: Request, res: Response) => {
+  try {
+    if (!isSmsWebhookRelayAuthorized(req)) {
+      return res.status(403).json({ error: 'Invalid relay secret' });
+    }
+
+    const messageSid = String(req.body.MessageSid || '').trim();
+    const messageStatus = normalizeSmsStatus(req.body.MessageStatus);
+    const errorCode = req.body.ErrorCode;
+    const errorMessage = req.body.ErrorMessage;
+
+    if (!messageSid) {
+      return res.status(400).json({ error: 'Missing MessageSid' });
+    }
+    if (!messageStatus) {
+      return res.status(400).json({ error: 'Missing MessageStatus' });
+    }
+
+    const updateResult = await applySmsStatusWebhookUpdate(
+      messageSid,
+      messageStatus,
+      errorCode,
+      errorMessage
+    );
+
+    if (!updateResult.handled) {
+      logger.warn('Relayed SMS status webhook for unknown message', { messageSid });
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    res.json({
+      success: true,
+      decision: updateResult.decision || 'unknown',
+    });
+  } catch (error: any) {
+    logger.error('Error processing relayed SMS status webhook', {
+      error: error.message,
+      messageSid: req.body?.MessageSid,
+    });
+    res.status(500).json({ error: 'Error processing relayed status' });
   }
 });
 

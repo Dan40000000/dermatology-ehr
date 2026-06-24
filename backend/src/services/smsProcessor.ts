@@ -44,6 +44,10 @@ export interface ProcessSMSResult {
   error?: string;
 }
 
+export interface ProcessIncomingSMSOptions {
+  suppressAutoResponses?: boolean;
+}
+
 export type SMSRoutingCategory =
   | 'general'
   | 'appointment'
@@ -182,9 +186,11 @@ function isOptOutKeyword(keyword: string): boolean {
  */
 export async function processIncomingSMS(
   params: IncomingSMSParams,
-  twilioService: TwilioService
+  twilioService: TwilioService,
+  options: ProcessIncomingSMSOptions = {}
 ): Promise<ProcessSMSResult> {
   const client = await pool.connect();
+  const allowAutoResponses = options.suppressAutoResponses !== true;
 
   try {
     await client.query('BEGIN');
@@ -242,15 +248,16 @@ export async function processIncomingSMS(
           client
         );
 
-        try {
-          let confirmationMessage = '';
-          if (waitlistReply.action === 'accepted') {
-            confirmationMessage = `Thank you for confirming! We'll contact you shortly to finalize your appointment. If you have questions, please call our office.`;
-          } else if (waitlistReply.action === 'declined') {
-            confirmationMessage = `Thanks for letting us know. We'll keep you on the waitlist and notify you of other available appointments.`;
-          }
+        let waitlistConfirmationSent = false;
+        let confirmationMessage = '';
+        if (waitlistReply.action === 'accepted') {
+          confirmationMessage = `Thank you for confirming! We'll contact you shortly to finalize your appointment. If you have questions, please call our office.`;
+        } else if (waitlistReply.action === 'declined') {
+          confirmationMessage = `Thanks for letting us know. We'll keep you on the waitlist and notify you of other available appointments.`;
+        }
 
-          if (confirmationMessage) {
+        if (allowAutoResponses && confirmationMessage) {
+          try {
             const response = await twilioService.sendSMS({
               to: fromPhone,
               from: toPhone,
@@ -272,19 +279,20 @@ export async function processIncomingSMS(
               },
               client
             );
+            waitlistConfirmationSent = true;
+          } catch (error: any) {
+            logger.error('Failed to send waitlist confirmation message', {
+              error: error.message,
+              patientId: patient.id,
+            });
           }
-        } catch (error: any) {
-          logger.error('Failed to send waitlist confirmation message', {
-            error: error.message,
-            patientId: patient.id,
-          });
         }
 
         await client.query('COMMIT');
         return {
           success: true,
           messageId,
-          autoResponseSent: true,
+          autoResponseSent: waitlistConfirmationSent,
           actionPerformed: `waitlist_${waitlistReply.action}`,
         };
       }
@@ -311,34 +319,36 @@ export async function processIncomingSMS(
           client
         );
 
-        try {
-          const response = await twilioService.sendSMS({
-            to: fromPhone,
-            from: toPhone,
-            body: helpText,
-          });
-
-          await logSMSMessage(
-            {
-              tenantId: params.tenantId,
-              twilioSid: response.sid,
-              direction: 'outbound',
-              from: toPhone,
+        if (allowAutoResponses) {
+          try {
+            const response = await twilioService.sendSMS({
               to: fromPhone,
+              from: toPhone,
               body: helpText,
-              status: response.status,
-              messageType: 'auto_response',
+            });
+
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: helpText,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+            helpSent = true;
+          } catch (error: any) {
+            logger.error('Failed to send SMS help response', {
+              error: error.message,
               patientId: patient.id,
-              inResponseTo: messageId,
-            },
-            client
-          );
-          helpSent = true;
-        } catch (error: any) {
-          logger.error('Failed to send SMS help response', {
-            error: error.message,
-            patientId: patient.id,
-          });
+            });
+          }
         }
 
         await client.query('COMMIT');
@@ -383,40 +393,44 @@ export async function processIncomingSMS(
           await clearSMSOptOut(params.tenantId, fromPhone, client);
 
           const confirmationText = buildSMSOptInConfirmationText(branding);
-          try {
-            const response = await twilioService.sendSMS({
-              to: fromPhone,
-              from: toPhone,
-              body: confirmationText,
-            });
-
-            await logSMSMessage(
-              {
-                tenantId: params.tenantId,
-                twilioSid: response.sid,
-                direction: 'outbound',
-                from: toPhone,
+          let optInConfirmationSent = false;
+          if (allowAutoResponses) {
+            try {
+              const response = await twilioService.sendSMS({
                 to: fromPhone,
+                from: toPhone,
                 body: confirmationText,
-                status: response.status,
-                messageType: 'auto_response',
+              });
+
+              await logSMSMessage(
+                {
+                  tenantId: params.tenantId,
+                  twilioSid: response.sid,
+                  direction: 'outbound',
+                  from: toPhone,
+                  to: fromPhone,
+                  body: confirmationText,
+                  status: response.status,
+                  messageType: 'auto_response',
+                  patientId: patient.id,
+                  inResponseTo: messageId,
+                },
+                client
+              );
+              optInConfirmationSent = true;
+            } catch (error: any) {
+              logger.error('Failed to send SMS opt-in confirmation', {
+                error: error.message,
                 patientId: patient.id,
-                inResponseTo: messageId,
-              },
-              client
-            );
-          } catch (error: any) {
-            logger.error('Failed to send SMS opt-in confirmation', {
-              error: error.message,
-              patientId: patient.id,
-            });
+              });
+            }
           }
 
           await client.query('COMMIT');
           return {
             success: true,
             messageId,
-            autoResponseSent: true,
+            autoResponseSent: optInConfirmationSent,
             autoResponseText: confirmationText,
             actionPerformed: 'opted_in',
           };
@@ -460,40 +474,44 @@ export async function processIncomingSMS(
         await upsertSMSOptOut(params.tenantId, fromPhone, 'Patient opted out via SMS keyword reply', client);
 
         const optOutText = buildSMSOptOutConfirmationText(branding);
-        try {
-          const response = await twilioService.sendSMS({
-            to: fromPhone,
-            from: toPhone,
-            body: optOutText,
-          });
-
-          await logSMSMessage(
-            {
-              tenantId: params.tenantId,
-              twilioSid: response.sid,
-              direction: 'outbound',
-              from: toPhone,
+        let optOutConfirmationSent = false;
+        if (allowAutoResponses) {
+          try {
+            const response = await twilioService.sendSMS({
               to: fromPhone,
+              from: toPhone,
               body: optOutText,
-              status: response.status,
-              messageType: 'auto_response',
+            });
+
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: optOutText,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+            optOutConfirmationSent = true;
+          } catch (error: any) {
+            logger.error('Failed to send SMS opt-out confirmation', {
+              error: error.message,
               patientId: patient.id,
-              inResponseTo: messageId,
-            },
-            client
-          );
-        } catch (error: any) {
-          logger.error('Failed to send SMS opt-out confirmation', {
-            error: error.message,
-            patientId: patient.id,
-          });
+            });
+          }
         }
 
         await client.query('COMMIT');
         return {
           success: true,
           messageId,
-          autoResponseSent: true,
+          autoResponseSent: optOutConfirmationSent,
           autoResponseText: optOutText,
           actionPerformed: 'opted_out',
         };
@@ -531,40 +549,44 @@ export async function processIncomingSMS(
           await clearSMSOptOut(params.tenantId, fromPhone, client);
 
           const confirmationText = buildSMSOptInConfirmationText(branding);
-          try {
-            const response = await twilioService.sendSMS({
-              to: fromPhone,
-              from: toPhone,
-              body: confirmationText,
-            });
-
-            await logSMSMessage(
-              {
-                tenantId: params.tenantId,
-                twilioSid: response.sid,
-                direction: 'outbound',
-                from: toPhone,
+          let optInConfirmationSent = false;
+          if (allowAutoResponses) {
+            try {
+              const response = await twilioService.sendSMS({
                 to: fromPhone,
+                from: toPhone,
                 body: confirmationText,
-                status: response.status,
-                messageType: 'auto_response',
+              });
+
+              await logSMSMessage(
+                {
+                  tenantId: params.tenantId,
+                  twilioSid: response.sid,
+                  direction: 'outbound',
+                  from: toPhone,
+                  to: fromPhone,
+                  body: confirmationText,
+                  status: response.status,
+                  messageType: 'auto_response',
+                  patientId: patient.id,
+                  inResponseTo: messageId,
+                },
+                client
+              );
+              optInConfirmationSent = true;
+            } catch (error: any) {
+              logger.error('Failed to send pending SMS opt-in confirmation', {
+                error: error.message,
                 patientId: patient.id,
-                inResponseTo: messageId,
-              },
-              client
-            );
-          } catch (error: any) {
-            logger.error('Failed to send pending SMS opt-in confirmation', {
-              error: error.message,
-              patientId: patient.id,
-            });
+              });
+            }
           }
 
           await client.query('COMMIT');
           return {
             success: true,
             messageId,
-            autoResponseSent: true,
+            autoResponseSent: optInConfirmationSent,
             autoResponseText: confirmationText,
             actionPerformed: 'consent_obtained',
           };
@@ -609,40 +631,44 @@ export async function processIncomingSMS(
           );
 
           const confirmationText = buildSMSOptInConfirmationText(branding);
-          try {
-            const response = await twilioService.sendSMS({
-              to: fromPhone,
-              from: toPhone,
-              body: confirmationText,
-            });
-
-            await logSMSMessage(
-              {
-                tenantId: params.tenantId,
-                twilioSid: response.sid,
-                direction: 'outbound',
-                from: toPhone,
+          let optInConfirmationSent = false;
+          if (allowAutoResponses) {
+            try {
+              const response = await twilioService.sendSMS({
                 to: fromPhone,
+                from: toPhone,
                 body: confirmationText,
-                status: response.status,
-                messageType: 'auto_response',
+              });
+
+              await logSMSMessage(
+                {
+                  tenantId: params.tenantId,
+                  twilioSid: response.sid,
+                  direction: 'outbound',
+                  from: toPhone,
+                  to: fromPhone,
+                  body: confirmationText,
+                  status: response.status,
+                  messageType: 'auto_response',
+                  patientId: patient.id,
+                  inResponseTo: messageId,
+                },
+                client
+              );
+              optInConfirmationSent = true;
+            } catch (error: any) {
+              logger.error('Failed to send standalone SMS opt-in confirmation', {
+                error: error.message,
                 patientId: patient.id,
-                inResponseTo: messageId,
-              },
-              client
-            );
-          } catch (error: any) {
-            logger.error('Failed to send standalone SMS opt-in confirmation', {
-              error: error.message,
-              patientId: patient.id,
-            });
+              });
+            }
           }
 
           await client.query('COMMIT');
           return {
             success: true,
             messageId,
-            autoResponseSent: true,
+            autoResponseSent: optInConfirmationSent,
             autoResponseText: confirmationText,
             actionPerformed: 'consent_obtained',
           };
@@ -676,40 +702,44 @@ export async function processIncomingSMS(
 
         const consentRequestText = buildSMSConsentRequestText(branding);
 
-        try {
-          const response = await twilioService.sendSMS({
-            to: fromPhone,
-            from: toPhone,
-            body: consentRequestText,
-          });
-
-          await logSMSMessage(
-            {
-              tenantId: params.tenantId,
-              twilioSid: response.sid,
-              direction: 'outbound',
-              from: toPhone,
+        let consentRequestSent = false;
+        if (allowAutoResponses) {
+          try {
+            const response = await twilioService.sendSMS({
               to: fromPhone,
+              from: toPhone,
               body: consentRequestText,
-              status: response.status,
-              messageType: 'consent_request',
+            });
+
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: consentRequestText,
+                status: response.status,
+                messageType: 'consent_request',
+                patientId: patient.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+            consentRequestSent = true;
+          } catch (error: any) {
+            logger.error('Failed to send SMS consent request', {
+              error: error.message,
               patientId: patient.id,
-              inResponseTo: messageId,
-            },
-            client
-          );
-        } catch (error: any) {
-          logger.error('Failed to send SMS consent request', {
-            error: error.message,
-            patientId: patient.id,
-          });
+            });
+          }
         }
 
         await client.query('COMMIT');
         return {
           success: true,
           messageId,
-          autoResponseSent: true,
+          autoResponseSent: consentRequestSent,
           autoResponseText: consentRequestText,
           actionPerformed: 'consent_requested',
         };
@@ -790,43 +820,45 @@ export async function processIncomingSMS(
       );
 
       // Send auto-reply
-      try {
-        const response = await twilioService.sendSMS({
-          to: fromPhone,
-          from: toPhone,
-          body: autoResponse.response_text,
-        });
-
-        // Log outgoing auto-response
-        await logSMSMessage(
-          {
-            tenantId: params.tenantId,
-            twilioSid: response.sid,
-            direction: 'outbound',
-            from: toPhone,
+      if (allowAutoResponses) {
+        try {
+          const response = await twilioService.sendSMS({
             to: fromPhone,
+            from: toPhone,
             body: autoResponse.response_text,
-            status: response.status,
-            messageType: 'auto_response',
+          });
+
+          // Log outgoing auto-response
+          await logSMSMessage(
+            {
+              tenantId: params.tenantId,
+              twilioSid: response.sid,
+              direction: 'outbound',
+              from: toPhone,
+              to: fromPhone,
+              body: autoResponse.response_text,
+              status: response.status,
+              messageType: 'auto_response',
+              patientId: patient?.id,
+              inResponseTo: messageId,
+            },
+            client
+          );
+
+          autoResponseSent = true;
+
+          logger.info('Auto-response sent', {
+            keyword: keyword,
+            action: autoResponse.action,
             patientId: patient?.id,
-            inResponseTo: messageId,
-          },
-          client
-        );
-
-        autoResponseSent = true;
-
-        logger.info('Auto-response sent', {
-          keyword: keyword,
-          action: autoResponse.action,
-          patientId: patient?.id,
-        });
-      } catch (error: any) {
-        logger.error('Failed to send auto-response', {
-          error: error.message,
-          keyword: keyword,
-        });
-        // Continue even if auto-response fails
+          });
+        } catch (error: any) {
+          logger.error('Failed to send auto-response', {
+            error: error.message,
+            keyword: keyword,
+          });
+          // Continue even if auto-response fails
+        }
       }
 
       await client.query('COMMIT');
@@ -887,50 +919,52 @@ export async function processIncomingSMS(
         let autoResponseText: string | undefined;
         let autoResponseSent = false;
 
-        try {
-          autoResponseText = buildSMSRoutingAcknowledgement(routedCategory);
-          const response = await twilioService.sendSMS({
-            to: fromPhone,
-            from: toPhone,
-            body: autoResponseText,
-          });
-
-          await logSMSMessage(
-            {
-              tenantId: params.tenantId,
-              twilioSid: response.sid,
-              direction: 'outbound',
-              from: toPhone,
+        autoResponseText = buildSMSRoutingAcknowledgement(routedCategory);
+        if (allowAutoResponses) {
+          try {
+            const response = await twilioService.sendSMS({
               to: fromPhone,
+              from: toPhone,
               body: autoResponseText,
-              status: response.status,
-              messageType: 'auto_response',
-              patientId: patient.id,
-              relatedThreadId: thread.id,
-              inResponseTo: messageId,
-            },
-            client
-          );
+            });
 
-          await addMessageToThread(
-            {
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: autoResponseText,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                relatedThreadId: thread.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+
+            await addMessageToThread(
+              {
+                threadId: thread.id,
+                senderType: 'staff',
+                senderName: 'Text Routing Assistant',
+                messageText: autoResponseText,
+                deliveredToPatient: true,
+              },
+              client
+            );
+            await updateMessageThreadRoute(thread.id, routedCategory, 'waiting-provider', client);
+            autoResponseSent = true;
+          } catch (error: any) {
+            logger.error('Failed to send SMS routing acknowledgement', {
+              error: error.message,
+              patientId: patient.id,
               threadId: thread.id,
-              senderType: 'staff',
-              senderName: 'Text Routing Assistant',
-              messageText: autoResponseText,
-              deliveredToPatient: true,
-            },
-            client
-          );
-          await updateMessageThreadRoute(thread.id, routedCategory, 'waiting-provider', client);
-          autoResponseSent = true;
-        } catch (error: any) {
-          logger.error('Failed to send SMS routing acknowledgement', {
-            error: error.message,
-            patientId: patient.id,
-            threadId: thread.id,
-            category: routedCategory,
-          });
+              category: routedCategory,
+            });
+          }
         }
 
         await notifyStaffOfIncomingSMS(params.tenantId, thread.id, patient.id, client);
@@ -949,48 +983,50 @@ export async function processIncomingSMS(
         let autoResponseText: string | undefined;
         let autoResponseSent = false;
 
-        try {
-          autoResponseText = buildSMSRoutingPrompt();
-          const response = await twilioService.sendSMS({
-            to: fromPhone,
-            from: toPhone,
-            body: autoResponseText,
-          });
-
-          await logSMSMessage(
-            {
-              tenantId: params.tenantId,
-              twilioSid: response.sid,
-              direction: 'outbound',
-              from: toPhone,
+        autoResponseText = buildSMSRoutingPrompt();
+        if (allowAutoResponses) {
+          try {
+            const response = await twilioService.sendSMS({
               to: fromPhone,
+              from: toPhone,
               body: autoResponseText,
-              status: response.status,
-              messageType: 'auto_response',
-              patientId: patient.id,
-              relatedThreadId: thread.id,
-              inResponseTo: messageId,
-            },
-            client
-          );
+            });
 
-          await addMessageToThread(
-            {
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: autoResponseText,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                relatedThreadId: thread.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+
+            await addMessageToThread(
+              {
+                threadId: thread.id,
+                senderType: 'staff',
+                senderName: 'Text Routing Assistant',
+                messageText: autoResponseText,
+                deliveredToPatient: true,
+              },
+              client
+            );
+            autoResponseSent = true;
+          } catch (error: any) {
+            logger.error('Failed to send SMS routing prompt', {
+              error: error.message,
+              patientId: patient.id,
               threadId: thread.id,
-              senderType: 'staff',
-              senderName: 'Text Routing Assistant',
-              messageText: autoResponseText,
-              deliveredToPatient: true,
-            },
-            client
-          );
-          autoResponseSent = true;
-        } catch (error: any) {
-          logger.error('Failed to send SMS routing prompt', {
-            error: error.message,
-            patientId: patient.id,
-            threadId: thread.id,
-          });
+            });
+          }
         }
 
         await updateMessageThreadRoute(thread.id, 'general', 'waiting-patient', client);

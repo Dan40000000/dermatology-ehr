@@ -2798,6 +2798,35 @@ async function isInboundWebhookAlreadyProcessed(messageSid: string): Promise<boo
   return result.rows.length > 0;
 }
 
+async function findSmsSettingsForStatusWebhook(body: Record<string, unknown>): Promise<{
+  twilio_account_sid: string;
+  twilio_auth_token: string;
+} | null> {
+  const accountSid = String(body.AccountSid || '').trim();
+  const phoneCandidates = [
+    formatPhoneE164(String(body.From || '')),
+    formatPhoneE164(String(body.To || '')),
+  ].filter(Boolean);
+
+  if (!accountSid && phoneCandidates.length === 0) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `SELECT twilio_account_sid, twilio_auth_token
+     FROM sms_settings
+     WHERE is_active = true
+       AND (
+         ($1::text <> '' AND twilio_account_sid = $1)
+         OR twilio_phone_number = ANY($2::text[])
+       )
+     LIMIT 1`,
+    [accountSid, phoneCandidates]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function applySmsStatusWebhookUpdate(
   messageSid: string,
   messageStatus: string,
@@ -3043,6 +3072,22 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
 
     if (tenantResult.rows.length === 0) {
       logger.warn('SMS status webhook for unknown message', { messageSid });
+      const webhookSettings = await findSmsSettingsForStatusWebhook(req.body);
+      if (!webhookSettings) {
+        return res.status(404).send('Message not found');
+      }
+
+      const twilioService = createTwilioService(
+        webhookSettings.twilio_account_sid,
+        webhookSettings.twilio_auth_token
+      );
+
+      const isValid = twilioService.validateWebhookSignature(signature, url, req.body);
+      if (!isValid) {
+        logger.error('Invalid Twilio status webhook signature for relayed message', { messageSid });
+        return res.status(403).send('Invalid signature');
+      }
+
       const relayResult = await forwardSmsWebhookRelays('status', req.body);
       if (relayResult.successes > 0) {
         return res.status(200).send('OK');

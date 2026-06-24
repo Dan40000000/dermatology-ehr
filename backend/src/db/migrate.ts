@@ -14330,6 +14330,13 @@ Consider age-appropriate treatments and include family counseling points.',
       ADD COLUMN IF NOT EXISTS opted_out_via TEXT;
     `,
   },
+  {
+    name: "207_sms_messages_conversation_nullable",
+    sql: `
+    ALTER TABLE sms_messages
+      ALTER COLUMN conversation_id DROP NOT NULL;
+    `,
+  },
 
 ];
 

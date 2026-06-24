@@ -14337,6 +14337,59 @@ Consider age-appropriate treatments and include family counseling points.',
       ALTER COLUMN conversation_id DROP NOT NULL;
     `,
   },
+  {
+    name: "208_sms_messages_runtime_columns",
+    sql: `
+    ALTER TABLE sms_messages
+      ADD COLUMN IF NOT EXISTS twilio_message_sid TEXT,
+      ADD COLUMN IF NOT EXISTS patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS content TEXT,
+      ADD COLUMN IF NOT EXISTS message_body TEXT,
+      ADD COLUMN IF NOT EXISTS message_type TEXT DEFAULT 'conversation',
+      ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS segment_count INTEGER,
+      ADD COLUMN IF NOT EXISTS keyword_matched TEXT;
+
+    UPDATE sms_messages
+    SET twilio_message_sid = COALESCE(twilio_message_sid, external_id),
+        message_body = COALESCE(message_body, body, content),
+        content = COALESCE(content, message_body, body),
+        message_type = COALESCE(message_type, 'conversation')
+    WHERE twilio_message_sid IS NULL
+       OR message_body IS NULL
+       OR content IS NULL
+       OR message_type IS NULL;
+
+    ALTER TABLE sms_messages
+      ALTER COLUMN body DROP NOT NULL;
+
+    ALTER TABLE sms_messages
+      DROP CONSTRAINT IF EXISTS sms_messages_status_check;
+
+    ALTER TABLE sms_messages
+      ADD CONSTRAINT sms_messages_status_check
+      CHECK (status IN (
+        'pending',
+        'accepted',
+        'queued',
+        'scheduled',
+        'sending',
+        'sent',
+        'delivered',
+        'undelivered',
+        'failed',
+        'received',
+        'read',
+        'cancelled',
+        'canceled'
+      ));
+
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_twilio_sid
+      ON sms_messages(twilio_message_sid);
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_patient_created
+      ON sms_messages(patient_id, created_at DESC);
+    `,
+  },
 
 ];
 

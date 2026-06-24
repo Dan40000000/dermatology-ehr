@@ -200,6 +200,15 @@ router.post('/:patientId/request', requireAuth, async (req: AuthedRequest, res: 
     if (consentState.hasConsent) {
       return res.status(400).json({ error: 'SMS consent is already on file', code: 'consent_already_granted' });
     }
+    if (consentState.pendingRequest) {
+      return res.json({
+        success: true,
+        pendingRequest: true,
+        alreadyPending: true,
+        requestedAt: consentState.requestedAt,
+        consentId: consentState.consent?.id,
+      });
+    }
 
     const settingsResult = await client.query(
       `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active, is_test_mode
@@ -216,16 +225,6 @@ router.post('/:patientId/request', requireAuth, async (req: AuthedRequest, res: 
     const branding = await getSMSPracticeBranding(tenantId, client);
     const messageBody = buildSMSConsentRequestText(branding);
     const fromNumber = settings.twilio_phone_number || '+15555550100';
-    const sendResult = settings.is_test_mode
-      ? buildMockSmsResult(messageBody)
-      : await createTwilioService(
-          settings.twilio_account_sid,
-          settings.twilio_auth_token
-        ).sendSMS({
-          to: patient.phone,
-          from: fromNumber,
-          body: messageBody,
-        });
 
     await client.query('BEGIN');
 
@@ -239,29 +238,65 @@ router.post('/:patientId/request', requireAuth, async (req: AuthedRequest, res: 
         notes: `Opt-in request sent to ${patient.first_name} ${patient.last_name}`,
       }
     );
+    await client.query('COMMIT');
+
+    let sendResult;
+    try {
+      sendResult = settings.is_test_mode
+        ? buildMockSmsResult(messageBody)
+        : await createTwilioService(
+            settings.twilio_account_sid,
+            settings.twilio_auth_token
+          ).sendSMS({
+            to: patient.phone,
+            from: fromNumber,
+            body: messageBody,
+          });
+    } catch (error: any) {
+      await client.query(
+        `DELETE FROM sms_consent
+         WHERE id = $1
+           AND tenant_id = $2
+           AND patient_id = $3
+           AND consent_given = false
+           AND consent_revoked = false`,
+        [consentId, tenantId, patientId]
+      );
+      throw error;
+    }
 
     const messageId = crypto.randomUUID();
-    await client.query(
-      `INSERT INTO sms_messages
-       (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
-        patient_id, content, message_body, status, message_type, sent_at, segment_count)
-       VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, $9, 'consent_request', CURRENT_TIMESTAMP, $10)`,
-      [
-        messageId,
-        tenantId,
-        sendResult.sid,
-        fromNumber,
-        formatPhoneE164(patient.phone),
-        patientId,
-        messageBody,
-        messageBody,
-        sendResult.status,
-        sendResult.numSegments,
-      ]
-    );
+    let messageLogged = false;
+    try {
+      await client.query(
+        `INSERT INTO sms_messages
+         (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
+          patient_id, content, message_body, status, message_type, sent_at, segment_count)
+         VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, $9, 'consent_request', CURRENT_TIMESTAMP, $10)`,
+        [
+          messageId,
+          tenantId,
+          sendResult.sid,
+          fromNumber,
+          formatPhoneE164(patient.phone),
+          patientId,
+          messageBody,
+          messageBody,
+          sendResult.status,
+          sendResult.numSegments,
+        ]
+      );
+      messageLogged = true;
 
-    await auditLog(tenantId, userId, 'sms_consent_request_sent', 'sms_consent', consentId);
-    await client.query('COMMIT');
+      await auditLog(tenantId, userId, 'sms_consent_request_sent', 'sms_consent', consentId);
+    } catch (error: any) {
+      logger.error('SMS consent request sent but message logging failed', {
+        error: error.message,
+        tenantId,
+        patientId,
+        consentId,
+      });
+    }
 
     res.json({
       success: true,
@@ -269,6 +304,7 @@ router.post('/:patientId/request', requireAuth, async (req: AuthedRequest, res: 
       messageId,
       status: sendResult.status,
       pendingRequest: true,
+      messageLogged,
     });
   } catch (error: any) {
     try {

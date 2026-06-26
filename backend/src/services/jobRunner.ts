@@ -2,6 +2,7 @@ import { CronParser, jobSchedulerService, JobHandler } from './jobSchedulerServi
 import { logger } from '../lib/logger';
 import { pool } from '../db/pool';
 import { prepareReadyDowntimePackets } from './downtimePacketService';
+import { processScheduledReminders } from './smsWorkflowService';
 
 // ============================================
 // JOB RUNNER
@@ -170,6 +171,14 @@ class JobRunner {
           remindersSent: sentCount,
           channels: config.channels,
         };
+      })
+    );
+
+    jobSchedulerService.registerHandler(
+      'smsWorkflowService',
+      'processScheduledReminders',
+      this.createHandler(async () => {
+        return await processScheduledReminders();
       })
     );
 
@@ -701,6 +710,20 @@ class JobRunner {
         priority: 4,
         timezone: 'America/New_York',
         tags: ['downtime', 'operations'],
+      }
+    );
+
+    await jobSchedulerService.registerJob(
+      'sms-workflow-process-reminders-5min',
+      '*/5 * * * *',
+      'smsWorkflowService',
+      'processScheduledReminders',
+      {
+        description: 'Process due appointment SMS reminders from the workflow reminder queue.',
+        jobType: 'system',
+        priority: 3,
+        timezone: 'America/Denver',
+        tags: ['sms', 'appointments', 'reminders'],
       }
     );
   }

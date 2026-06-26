@@ -655,6 +655,7 @@ const connectionBadgeClass: Record<ExternalIntegrationStatus["connectionStatus"]
 
 export default function IntegrationsSettingsPage() {
   const { headers } = useAuth();
+  const authConfig = { headers, withCredentials: true };
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [logs, setLogs] = useState<NotificationLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -700,17 +701,17 @@ export default function IntegrationsSettingsPage() {
   const [refreshingStripeSubscription, setRefreshingStripeSubscription] = useState(false);
 
   const fetchIntegrations = async () => {
-    const response = await axios.get(`${API_URL}/api/integrations`, { headers });
+    const response = await axios.get(`${API_URL}/api/integrations`, authConfig);
     setIntegrations(response.data.integrations || []);
   };
 
   const fetchLogs = async () => {
-    const response = await axios.get(`${API_URL}/api/integrations/logs?limit=20`, { headers });
+    const response = await axios.get(`${API_URL}/api/integrations/logs?limit=20`, authConfig);
     setLogs(response.data.logs || []);
   };
 
   const fetchExternalIntegrations = async () => {
-    const response = await axios.get(`${API_URL}/api/external-integrations`, { headers });
+    const response = await axios.get(`${API_URL}/api/external-integrations`, authConfig);
     const payload = (response.data?.integrations || {}) as Partial<
       Record<ExternalIntegrationType, Partial<ExternalIntegrationStatus>>
     >;
@@ -742,23 +743,19 @@ export default function IntegrationsSettingsPage() {
   };
 
   const fetchExternalLogs = async () => {
-    const response = await axios.get(`${API_URL}/api/external-integrations/logs?limit=20`, {
-      headers,
-    });
+    const response = await axios.get(`${API_URL}/api/external-integrations/logs?limit=20`, authConfig);
     setExternalLogs(response.data.logs || []);
   };
 
   const fetchExternalStats = async () => {
-    const response = await axios.get(`${API_URL}/api/external-integrations/stats?days=7`, {
-      headers,
-    });
+    const response = await axios.get(`${API_URL}/api/external-integrations/stats?days=7`, authConfig);
     setExternalStats(response.data.stats || null);
   };
 
   const fetchStripeConnectStatus = async () => {
     const response = await axios.get(
       `${API_URL}/api/external-integrations/payments/stripe/connect/status`,
-      { headers }
+      authConfig
     );
     setStripeConnectStatus(response.data.status || null);
   };
@@ -821,7 +818,7 @@ export default function IntegrationsSettingsPage() {
           channelName: slackChannel,
           notificationTypes: slackNotifications,
         },
-        { headers }
+        authConfig
       );
       setSuccess("Slack integration created successfully!");
       setShowSlackSetup(false);
@@ -854,7 +851,7 @@ export default function IntegrationsSettingsPage() {
           channelName: teamsChannel,
           notificationTypes: teamsNotifications,
         },
-        { headers }
+        authConfig
       );
       setSuccess("Teams integration created successfully!");
       setShowTeamsSetup(false);
@@ -871,7 +868,7 @@ export default function IntegrationsSettingsPage() {
     setTestingId(integrationId);
     setError(null);
     try {
-      await axios.post(`${API_URL}/api/integrations/${integrationId}/test`, {}, { headers });
+      await axios.post(`${API_URL}/api/integrations/${integrationId}/test`, {}, authConfig);
       setSuccess("Test notification sent successfully!");
       await fetchLogs();
     } catch (err: any) {
@@ -886,7 +883,7 @@ export default function IntegrationsSettingsPage() {
       await axios.patch(
         `${API_URL}/api/integrations/${integrationId}`,
         { enabled: !enabled },
-        { headers }
+        authConfig
       );
       await fetchIntegrations();
     } catch (err: any) {
@@ -900,7 +897,7 @@ export default function IntegrationsSettingsPage() {
     }
 
     try {
-      await axios.delete(`${API_URL}/api/integrations/${integrationId}`, { headers });
+      await axios.delete(`${API_URL}/api/integrations/${integrationId}`, authConfig);
       setSuccess("Integration deleted successfully");
       await fetchIntegrations();
     } catch (err: any) {
@@ -913,7 +910,7 @@ export default function IntegrationsSettingsPage() {
       await axios.patch(
         `${API_URL}/api/integrations/${integrationId}`,
         { notificationTypes: types },
-        { headers }
+        authConfig
       );
       await fetchIntegrations();
       setSuccess("Notification types updated");
@@ -970,7 +967,7 @@ export default function IntegrationsSettingsPage() {
     setSavingExternalType(type);
 
     try {
-      await axios.patch(`${API_URL}/api/external-integrations/${type}`, body, { headers });
+      await axios.patch(`${API_URL}/api/external-integrations/${type}`, body, authConfig);
       setSuccess(`${externalTypeLabels[type]} integration saved`);
       await refreshExternalData();
     } catch (err: any) {
@@ -1005,7 +1002,7 @@ export default function IntegrationsSettingsPage() {
           publishableKey,
           syncFrequencyMinutes,
         },
-        { headers }
+        authConfig
       );
       const message = response.data?.message || "Stripe configured successfully";
       const mode = response.data?.mode;
@@ -1027,7 +1024,7 @@ export default function IntegrationsSettingsPage() {
       const response = await axios.post(
         `${API_URL}/api/external-integrations/payments/stripe/use-mock`,
         {},
-        { headers }
+        authConfig
       );
       const message = response.data?.message || "Mock payment mode enabled";
       setSuccess(`${message} (no real charges)`);
@@ -1050,7 +1047,7 @@ export default function IntegrationsSettingsPage() {
       const response = await axios.post(
         `${API_URL}/api/external-integrations/payments/stripe/connect/onboarding-link`,
         { returnUrl, refreshUrl },
-        { headers }
+        authConfig
       );
       const url = response.data?.url;
       if (!url) {
@@ -1070,7 +1067,7 @@ export default function IntegrationsSettingsPage() {
       const response = await axios.post(
         `${API_URL}/api/external-integrations/payments/stripe/connect/refresh`,
         {},
-        { headers }
+        authConfig
       );
       setStripeConnectStatus(response.data.status || null);
       setSuccess("Stripe payout account status refreshed");
@@ -1091,7 +1088,7 @@ export default function IntegrationsSettingsPage() {
       const response = await axios.post(
         `${API_URL}/api/external-integrations/payments/stripe/subscription/checkout`,
         { returnUrl, cancelUrl },
-        { headers }
+        authConfig
       );
       const url = response.data?.url;
       if (!url) {
@@ -1111,7 +1108,7 @@ export default function IntegrationsSettingsPage() {
       const response = await axios.post(
         `${API_URL}/api/external-integrations/payments/stripe/subscription/refresh`,
         {},
-        { headers }
+        authConfig
       );
       setStripeConnectStatus(response.data.status || null);
       setSuccess("Stripe subscription status refreshed");
@@ -1128,7 +1125,7 @@ export default function IntegrationsSettingsPage() {
     setTestingExternalType(type);
 
     try {
-      const response = await axios.post(`${API_URL}/api/external-integrations/${type}/test`, {}, { headers });
+      const response = await axios.post(`${API_URL}/api/external-integrations/${type}/test`, {}, authConfig);
       const message = response.data?.message || `${externalTypeLabels[type]} test succeeded`;
       setSuccess(message);
       await refreshExternalData();
@@ -1144,7 +1141,7 @@ export default function IntegrationsSettingsPage() {
     setSyncingExternalType(type);
 
     try {
-      const response = await axios.post(`${API_URL}/api/external-integrations/${type}/sync`, {}, { headers });
+      const response = await axios.post(`${API_URL}/api/external-integrations/${type}/sync`, {}, authConfig);
       const items = response.data?.itemsProcessed;
       const suffix = Number.isFinite(items) ? ` (${items} items)` : "";
       setSuccess(`${externalTypeLabels[type]} sync completed${suffix}`);

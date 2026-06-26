@@ -366,7 +366,7 @@ export class SMSWorkflowService {
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     // Get appointment details
     const apptResult = await pool.query(
-      `SELECT a.id, a.patient_id, a.start_time,
+      `SELECT a.id, a.patient_id, COALESCE(a.scheduled_start, a.start_time) as start_time,
               p.first_name, p.last_name, p.phone,
               pr.full_name as provider_name,
               l.name as location_name
@@ -418,7 +418,7 @@ export class SMSWorkflowService {
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     // Get appointment details
     const apptResult = await pool.query(
-      `SELECT a.id, a.patient_id, a.start_time,
+      `SELECT a.id, a.patient_id, COALESCE(a.scheduled_start, a.start_time) as start_time,
               p.first_name, p.last_name, p.phone,
               pr.full_name as provider_name
        FROM appointments a

@@ -249,7 +249,9 @@ export class WorkflowOrchestrator {
 
     // Get appointment details
     const apptResult = await pool.query(
-      `SELECT a.*, p.id as patient_id, p.first_name, p.last_name,
+      `SELECT a.*,
+              COALESCE(a.scheduled_start, a.start_time) as start_time,
+              p.id as patient_id, p.first_name, p.last_name,
               p.insurance_payer_id, p.insurance_plan_name
        FROM appointments a
        JOIN patients p ON p.id = a.patient_id

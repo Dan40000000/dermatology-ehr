@@ -1542,13 +1542,15 @@ router.put('/conversations/:patientId/mark-read', requireAuth, async (req: Authe
     try {
       await client.query('BEGIN');
 
-      await client.query(
-        `INSERT INTO sms_message_reads (tenant_id, patient_id, last_read_at)
-         VALUES ($1, $2, CURRENT_TIMESTAMP)
-         ON CONFLICT (tenant_id, patient_id)
-         DO UPDATE SET last_read_at = CURRENT_TIMESTAMP`,
-        [tenantId, patientId]
-      );
+      if (await smsTableExists('sms_message_reads')) {
+        await client.query(
+          `INSERT INTO sms_message_reads (tenant_id, patient_id, last_read_at)
+           VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT (tenant_id, patient_id)
+           DO UPDATE SET last_read_at = CURRENT_TIMESTAMP`,
+          [tenantId, patientId]
+        );
+      }
 
       const threadResult = await client.query(
         `SELECT id

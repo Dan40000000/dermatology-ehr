@@ -65,7 +65,7 @@ const createThreadSchema = z.object({
 });
 
 const updateThreadSchema = z.object({
-  assignedTo: z.string().uuid().optional(),
+  assignedTo: z.string().trim().min(1).optional(),
   status: z.enum(["open", "in-progress", "waiting-patient", "waiting-provider", "closed"]).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
 });
@@ -230,7 +230,7 @@ router.get("/threads/:id", requireAuth, async (req: AuthedRequest, res) => {
         p.dob as "patientDob",
         p.email as "patientEmail",
         p.phone as "patientPhone",
-        u.name as "assignedToName"
+        u.full_name as "assignedToName"
       FROM patient_message_threads t
       LEFT JOIN patients p ON t.patient_id = p.id
       LEFT JOIN users u ON t.assigned_to = u.id
@@ -249,7 +249,7 @@ router.get("/threads/:id", requireAuth, async (req: AuthedRequest, res) => {
       `SELECT
         m.*,
         CASE
-          WHEN m.sender_type = 'staff' THEN u.name
+          WHEN m.sender_type = 'staff' THEN u.full_name
           WHEN m.sender_type = 'patient' THEN p.first_name || ' ' || p.last_name
           ELSE m.sender_name
         END as "senderName",
@@ -290,7 +290,7 @@ router.post("/threads", requireAuth, async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const userName = req.user!.fullName;
+    const userName = req.user!.fullName || (req.user as any).name || req.user!.email || "Staff Member";
 
     const parsed = createThreadSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -414,7 +414,7 @@ router.post("/threads/:id/messages", requireAuth, async (req: AuthedRequest, res
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const userName = req.user!.fullName;
+    const userName = req.user!.fullName || (req.user as any).name || req.user!.email || "Staff Member";
     const threadId = req.params.id || "";
 
     if (!threadId) {

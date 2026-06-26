@@ -214,6 +214,18 @@ describe("Patient message routes", () => {
     expect(res.body.success).toBe(true);
   });
 
+  it("PUT /patient-messages/threads/:id accepts non-UUID staff IDs from clean deployments", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1 });
+
+    const res = await request(app)
+      .put(`/patient-messages/threads/${uuid}`)
+      .send({ assignedTo: "pilot-staff-nurse", status: "in-progress" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(queryMock.mock.calls[0][1]).toEqual(expect.arrayContaining(["pilot-staff-nurse"]));
+  });
+
   it("POST /patient-messages/threads/:id/messages validates body", async () => {
     const res = await request(app).post(`/patient-messages/threads/${uuid}/messages`).send({});
 

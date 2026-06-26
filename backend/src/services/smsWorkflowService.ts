@@ -18,6 +18,7 @@ import { createTwilioService } from './twilioService';
 import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
 import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
 import { getPracticeTimeZone } from '../lib/practiceTimeZone';
+import type { PoolClient } from 'pg';
 import crypto from 'crypto';
 
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
@@ -64,6 +65,59 @@ async function markScheduledReminderFailed(reminderId: string, errorMessage?: st
       [reminderId]
     );
   }
+}
+
+async function withAppointmentConfirmationLock<T>(
+  tenantId: string,
+  appointmentId: string,
+  operation: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  const lockScope = 'appointment_confirmation_sms';
+
+  try {
+    await client.query(
+      `SELECT pg_advisory_lock(hashtext($1), hashtext($2))`,
+      [tenantId, `${lockScope}:${appointmentId}`]
+    );
+
+    return await operation(client);
+  } finally {
+    try {
+      await client.query(
+        `SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`,
+        [tenantId, `${lockScope}:${appointmentId}`]
+      );
+    } catch (error: any) {
+      logger.warn('Failed to release appointment confirmation SMS lock', {
+        tenantId,
+        appointmentId,
+        error: error.message,
+      });
+    }
+    client.release();
+  }
+}
+
+async function findExistingAppointmentConfirmation(
+  client: PoolClient,
+  tenantId: string,
+  appointmentId: string
+): Promise<string | null> {
+  const result = await client.query(
+    `SELECT id
+     FROM sms_messages
+     WHERE tenant_id = $1
+       AND related_appointment_id = $2
+       AND direction = 'outbound'
+       AND message_type = 'appointment_confirmation'
+       AND COALESCE(status, 'sent') NOT IN ('failed', 'undelivered', 'cancelled', 'canceled')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [tenantId, appointmentId]
+  );
+
+  return result.rows[0]?.id || null;
 }
 
 // ============================================
@@ -401,8 +455,9 @@ export class SMSWorkflowService {
    */
   async sendAppointmentConfirmation(
     tenantId: string,
-    appointmentId: string
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    appointmentId: string,
+    options: { forceResend?: boolean } = {}
+  ): Promise<{ success: boolean; messageId?: string; error?: string; duplicate?: boolean }> {
     // Get appointment details
     const apptResult = await pool.query(
       `SELECT a.id, a.patient_id, COALESCE(a.scheduled_start, a.start_time) as start_time,
@@ -424,7 +479,7 @@ export class SMSWorkflowService {
     const appt = apptResult.rows[0];
     const appointmentDate = new Date(appt.start_time);
 
-    return this.sendWorkflowSMS({
+    const sendConfirmation = () => this.sendWorkflowSMS({
       tenantId,
       patientId: appt.patient_id,
       template: SMS_TEMPLATES.APPOINTMENT_CONFIRMATION,
@@ -436,6 +491,24 @@ export class SMSWorkflowService {
       messageType: 'appointment_confirmation',
       relatedEntityType: 'appointment',
       relatedEntityId: appointmentId,
+    });
+
+    if (options.forceResend) {
+      return sendConfirmation();
+    }
+
+    return withAppointmentConfirmationLock(tenantId, appointmentId, async (client) => {
+      const existingMessageId = await findExistingAppointmentConfirmation(client, tenantId, appointmentId);
+      if (existingMessageId) {
+        logger.info('Skipped duplicate appointment confirmation SMS', {
+          tenantId,
+          appointmentId,
+          existingMessageId,
+        });
+        return { success: true, messageId: existingMessageId, duplicate: true };
+      }
+
+      return sendConfirmation();
     });
   }
 

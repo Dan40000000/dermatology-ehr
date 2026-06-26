@@ -7,14 +7,26 @@ import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '.
 jest.mock('../../db/pool', () => ({
   pool: {
     query: jest.fn(),
+    connect: jest.fn(),
   },
 }));
 
 const queryMock = pool.query as jest.Mock;
+const connectMock = pool.connect as jest.Mock;
+const clientQueryMock = jest.fn();
+const clientReleaseMock = jest.fn();
 
 describe('smsWorkflowService templates', () => {
   beforeEach(() => {
     queryMock.mockReset();
+    connectMock.mockReset();
+    clientQueryMock.mockReset();
+    clientReleaseMock.mockReset();
+    connectMock.mockResolvedValue({
+      query: clientQueryMock,
+      release: clientReleaseMock,
+    });
+    clientQueryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   });
 
   it('keeps all default outbound SMS templates minimum necessary', () => {
@@ -72,6 +84,10 @@ describe('smsWorkflowService templates', () => {
         rowCount: 1,
       })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    clientQueryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     const result = await smsWorkflowService.sendAppointmentConfirmation('tenant-1', 'appt-1');
 
@@ -79,6 +95,29 @@ describe('smsWorkflowService templates', () => {
     const insertCall = queryMock.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO sms_messages'));
     expect(insertCall?.[1][6]).toContain('Monday, June 29 at 10:00 AM');
     expect(insertCall?.[1][6]).not.toContain('4:00 PM');
+  });
+
+  it('does not send duplicate appointment confirmations for the same appointment', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        id: 'appt-1',
+        patient_id: 'patient-1',
+        start_time: new Date('2026-06-29T16:00:00.000Z'),
+        provider_name: 'Dr. Smith',
+        location_name: 'Home Clinic',
+      }],
+      rowCount: 1,
+    });
+    clientQueryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id: 'existing-message-1' }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const result = await smsWorkflowService.sendAppointmentConfirmation('tenant-1', 'appt-1');
+
+    expect(result).toEqual({ success: true, messageId: 'existing-message-1', duplicate: true });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(clientReleaseMock).toHaveBeenCalled();
   });
 
   it('uses scheduled_start for appointment reminder timestamps when present', async () => {

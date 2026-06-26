@@ -3197,14 +3197,15 @@ router.post('/workflow/appointment-confirmation/:appointmentId', requireAuth, as
       return res.status(400).json({ error: 'Appointment ID required' });
     }
 
-    const result = await smsWorkflowService.sendAppointmentConfirmation(tenantId, appointmentId);
+    const forceResend = req.body?.forceResend === true;
+    const result = await smsWorkflowService.sendAppointmentConfirmation(tenantId, appointmentId, { forceResend });
 
     if (!result.success) {
       return res.status(400).json({ error: result.error });
     }
 
     await auditLog(tenantId, req.user!.id, 'sms_workflow_confirmation', 'appointment', appointmentId || 'unknown');
-    res.json({ success: true, messageId: result.messageId });
+    res.json({ success: true, messageId: result.messageId, duplicate: result.duplicate === true });
   } catch (error: any) {
     logger.error('Error sending appointment confirmation SMS', { error: error.message });
     res.status(500).json({ error: 'Failed to send confirmation SMS' });

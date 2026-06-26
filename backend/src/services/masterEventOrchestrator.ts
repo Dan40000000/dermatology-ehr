@@ -991,7 +991,7 @@ export class MasterEventOrchestrator {
         patientName: `${appt.first_name} ${appt.last_name}`,
         providerId: appt.provider_id,
         providerName: appt.provider_name,
-        startTime: appt.start_time,
+        startTime: appt.scheduled_start || appt.start_time,
         appointmentType: appt.appointment_type,
         isNewPatient: appt.is_new_patient,
         locationId: appt.location_id,

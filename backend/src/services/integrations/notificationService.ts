@@ -183,18 +183,18 @@ export class NotificationService {
     const limit = options.limit || 50;
     const offset = options.offset || 0;
 
-    let whereClause = "WHERE tenant_id = $1";
+    let whereClause = "WHERE inl.tenant_id = $1";
     const params: any[] = [tenantId];
     let paramIndex = 2;
 
     if (options.integrationId) {
-      whereClause += ` AND integration_id = $${paramIndex}`;
+      whereClause += ` AND inl.integration_id = $${paramIndex}`;
       params.push(options.integrationId);
       paramIndex++;
     }
 
     if (options.success !== undefined) {
-      whereClause += ` AND success = $${paramIndex}`;
+      whereClause += ` AND inl.success = $${paramIndex}`;
       params.push(options.success);
       paramIndex++;
     }
@@ -213,7 +213,7 @@ export class NotificationService {
     // Get total count
     const countResult = await pool.query(
       `SELECT COUNT(*) as count
-       FROM integration_notification_logs
+       FROM integration_notification_logs inl
        ${whereClause}`,
       params
     );

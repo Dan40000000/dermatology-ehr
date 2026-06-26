@@ -213,6 +213,51 @@ describe('MessageNotificationService', () => {
       );
     });
 
+    it('should use primary patient email when the preferences table is missing', async () => {
+      const missingPreferencesTable = Object.assign(
+        new Error('relation "patient_message_preferences" does not exist'),
+        { code: '42P01' }
+      );
+      const mockPatient = {
+        email: 'patient@example.com',
+        email_enabled: true,
+        notification_email: 'patient@example.com',
+      };
+
+      queryMock
+        .mockRejectedValueOnce(missingPreferencesTable)
+        .mockResolvedValueOnce({ rows: [mockPatient] });
+
+      await notifyPatientOfNewMessage(
+        'tenant-123',
+        'patient-456',
+        'thread-789',
+        'Message Subject'
+      );
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Patient message preferences table missing; using primary email notification defaults',
+        expect.objectContaining({ patientId: 'patient-456', tenantId: 'tenant-123' })
+      );
+      expect(mockSendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'patient@example.com',
+          subject: 'You have a new message from your healthcare provider',
+        })
+      );
+      expect(createAuditLogMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-123',
+          action: 'patient_message_notification_sent',
+          status: 'success',
+          metadata: expect.objectContaining({
+            emailDeliveryStatus: 'sent',
+            recipientType: 'patient',
+          }),
+        })
+      );
+    });
+
     it('should use notification_email when different from primary email', async () => {
       const mockPatient = {
         email: 'primary@example.com',

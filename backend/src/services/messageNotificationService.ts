@@ -36,6 +36,15 @@ function notificationAuditAction(prefix: string, status: EmailDeliveryStatus): s
   }
 }
 
+function isMissingPatientMessagePreferences(error: unknown): boolean {
+  const pgError = error as { code?: string; message?: string };
+  return (
+    pgError?.code === "42P01" &&
+    typeof pgError.message === "string" &&
+    pgError.message.includes("patient_message_preferences")
+  );
+}
+
 async function auditNotificationDelivery(params: {
   tenantId: string;
   actionPrefix: "patient_message_notification" | "staff_message_notification" | "staff_digest_email";
@@ -73,16 +82,37 @@ export async function notifyPatientOfNewMessage(
 ): Promise<void> {
   try {
     // Get patient email and notification preferences
-    const result = await pool.query(
-      `SELECT
-        p.email,
-        COALESCE(pref.email_notifications_enabled, true) as email_enabled,
-        COALESCE(pref.notification_email, p.email) as notification_email
-      FROM patients p
-      LEFT JOIN patient_message_preferences pref ON p.id = pref.patient_id
-      WHERE p.id = $1 AND p.tenant_id = $2`,
-      [patientId, tenantId]
-    );
+    let result: { rows: any[] };
+    try {
+      result = await pool.query(
+        `SELECT
+          p.email,
+          COALESCE(pref.email_notifications_enabled, true) as email_enabled,
+          COALESCE(pref.notification_email, p.email) as notification_email
+        FROM patients p
+        LEFT JOIN patient_message_preferences pref ON p.id = pref.patient_id
+        WHERE p.id = $1 AND p.tenant_id = $2`,
+        [patientId, tenantId]
+      );
+    } catch (error) {
+      if (!isMissingPatientMessagePreferences(error)) {
+        throw error;
+      }
+
+      logger.warn("Patient message preferences table missing; using primary email notification defaults", {
+        patientId,
+        tenantId,
+      });
+      result = await pool.query(
+        `SELECT
+          p.email,
+          true as email_enabled,
+          p.email as notification_email
+        FROM patients p
+        WHERE p.id = $1 AND p.tenant_id = $2`,
+        [patientId, tenantId]
+      );
+    }
 
     if (result.rows.length === 0) {
       logger.warn('Patient not found for message notification', { patientId, tenantId });

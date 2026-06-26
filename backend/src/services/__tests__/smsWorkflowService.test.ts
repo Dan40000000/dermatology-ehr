@@ -1,7 +1,7 @@
 process.env.PATIENT_SCHEDULING_TIME_ZONE = 'America/Denver';
 
 import { pool } from '../../db/pool';
-import { SMS_TEMPLATES, smsWorkflowService } from '../smsWorkflowService';
+import { SMS_TEMPLATES, processScheduledReminders, smsWorkflowService } from '../smsWorkflowService';
 import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../../utils/smsPrivacyGuard';
 
 jest.mock('../../db/pool', () => ({
@@ -90,5 +90,43 @@ describe('smsWorkflowService templates', () => {
       expect.stringContaining('COALESCE(a.scheduled_start, a.start_time) as start_time'),
       ['appt-1', 'tenant-1']
     );
+  });
+
+  it('marks failed scheduled reminders when older clean schemas lack error_message', async () => {
+    const sendReminderSpy = jest
+      .spyOn(smsWorkflowService, 'sendAppointmentReminder')
+      .mockResolvedValueOnce({ success: false, error: 'Twilio not ready' });
+
+    queryMock.mockImplementation((sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM scheduled_reminders sr')) {
+        return Promise.resolve({
+          rows: [{
+            id: 'reminder-1',
+            tenant_id: 'tenant-1',
+            appointment_id: 'appt-1',
+            reminder_type: '24h',
+            patient_id: 'patient-1',
+            appointment_status: 'scheduled',
+          }],
+          rowCount: 1,
+        });
+      }
+
+      if (sql.includes("error_message = $1")) {
+        return Promise.reject({ code: '42703', message: 'column "error_message" does not exist' });
+      }
+
+      if (sql.includes("UPDATE scheduled_reminders SET status = 'failed' WHERE id = $1")) {
+        expect(params).toEqual(['reminder-1']);
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      }
+
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+
+    await expect(processScheduledReminders()).resolves.toEqual({ sent: 0, failed: 1, skipped: 0 });
+    expect(sendReminderSpy).toHaveBeenCalledWith('tenant-1', 'appt-1', '24h');
+
+    sendReminderSpy.mockRestore();
   });
 });

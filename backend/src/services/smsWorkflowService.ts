@@ -48,6 +48,24 @@ function formatAppointmentTimeForSms(value: Date): string {
   });
 }
 
+async function markScheduledReminderFailed(reminderId: string, errorMessage?: string): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE scheduled_reminders SET status = 'failed', error_message = $1 WHERE id = $2`,
+      [errorMessage, reminderId]
+    );
+  } catch (error: any) {
+    if (error?.code !== '42703') {
+      throw error;
+    }
+
+    await pool.query(
+      `UPDATE scheduled_reminders SET status = 'failed' WHERE id = $1`,
+      [reminderId]
+    );
+  }
+}
+
 // ============================================
 // SMS TEMPLATES
 // ============================================
@@ -734,10 +752,7 @@ export async function processScheduledReminders(): Promise<{
           sent++;
         } else {
           // Mark as failed
-          await pool.query(
-            `UPDATE scheduled_reminders SET status = 'failed', error_message = $1 WHERE id = $2`,
-            [result.error, reminder.id]
-          );
+          await markScheduledReminderFailed(reminder.id, result.error);
           failed++;
         }
       } catch (error: any) {

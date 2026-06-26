@@ -3294,9 +3294,9 @@ router.get('/workflow/scheduled-reminders', requireAuth, async (req: AuthedReque
         sr.scheduled_time as "scheduledTime",
         sr.status,
         sr.sent_at as "sentAt",
-        sr.error_message as "errorMessage",
+        NULL::text as "errorMessage",
         p.first_name || ' ' || p.last_name as "patientName",
-        a.start_time as "appointmentTime"
+        COALESCE(a.scheduled_start, a.start_time) as "appointmentTime"
       FROM scheduled_reminders sr
       JOIN appointments a ON a.id = sr.appointment_id
       JOIN patients p ON p.id = a.patient_id

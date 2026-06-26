@@ -60,6 +60,26 @@ const SMS_A2P_CONSENT_URL = process.env.SMS_A2P_CONSENT_URL || `${SMS_A2P_PUBLIC
 const SMS_A2P_EVIDENCE_URL = process.env.SMS_A2P_EVIDENCE_URL || `${SMS_A2P_PUBLIC_BASE_URL}/sms-opt-in-evidence.html`;
 const SMS_A2P_TERMS_URL = process.env.SMS_A2P_TERMS_URL || `${SMS_A2P_PUBLIC_BASE_URL}/sms-terms.html`;
 const SMS_A2P_PRIVACY_URL = process.env.SMS_A2P_PRIVACY_URL || `${SMS_A2P_PUBLIC_BASE_URL}/sms-privacy.html`;
+const smsTableExistsCache = new Map<string, boolean>();
+
+async function smsTableExists(tableName: string): Promise<boolean> {
+  const cached = smsTableExistsCache.get(tableName);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const result = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = $1
+     ) as exists`,
+    [tableName]
+  );
+  const exists = result.rows[0]?.exists === true;
+  smsTableExistsCache.set(tableName, exists);
+  return exists;
+}
 
 function isInboundSimulationEnabled(isTestMode: boolean): boolean {
   return (
@@ -1133,6 +1153,7 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
     const status = req.query.status as string | undefined;
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
+    const hasSmsMessageReads = await smsTableExists('sms_message_reads');
     const conversationStatusSql = `
       CASE
         WHEN c.consent_status = 'opted_out' OR c.opt_out_date IS NOT NULL THEN 'blocked'
@@ -1169,6 +1190,22 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
         LIMIT 1
       )
     `;
+    const unreadCountSql = hasSmsMessageReads
+      ? `COALESCE(
+          c.unread_count,
+          (
+          SELECT COUNT(*)::int
+          FROM sms_messages m
+          WHERE m.patient_id = p.id
+            AND m.tenant_id = $1
+            AND m.direction = 'inbound'
+            AND m.created_at > COALESCE((
+              SELECT last_read_at FROM sms_message_reads
+              WHERE patient_id = p.id AND tenant_id = $1
+            ), '1970-01-01'::timestamp)
+          )
+        )`
+      : `COALESCE(c.unread_count, 0)`;
 
     const result = await pool.query(
       `SELECT DISTINCT ON (p.id)
@@ -1197,20 +1234,7 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
         ${lastMessageDirectionSql} as "lastMessageDirection",
         ${lastMessagePreviewSql} as "lastMessagePreview",
         ${lastMessagePreviewSql} as "lastMessage",
-        COALESCE(
-          c.unread_count,
-          (
-          SELECT COUNT(*)::int
-          FROM sms_messages m
-          WHERE m.patient_id = p.id
-            AND m.tenant_id = $1
-            AND m.direction = 'inbound'
-            AND m.created_at > COALESCE((
-              SELECT last_read_at FROM sms_message_reads
-              WHERE patient_id = p.id AND tenant_id = $1
-            ), '1970-01-01'::timestamp)
-          )
-        ) as "unreadCount"
+        ${unreadCountSql} as "unreadCount"
       FROM patients p
       LEFT JOIN sms_conversations c ON c.patient_id = p.id AND c.tenant_id = $1
       LEFT JOIN patient_sms_preferences prefs ON prefs.patient_id = p.id AND prefs.tenant_id = $1
@@ -1283,7 +1307,7 @@ router.get('/conversations/:patientId', requireAuth, async (req: AuthedRequest, 
         message_body as "messageBody",
         status,
         sent_at as "sentAt",
-        delivered_at as "deliveredAt",
+        NULL::timestamptz as "deliveredAt",
         created_at as "createdAt"
       FROM sms_messages
       WHERE patient_id = $1 AND tenant_id = $2
@@ -1950,6 +1974,9 @@ router.get('/templates', requireAuth, async (req: AuthedRequest, res: Response) 
     const tenantId = req.user!.tenantId;
     const category = req.query.category as string | undefined;
     const activeOnly = req.query.activeOnly === 'true';
+    if (!(await smsTableExists('sms_message_templates'))) {
+      return res.json({ templates: [] });
+    }
 
     let query = `
       SELECT

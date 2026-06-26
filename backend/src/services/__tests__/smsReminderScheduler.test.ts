@@ -1,3 +1,5 @@
+process.env.PATIENT_SCHEDULING_TIME_ZONE = "America/Denver";
+
 import { sendImmediateReminder, sendScheduledReminders, startReminderScheduler } from "../smsReminderScheduler";
 import { pool } from "../../db/pool";
 import { createTwilioService } from "../twilioService";
@@ -312,6 +314,47 @@ describe("smsReminderScheduler", () => {
     expect(result).toEqual({ success: true });
     expect(createTwilioServiceMock).toHaveBeenCalled();
     expect(twilioServiceMock.sendAppointmentReminder).toHaveBeenCalled();
+  });
+
+  it("formats reminder times in the practice timezone", async () => {
+    settingsRows = [
+      {
+        twilio_account_sid: "sid",
+        twilio_auth_token: "token",
+        twilio_phone_number: "+15550001",
+        reminder_template: "Template {appointmentDate} {appointmentTime}",
+      },
+    ];
+    appointmentDetailRows = [
+      {
+        appointmentId: "appt-1",
+        patientId: "patient-1",
+        patientName: "Daniel Perry",
+        patientFirstName: "Daniel",
+        patientPhone: "5412318693",
+        providerName: "Dr. Smith",
+        appointmentDate: new Date("2026-06-29T16:00:00.000Z"),
+        appointmentTime: "04:00 PM",
+        clinicPhone: "5417549454",
+      },
+    ];
+    twilioServiceMock.sendAppointmentReminder.mockResolvedValueOnce({
+      sid: "sid-1",
+      status: "sent",
+      body: "body",
+      numSegments: 1,
+    });
+
+    const result = await sendImmediateReminder("tenant-1", "appt-1");
+
+    expect(result).toEqual({ success: true });
+    expect(twilioServiceMock.sendAppointmentReminder).toHaveBeenCalledWith(
+      "+15550001",
+      expect.objectContaining({
+        appointmentDate: "Monday, June 29, 2026",
+        appointmentTime: "10:00 AM",
+      })
+    );
   });
 
   it("sends voice reminder in test mode without Twilio credentials", async () => {

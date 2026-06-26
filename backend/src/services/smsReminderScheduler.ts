@@ -8,6 +8,7 @@ import { logger } from '../lib/logger';
 import { TwilioService, createTwilioService } from './twilioService';
 import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
 import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
+import { getPracticeTimeZone } from '../lib/practiceTimeZone';
 import crypto from 'crypto';
 
 export interface AppointmentToRemind {
@@ -26,6 +27,7 @@ export interface AppointmentToRemind {
 export type ReminderChannel = 'sms' | 'voice';
 
 const DEFAULT_CLINIC_NUMBER = '+15555550100';
+const REMINDER_TIME_ZONE = getPracticeTimeZone();
 const DEFAULT_SMS_TEMPLATE =
   'Hi {firstName}, this is a reminder for your appointment on {appointmentDate} at {appointmentTime}. Reply C to confirm, R to reschedule, or X to cancel.';
 
@@ -45,6 +47,25 @@ interface ReminderSendResult {
   status: string;
   body: string;
   numSegments: number;
+}
+
+function formatReminderDate(value: Date): string {
+  return value.toLocaleDateString('en-US', {
+    timeZone: REMINDER_TIME_ZONE,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function formatReminderTime(value: Date): string {
+  return value.toLocaleTimeString('en-US', {
+    timeZone: REMINDER_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 function getDefaultReminderChannel(): ReminderChannel {
@@ -285,12 +306,8 @@ async function sendAppointmentReminder(
 
     // Format appointment date
     const appointmentDate = new Date(appointment.appointmentDate);
-    const formattedDate = appointmentDate.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    const formattedDate = formatReminderDate(appointmentDate);
+    const formattedTime = formatReminderTime(appointmentDate);
 
     // Create reminder record (scheduled)
     const reminderId = crypto.randomUUID();
@@ -306,7 +323,7 @@ async function sendAppointmentReminder(
       patientName: appointment.patientName,
       providerName: appointment.providerName,
       appointmentDate: formattedDate,
-      appointmentTime: appointment.appointmentTime,
+      appointmentTime: formattedTime,
       clinicPhone: appointment.clinicPhone,
     });
 
@@ -330,7 +347,7 @@ async function sendAppointmentReminder(
           patientName: appointment.patientName,
           providerName: appointment.providerName,
           appointmentDate: formattedDate,
-          appointmentTime: appointment.appointmentTime,
+          appointmentTime: formattedTime,
           clinicPhone: appointment.clinicPhone,
           template: tenant.reminder_template || DEFAULT_SMS_TEMPLATE,
         }
@@ -418,14 +435,10 @@ async function sendAppointmentVoiceReminder(
     }
 
     const appointmentDate = new Date(appointment.appointmentDate);
-    const formattedDate = appointmentDate.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    const formattedDate = formatReminderDate(appointmentDate);
+    const formattedTime = formatReminderTime(appointmentDate);
 
-    const voiceMessage = `Hello ${appointment.patientFirstName || appointment.patientName.split(/\s+/)[0] || 'there'}. This is a reminder from your dermatology clinic. You have an appointment on ${formattedDate} at ${appointment.appointmentTime}. If you need to reschedule, please call ${appointment.clinicPhone}.`;
+    const voiceMessage = `Hello ${appointment.patientFirstName || appointment.patientName.split(/\s+/)[0] || 'there'}. This is a reminder from your dermatology clinic. You have an appointment on ${formattedDate} at ${formattedTime}. If you need to reschedule, please call ${appointment.clinicPhone}.`;
 
     const callResult = tenant.is_test_mode
       ? {

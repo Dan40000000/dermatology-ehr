@@ -17,14 +17,35 @@ import { logger } from '../lib/logger';
 import { createTwilioService } from './twilioService';
 import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
 import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
+import { getPracticeTimeZone } from '../lib/practiceTimeZone';
 import crypto from 'crypto';
 
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
+const SMS_APPOINTMENT_TIME_ZONE = getPracticeTimeZone();
 
 function calculateSmsSegments(body: string): number {
   const hasUnicode = /[^\x00-\x7F]/.test(body);
   const segmentLength = hasUnicode ? 70 : 160;
   return Math.max(1, Math.ceil(body.length / segmentLength));
+}
+
+function formatAppointmentDateForSms(value: Date, includeYear = false): string {
+  return value.toLocaleDateString('en-US', {
+    timeZone: SMS_APPOINTMENT_TIME_ZONE,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    ...(includeYear ? { year: 'numeric' } : {}),
+  });
+}
+
+function formatAppointmentTimeForSms(value: Date): string {
+  return value.toLocaleTimeString('en-US', {
+    timeZone: SMS_APPOINTMENT_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 // ============================================
@@ -391,16 +412,8 @@ export class SMSWorkflowService {
       template: SMS_TEMPLATES.APPOINTMENT_CONFIRMATION,
       variables: {
         providerName: appt.provider_name,
-        appointmentDate: appointmentDate.toLocaleDateString('en-US', {
-          weekday: 'long',
-          month: 'long',
-          day: 'numeric',
-        }),
-        appointmentTime: appointmentDate.toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-        }),
+        appointmentDate: formatAppointmentDateForSms(appointmentDate),
+        appointmentTime: formatAppointmentTimeForSms(appointmentDate),
       },
       messageType: 'appointment_confirmation',
       relatedEntityType: 'appointment',
@@ -445,16 +458,8 @@ export class SMSWorkflowService {
       template,
       variables: {
         providerName: appt.provider_name,
-        appointmentDate: appointmentDate.toLocaleDateString('en-US', {
-          weekday: 'long',
-          month: 'long',
-          day: 'numeric',
-        }),
-        appointmentTime: appointmentDate.toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-        }),
+        appointmentDate: formatAppointmentDateForSms(appointmentDate),
+        appointmentTime: formatAppointmentTimeForSms(appointmentDate),
       },
       messageType: 'appointment_reminder',
       relatedEntityType: 'appointment',

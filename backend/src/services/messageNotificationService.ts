@@ -11,10 +11,56 @@
  */
 
 import { pool } from "../db/pool";
-import { auditLog } from "./audit";
+import { createAuditLog } from "./audit";
 import { logger } from "../lib/logger";
 import { config } from "../config";
 import { getEmailService } from "../lib/container";
+
+type EmailDeliveryStatus = "sent" | "disabled" | "blocked_phi" | "failed";
+
+type EmailDeliveryResult = {
+  status: EmailDeliveryStatus;
+  error?: string;
+};
+
+function notificationAuditAction(prefix: string, status: EmailDeliveryStatus): string {
+  switch (status) {
+    case "sent":
+      return `${prefix}_sent`;
+    case "disabled":
+      return `${prefix}_skipped`;
+    case "blocked_phi":
+      return `${prefix}_blocked`;
+    case "failed":
+      return `${prefix}_failed`;
+  }
+}
+
+async function auditNotificationDelivery(params: {
+  tenantId: string;
+  actionPrefix: "patient_message_notification" | "staff_message_notification" | "staff_digest_email";
+  resourceId: string;
+  resourceType?: "patient_message_thread" | "user";
+  delivery: EmailDeliveryResult;
+  recipientType: "patient" | "staff";
+  recipientUserId?: string;
+}): Promise<void> {
+  await createAuditLog({
+    tenantId: params.tenantId,
+    userId: "system",
+    action: notificationAuditAction(params.actionPrefix, params.delivery.status),
+    resourceType: params.resourceType || "patient_message_thread",
+    resourceId: params.resourceId,
+    severity: params.delivery.status === "failed" ? "warning" : "info",
+    status: params.delivery.status === "sent" ? "success" : params.delivery.status === "failed" ? "failure" : "partial",
+    metadata: {
+      emailDeliveryStatus: params.delivery.status,
+      recipientType: params.recipientType,
+      recipientUserId: params.recipientUserId,
+      error: params.delivery.error,
+    },
+  });
+}
 
 /**
  * Send email notification to patient when staff sends a message
@@ -85,21 +131,20 @@ To manage your notification preferences, log in to the patient portal.
       subject: emailSubject,
     });
 
-    await maybeSendEmail({
+    const delivery = await maybeSendEmail({
       to: recipientEmail,
       subject: emailSubject,
       text: emailBody,
       html: emailBody.replace(/\n/g, "<br>"),
     });
 
-    // Audit log
-    await auditLog(
+    await auditNotificationDelivery({
       tenantId,
-      "system",
-      "patient_message_notification_sent",
-      "patient_message_thread",
-      threadId
-    );
+      actionPrefix: "patient_message_notification",
+      resourceId: threadId,
+      delivery,
+      recipientType: "patient",
+    });
   } catch (error) {
     logger.error('Error sending patient notification', { error: (error as Error).message });
     // Don't throw - notification failure shouldn't break message sending
@@ -137,7 +182,7 @@ export async function notifyStaffOfNewPatientMessage(
         `SELECT
           id,
           email,
-          COALESCE(full_name, first_name || ' ' || last_name, email) as name
+          COALESCE(full_name, email) as name
         FROM users
         WHERE id = $1 AND tenant_id = $2`,
         [assignedUserId, tenantId]
@@ -151,7 +196,7 @@ export async function notifyStaffOfNewPatientMessage(
         `SELECT
           id,
           email,
-          COALESCE(full_name, first_name || ' ' || last_name, email) as name
+          COALESCE(full_name, email) as name
         FROM users
         WHERE tenant_id = $1 AND role IN ('admin', 'provider', 'nurse', 'medical_assistant')
         LIMIT 5`,
@@ -190,21 +235,21 @@ This is an automated message. Please do not reply to this email.
         subject: emailSubject,
       });
 
-      await maybeSendEmail({
+      const delivery = await maybeSendEmail({
         to: user.email,
         subject: emailSubject,
         text: emailBody,
         html: emailBody.replace(/\n/g, "<br>"),
       });
 
-      // Audit log
-      await auditLog(
+      await auditNotificationDelivery({
         tenantId,
-        "system",
-        "staff_message_notification_sent",
-        "patient_message_thread",
-        threadId
-      );
+        actionPrefix: "staff_message_notification",
+        resourceId: threadId,
+        delivery,
+        recipientType: "staff",
+        recipientUserId: user.id,
+      });
     }
   } catch (error) {
     logger.error('Error sending staff notification', { error: (error as Error).message });
@@ -223,14 +268,14 @@ export async function sendStaffDigestEmail(tenantId: string): Promise<void> {
       `SELECT
         COALESCE(t.assigned_to, 'unassigned') as user_id,
         u.email,
-        u.name,
+        COALESCE(u.full_name, u.email) as name,
         COUNT(*) as unread_count
       FROM patient_message_threads t
       LEFT JOIN users u ON t.assigned_to = u.id
       WHERE t.tenant_id = $1
         AND t.is_read_by_staff = false
         AND t.status != 'closed'
-      GROUP BY COALESCE(t.assigned_to, 'unassigned'), u.email, u.name`,
+      GROUP BY COALESCE(t.assigned_to, 'unassigned'), u.email, u.full_name`,
       [tenantId]
     );
 
@@ -257,14 +302,22 @@ Dermatology EHR System
         totalMessages: row.unread_count,
       });
 
-      await maybeSendEmail({
+      const delivery = await maybeSendEmail({
         to: row.email,
         subject: emailSubject,
         text: emailBody,
         html: emailBody.replace(/\n/g, "<br>"),
       });
 
-      await auditLog(tenantId, "system", "staff_digest_email_sent", "user", row.user_id);
+      await auditNotificationDelivery({
+        tenantId,
+        actionPrefix: "staff_digest_email",
+        resourceType: "user",
+        resourceId: row.user_id,
+        delivery,
+        recipientType: "staff",
+        recipientUserId: row.user_id,
+      });
     }
   } catch (error) {
     logger.error('Error sending staff digest', { error: (error as Error).message });
@@ -290,20 +343,23 @@ async function maybeSendEmail(params: {
   text: string;
   html: string;
   containsPhi?: boolean;
-}): Promise<void> {
+}): Promise<EmailDeliveryResult> {
   if (!config.features.emailDelivery) {
-    return;
+    return { status: "disabled" };
   }
 
   if (config.email.notificationOnly && params.containsPhi) {
     logger.warn("Blocked email containing PHI because EMAIL_NOTIFICATION_ONLY is enabled");
-    return;
+    return { status: "blocked_phi" };
   }
 
   try {
     await getEmailService().sendEmail(params);
+    return { status: "sent" };
   } catch (error) {
-    logger.error("Email delivery failed", { error: (error as Error).message });
+    const message = (error as Error).message;
+    logger.error("Email delivery failed", { error: message });
+    return { status: "failed", error: message };
   }
 }
 

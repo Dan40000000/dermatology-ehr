@@ -1,11 +1,13 @@
 import { pool } from '../../db/pool';
-import { auditLog } from '../audit';
+import { createAuditLog } from '../audit';
 import { logger } from '../../lib/logger';
 import {
   notifyPatientOfNewMessage,
   notifyStaffOfNewPatientMessage,
   sendStaffDigestEmail,
 } from '../messageNotificationService';
+
+const mockSendEmail = jest.fn();
 
 jest.mock('../../db/pool', () => ({
   pool: {
@@ -15,6 +17,25 @@ jest.mock('../../db/pool', () => ({
 
 jest.mock('../audit', () => ({
   auditLog: jest.fn(),
+  createAuditLog: jest.fn(),
+}));
+
+jest.mock('../../config', () => ({
+  config: {
+    features: {
+      emailDelivery: true,
+    },
+    email: {
+      notificationOnly: true,
+    },
+    frontendUrl: 'https://example.test',
+  },
+}));
+
+jest.mock('../../lib/container', () => ({
+  getEmailService: jest.fn(() => ({
+    sendEmail: mockSendEmail,
+  })),
 }));
 
 jest.mock('../../lib/logger', () => ({
@@ -26,11 +47,17 @@ jest.mock('../../lib/logger', () => ({
 }));
 
 const queryMock = pool.query as jest.Mock;
-const auditLogMock = auditLog as jest.Mock;
+const createAuditLogMock = createAuditLog as jest.Mock;
 
 describe('MessageNotificationService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSendEmail.mockReset();
+    mockSendEmail.mockResolvedValue({
+      messageId: 'email-123',
+      accepted: ['recipient@example.com'],
+      rejected: [],
+    });
   });
 
   describe('notifyPatientOfNewMessage', () => {
@@ -66,12 +93,19 @@ describe('MessageNotificationService', () => {
         })
       );
 
-      expect(auditLogMock).toHaveBeenCalledWith(
-        'tenant-123',
-        'system',
-        'patient_message_notification_sent',
-        'patient_message_thread',
-        'thread-789'
+      expect(createAuditLogMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-123',
+          userId: 'system',
+          action: 'patient_message_notification_sent',
+          resourceType: 'patient_message_thread',
+          resourceId: 'thread-789',
+          status: 'success',
+          metadata: expect.objectContaining({
+            emailDeliveryStatus: 'sent',
+            recipientType: 'patient',
+          }),
+        })
       );
     });
 
@@ -97,7 +131,7 @@ describe('MessageNotificationService', () => {
         expect.objectContaining({ patientId: 'patient-456', tenantId: 'tenant-123' })
       );
 
-      expect(auditLogMock).not.toHaveBeenCalled();
+      expect(createAuditLogMock).not.toHaveBeenCalled();
     });
 
     it('should log warning when patient not found', async () => {
@@ -115,7 +149,7 @@ describe('MessageNotificationService', () => {
         expect.objectContaining({ patientId: 'patient-999', tenantId: 'tenant-123' })
       );
 
-      expect(auditLogMock).not.toHaveBeenCalled();
+      expect(createAuditLogMock).not.toHaveBeenCalled();
     });
 
     it('should log warning when no email address available', async () => {
@@ -138,6 +172,44 @@ describe('MessageNotificationService', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         'No email address for patient notification',
         expect.objectContaining({ patientId: 'patient-456', tenantId: 'tenant-123' })
+      );
+    });
+
+    it('should audit failed delivery when the email provider rejects the send', async () => {
+      const mockPatient = {
+        email: 'patient@example.com',
+        first_name: 'John',
+        email_enabled: true,
+        notification_email: 'patient@example.com',
+      };
+
+      queryMock.mockResolvedValueOnce({ rows: [mockPatient] });
+      mockSendEmail.mockRejectedValueOnce(new Error('Maximum credits exceeded'));
+
+      await notifyPatientOfNewMessage(
+        'tenant-123',
+        'patient-456',
+        'thread-789',
+        'Message Subject'
+      );
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Email delivery failed',
+        expect.objectContaining({ error: 'Maximum credits exceeded' })
+      );
+      expect(createAuditLogMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-123',
+          action: 'patient_message_notification_failed',
+          resourceType: 'patient_message_thread',
+          resourceId: 'thread-789',
+          status: 'failure',
+          metadata: expect.objectContaining({
+            emailDeliveryStatus: 'failed',
+            recipientType: 'patient',
+            error: 'Maximum credits exceeded',
+          }),
+        })
       );
     });
 
@@ -219,12 +291,25 @@ describe('MessageNotificationService', () => {
         })
       );
 
-      expect(auditLogMock).toHaveBeenCalledWith(
-        'tenant-123',
-        'system',
-        'staff_message_notification_sent',
-        'patient_message_thread',
-        'thread-789'
+      const staffLookupSql = queryMock.mock.calls[1][0] as string;
+      expect(staffLookupSql).toContain('COALESCE(full_name, email) as name');
+      expect(staffLookupSql).not.toContain('first_name');
+      expect(staffLookupSql).not.toContain('last_name');
+
+      expect(createAuditLogMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-123',
+          userId: 'system',
+          action: 'staff_message_notification_sent',
+          resourceType: 'patient_message_thread',
+          resourceId: 'thread-789',
+          status: 'success',
+          metadata: expect.objectContaining({
+            emailDeliveryStatus: 'sent',
+            recipientType: 'staff',
+            recipientUserId: 'user-123',
+          }),
+        })
       );
     });
 
@@ -253,7 +338,7 @@ describe('MessageNotificationService', () => {
       );
 
       expect(logger.info).toHaveBeenCalledTimes(3);
-      expect(auditLogMock).toHaveBeenCalledTimes(3);
+      expect(createAuditLogMock).toHaveBeenCalledTimes(3);
     });
 
     it('should skip users without email addresses', async () => {
@@ -281,7 +366,7 @@ describe('MessageNotificationService', () => {
       );
 
       expect(logger.info).toHaveBeenCalledTimes(2);
-      expect(auditLogMock).toHaveBeenCalledTimes(2);
+      expect(createAuditLogMock).toHaveBeenCalledTimes(2);
     });
 
     it('should handle patient not found gracefully', async () => {
@@ -360,12 +445,20 @@ describe('MessageNotificationService', () => {
         })
       );
 
-      expect(auditLogMock).toHaveBeenCalledWith(
-        'tenant-123',
-        'system',
-        'staff_digest_email_sent',
-        'user',
-        'user-123'
+      expect(createAuditLogMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-123',
+          userId: 'system',
+          action: 'staff_digest_email_sent',
+          resourceType: 'user',
+          resourceId: 'user-123',
+          status: 'success',
+          metadata: expect.objectContaining({
+            emailDeliveryStatus: 'sent',
+            recipientType: 'staff',
+            recipientUserId: 'user-123',
+          }),
+        })
       );
     });
 
@@ -452,7 +545,7 @@ describe('MessageNotificationService', () => {
       await sendStaffDigestEmail('tenant-123');
 
       expect(logger.info).not.toHaveBeenCalled();
-      expect(auditLogMock).not.toHaveBeenCalled();
+      expect(createAuditLogMock).not.toHaveBeenCalled();
     });
 
     it('should handle database errors gracefully', async () => {

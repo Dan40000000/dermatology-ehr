@@ -117,11 +117,7 @@ interface StripeConnectStatus {
   connectedAccountId?: string;
   accountType?: string;
   onboardingStatus:
-    | "not_started"
-    | "pending"
-    | "complete"
-    | "restricted"
-    | "mock";
+    "not_started" | "pending" | "complete" | "restricted" | "mock";
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
   destinationChargesEnabled: boolean;
@@ -756,7 +752,10 @@ const buildDefaultExternalForms = (): Record<
   },
 });
 
-const parseJsonObject = (label: string, raw: string): Record<string, unknown> => {
+const parseJsonObject = (
+  label: string,
+  raw: string,
+): Record<string, unknown> => {
   const trimmed = raw.trim();
   if (!trimmed) {
     return {};
@@ -881,7 +880,7 @@ const toneForConnection = (
 const stripeSubscriptionReady = (status: StripeConnectStatus | null) =>
   Boolean(
     status &&
-      ["active", "trialing", "mock"].includes(status.subscription.status),
+    ["active", "trialing", "mock"].includes(status.subscription.status),
   );
 
 const stripePayoutReady = (status: StripeConnectStatus | null) =>
@@ -890,6 +889,11 @@ const stripePayoutReady = (status: StripeConnectStatus | null) =>
 const stripeRoutingReady = (status: StripeConnectStatus | null) =>
   Boolean(
     status && (status.destinationChargesEnabled || status.mode === "mock"),
+  );
+
+const stripeRequiresPlatformSetup = (message?: string | null) =>
+  /platform.*key|secret key.*not configured|price.*not configured/i.test(
+    message || "",
   );
 
 function StatusPill({
@@ -1381,7 +1385,12 @@ export default function IntegrationsSettingsPage() {
       }
       window.location.assign(url);
     } catch (err: unknown) {
-      setError(parseError(err, "Failed to start Stripe onboarding"));
+      const message = parseError(err, "Failed to start Stripe onboarding");
+      setError(
+        stripeRequiresPlatformSetup(message)
+          ? "Choose Use Mock Payments for demos, or save matching Stripe platform keys before opening Stripe onboarding."
+          : message,
+      );
       setStartingStripeConnect(false);
     }
   };
@@ -1422,7 +1431,12 @@ export default function IntegrationsSettingsPage() {
       }
       window.location.assign(url);
     } catch (err: unknown) {
-      setError(parseError(err, "Failed to start subscription checkout"));
+      const message = parseError(err, "Failed to start subscription checkout");
+      setError(
+        stripeRequiresPlatformSetup(message)
+          ? "Choose Use Mock Payments for demos, or save matching Stripe platform keys and a subscription price before opening checkout."
+          : message,
+      );
       setStartingStripeSubscription(false);
     }
   };
@@ -1920,6 +1934,20 @@ export default function IntegrationsSettingsPage() {
                       );
                 const providerOptions =
                   externalProviderOptions[integration.type];
+                const stripeMockConfigured =
+                  integration.type === "payment" &&
+                  integration.isConfigured &&
+                  stripeConnectStatus?.mode === "mock";
+                const stripeHostedSetupReady =
+                  integration.type === "payment" &&
+                  Boolean(
+                    stripeConnectStatus?.platformConfigured ||
+                    stripeMockConfigured,
+                  );
+                const stripeNeedsFirstStep =
+                  integration.type === "payment" && !stripeHostedSetupReady;
+                const stripeDisabledReason =
+                  "Choose Use Mock Payments for demos, or save Stripe platform keys before opening this link.";
 
                 return (
                   <section
@@ -2188,6 +2216,77 @@ export default function IntegrationsSettingsPage() {
 
                       {integration.type === "payment" ? (
                         <div className="space-y-5">
+                          <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <ShieldCheck className="h-4 w-4 text-sky-700" />
+                                  <p className="text-sm font-bold text-slate-950">
+                                    Stripe setup guide
+                                  </p>
+                                </div>
+                                <p className="mt-2 max-w-3xl text-sm leading-6 text-sky-900">
+                                  Pick one path first. For demos, click{" "}
+                                  <strong>Use Mock Payments</strong>. For a real
+                                  practice, paste the Stripe publishable and
+                                  secret keys, then click{" "}
+                                  <strong>Save Platform Keys</strong>. After
+                                  that, use Connect Stripe for the practice bank
+                                  account and Start Subscription for the
+                                  practice billing plan.
+                                </p>
+                              </div>
+                              <StatusPill
+                                tone={
+                                  stripeHostedSetupReady ? "good" : "warning"
+                                }
+                              >
+                                {stripeHostedSetupReady
+                                  ? "ready for links"
+                                  : "first step needed"}
+                              </StatusPill>
+                            </div>
+                            <div className="mt-4 grid gap-3 md:grid-cols-3">
+                              <div className="rounded-lg bg-white p-3 ring-1 ring-sky-200">
+                                <p className="text-xs font-bold uppercase tracking-wide text-sky-800">
+                                  Demo testing
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-slate-600">
+                                  Use Mock Payments. The app records payments,
+                                  orders, and revenue without charging cards or
+                                  asking for banking info.
+                                </p>
+                              </div>
+                              <div className="rounded-lg bg-white p-3 ring-1 ring-sky-200">
+                                <p className="text-xs font-bold uppercase tracking-wide text-sky-800">
+                                  Real Stripe
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-slate-600">
+                                  Copy matching test or live API keys from
+                                  Stripe Developers. Do not mix test and live
+                                  keys.
+                                </p>
+                              </div>
+                              <div className="rounded-lg bg-white p-3 ring-1 ring-sky-200">
+                                <p className="text-xs font-bold uppercase tracking-wide text-sky-800">
+                                  Owner handoff
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-slate-600">
+                                  Stripe will ask the owner for legal business
+                                  details, tax identity, support info, and bank
+                                  payout details on Stripe's hosted page.
+                                </p>
+                              </div>
+                            </div>
+                            {stripeNeedsFirstStep && (
+                              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                                Connect Stripe and Start Subscription stay
+                                locked until mock mode is enabled or Stripe
+                                platform keys are saved.
+                              </div>
+                            )}
+                          </div>
+
                           <div className="grid gap-3 lg:grid-cols-4">
                             {stripeSteps.map((step) => (
                               <div
@@ -2292,7 +2391,15 @@ export default function IntegrationsSettingsPage() {
                                   onClick={() => {
                                     void startStripeConnectOnboarding();
                                   }}
-                                  disabled={startingStripeConnect}
+                                  disabled={
+                                    startingStripeConnect ||
+                                    !stripeHostedSetupReady
+                                  }
+                                  title={
+                                    stripeHostedSetupReady
+                                      ? undefined
+                                      : stripeDisabledReason
+                                  }
                                   className={`${buttonBase} bg-sky-600 text-white hover:bg-sky-700`}
                                 >
                                   <Building2 className="h-4 w-4" />
@@ -2354,7 +2461,8 @@ export default function IntegrationsSettingsPage() {
                                 <p className="mt-2 text-xs text-slate-600">
                                   Renews{" "}
                                   {new Date(
-                                    stripeConnectStatus.subscription.currentPeriodEnd,
+                                    stripeConnectStatus.subscription
+                                      .currentPeriodEnd,
                                   ).toLocaleDateString()}
                                 </p>
                               )}
@@ -2363,7 +2471,15 @@ export default function IntegrationsSettingsPage() {
                                   onClick={() => {
                                     void startStripeSubscriptionCheckout();
                                   }}
-                                  disabled={startingStripeSubscription}
+                                  disabled={
+                                    startingStripeSubscription ||
+                                    !stripeHostedSetupReady
+                                  }
+                                  title={
+                                    stripeHostedSetupReady
+                                      ? undefined
+                                      : stripeDisabledReason
+                                  }
                                   className={`${buttonBase} bg-indigo-600 text-white hover:bg-indigo-700`}
                                 >
                                   <CreditCard className="h-4 w-4" />

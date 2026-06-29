@@ -1100,6 +1100,11 @@ router.post('/payments/stripe/connect/onboarding-link', requireAuth, requireRole
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.issues });
     }
+    if (/stripe platform secret key is not configured/i.test(error.message || '')) {
+      return res.status(400).json({
+        error: 'Choose mock payments for demos or save Stripe platform keys before starting Stripe Connect onboarding.',
+      });
+    }
     logger.error('Failed to create Stripe Connect onboarding link', { error: error.message });
     return res.status(500).json({ error: error.message || 'Failed to create Stripe Connect onboarding link' });
   }
@@ -1139,6 +1144,11 @@ router.post('/payments/stripe/subscription/checkout', requireAuth, requireRoles(
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.issues });
+    }
+    if (/stripe platform secret key is not configured|stripe subscription price is not configured/i.test(error.message || '')) {
+      return res.status(400).json({
+        error: 'Choose mock payments for demos or save Stripe platform keys and a subscription price before starting checkout.',
+      });
     }
     logger.error('Failed to create Stripe subscription checkout', { error: error.message });
     return res.status(500).json({ error: error.message || 'Failed to create Stripe subscription checkout' });

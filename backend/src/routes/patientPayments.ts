@@ -73,7 +73,7 @@ patientPaymentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       c.claim_number as "claimNumber"
     from patient_payments pp
     join patients p on p.id = pp.patient_id
-    join users u on u.id = pp.processed_by
+    left join users u on u.id = pp.processed_by
     left join claims c on c.id = pp.applied_to_claim_id
     where pp.tenant_id = $1
   `;
@@ -144,7 +144,7 @@ patientPaymentsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) =
       c.claim_number as "claimNumber"
     from patient_payments pp
     join patients p on p.id = pp.patient_id
-    join users u on u.id = pp.processed_by
+      left join users u on u.id = pp.processed_by
     left join claims c on c.id = pp.applied_to_claim_id
     where pp.id = $1 and pp.tenant_id = $2`,
     [paymentId, tenantId],

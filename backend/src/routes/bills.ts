@@ -38,7 +38,16 @@ const billUpdateSchema = z.object({
 });
 
 const billActionSchema = z.object({
-  action: z.enum(["send_statement", "set_payment_plan", "flag_collections", "send_to_collections", "write_off", "add_note"]),
+  action: z.enum([
+    "send_statement",
+    "print_statement",
+    "mark_statement_mailed",
+    "set_payment_plan",
+    "flag_collections",
+    "send_to_collections",
+    "write_off",
+    "add_note",
+  ]),
   note: z.string().max(1000).optional(),
   amountCents: z.number().int().min(0).optional(),
 });
@@ -95,6 +104,7 @@ billsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       nullif(to_jsonb(b)->>'last_statement_sent_at', '') as "lastStatementSentAt",
       b.created_at as "createdAt", b.updated_at as "updatedAt",
       p.first_name as "patientFirstName", p.last_name as "patientLastName",
+      right(upper(regexp_replace(coalesce(p.account_number, ''), '[^a-zA-Z0-9]', '', 'g')), 4) as "accountEnding",
       coalesce(p.insurance_plan_name, p.insurance) as "payerName",
       u.full_name as "createdByName"
     from bills b
@@ -256,6 +266,12 @@ billsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
       b.created_at as "createdAt", b.updated_at as "updatedAt",
       p.first_name as "patientFirstName", p.last_name as "patientLastName",
       p.dob, p.email as "patientEmail", p.phone as "patientPhone",
+      p.account_number as "accountNumber",
+      right(upper(regexp_replace(coalesce(p.account_number, ''), '[^a-zA-Z0-9]', '', 'g')), 4) as "accountEnding",
+      p.address as "patientAddress",
+      p.city as "patientCity",
+      p.state as "patientState",
+      p.zip as "patientZip",
       u.full_name as "createdByName"
     from bills b
     join patients p on p.id = b.patient_id
@@ -410,6 +426,10 @@ billsRouter.post("/:id/actions", requireAuth, requireRoles(["admin", "billing", 
     const billResult = await client.query(
       `select
          id,
+         patient_id,
+         bill_number,
+         bill_date,
+         due_date,
          coalesce(balance_cents, 0) as balance_cents,
          coalesce(adjustment_amount_cents, 0) as adjustment_amount_cents
        from bills
@@ -438,6 +458,12 @@ billsRouter.post("/:id/actions", requireAuth, requireRoles(["admin", "billing", 
     if (action === "send_statement") {
       updateParts.push("last_statement_sent_at = now()");
       addUpdate("follow_up_status", "statement_sent");
+    } else if (action === "mark_statement_mailed") {
+      updateParts.push("last_statement_sent_at = now()");
+      addUpdate("follow_up_status", "statement_sent");
+      addUpdate("billing_internal_note", note || "Printed statement mailed to patient");
+    } else if (action === "print_statement") {
+      addUpdate("follow_up_status", "statement_printed");
     } else if (action === "set_payment_plan") {
       addUpdate("payment_plan_status", "active");
       addUpdate("follow_up_status", "payment_plan");
@@ -477,6 +503,58 @@ billsRouter.post("/:id/actions", requireAuth, requireRoles(["admin", "billing", 
        where id = $${param++} and tenant_id = $${param}`,
       updateValues,
     );
+
+    if (action === "mark_statement_mailed") {
+      const statementId = crypto.randomUUID();
+      const countResult = await client.query(
+        `select count(*) as count from patient_statements where tenant_id = $1`,
+        [tenantId],
+      );
+      const statementNumber = `STMT-${new Date().getFullYear()}-${String(parseInt(countResult.rows[0].count) + 1).padStart(6, "0")}`;
+
+      await client.query(
+        `insert into patient_statements(
+          id, tenant_id, patient_id, statement_number, statement_date,
+          balance_cents, status, last_sent_date, sent_via, due_date, notes, generated_by
+        ) values ($1, $2, $3, $4, current_date, $5, 'sent', current_date, 'mail', $6, $7, $8)`,
+        [
+          statementId,
+          tenantId,
+          bill.patient_id,
+          statementNumber,
+          currentBalanceCents,
+          bill.due_date || null,
+          note || `Printed statement mailed for bill ${bill.bill_number || billId}`,
+          req.user!.id,
+        ],
+      );
+
+      const billLines = await client.query(
+        `select service_date, cpt_code, description, total_cents
+         from bill_line_items
+         where bill_id = $1 and tenant_id = $2
+         order by service_date asc`,
+        [billId, tenantId],
+      );
+
+      for (const line of billLines.rows) {
+        await client.query(
+          `insert into statement_line_items(
+            id, tenant_id, statement_id, service_date, description,
+            amount_cents, insurance_paid_cents, patient_responsibility_cents
+          ) values ($1, $2, $3, $4, $5, $6, 0, $7)`,
+          [
+            crypto.randomUUID(),
+            tenantId,
+            statementId,
+            line.service_date || bill.bill_date,
+            [line.cpt_code, line.description].filter(Boolean).join(" - ") || bill.bill_number || "Patient bill",
+            Number(line.total_cents || 0),
+            Number(line.total_cents || 0),
+          ],
+        );
+      }
+    }
 
     await client.query(
       `insert into bill_activity(id, tenant_id, bill_id, action, note, amount_cents, created_by, created_at)

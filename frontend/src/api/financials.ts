@@ -32,6 +32,20 @@ export async function fetchBills(options: FetchOptions, filters?: {
   return res.json();
 }
 
+export async function fetchBillDetail(options: FetchOptions, billId: string) {
+  const res = await fetch(`${API_BASE}/api/bills/${encodeURIComponent(billId)}`, {
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to fetch bill");
+  }
+  return res.json();
+}
+
 export async function fetchFinancialWorkQueue(options: FetchOptions, status = 'open') {
   const params = new URLSearchParams();
   if (status) params.append('status', status);
@@ -64,7 +78,7 @@ export async function resolveFinancialWorkQueueItem(options: FetchOptions, itemI
 }
 
 export async function postBillAction(options: FetchOptions, billId: string, data: {
-  action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'send_to_collections' | 'write_off' | 'add_note';
+  action: 'send_statement' | 'print_statement' | 'mark_statement_mailed' | 'set_payment_plan' | 'flag_collections' | 'send_to_collections' | 'write_off' | 'add_note';
   note?: string;
   amountCents?: number;
 }) {

@@ -369,6 +369,114 @@ describe("Bills Routes", () => {
       expect(mockClient.release).toHaveBeenCalled();
     });
 
+    it("should mark a printed statement as mailed", async () => {
+      const currentYear = new Date().getFullYear();
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{
+            id: "bill-1",
+            patient_id: "patient-1",
+            bill_number: "BILL-2026-000001",
+            bill_date: "2026-06-29",
+            due_date: "2026-07-29",
+            balance_cents: 5000,
+            adjustment_amount_cents: 0,
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [] }) // update bill
+        .mockResolvedValueOnce({ rows: [{ count: "3" }] }) // statement count
+        .mockResolvedValueOnce({ rows: [] }) // insert statement
+        .mockResolvedValueOnce({ rows: [] }) // select bill lines
+        .mockResolvedValueOnce({ rows: [] }) // insert activity
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const res = await request(app)
+        .post("/bills/bill-1/actions")
+        .send({ action: "mark_statement_mailed", note: "Printed and placed in outgoing mail" });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, action: "mark_statement_mailed" });
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining("last_statement_sent_at = now()"),
+        expect.arrayContaining([
+          "statement_sent",
+          "Printed and placed in outgoing mail",
+          "bill-1",
+          "tenant-1",
+        ]),
+      );
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        4,
+        expect.stringContaining("select count(*) as count from patient_statements"),
+        ["tenant-1"],
+      );
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        5,
+        expect.stringContaining("insert into patient_statements"),
+        expect.arrayContaining([
+          "tenant-1",
+          "patient-1",
+          `STMT-${currentYear}-000004`,
+          5000,
+          "2026-07-29",
+          "Printed and placed in outgoing mail",
+          "user-1",
+        ]),
+      );
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        7,
+        expect.stringContaining("insert into bill_activity"),
+        expect.arrayContaining([
+          "tenant-1",
+          "bill-1",
+          "mark_statement_mailed",
+          "Printed and placed in outgoing mail",
+          null,
+          "user-1",
+        ]),
+      );
+      expect(auditLog).toHaveBeenCalledWith("tenant-1", "user-1", "bill_action_mark_statement_mailed", "bill", "bill-1");
+    });
+
+    it("should record printed statements without marking them mailed", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ id: "bill-1", balance_cents: 5000, adjustment_amount_cents: 0 }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [] }) // update bill
+        .mockResolvedValueOnce({ rows: [] }) // insert activity
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const res = await request(app)
+        .post("/bills/bill-1/actions")
+        .send({ action: "print_statement", note: "Printed for front desk mailing" });
+
+      expect(res.status).toBe(200);
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining("follow_up_status = $1"),
+        expect.arrayContaining(["statement_printed", "bill-1", "tenant-1"]),
+      );
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        4,
+        expect.stringContaining("insert into bill_activity"),
+        expect.arrayContaining([
+          "tenant-1",
+          "bill-1",
+          "print_statement",
+          "Printed for front desk mailing",
+          null,
+          "user-1",
+        ]),
+      );
+      expect(auditLog).toHaveBeenCalledWith("tenant-1", "user-1", "bill_action_print_statement", "bill", "bill-1");
+    });
+
     it("should flag collections with an internal note", async () => {
       mockClient.query
         .mockResolvedValueOnce({ rows: [] }) // BEGIN

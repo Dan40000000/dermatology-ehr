@@ -6,6 +6,7 @@ import { Skeleton } from '../components/ui';
 import { RCMDashboard } from '../components/financials/RCMDashboard';
 import { PatientPaymentPortal } from '../components/financials/PatientPaymentPortal';
 import { PremiumAnalytics } from '../components/financials/PremiumAnalytics';
+import { BillStatementModal, openPrintableBillStatement } from '../components/financials/BillStatementModal';
 import { FeeSchedulePage } from './FeeSchedulePage';
 import {
   BarChart3,
@@ -22,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   fetchARAging,
+  fetchBillDetail,
   fetchBills,
   fetchBillsSummary,
   fetchClaims,
@@ -164,11 +166,39 @@ interface FinancialBill {
   balanceCents?: number;
   dueDate?: string;
   status?: string;
+  accountEnding?: string;
+  accountNumber?: string;
+  patientEmail?: string;
+  patientPhone?: string;
+  patientAddress?: string;
+  patientCity?: string;
+  patientState?: string;
+  patientZip?: string;
+  serviceDateStart?: string;
+  serviceDateEnd?: string;
+  adjustmentAmountCents?: number;
   followUpStatus?: string;
   collectionsStatus?: string;
   paymentPlanStatus?: string;
   billingInternalNote?: string;
   lastStatementSentAt?: string;
+}
+
+interface FinancialBillLineItem {
+  id: string;
+  serviceDate?: string;
+  cptCode?: string;
+  description?: string;
+  quantity?: number;
+  unitPriceCents?: number;
+  totalCents?: number;
+  icdCodes?: string[];
+}
+
+interface BillStatementPreviewState {
+  bill: FinancialBill;
+  lineItems: FinancialBillLineItem[];
+  payUrl: string;
 }
 
 interface FinancialClaim {
@@ -763,6 +793,10 @@ export function FinancialsHub() {
   });
   const [dashboardARAging, setDashboardARAging] = useState<DashboardAraBucket[]>([]);
   const [recentBills, setRecentBills] = useState<FinancialBill[]>([]);
+  const [billStatementPreview, setBillStatementPreview] = useState<BillStatementPreviewState | null>(null);
+  const [billStatementLoadingId, setBillStatementLoadingId] = useState<string | null>(null);
+  const [billStatementPrinting, setBillStatementPrinting] = useState(false);
+  const [billStatementMarkingMailed, setBillStatementMarkingMailed] = useState(false);
   const [financialClaims, setFinancialClaims] = useState<FinancialClaim[]>([]);
   const [financialWorkQueue, setFinancialWorkQueue] = useState<FinancialWorkQueueItem[]>([]);
   const initialDashboardRange = getDashboardRange('today');
@@ -1329,13 +1363,23 @@ export function FinancialsHub() {
     loadData();
   };
 
-  const copyBillPayLink = async (bill: FinancialBill) => {
+  const buildBillPayUrl = (bill: FinancialBill) => {
     if (!bill.billPayCode) {
+      return '';
+    }
+
+    const params = new URLSearchParams({ code: bill.billPayCode });
+    if (bill.accountEnding) params.set('account', bill.accountEnding);
+    return `${window.location.origin}/bill-pay?${params.toString()}`;
+  };
+
+  const copyBillPayLink = async (bill: FinancialBill) => {
+    const url = buildBillPayUrl(bill);
+    if (!url) {
       showError('This bill does not have a bill pay code yet.');
       return;
     }
 
-    const url = `${window.location.origin}/bill-pay?code=${encodeURIComponent(bill.billPayCode)}`;
     try {
       await navigator.clipboard.writeText(url);
       showSuccess('Bill pay link copied.');
@@ -1344,14 +1388,111 @@ export function FinancialsHub() {
     }
   };
 
+  const openBillStatement = async (bill: FinancialBill) => {
+    if (!session) return;
+
+    setBillStatementLoadingId(bill.id);
+    try {
+      const detail = await fetchBillDetail(
+        {
+          tenantId: session.tenantId,
+          accessToken: session.accessToken,
+        },
+        bill.id,
+      );
+      const detailedBill = { ...bill, ...(detail.bill || {}) };
+      setBillStatementPreview({
+        bill: detailedBill,
+        lineItems: Array.isArray(detail.lineItems) ? detail.lineItems : [],
+        payUrl: buildBillPayUrl(detailedBill),
+      });
+    } catch (error: any) {
+      showError(error?.message || 'Failed to open statement preview');
+    } finally {
+      setBillStatementLoadingId(null);
+    }
+  };
+
+  const printBillStatement = async () => {
+    if (!session || !billStatementPreview) return;
+
+    setBillStatementPrinting(true);
+    try {
+      await postBillAction(
+        {
+          tenantId: session.tenantId,
+          accessToken: session.accessToken,
+        },
+        billStatementPreview.bill.id,
+        {
+          action: 'print_statement',
+          note: `Printed patient statement for bill ${billStatementPreview.bill.billNumber || billStatementPreview.bill.id}`,
+        },
+      );
+      openPrintableBillStatement(
+        billStatementPreview.bill,
+        billStatementPreview.lineItems,
+        billStatementPreview.payUrl,
+      );
+      showSuccess('Statement opened for printing.');
+      loadData();
+    } catch (error: any) {
+      showError(error?.message || 'Failed to print statement');
+    } finally {
+      setBillStatementPrinting(false);
+    }
+  };
+
+  const markBillStatementMailed = async () => {
+    if (!session || !billStatementPreview) return;
+
+    setBillStatementMarkingMailed(true);
+    try {
+      await postBillAction(
+        {
+          tenantId: session.tenantId,
+          accessToken: session.accessToken,
+        },
+        billStatementPreview.bill.id,
+        {
+          action: 'mark_statement_mailed',
+          note: `Printed statement mailed for bill ${billStatementPreview.bill.billNumber || billStatementPreview.bill.id}`,
+        },
+      );
+      showSuccess('Statement marked as mailed.');
+      setBillStatementPreview(null);
+      loadData();
+    } catch (error: any) {
+      showError(error?.message || 'Failed to mark statement mailed');
+    } finally {
+      setBillStatementMarkingMailed(false);
+    }
+  };
+
+  const copyPreviewPayLink = async () => {
+    if (!billStatementPreview?.payUrl) {
+      showError('This bill does not have a complete bill-pay link.');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(billStatementPreview.payUrl);
+      showSuccess('Bill pay link copied.');
+    } catch {
+      showError(billStatementPreview.payUrl);
+    }
+  };
+
   const handleBillAction = async (
     bill: FinancialBill,
-    action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'send_to_collections' | 'write_off' | 'add_note',
+    action: 'send_statement' | 'print_statement' | 'mark_statement_mailed' | 'set_payment_plan' | 'flag_collections' | 'send_to_collections' | 'write_off' | 'add_note',
   ) => {
     if (!session) return;
 
     const actionLabels: Record<typeof action, string> = {
       send_statement: 'Statement sent',
+      print_statement: 'Statement printed',
+      mark_statement_mailed: 'Statement marked mailed',
       set_payment_plan: 'Payment plan started',
       flag_collections: 'Collections flag added',
       send_to_collections: 'Debt sent to collections',
@@ -3918,16 +4059,21 @@ export function FinancialsHub() {
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                            <button style={{
-                              padding: '0.4rem 0.75rem',
-                              background: 'white',
-                              color: '#374151',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '6px',
-                              fontSize: '0.8rem',
-                              cursor: 'pointer',
-                            }}>
-                              View
+                            <button
+                              type="button"
+                              onClick={() => openBillStatement(bill)}
+                              disabled={billStatementLoadingId === bill.id}
+                              style={{
+                                padding: '0.4rem 0.75rem',
+                                background: 'white',
+                                color: billStatementLoadingId === bill.id ? '#9ca3af' : '#374151',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '6px',
+                                fontSize: '0.8rem',
+                                cursor: billStatementLoadingId === bill.id ? 'wait' : 'pointer',
+                              }}
+                            >
+                              {billStatementLoadingId === bill.id ? 'Opening...' : 'View'}
                             </button>
                             <button
                               type="button"
@@ -3947,19 +4093,20 @@ export function FinancialsHub() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleBillAction(bill, 'send_statement')}
+                              onClick={() => openBillStatement(bill)}
+                              disabled={billStatementLoadingId === bill.id}
                               style={{
                                 padding: '0.4rem 0.75rem',
                                 background: '#eff6ff',
-                                color: '#1d4ed8',
+                                color: billStatementLoadingId === bill.id ? '#93c5fd' : '#1d4ed8',
                                 border: '1px solid #bfdbfe',
                                 borderRadius: '6px',
                                 fontSize: '0.8rem',
-                                cursor: 'pointer',
+                                cursor: billStatementLoadingId === bill.id ? 'wait' : 'pointer',
                                 fontWeight: 700,
                               }}
                             >
-                              Statement
+                              Print / Mail
                             </button>
                             <button
                               type="button"
@@ -4458,6 +4605,19 @@ export function FinancialsHub() {
           </div>
         </div>
       </div>
+      {billStatementPreview && (
+        <BillStatementModal
+          bill={billStatementPreview.bill}
+          lineItems={billStatementPreview.lineItems}
+          payUrl={billStatementPreview.payUrl}
+          onClose={() => setBillStatementPreview(null)}
+          onPrint={printBillStatement}
+          onCopyPayLink={copyPreviewPayLink}
+          onMarkMailed={markBillStatementMailed}
+          printing={billStatementPrinting}
+          markingMailed={billStatementMarkingMailed}
+        />
+      )}
     </div>
   );
 }

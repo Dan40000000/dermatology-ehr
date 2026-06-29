@@ -14390,6 +14390,13 @@ Consider age-appropriate treatments and include family counseling points.',
       ON sms_messages(patient_id, created_at DESC);
     `,
   },
+  {
+    name: "209_patient_payment_public_ledger_nullable_processor",
+    sql: `
+    ALTER TABLE patient_payments
+      ALTER COLUMN processed_by DROP NOT NULL;
+    `,
+  },
 
 ];
 

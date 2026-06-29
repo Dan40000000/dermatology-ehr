@@ -234,6 +234,7 @@ publicBillPayRouter.post("/pay", async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     logPublicBillPayError("Public bill payment error", error);
+    console.error("Public bill payment error:", toSafeErrorMessage(error));
     return res.status(500).json({ error: "Payment failed" });
   } finally {
     client.release();

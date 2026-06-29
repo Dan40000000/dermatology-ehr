@@ -1,8 +1,8 @@
 const DEMO_INTEGRATION_ITEMS = [
-  { label: 'Insurance', detail: 'demo data only' },
-  { label: 'Rx / eRx', detail: 'not live-linked' },
-  { label: 'Text/SMS', detail: 'demo/pending approval' },
-  { label: 'Payments', detail: 'Stripe test/mock only' },
+  { label: 'Insurance', detail: 'demo unless connected' },
+  { label: 'Rx / eRx', detail: 'vendor approval required' },
+  { label: 'Text/SMS', detail: 'live when enabled' },
+  { label: 'Payments', detail: 'mock/test/live by keys' },
 ];
 
 export function DemoIntegrationBanner() {
@@ -28,7 +28,7 @@ export function DemoIntegrationBanner() {
           Professional Review Demo
         </div>
         <div style={{ fontSize: '0.78rem', color: '#78350f', marginTop: '0.15rem' }}>
-          Use synthetic patients only. These integrations are not connected to live vendor networks.
+          Use synthetic patients in demo tenants. Check each environment before using live vendor networks.
         </div>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>

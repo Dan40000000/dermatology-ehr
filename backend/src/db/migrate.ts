@@ -14397,6 +14397,80 @@ Consider age-appropriate treatments and include family counseling points.',
       ALTER COLUMN processed_by DROP NOT NULL;
     `,
   },
+  {
+    name: "210_portal_payment_runtime_tables",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS portal_payment_methods (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      payment_type TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      processor TEXT DEFAULT 'stripe',
+      last_four TEXT NOT NULL,
+      card_brand TEXT,
+      account_type TEXT,
+      bank_name TEXT,
+      cardholder_name TEXT,
+      expiry_month INTEGER,
+      expiry_year INTEGER,
+      billing_address JSONB,
+      is_default BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_payment_transactions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      amount NUMERIC(10,2) NOT NULL,
+      currency TEXT DEFAULT 'USD',
+      status TEXT NOT NULL DEFAULT 'pending',
+      payment_method_id TEXT REFERENCES portal_payment_methods(id),
+      payment_method_type TEXT,
+      processor TEXT DEFAULT 'stripe',
+      processor_transaction_id TEXT,
+      processor_response JSONB,
+      invoice_id TEXT,
+      charge_ids JSONB,
+      description TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      receipt_url TEXT,
+      receipt_number TEXT UNIQUE,
+      refund_amount NUMERIC(10,2) DEFAULT 0,
+      refund_reason TEXT,
+      refunded_at TIMESTAMPTZ,
+      refunded_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_patient_balances (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE UNIQUE,
+      total_charges NUMERIC(10,2) DEFAULT 0,
+      total_payments NUMERIC(10,2) DEFAULT 0,
+      total_adjustments NUMERIC(10,2) DEFAULT 0,
+      current_balance NUMERIC(10,2) GENERATED ALWAYS AS (total_charges - total_payments - total_adjustments) STORED,
+      last_payment_date TIMESTAMPTZ,
+      last_payment_amount NUMERIC(10,2),
+      last_updated TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_payment_methods_patient
+      ON portal_payment_methods(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_transactions_patient
+      ON portal_payment_transactions(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_balances_patient
+      ON portal_patient_balances(patient_id);
+    `,
+  },
 
 ];
 

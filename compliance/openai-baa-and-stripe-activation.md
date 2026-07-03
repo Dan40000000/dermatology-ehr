@@ -4,7 +4,9 @@ Last updated: 2026-07-03
 
 ## OpenAI BAA request
 
-OpenAI's API BAA process starts by emailing `baa@openai.com`. ChatGPT/Codex HIPAA support requires an eligible ChatGPT Enterprise or regulated healthcare workspace, and OpenAI states that Codex HIPAA support must be enabled by the account director.
+OpenAI's API BAA process starts by emailing `baa@openai.com`. ChatGPT/Codex HIPAA support is not a standalone Codex checkbox; it requires an eligible ChatGPT Enterprise, Healthcare, or Regulated Workspace. OpenAI states that Codex Local support for PHI-covered work must be enabled by the OpenAI account director.
+
+Do not process PHI through Codex, ChatGPT, browser connectors, file uploads, or data migration tools until the BAA is signed and the covered workspace/API configuration is confirmed.
 
 ### Email draft
 
@@ -43,6 +45,22 @@ CRM_CHECKOUT_ALLOWED_HOSTS=perrysoftwarellc.com,www.perrysoftwarellc.com
 
 `CRM_STRIPE_SECRET_KEY` is preferred for Perry Software's own CRM billing so it can be separated from any practice-owned Stripe configuration inside the dermatology app.
 
+Create Stripe webhook endpoints for the live and pilot API services:
+
+```text
+https://derm-api-production.up.railway.app/api/stripe/webhook
+https://derm-api-pilot-live.up.railway.app/api/stripe/webhook
+```
+
+Subscribe the endpoints to:
+
+```text
+checkout.session.completed
+payment_intent.succeeded
+```
+
+Copy each endpoint signing secret, which starts with `whsec_`, into the matching Railway environment as `STRIPE_WEBHOOK_SECRET`.
+
 After the variables are set, redeploy or restart `derm-api` in both Railway environments, then create a CRM invoice with a non-zero open balance and click **Pay with Stripe** from `https://perrysoftwarellc.com/account/`.
 
 ## Verification checklist
@@ -51,6 +69,6 @@ After the variables are set, redeploy or restart `derm-api` in both Railway envi
 - GitHub Pages has HTTPS enforced.
 - Railway `derm-api` has `CRM_STRIPE_SECRET_KEY` or `STRIPE_SECRET_KEY`.
 - Railway `derm-api` has `STRIPE_WEBHOOK_SECRET`.
-- Stripe webhook endpoint points to `https://derm-api-production.up.railway.app/api/stripe/webhook`.
+- Stripe webhook endpoints point to both Railway API environments.
 - Test payment redirects to Stripe Checkout.
 - Stripe `checkout.session.completed` or `payment_intent.succeeded` webhook marks the CRM invoice paid.

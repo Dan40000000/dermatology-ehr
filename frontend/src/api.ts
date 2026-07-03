@@ -11050,6 +11050,9 @@ export interface CrmInvoice {
   dueDate: string | null;
   paidAt: string | null;
   stripeInvoiceUrl: string | null;
+  stripeCheckoutSessionId?: string | null;
+  stripePaymentIntentId?: string | null;
+  stripePaymentStatus?: string | null;
   notes: string | null;
   createdAt: string | null;
   updatedAt: string | null;

@@ -183,7 +183,7 @@ const invoiceRows = [
     client_id: "crm-client-clean",
     invoice_number: "INV-CLEAN-001",
     description: "Pilot account",
-    amount_cents: 0,
+    amount_cents: 9900,
     status: "open",
     due_date: "2026-06-30",
     paid_at: null,
@@ -304,6 +304,24 @@ function installCrmQueryMock(loginUser = ownerRow) {
         rowCount: userId === ownerRow.id || userId === clientUserRow.id ? 1 : 0,
       };
     }
+    if (sql.includes("FROM crm_client_invoices i") && sql.includes("JOIN crm_clients")) {
+      const invoiceId = params?.[0];
+      const invoice = invoiceRows.find((row) => row.id === invoiceId);
+      if (!invoice) return { rows: [], rowCount: 0 };
+      const client = clientRows.find((row) => row.id === invoice.client_id);
+      return {
+        rows: [{
+          ...invoice,
+          account_name: client?.account_name,
+          legal_name: client?.legal_name,
+          contact_name: client?.contact_name,
+          contact_email: client?.contact_email,
+          contact_phone: client?.contact_phone,
+          stripe_customer_id: client?.stripe_customer_id,
+        }],
+        rowCount: 1,
+      };
+    }
     if (sql.includes("FROM crm_clients")) {
       if (sql.includes("WHERE id = $1")) {
         const clientId = params?.[0];
@@ -326,6 +344,9 @@ function installCrmQueryMock(loginUser = ownerRow) {
       const clientIds = (params?.[0] as string[]) || [];
       const rows = invoiceRows.filter((row) => clientIds.includes(row.client_id));
       return { rows, rowCount: rows.length };
+    }
+    if (sql.includes("UPDATE crm_client_invoices")) {
+      return { rows: [], rowCount: 1 };
     }
     if (sql.includes("FROM crm_client_requests")) {
       const clientIds = (params?.[0] as string[]) || [];
@@ -475,7 +496,7 @@ describe("CRM routes", () => {
     expect(res.body.summary.openRequestCount).toBe(2);
     expect(res.body.summary.providerOnboardingRequests).toBe(1);
     expect(res.body.summary.highPriorityRequests).toBe(1);
-    expect(res.body.summary.openInvoiceCents).toBe(12500);
+    expect(res.body.summary.openInvoiceCents).toBe(22400);
     expect(res.body.summary.overdueInvoiceCents).toBe(12500);
     expect(res.body.requests).toHaveLength(2);
     expect(res.body.invoices).toHaveLength(2);
@@ -555,6 +576,50 @@ describe("CRM routes", () => {
     expect(res.body.request.priority).toBe("high");
     expect(res.body.request.status).toBe("new");
     expect(res.body.request.title).toBe("Need invoice help");
+  });
+
+  it("lets a client start checkout for their own open invoice", async () => {
+    installCrmQueryMock(clientUserRow);
+
+    const login = await request(app)
+      .post("/api/crm/auth/login")
+      .send({ email: "pilot-empty@perrysoftwarellc.com", password: "PilotCRM-2026!" });
+
+    const res = await request(app)
+      .post("/api/crm/client/invoices/invoice-clean-open/checkout")
+      .set("Authorization", `Bearer ${login.body.token}`)
+      .send({
+        successUrl: "https://perrysoftwarellc.com/account/",
+        cancelUrl: "https://perrysoftwarellc.com/account/",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("mock");
+    expect(res.body.url).toContain("payment=success");
+    expect(res.body.url).toContain("invoiceId=invoice-clean-open");
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE crm_client_invoices"),
+      expect.arrayContaining(["invoice-clean-open"])
+    );
+  });
+
+  it("blocks a client from starting checkout for another client invoice", async () => {
+    installCrmQueryMock(clientUserRow);
+
+    const login = await request(app)
+      .post("/api/crm/auth/login")
+      .send({ email: "pilot-empty@perrysoftwarellc.com", password: "PilotCRM-2026!" });
+
+    const res = await request(app)
+      .post("/api/crm/client/invoices/invoice-test-overdue/checkout")
+      .set("Authorization", `Bearer ${login.body.token}`)
+      .send({
+        successUrl: "https://perrysoftwarellc.com/account/",
+        cancelUrl: "https://perrysoftwarellc.com/account/",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Invoice does not belong to this client account");
   });
 
   it("lets the Perry owner update a client request status", async () => {

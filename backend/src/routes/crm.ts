@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { randomUUID } from "crypto";
 import { z } from "zod";
+import Stripe from "stripe";
 import { env } from "../config/env";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
@@ -88,11 +89,63 @@ const clientRequestSchema = z.object({
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
 });
 
+const invoiceCheckoutSchema = z.object({
+  successUrl: z.string().trim().url().optional(),
+  cancelUrl: z.string().trim().url().optional(),
+});
+
 const requestUpdateSchema = z.object({
   status: z.enum(["new", "in_review", "waiting_on_client", "scheduled", "completed", "cancelled"]).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
   ownerNotes: z.string().trim().max(2000).nullable().optional(),
 }).refine((data) => Object.keys(data).length > 0, { message: "At least one field is required" });
+
+const CRM_ACCOUNT_PORTAL_URL = process.env.CRM_ACCOUNT_PORTAL_URL || "https://perrysoftwarellc.com/account/";
+const CRM_CHECKOUT_ALLOWED_HOSTS = new Set(
+  (process.env.CRM_CHECKOUT_ALLOWED_HOSTS || "perrysoftwarellc.com,www.perrysoftwarellc.com,localhost,127.0.0.1")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function getStripeSecretKey(): string {
+  return (process.env.CRM_STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY || "").trim();
+}
+
+function shouldUseMockCrmCheckout(): boolean {
+  const configured = String(process.env.CRM_STRIPE_MOCK_CHECKOUT || "").toLowerCase();
+  if (configured === "true" || configured === "1") return true;
+  if (configured === "false" || configured === "0") return false;
+  return env.runtimeEnvironment !== "production" && !getStripeSecretKey();
+}
+
+function isUsableStripeCustomerId(value: unknown): value is string {
+  return typeof value === "string" && /^cus_[A-Za-z0-9]+$/.test(value.trim());
+}
+
+function allowedCheckoutReturnUrl(input: unknown, fallback: string): string {
+  const candidate = typeof input === "string" && input.trim() ? input.trim() : fallback;
+  try {
+    const url = new URL(candidate);
+    const host = url.hostname.toLowerCase();
+    const isLocalhost = host === "localhost" || host === "127.0.0.1";
+    if (url.protocol !== "https:" && !isLocalhost) return fallback;
+    if (CRM_CHECKOUT_ALLOWED_HOSTS.has(host) || host.endsWith(".perrysoftwarellc.com")) {
+      return url.toString();
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
+function appendCheckoutParams(urlValue: string, params: Record<string, string>): string {
+  const url = new URL(urlValue);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
 
 function mapCrmUser(row: any): CrmUser {
   return {
@@ -223,6 +276,9 @@ function mapInvoice(row: any) {
     dueDate: toIsoDate(row.due_date),
     paidAt: row.paid_at ? new Date(row.paid_at).toISOString() : null,
     stripeInvoiceUrl: row.stripe_invoice_url || null,
+    stripeCheckoutSessionId: row.stripe_checkout_session_id || null,
+    stripePaymentIntentId: row.stripe_payment_intent_id || null,
+    stripePaymentStatus: row.stripe_payment_status || null,
     notes: row.notes || null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
@@ -717,6 +773,165 @@ router.post("/client/requests", requireCrmAuth, async (req: CrmAuthedRequest, re
   );
 
   res.status(201).json({ request: mapClientRequest(result.rows[0]) });
+});
+
+router.post("/client/invoices/:id/checkout", requireCrmAuth, async (req: CrmAuthedRequest, res) => {
+  const parsed = invoiceCheckoutSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid invoice checkout payload", details: parsed.error.format() });
+  }
+
+  const invoiceResult = await pool.query(
+    `SELECT
+       i.*,
+       c.account_name,
+       c.legal_name,
+       c.contact_name,
+       c.contact_email,
+       c.contact_phone,
+       c.stripe_customer_id
+     FROM crm_client_invoices i
+     JOIN crm_clients c ON c.id = i.client_id
+     WHERE i.id = $1
+     LIMIT 1`,
+    [req.params.id]
+  );
+
+  const invoice = invoiceResult.rows[0];
+  if (!invoice) {
+    return res.status(404).json({ error: "Invoice not found" });
+  }
+  if (req.crmUser?.role !== "owner" && invoice.client_id !== req.crmUser?.clientId) {
+    return res.status(403).json({ error: "Invoice does not belong to this client account" });
+  }
+  if (!["open", "overdue"].includes(invoice.status)) {
+    return res.status(409).json({ error: "Only open or overdue invoices can be paid from the CRM" });
+  }
+  const amountCents = cents(invoice.amount_cents);
+  if (amountCents <= 0) {
+    return res.status(400).json({ error: "This invoice has no balance due" });
+  }
+
+  const successBase = allowedCheckoutReturnUrl(parsed.data.successUrl, CRM_ACCOUNT_PORTAL_URL);
+  const cancelBase = allowedCheckoutReturnUrl(parsed.data.cancelUrl, CRM_ACCOUNT_PORTAL_URL);
+  const successUrl = appendCheckoutParams(successBase, {
+    payment: "success",
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoice_number,
+  });
+  const cancelUrl = appendCheckoutParams(cancelBase, {
+    payment: "cancelled",
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoice_number,
+  });
+
+  if (shouldUseMockCrmCheckout()) {
+    const mockUrl = appendCheckoutParams(successUrl, {
+      mock: "true",
+      checkoutSessionId: `cs_mock_crm_${invoice.id}`,
+    });
+    await pool.query(
+      `UPDATE crm_client_invoices
+       SET status = 'paid',
+           paid_at = COALESCE(paid_at, NOW()),
+           stripe_invoice_url = $1,
+           stripe_checkout_session_id = $2,
+           stripe_payment_status = 'paid',
+           updated_at = NOW()
+       WHERE id = $3`,
+      [mockUrl, `cs_mock_crm_${invoice.id}`, invoice.id]
+    );
+    return res.json({
+      url: mockUrl,
+      mode: "mock",
+      invoice: {
+        ...mapInvoice({ ...invoice, status: "paid", paid_at: new Date().toISOString(), stripe_invoice_url: mockUrl }),
+        stripeCheckoutSessionId: `cs_mock_crm_${invoice.id}`,
+        stripePaymentStatus: "paid",
+      },
+    });
+  }
+
+  const stripeSecretKey = getStripeSecretKey();
+  if (!stripeSecretKey) {
+    return res.status(503).json({ error: "Stripe is not configured for Perry Software CRM billing" });
+  }
+
+  const stripe = new Stripe(stripeSecretKey);
+  let stripeCustomerId = isUsableStripeCustomerId(invoice.stripe_customer_id) ? invoice.stripe_customer_id.trim() : "";
+  if (!stripeCustomerId) {
+    const customer = await stripe.customers.create({
+      name: invoice.legal_name || invoice.account_name,
+      email: invoice.contact_email || undefined,
+      phone: invoice.contact_phone || undefined,
+      metadata: {
+        crmClientId: invoice.client_id,
+        crmAccountName: invoice.account_name,
+      },
+    });
+    stripeCustomerId = customer.id;
+    await pool.query(
+      `UPDATE crm_clients
+       SET stripe_customer_id = $1,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [stripeCustomerId, invoice.client_id]
+    );
+  }
+
+  const checkout = await stripe.checkout.sessions.create({
+    mode: "payment",
+    customer: stripeCustomerId,
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    line_items: [
+      {
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: amountCents,
+          product_data: {
+            name: `Perry Software invoice ${invoice.invoice_number}`,
+            description: invoice.description,
+          },
+        },
+      },
+    ],
+    metadata: {
+      source: "perry_crm",
+      crmInvoiceId: invoice.id,
+      crmClientId: invoice.client_id,
+      crmInvoiceNumber: invoice.invoice_number,
+    },
+    payment_intent_data: {
+      metadata: {
+        source: "perry_crm",
+        crmInvoiceId: invoice.id,
+        crmClientId: invoice.client_id,
+        crmInvoiceNumber: invoice.invoice_number,
+      },
+    },
+  });
+
+  if (!checkout.url) {
+    return res.status(502).json({ error: "Stripe did not return a checkout URL" });
+  }
+
+  await pool.query(
+    `UPDATE crm_client_invoices
+     SET stripe_invoice_url = $1,
+         stripe_checkout_session_id = $2,
+         stripe_payment_status = COALESCE($3, stripe_payment_status),
+         updated_at = NOW()
+     WHERE id = $4`,
+    [checkout.url, checkout.id, checkout.payment_status || null, invoice.id]
+  );
+
+  return res.json({
+    url: checkout.url,
+    mode: "stripe",
+    checkoutSessionId: checkout.id,
+  });
 });
 
 router.patch("/owner/requests/:id", requireCrmAuth, async (req: CrmAuthedRequest, res) => {

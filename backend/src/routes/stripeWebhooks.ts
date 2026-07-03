@@ -46,6 +46,49 @@ async function markStoreOrderPaidFromMetadata(input: {
   });
 }
 
+async function markCrmInvoicePaidFromMetadata(input: {
+  crmInvoiceId?: string | null;
+  crmClientId?: string | null;
+  checkoutSessionId?: string | null;
+  paymentIntentId?: string | null;
+  paymentStatus?: string | null;
+  customerId?: string | null;
+}): Promise<void> {
+  if (!input.crmInvoiceId) {
+    return;
+  }
+
+  const result = await pool.query(
+    `UPDATE crm_client_invoices
+     SET status = 'paid',
+         paid_at = COALESCE(paid_at, NOW()),
+         stripe_checkout_session_id = COALESCE($2, stripe_checkout_session_id),
+         stripe_payment_intent_id = COALESCE($3, stripe_payment_intent_id),
+         stripe_payment_status = COALESCE($4, stripe_payment_status, 'paid'),
+         updated_at = NOW()
+     WHERE id = $1
+       AND status IN ('draft', 'open', 'overdue')
+     RETURNING client_id`,
+    [
+      input.crmInvoiceId,
+      input.checkoutSessionId || null,
+      input.paymentIntentId || null,
+      input.paymentStatus || "paid",
+    ]
+  );
+
+  const clientId = result.rows[0]?.client_id || input.crmClientId;
+  if (clientId && input.customerId) {
+    await pool.query(
+      `UPDATE crm_clients
+       SET stripe_customer_id = COALESCE(NULLIF(stripe_customer_id, 'stripe_customer_pending'), $1),
+           updated_at = NOW()
+       WHERE id = $2`,
+      [input.customerId, clientId]
+    );
+  }
+}
+
 function mapStripeSubscriptionToConfig(subscription: Stripe.Subscription): Record<string, any> {
   const firstItem = subscription.items?.data?.[0] as any;
   return {
@@ -192,16 +235,33 @@ stripeWebhooksRouter.post("/webhook", async (req, res) => {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       if (session.payment_status === "paid") {
-        await markStoreOrderPaidFromMetadata({
-          tenantId: session.metadata?.tenantId,
-          saleId: session.metadata?.saleId,
-          checkoutSessionId: session.id,
-          paymentIntentId:
-            typeof session.payment_intent === "string"
-              ? session.payment_intent
-              : session.payment_intent?.id,
-          paymentStatus: session.payment_status,
-        });
+        const paymentIntentId =
+          typeof session.payment_intent === "string"
+            ? session.payment_intent
+            : session.payment_intent?.id;
+        const customerId =
+          typeof session.customer === "string"
+            ? session.customer
+            : session.customer?.id;
+        if (session.metadata?.crmInvoiceId) {
+          await markCrmInvoicePaidFromMetadata({
+            crmInvoiceId: session.metadata.crmInvoiceId,
+            crmClientId: session.metadata.crmClientId,
+            checkoutSessionId: session.id,
+            paymentIntentId,
+            paymentStatus: session.payment_status,
+            customerId,
+          });
+        }
+        if (session.metadata?.saleId) {
+          await markStoreOrderPaidFromMetadata({
+            tenantId: session.metadata?.tenantId,
+            saleId: session.metadata?.saleId,
+            checkoutSessionId: session.id,
+            paymentIntentId,
+            paymentStatus: session.payment_status,
+          });
+        }
       }
       if (session.mode === "subscription") {
         await patchSubscriptionFromCheckoutSession(session);
@@ -210,12 +270,27 @@ stripeWebhooksRouter.post("/webhook", async (req, res) => {
 
     if (event.type === "payment_intent.succeeded") {
       const intent = event.data.object as Stripe.PaymentIntent;
-      await markStoreOrderPaidFromMetadata({
-        tenantId: intent.metadata?.tenantId,
-        saleId: intent.metadata?.saleId,
-        paymentIntentId: intent.id,
-        paymentStatus: "paid",
-      });
+      const customerId =
+        typeof intent.customer === "string"
+          ? intent.customer
+          : intent.customer?.id;
+      if (intent.metadata?.crmInvoiceId) {
+        await markCrmInvoicePaidFromMetadata({
+          crmInvoiceId: intent.metadata.crmInvoiceId,
+          crmClientId: intent.metadata.crmClientId,
+          paymentIntentId: intent.id,
+          paymentStatus: "paid",
+          customerId,
+        });
+      }
+      if (intent.metadata?.saleId) {
+        await markStoreOrderPaidFromMetadata({
+          tenantId: intent.metadata?.tenantId,
+          saleId: intent.metadata?.saleId,
+          paymentIntentId: intent.id,
+          paymentStatus: "paid",
+        });
+      }
     }
 
     if (event.type === "account.updated") {

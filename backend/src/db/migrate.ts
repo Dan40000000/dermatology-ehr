@@ -14471,6 +14471,20 @@ Consider age-appropriate treatments and include family counseling points.',
       ON portal_patient_balances(patient_id);
     `,
   },
+  {
+    name: "211_crm_invoice_stripe_checkout_tracking",
+    sql: `
+    ALTER TABLE crm_client_invoices
+      ADD COLUMN IF NOT EXISTS stripe_checkout_session_id TEXT,
+      ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT,
+      ADD COLUMN IF NOT EXISTS stripe_payment_status TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_crm_client_invoices_checkout_session
+      ON crm_client_invoices(stripe_checkout_session_id);
+    CREATE INDEX IF NOT EXISTS idx_crm_client_invoices_payment_intent
+      ON crm_client_invoices(stripe_payment_intent_id);
+    `,
+  },
 
 ];
 

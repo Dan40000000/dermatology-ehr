@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { KeyRound, RefreshCw, Server, WalletCards } from 'lucide-react';
+import { ExternalLink, Inbox, KeyRound, ReceiptText, RefreshCw, Server, WalletCards } from 'lucide-react';
 import { fetchCrmOverview, type CrmClient, type CrmOverview } from '../api';
 import { useAuth } from '../contexts/AuthContext';
+
+const ACCOUNT_PORTAL_URL = 'https://perrysoftwarellc.com/account/';
 
 const pageStyle: CSSProperties = {
   padding: '24px',
@@ -63,6 +65,22 @@ function statusStyle(status: string): CSSProperties {
     fontWeight: 800,
     textTransform: 'capitalize',
   };
+}
+
+function labelize(value: string | null | undefined): string {
+  return String(value || '-').replace(/_/g, ' ');
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function stripeSetupUrl(client: CrmClient): string {
+  if (!client.productUrl) return '';
+  return `${client.productUrl.replace(/\/$/, '')}/admin/integrations#stripe-payments`;
 }
 
 function SummaryCard({ label, value, detail, icon }: { label: string; value: string; detail: string; icon: JSX.Element }) {
@@ -164,10 +182,16 @@ export function CrmDashboardPage() {
           <h1 style={{ margin: 0, color: '#111827', fontSize: '2rem', fontWeight: 850 }}>CRM Command Center</h1>
           <p style={{ margin: '6px 0 0', color: '#64748b' }}>Client accounts, platform costs, AI usage, and account management.</p>
         </div>
-        <button type="button" style={buttonStyle} onClick={() => void load()} disabled={loading}>
-          <RefreshCw size={16} />
-          Refresh
-        </button>
+        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <a href={ACCOUNT_PORTAL_URL} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>
+            <ExternalLink size={16} />
+            Website account portal
+          </a>
+          <button type="button" style={buttonStyle} onClick={() => void load()} disabled={loading}>
+            <RefreshCw size={16} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -185,6 +209,8 @@ export function CrmDashboardPage() {
             <SummaryCard label="Monthly Revenue" value={formatMoney(overview.summary.monthlyRecurringRevenueCents)} detail="Contracted client fees tracked here" icon={<WalletCards size={26} />} />
             <SummaryCard label="AI Spend MTD" value={formatMoney(overview.summary.aiSpendCents)} detail={`${formatMoney(overview.summary.openAiSpendCents)} OpenAI / ${formatMoney(overview.summary.amazonVoiceSpendCents)} Amazon Voice`} icon={<KeyRound size={26} />} />
             <SummaryCard label="Perry-Paid Tools" value={formatMoney(overview.summary.perryPaidSubscriptionCents)} detail={`${overview.summary.activeAiKeys} active AI key records`} icon={<WalletCards size={26} />} />
+            <SummaryCard label="Open Requests" value={String(overview.summary.openRequestCount)} detail={`${overview.summary.highPriorityRequests} high priority / ${overview.summary.providerOnboardingRequests} provider adds`} icon={<Inbox size={26} />} />
+            <SummaryCard label="Open Invoices" value={formatMoney(overview.summary.openInvoiceCents)} detail={`${formatMoney(overview.summary.overdueInvoiceCents)} overdue`} icon={<ReceiptText size={26} />} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) minmax(0, 1fr)', gap: '18px', alignItems: 'start' }}>
@@ -241,12 +267,18 @@ function ClientDetail({ client }: { client: CrmClient }) {
           <InfoBlock label="Plan" value={client.planName} detail={`${formatMoney(client.monthlyFeeCents)} monthly`} />
           <InfoBlock label="Environment" value={client.environmentName || '-'} detail={client.linkedTenantId || ''} />
           <InfoBlock label="Stripe" value={client.stripeCustomerId || 'Pending'} detail={client.stripeSubscriptionId || ''} />
+          <InfoBlock label="With Us" value={client.metrics.accountAgeLabel || '-'} detail={`${client.metrics.providerCount || 0} providers tracked`} />
         </div>
 
         {client.productUrl && (
-          <a href={client.productUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', marginTop: '14px', color: '#0f766e', fontWeight: 800 }}>
-            Open client app
-          </a>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '14px' }}>
+            <a href={client.productUrl} target="_blank" rel="noreferrer" style={{ color: '#0f766e', fontWeight: 800 }}>
+              Open client app
+            </a>
+            <a href={stripeSetupUrl(client)} target="_blank" rel="noreferrer" style={{ color: '#0f766e', fontWeight: 800 }}>
+              Open Stripe setup
+            </a>
+          </div>
         )}
       </div>
 
@@ -254,6 +286,40 @@ function ClientDetail({ client }: { client: CrmClient }) {
         <SummaryCard label="OpenAI" value={formatMoney(client.metrics.openAiSpendCents)} detail="Month-to-date OpenAI credits used" icon={<KeyRound size={24} />} />
         <SummaryCard label="Amazon Voice" value={formatMoney(client.metrics.amazonVoiceSpendCents)} detail="Month-to-date voice/transcription expense" icon={<Server size={24} />} />
         <SummaryCard label="Subscriptions Paid" value={formatMoney(client.metrics.perryPaidSubscriptionCents)} detail={`${client.metrics.activeSubscriptions} active/trialing records`} icon={<WalletCards size={24} />} />
+        <SummaryCard label="Open Bill" value={formatMoney(client.metrics.openInvoiceCents)} detail={`${formatMoney(client.metrics.overdueInvoiceCents)} overdue`} icon={<ReceiptText size={24} />} />
+        <SummaryCard label="Open Requests" value={String(client.metrics.openRequestCount)} detail={`${client.metrics.highPriorityRequestCount} high priority`} icon={<Inbox size={24} />} />
+      </div>
+
+      <div style={{ ...cardStyle, padding: '18px' }}>
+        <h3 style={{ margin: '0 0 12px', color: '#111827' }}>Client Requests</h3>
+        <DataTable
+          headers={['Priority', 'Status', 'Category', 'Request', 'Submitted', 'Owner Notes']}
+          empty="No client requests."
+          rows={(client.requests || []).map((request) => [
+            <span style={statusStyle(request.priority)}>{labelize(request.priority)}</span>,
+            <span style={statusStyle(request.status)}>{labelize(request.status)}</span>,
+            labelize(request.category),
+            <span><strong>{request.title}</strong><br /><small style={{ color: '#64748b' }}>{request.description || '-'}</small></span>,
+            formatDate(request.createdAt),
+            request.ownerNotes || '-',
+          ])}
+        />
+      </div>
+
+      <div style={{ ...cardStyle, padding: '18px' }}>
+        <h3 style={{ margin: '0 0 12px', color: '#111827' }}>Invoices & Bill Pay</h3>
+        <DataTable
+          headers={['Invoice', 'Description', 'Due', 'Status', 'Amount', 'Stripe']}
+          empty="No CRM invoices."
+          rows={(client.invoices || []).map((invoice) => [
+            invoice.invoiceNumber,
+            invoice.description,
+            formatDate(invoice.dueDate),
+            <span style={statusStyle(invoice.status)}>{labelize(invoice.status)}</span>,
+            formatMoney(invoice.amountCents),
+            invoice.stripeInvoiceUrl ? <a href={invoice.stripeInvoiceUrl} target="_blank" rel="noreferrer" style={{ color: '#0f766e', fontWeight: 800 }}>Open payment link</a> : 'Pending',
+          ])}
+        />
       </div>
 
       <div style={{ ...cardStyle, padding: '18px' }}>
@@ -281,8 +347,8 @@ function ClientDetail({ client }: { client: CrmClient }) {
             sub.vendor,
             sub.description,
             sub.category,
-            sub.billingCycle.replace(/_/g, ' '),
-            sub.paidBy.replace(/_/g, ' '),
+            labelize(sub.billingCycle),
+            labelize(sub.paidBy),
             formatMoney(sub.amountCents),
             <span style={statusStyle(sub.status)}>{sub.status}</span>,
           ])}

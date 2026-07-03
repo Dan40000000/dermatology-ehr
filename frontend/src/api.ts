@@ -11040,6 +11040,44 @@ export interface CrmAiUsageRollup {
   lastUsedAt: string | null;
 }
 
+export interface CrmInvoice {
+  id: string;
+  clientId: string;
+  invoiceNumber: string;
+  description: string;
+  amountCents: number;
+  status: 'draft' | 'open' | 'paid' | 'overdue' | 'void' | string;
+  dueDate: string | null;
+  paidAt: string | null;
+  stripeInvoiceUrl: string | null;
+  notes: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface CrmClientRequest {
+  id: string;
+  clientId: string;
+  requestedByUserId: string | null;
+  requestedByName: string | null;
+  requestedByEmail: string | null;
+  clientName: string | null;
+  category: 'provider_onboarding' | 'billing' | 'support' | 'implementation' | 'access' | 'integration' | string;
+  title: string;
+  description: string | null;
+  priority: 'low' | 'normal' | 'high' | 'urgent' | string;
+  status: 'new' | 'in_review' | 'waiting_on_client' | 'scheduled' | 'completed' | 'cancelled' | string;
+  providerFullName: string | null;
+  providerSpecialty: string | null;
+  providerEmail: string | null;
+  providerPhone: string | null;
+  requestedStartDate: string | null;
+  ownerNotes: string | null;
+  completedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
 export interface CrmClient {
   id: string;
   linkedTenantId: string | null;
@@ -11060,6 +11098,8 @@ export interface CrmClient {
   notes: string | null;
   subscriptions: CrmSubscription[];
   aiKeys: CrmAiKey[];
+  invoices: CrmInvoice[];
+  requests: CrmClientRequest[];
   aiUsage: CrmAiUsageRollup[];
   metrics: {
     perryPaidSubscriptionCents: number;
@@ -11068,20 +11108,51 @@ export interface CrmClient {
     amazonVoiceSpendCents: number;
     activeSubscriptions: number;
     activeAiKeys: number;
+    openInvoiceCents: number;
+    overdueInvoiceCents: number;
+    paidInvoiceCents: number;
+    openRequestCount: number;
+    providerRequestCount: number;
+    highPriorityRequestCount: number;
+    providerCount: number;
+    activeProviderCount: number;
+    accountAgeDays: number | null;
+    accountAgeLabel: string;
+    isNewClient: boolean;
+    isRetainedClient: boolean;
   };
 }
 
 export interface CrmOverview {
   clients: CrmClient[];
+  requests: CrmClientRequest[];
+  invoices: CrmInvoice[];
   summary: {
     totalClients: number;
     activeClients: number;
+    newClients30d: number;
+    retainingClients: number;
+    atRiskClients: number;
+    pausedClients: number;
+    cancelledClients: number;
+    totalProviders: number;
+    activeProviders: number;
+    averageClientAgeDays: number | null;
+    averageClientAgeLabel: string;
+    averageProvidersPerClient: number;
+    statusCounts: Record<string, number>;
     monthlyRecurringRevenueCents: number;
+    annualRunRateCents: number;
     perryPaidSubscriptionCents: number;
     aiSpendCents: number;
     openAiSpendCents: number;
     amazonVoiceSpendCents: number;
     activeAiKeys: number;
+    openRequestCount: number;
+    providerOnboardingRequests: number;
+    highPriorityRequests: number;
+    openInvoiceCents: number;
+    overdueInvoiceCents: number;
   };
 }
 

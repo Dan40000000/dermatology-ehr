@@ -1327,6 +1327,9 @@ function AdminSettingsPanel() {
           <Link to="/admin/crm" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
             Client Accounts CRM
           </Link>
+          <a href="https://perrysoftwarellc.com/account/" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            Perry Software Account Portal
+          </a>
           {canViewProfessionalFeedback(user) && (
             <Link to="/admin/feedback" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
               Feedback Inbox

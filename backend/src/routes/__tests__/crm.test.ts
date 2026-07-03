@@ -333,33 +333,59 @@ function installCrmQueryMock(loginUser = ownerRow) {
       return { rows, rowCount: rows.length };
     }
     if (sql.includes("INSERT INTO crm_client_requests")) {
-      const [
-        id,
-        clientId,
-        requestedByUserId,
-        title,
-        description,
-        providerFullName,
-        providerSpecialty,
-        providerEmail,
-        providerPhone,
-        requestedStartDate,
-      ] = (params || []) as string[];
+      if (sql.includes("provider_full_name")) {
+        const [
+          id,
+          clientId,
+          requestedByUserId,
+          title,
+          description,
+          providerFullName,
+          providerSpecialty,
+          providerEmail,
+          providerPhone,
+          requestedStartDate,
+        ] = (params || []) as string[];
+        return {
+          rows: [{
+            id,
+            client_id: clientId,
+            requested_by_user_id: requestedByUserId,
+            category: "provider_onboarding",
+            title,
+            description,
+            priority: "normal",
+            status: "new",
+            provider_full_name: providerFullName,
+            provider_specialty: providerSpecialty,
+            provider_email: providerEmail,
+            provider_phone: providerPhone,
+            requested_start_date: requestedStartDate,
+            owner_notes: null,
+            completed_at: null,
+            created_at: "2026-06-22T12:00:00.000Z",
+            updated_at: "2026-06-22T12:00:00.000Z",
+          }],
+          rowCount: 1,
+        };
+      }
+
+      const [id, clientId, requestedByUserId, category, title, description, priority] = (params || []) as string[];
       return {
         rows: [{
           id,
           client_id: clientId,
           requested_by_user_id: requestedByUserId,
-          category: "provider_onboarding",
+          category,
           title,
           description,
-          priority: "normal",
+          priority,
           status: "new",
-          provider_full_name: providerFullName,
-          provider_specialty: providerSpecialty,
-          provider_email: providerEmail,
-          provider_phone: providerPhone,
-          requested_start_date: requestedStartDate,
+          provider_full_name: null,
+          provider_specialty: null,
+          provider_email: null,
+          provider_phone: null,
+          requested_start_date: null,
           owner_notes: null,
           completed_at: null,
           created_at: "2026-06-22T12:00:00.000Z",
@@ -505,6 +531,30 @@ describe("CRM routes", () => {
     expect(res.body.request.status).toBe("new");
     expect(res.body.request.providerFullName).toBe("Dr. Jordan Lee");
     expect(res.body.request.title).toBe("Add provider: Dr. Jordan Lee");
+  });
+
+  it("lets a client submit a support or billing request", async () => {
+    installCrmQueryMock(clientUserRow);
+
+    const login = await request(app)
+      .post("/api/crm/auth/login")
+      .send({ email: "pilot-empty@perrysoftwarellc.com", password: "PilotCRM-2026!" });
+
+    const res = await request(app)
+      .post("/api/crm/client/requests")
+      .set("Authorization", `Bearer ${login.body.token}`)
+      .send({
+        category: "billing",
+        title: "Need invoice help",
+        description: "Please explain the latest platform invoice.",
+        priority: "high",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.request.category).toBe("billing");
+    expect(res.body.request.priority).toBe("high");
+    expect(res.body.request.status).toBe("new");
+    expect(res.body.request.title).toBe("Need invoice help");
   });
 
   it("lets the Perry owner update a client request status", async () => {

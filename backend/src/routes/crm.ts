@@ -81,6 +81,13 @@ const providerRequestSchema = z.object({
   notes: z.string().trim().max(2000).nullable().optional(),
 });
 
+const clientRequestSchema = z.object({
+  category: z.enum(["billing", "support", "implementation", "access", "integration"]),
+  title: z.string().trim().min(3).max(180),
+  description: z.string().trim().min(8).max(3000),
+  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+});
+
 const requestUpdateSchema = z.object({
   status: z.enum(["new", "in_review", "waiting_on_client", "scheduled", "completed", "cancelled"]).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
@@ -665,6 +672,47 @@ router.post("/client/provider-requests", requireCrmAuth, async (req: CrmAuthedRe
       data.providerEmail || null,
       data.providerPhone || null,
       data.requestedStartDate || null,
+    ]
+  );
+
+  res.status(201).json({ request: mapClientRequest(result.rows[0]) });
+});
+
+router.post("/client/requests", requireCrmAuth, async (req: CrmAuthedRequest, res) => {
+  if (req.crmUser?.role === "owner") {
+    return res.status(403).json({ error: "Owner accounts cannot create client requests" });
+  }
+
+  if (!req.crmUser?.clientId) {
+    return res.status(403).json({ error: "No client account linked" });
+  }
+
+  const parsed = clientRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid client request payload", details: parsed.error.format() });
+  }
+
+  const data = parsed.data;
+  const result = await pool.query(
+    `INSERT INTO crm_client_requests (
+       id,
+       client_id,
+       requested_by_user_id,
+       category,
+       title,
+       description,
+       priority,
+       status
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'new')
+     RETURNING *`,
+    [
+      randomUUID(),
+      req.crmUser.clientId,
+      req.crmUser.id,
+      data.category,
+      data.title,
+      data.description,
+      data.priority || "normal",
     ]
   );
 

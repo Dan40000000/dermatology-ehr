@@ -2249,6 +2249,15 @@ export async function getStoreOrders(
       OR p.first_name ILIKE $${paramIndex}
       OR p.last_name ILIKE $${paramIndex}
       OR CONCAT_WS(' ', p.first_name, p.last_name) ILIKE $${paramIndex}
+      OR EXISTS (
+        SELECT 1
+        FROM product_sale_items psi_search
+        WHERE psi_search.sale_id::text = ps.id::text
+          AND (
+            psi_search.product_name ILIKE $${paramIndex}
+            OR psi_search.product_sku ILIKE $${paramIndex}
+          )
+      )
     )`);
     params.push(`%${filters.search}%`);
     paramIndex++;

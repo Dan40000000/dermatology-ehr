@@ -14485,6 +14485,423 @@ Consider age-appropriate treatments and include family counseling points.',
       ON crm_client_invoices(stripe_payment_intent_id);
     `,
   },
+  {
+    name: "212_communication_hub_notifications_compat",
+    sql: `
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      subject TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      channel TEXT NOT NULL,
+      assigned_to TEXT REFERENCES users(id) ON DELETE SET NULL,
+      priority TEXT NOT NULL DEFAULT 'normal',
+      last_message_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      closed_at TIMESTAMPTZ,
+      closed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_conversations_tenant_patient
+      ON conversations(tenant_id, patient_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_conversations_status
+      ON conversations(tenant_id, status, last_message_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_conversations_assigned
+      ON conversations(tenant_id, assigned_to, status, last_message_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_conversations_channel
+      ON conversations(tenant_id, channel, status);
+    CREATE INDEX IF NOT EXISTS idx_conversations_priority
+      ON conversations(tenant_id, priority, status, last_message_at DESC);
+
+    CREATE TABLE IF NOT EXISTS conversation_messages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      direction TEXT NOT NULL,
+      sender_type TEXT NOT NULL,
+      sender_id TEXT,
+      content TEXT NOT NULL,
+      content_type TEXT NOT NULL DEFAULT 'text',
+      attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+      read_at TIMESTAMPTZ,
+      delivered_at TIMESTAMPTZ,
+      failed_at TIMESTAMPTZ,
+      failure_reason TEXT,
+      external_id TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_conv_messages_conversation
+      ON conversation_messages(conversation_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_conv_messages_unread
+      ON conversation_messages(conversation_id, direction, read_at);
+    CREATE INDEX IF NOT EXISTS idx_conv_messages_external
+      ON conversation_messages(external_id);
+
+    CREATE TABLE IF NOT EXISTS message_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      subject TEXT,
+      content TEXT NOT NULL,
+      variables JSONB NOT NULL DEFAULT '[]'::jsonb,
+      channel TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_message_templates_category
+      ON message_templates(tenant_id, category, is_active);
+    CREATE INDEX IF NOT EXISTS idx_message_templates_channel
+      ON message_templates(tenant_id, channel, is_active);
+
+    CREATE TABLE IF NOT EXISTS broadcast_messages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      subject TEXT,
+      channel TEXT NOT NULL,
+      target_criteria JSONB NOT NULL DEFAULT '{}'::jsonb,
+      scheduled_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      recipient_count INTEGER NOT NULL DEFAULT 0,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      delivered_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft',
+      template_id TEXT REFERENCES message_templates(id) ON DELETE SET NULL,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_broadcast_messages_status
+      ON broadcast_messages(tenant_id, status, scheduled_at);
+    CREATE INDEX IF NOT EXISTS idx_broadcast_messages_scheduled
+      ON broadcast_messages(tenant_id, status, scheduled_at)
+      WHERE status = 'scheduled';
+
+    CREATE TABLE IF NOT EXISTS broadcast_recipients (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      broadcast_id TEXT NOT NULL REFERENCES broadcast_messages(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      sent_at TIMESTAMPTZ,
+      delivered_at TIMESTAMPTZ,
+      opened_at TIMESTAMPTZ,
+      clicked_at TIMESTAMPTZ,
+      failed_at TIMESTAMPTZ,
+      failure_reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      external_id TEXT,
+      UNIQUE(broadcast_id, patient_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_broadcast
+      ON broadcast_recipients(broadcast_id, status);
+    CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_patient
+      ON broadcast_recipients(patient_id, sent_at DESC);
+
+    CREATE TABLE IF NOT EXISTS communication_preferences (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      sms_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      portal_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      marketing_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      reminder_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      preferred_channel TEXT NOT NULL DEFAULT 'sms',
+      quiet_hours_start TIME,
+      quiet_hours_end TIME,
+      language TEXT NOT NULL DEFAULT 'en',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_comm_prefs_patient
+      ON communication_preferences(tenant_id, patient_id);
+
+    CREATE TABLE IF NOT EXISTS communication_unsubscribes (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      reason TEXT,
+      unsubscribed_at TIMESTAMPTZ DEFAULT NOW(),
+      resubscribed_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_unsubscribes_patient
+      ON communication_unsubscribes(tenant_id, patient_id, channel);
+    CREATE INDEX IF NOT EXISTS idx_unsubscribes_channel
+      ON communication_unsubscribes(tenant_id, channel, unsubscribed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS conversation_routing_rules (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 100,
+      conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+      action_type TEXT NOT NULL,
+      action_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_routing_rules_active
+      ON conversation_routing_rules(tenant_id, is_active, priority);
+
+    CREATE TABLE IF NOT EXISTS after_hours_config (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      start_time TIME NOT NULL,
+      end_time TIME NOT NULL,
+      days_of_week INTEGER[] NOT NULL DEFAULT ARRAY[0,6],
+      response_template_id TEXT REFERENCES message_templates(id) ON DELETE SET NULL,
+      custom_message TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, channel)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_after_hours_active
+      ON after_hours_config(tenant_id, is_active);
+
+    CREATE TABLE IF NOT EXISTS email_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      template_name TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      html_content TEXT NOT NULL,
+      text_content TEXT,
+      variables JSONB NOT NULL DEFAULT '[]'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      description TEXT,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, template_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_email_template_tenant
+      ON email_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_email_template_name
+      ON email_templates(template_name);
+    CREATE INDEX IF NOT EXISTS idx_email_template_active
+      ON email_templates(tenant_id, is_active)
+      WHERE is_active = true;
+
+    CREATE OR REPLACE FUNCTION can_contact_patient(
+      p_tenant_id TEXT,
+      p_patient_id TEXT,
+      p_channel TEXT,
+      p_message_type TEXT DEFAULT 'general'
+    ) RETURNS BOOLEAN AS $$
+    DECLARE
+      v_prefs RECORD;
+      v_unsubscribed BOOLEAN;
+    BEGIN
+      SELECT EXISTS (
+        SELECT 1
+        FROM communication_unsubscribes
+        WHERE tenant_id = p_tenant_id
+          AND patient_id = p_patient_id
+          AND (channel = p_channel OR channel = 'all')
+          AND resubscribed_at IS NULL
+      ) INTO v_unsubscribed;
+
+      IF v_unsubscribed THEN
+        RETURN FALSE;
+      END IF;
+
+      SELECT * INTO v_prefs
+      FROM communication_preferences
+      WHERE tenant_id = p_tenant_id AND patient_id = p_patient_id;
+
+      IF v_prefs IS NULL THEN
+        RETURN p_message_type != 'marketing';
+      END IF;
+
+      IF p_channel = 'sms' AND NOT v_prefs.sms_enabled THEN RETURN FALSE; END IF;
+      IF p_channel = 'email' AND NOT v_prefs.email_enabled THEN RETURN FALSE; END IF;
+      IF p_channel = 'portal' AND NOT v_prefs.portal_enabled THEN RETURN FALSE; END IF;
+      IF p_message_type = 'marketing' AND NOT v_prefs.marketing_enabled THEN RETURN FALSE; END IF;
+      IF p_message_type = 'reminder' AND NOT v_prefs.reminder_enabled THEN RETURN FALSE; END IF;
+
+      RETURN TRUE;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE FUNCTION get_unread_count(
+      p_tenant_id TEXT,
+      p_user_id TEXT
+    ) RETURNS INTEGER AS $$
+    DECLARE
+      v_count INTEGER;
+    BEGIN
+      SELECT COUNT(DISTINCT c.id)
+      INTO v_count
+      FROM conversations c
+      JOIN conversation_messages m ON m.conversation_id = c.id
+      WHERE c.tenant_id = p_tenant_id
+        AND (c.assigned_to = p_user_id OR c.assigned_to IS NULL)
+        AND c.status IN ('open', 'pending')
+        AND m.direction = 'inbound'
+        AND m.read_at IS NULL;
+
+      RETURN COALESCE(v_count, 0);
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE FUNCTION update_conversation_last_message()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      UPDATE conversations
+      SET last_message_at = NEW.created_at,
+          status = CASE
+            WHEN NEW.direction = 'inbound' AND status = 'closed' THEN 'open'
+            ELSE status
+          END
+      WHERE id = NEW.conversation_id;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_update_conversation_last_message ON conversation_messages;
+    CREATE TRIGGER trigger_update_conversation_last_message
+      AFTER INSERT ON conversation_messages
+      FOR EACH ROW
+      EXECUTE FUNCTION update_conversation_last_message();
+
+    INSERT INTO message_templates (tenant_id, name, category, subject, content, variables, channel, is_active)
+    SELECT
+      t.id,
+      seed.name,
+      seed.category,
+      seed.subject,
+      seed.content,
+      seed.variables::jsonb,
+      seed.channel,
+      TRUE
+    FROM tenants t
+    CROSS JOIN (VALUES
+      ('Appointment Reminder', 'appointment', 'Your Appointment Reminder',
+       'Hi {{patient_name}}, this is a reminder of your appointment on {{appointment_date}} at {{appointment_time}} with {{provider_name}}. Reply C to confirm or call us to reschedule.',
+       '[{"name": "patient_name", "description": "Patient first name"}, {"name": "appointment_date", "description": "Appointment date"}, {"name": "appointment_time", "description": "Appointment time"}, {"name": "provider_name", "description": "Provider name"}]',
+      'sms'),
+      ('Payment Reminder', 'billing', 'Payment Reminder',
+       'Hi {{patient_name}}, you have an outstanding balance of {{balance_amount}}. Please call our office or visit the patient portal to make a payment. Thank you!',
+       '[{"name": "patient_name", "description": "Patient first name"}, {"name": "balance_amount", "description": "Outstanding balance"}]',
+       'sms'),
+      ('Lab Results Ready', 'clinical', 'Your Lab Results Are Ready',
+       'Hi {{patient_name}}, your lab results are available in the patient portal. Please call our office if you have questions.',
+       '[{"name": "patient_name", "description": "Patient first name"}]',
+       'sms'),
+      ('After Hours Response', 'general', NULL,
+       'Thank you for contacting us. Our office is currently closed. We will respond during normal business hours. For emergencies, please call 911.',
+       '[]',
+       'sms')
+    ) AS seed(name, category, subject, content, variables, channel)
+    ON CONFLICT (tenant_id, name) DO NOTHING;
+
+    INSERT INTO after_hours_config (tenant_id, channel, start_time, end_time, days_of_week, custom_message, is_active)
+    SELECT
+      t.id,
+      'sms',
+      '17:00'::time,
+      '08:00'::time,
+      ARRAY[0,6],
+      'Thank you for contacting us. Our office is currently closed. We will respond during normal business hours. For emergencies, please call 911.',
+      TRUE
+    FROM tenants t
+    ON CONFLICT (tenant_id, channel) DO NOTHING;
+
+    INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
+    SELECT
+      t.id,
+      seed.template_name,
+      seed.subject,
+      seed.html_content,
+      seed.text_content,
+      seed.variables::jsonb,
+      seed.description,
+      TRUE
+    FROM tenants t
+    CROSS JOIN (VALUES
+      (
+        'appointment_reminder',
+        'Appointment Reminder',
+        '<p>Hi {{patientName}},</p><p>This is a reminder for your appointment on {{appointmentDate}} at {{appointmentTime}}.</p>',
+        'Hi {{patientName}}, this is a reminder for your appointment on {{appointmentDate}} at {{appointmentTime}}.',
+        '["patientName", "appointmentDate", "appointmentTime"]',
+        'Patient appointment reminder email.'
+      ),
+      (
+        'statement_ready',
+        'Statement Ready',
+        '<p>Hi {{patientName}},</p><p>Your billing statement is ready in the patient portal.</p>',
+        'Hi {{patientName}}, your billing statement is ready in the patient portal.',
+        '["patientName"]',
+        'Patient statement ready email.'
+      ),
+      (
+        'welcome_email',
+        'Welcome to the Practice',
+        '<p>Welcome {{patientName}},</p><p>Your patient portal account is ready.</p>',
+        'Welcome {{patientName}}, your patient portal account is ready.',
+        '["patientName"]',
+        'Patient portal welcome email.'
+      )
+    ) AS seed(template_name, subject, html_content, text_content, variables, description)
+    ON CONFLICT (tenant_id, template_name) DO NOTHING;
+    `,
+  },
+  {
+    name: "213_sms_messages_delivery_status_compat",
+    sql: `
+    ALTER TABLE sms_messages
+      ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS error_message TEXT,
+      ADD COLUMN IF NOT EXISTS sent_by_user_id TEXT,
+      ADD COLUMN IF NOT EXISTS template_id TEXT;
+
+    ALTER TABLE sms_messages
+      ALTER COLUMN segment_count SET DEFAULT 1;
+
+    UPDATE sms_messages
+    SET segment_count = COALESCE(segment_count, 1),
+        sent_at = CASE
+          WHEN sent_at IS NULL
+            AND direction = 'outbound'
+            AND status IN ('accepted', 'queued', 'sending', 'sent', 'delivered')
+          THEN created_at
+          ELSE sent_at
+        END,
+        delivered_at = CASE
+          WHEN delivered_at IS NULL AND status = 'delivered' THEN COALESCE(sent_at, created_at)
+          ELSE delivered_at
+        END,
+        failed_at = CASE
+          WHEN failed_at IS NULL AND status IN ('failed', 'undelivered') THEN COALESCE(sent_at, created_at)
+          ELSE failed_at
+        END
+    WHERE segment_count IS NULL
+       OR (sent_at IS NULL AND direction = 'outbound' AND status IN ('accepted', 'queued', 'sending', 'sent', 'delivered'))
+       OR (delivered_at IS NULL AND status = 'delivered')
+       OR (failed_at IS NULL AND status IN ('failed', 'undelivered'));
+    `,
+  },
 
 ];
 

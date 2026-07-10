@@ -106,6 +106,7 @@ import { patientPaymentsRouter } from "./patientPayments";
 import { statementsRouter } from "./statements";
 import { batchesRouter } from "./batches";
 import { billsRouter } from "./bills";
+import { collectionsRouter } from "./collections";
 import { financialMetricsRouter } from "./financialMetrics";
 import { integrationsRouter } from "./integrations";
 import { frontDeskRouter } from "./frontDesk";
@@ -290,6 +291,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/statements", ...requireFinancialDashboardAccess, statementsRouter);
   app.use("/api/batches", ...requireFinancialDashboardAccess, batchesRouter);
   app.use("/api/bills", ...requireFinancialDashboardAccess, billsRouter);
+  app.use("/api/collections", ...requireFinancialDashboardAccess, collectionsRouter);
   app.use("/api/financial-metrics", ...requireFinancialDashboardAccess, financialMetricsRouter);
   app.use("/api/eligibility", eligibilityRouter);
   app.use("/api/check-in", checkInRouter);

@@ -303,15 +303,21 @@ collectionsRouter.post(
 
         await client.query(
           `insert into payment_plans (
-            id, tenant_id, patient_id, total_amount_cents,
+            id, tenant_id, patient_id,
+            total_amount, remaining_balance, monthly_payment, number_of_payments,
+            total_amount_cents,
             installment_amount_cents, frequency, start_date,
             next_payment_date, paid_amount_cents, remaining_amount_cents,
-            status, notes, created_by
-          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            status, auto_charge, payment_method_id, notes, created_by
+          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
           [
             planId,
             tenantId,
             payload.patientId,
+            payload.totalAmount,
+            payload.totalAmount,
+            payload.monthlyPayment,
+            payload.numberOfPayments,
             Math.round(payload.totalAmount * 100),
             Math.round(payload.monthlyPayment * 100),
             "monthly",
@@ -320,6 +326,8 @@ collectionsRouter.post(
             0,
             Math.round(payload.totalAmount * 100),
             "active",
+            payload.autoCharge || false,
+            payload.cardOnFileId || null,
             payload.notes || null,
             req.user!.id,
           ]
@@ -571,10 +579,10 @@ collectionsRouter.post(
       await pool.query(
         `insert into patient_statements (
           id, tenant_id, patient_id, statement_date, statement_number,
-          due_date, previous_balance, new_charges, payments_received,
+          due_date, balance_cents, previous_balance, new_charges, payments_received,
           current_balance, current_amount, days_30_amount, days_60_amount,
-          days_90_plus_amount, delivery_method, status, created_by
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          days_90_plus_amount, sent_via, delivery_method, status, generated_by, created_by
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
         [
           statementId,
           tenantId,
@@ -582,6 +590,7 @@ collectionsRouter.post(
           statementDate,
           statementNumber,
           dueDate.toISOString().split("T")[0],
+          Math.round(balance.totalBalance * 100),
           0, // previous_balance (would calculate from last statement)
           balance.totalBalance,
           0, // payments_received (would calculate)
@@ -591,7 +600,9 @@ collectionsRouter.post(
           balance.balance61_90,
           balance.balanceOver90,
           deliveryMethod || "mail",
+          deliveryMethod || "mail",
           "draft",
+          req.user!.id,
           req.user!.id,
         ]
       );

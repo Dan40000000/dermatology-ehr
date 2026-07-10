@@ -215,6 +215,7 @@ export async function processPayment(
 
     // Insert payment
     const amountCents = Math.round(amount * 100);
+    const dbPaymentMethod = normalizePaymentMethod(paymentMethod);
     await client.query(
       `insert into patient_payments (
         id, tenant_id, patient_id, payment_date, amount_cents,
@@ -228,7 +229,7 @@ export async function processPayment(
         patientId,
         new Date().toISOString().split("T")[0],
         amountCents,
-        paymentMethod,
+        dbPaymentMethod,
         options.cardLastFour || null,
         options.checkNumber || null,
         options.referenceNumber || null,
@@ -544,5 +545,16 @@ export function getCollectionTalkingPoints(
         "Consider collections agency referral if no resolution",
       ],
     };
+  }
+}
+
+function normalizePaymentMethod(paymentMethod: string): string {
+  switch (paymentMethod) {
+    case "card":
+      return "credit";
+    case "hsa":
+      return "other";
+    default:
+      return paymentMethod;
   }
 }

@@ -360,15 +360,17 @@ export async function getEstimate(
   if (!result.rowCount) return null;
 
   const row = result.rows[0];
-  const breakdown = row.breakdown;
-  const cptCodes = row.cptCodes;
+  const breakdown = normalizeBreakdown(row.breakdown);
+  const cptCodes = normalizeCptDetails(row.cptCodes);
 
   // Calculate totals
   const totalCharges = cptCodes.reduce(
-    (sum: number, item: any) => sum + item.fee,
+    (sum: number, item) => sum + toNumber(item.fee),
     0
   );
-  const insurancePays = row.insuranceAllowedAmount - row.patientResponsibility;
+  const insuranceAllowedAmount = toNumber(row.insuranceAllowedAmount);
+  const patientResponsibility = toNumber(row.patientResponsibility);
+  const insurancePays = calculateInsurancePays(insuranceAllowedAmount, breakdown);
 
   return {
     id: row.id,
@@ -376,9 +378,9 @@ export async function getEstimate(
     appointmentId: row.appointmentId,
     serviceType: row.serviceType,
     totalCharges,
-    insuranceAllowedAmount: parseFloat(row.insuranceAllowedAmount),
+    insuranceAllowedAmount,
     insurancePays,
-    patientResponsibility: parseFloat(row.patientResponsibility),
+    patientResponsibility,
     breakdown,
     isCosmetic: row.isCosmetic,
     insuranceVerified: row.insuranceVerified,
@@ -416,14 +418,16 @@ export async function getEstimateByAppointment(
   if (!result.rowCount) return null;
 
   const row = result.rows[0];
-  const breakdown = row.breakdown;
-  const cptCodes = row.cptCodes;
+  const breakdown = normalizeBreakdown(row.breakdown);
+  const cptCodes = normalizeCptDetails(row.cptCodes);
 
   const totalCharges = cptCodes.reduce(
-    (sum: number, item: any) => sum + item.fee,
+    (sum: number, item) => sum + toNumber(item.fee),
     0
   );
-  const insurancePays = row.insuranceAllowedAmount - row.patientResponsibility;
+  const insuranceAllowedAmount = toNumber(row.insuranceAllowedAmount);
+  const patientResponsibility = toNumber(row.patientResponsibility);
+  const insurancePays = calculateInsurancePays(insuranceAllowedAmount, breakdown);
 
   return {
     id: row.id,
@@ -431,9 +435,9 @@ export async function getEstimateByAppointment(
     appointmentId: row.appointmentId,
     serviceType: row.serviceType,
     totalCharges,
-    insuranceAllowedAmount: parseFloat(row.insuranceAllowedAmount),
+    insuranceAllowedAmount,
     insurancePays,
-    patientResponsibility: parseFloat(row.patientResponsibility),
+    patientResponsibility,
     breakdown,
     isCosmetic: row.isCosmetic,
     insuranceVerified: row.insuranceVerified,
@@ -471,6 +475,60 @@ function getValidUntilDate(): string {
 function toNumber(value: unknown, fallback = 0): number {
   const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeCptDetails(
+  value: unknown
+): Array<{ code?: string; fee: number; description?: string }> {
+  const parsed = parseJson<unknown>(value, []);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed.map((rawItem) => {
+    const item = isRecord(rawItem) ? rawItem : {};
+    return {
+      code: typeof item?.code === "string" ? item.code : undefined,
+      fee: toNumber(item?.fee),
+      description:
+        typeof item?.description === "string" ? item.description : undefined,
+    };
+  });
+}
+
+function normalizeBreakdown(value: unknown): CostEstimate["breakdown"] {
+  const parsed = parseJson<Record<string, unknown>>(value, {});
+  return {
+    copay: toNumber(parsed?.copay),
+    deductible: toNumber(parsed?.deductible),
+    coinsurance: toNumber(parsed?.coinsurance),
+    notCovered: toNumber(parsed?.notCovered),
+  };
+}
+
+function parseJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== "string") {
+    return (value ?? fallback) as T;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function calculateInsurancePays(
+  insuranceAllowedAmount: number,
+  breakdown: CostEstimate["breakdown"]
+): number {
+  const coveredPatientResponsibility =
+    breakdown.copay + breakdown.deductible + breakdown.coinsurance;
+  return Math.max(0, insuranceAllowedAmount - coveredPatientResponsibility);
 }
 
 function isMissingRelationError(error: any): boolean {

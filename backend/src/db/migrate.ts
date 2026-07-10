@@ -14902,6 +14902,408 @@ Consider age-appropriate treatments and include family counseling points.',
        OR (failed_at IS NULL AND status IN ('failed', 'undelivered'));
     `,
   },
+  {
+    name: "214_collections_runtime_schema",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS patient_balances (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      total_balance NUMERIC(10,2) DEFAULT 0,
+      current_balance NUMERIC(10,2) DEFAULT 0,
+      balance_31_60 NUMERIC(10,2) DEFAULT 0,
+      balance_61_90 NUMERIC(10,2) DEFAULT 0,
+      balance_over_90 NUMERIC(10,2) DEFAULT 0,
+      oldest_charge_date DATE,
+      last_payment_date DATE,
+      last_payment_amount NUMERIC(10,2),
+      last_statement_date DATE,
+      last_collection_attempt_date DATE,
+      has_payment_plan BOOLEAN DEFAULT FALSE,
+      has_autopay BOOLEAN DEFAULT FALSE,
+      is_in_collections BOOLEAN DEFAULT FALSE,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_balances_tenant
+      ON patient_balances(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_balances_patient
+      ON patient_balances(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_balances_total
+      ON patient_balances(total_balance)
+      WHERE total_balance > 0;
+    CREATE INDEX IF NOT EXISTS idx_patient_balances_aging
+      ON patient_balances(balance_over_90)
+      WHERE balance_over_90 > 0;
+
+    CREATE TABLE IF NOT EXISTS collection_attempts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      attempt_date TIMESTAMPTZ DEFAULT NOW(),
+      amount_due NUMERIC(10,2) NOT NULL DEFAULT 0,
+      collection_point TEXT NOT NULL DEFAULT 'other',
+      result TEXT NOT NULL,
+      amount_collected NUMERIC(10,2) DEFAULT 0,
+      skip_reason TEXT,
+      notes TEXT,
+      talking_points_used TEXT,
+      attempted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_tenant
+      ON collection_attempts(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_patient
+      ON collection_attempts(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_date
+      ON collection_attempts(attempt_date);
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_result
+      ON collection_attempts(result);
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_point
+      ON collection_attempts(collection_point);
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collection_attempts'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%collection_point%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collection_attempts DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE collection_attempts
+        ADD CONSTRAINT collection_attempts_collection_point_check
+        CHECK (collection_point IN ('check_in', 'check_out', 'phone', 'statement', 'portal', 'text', 'other'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collection_attempts'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%result%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collection_attempts DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE collection_attempts
+        ADD CONSTRAINT collection_attempts_result_check
+        CHECK (result IN ('collected_full', 'collected_partial', 'payment_plan', 'declined', 'skipped'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    CREATE TABLE IF NOT EXISTS cost_estimates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      appointment_id TEXT,
+      service_type TEXT,
+      cpt_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      insurance_id TEXT,
+      insurance_name TEXT,
+      estimated_allowed_amount NUMERIC(10,2) DEFAULT 0,
+      deductible_remaining NUMERIC(10,2) DEFAULT 0,
+      coinsurance_percent NUMERIC(5,2) DEFAULT 0,
+      copay_amount NUMERIC(10,2) DEFAULT 0,
+      estimated_patient_responsibility NUMERIC(10,2) NOT NULL DEFAULT 0,
+      breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_cosmetic BOOLEAN DEFAULT FALSE,
+      insurance_verified BOOLEAN DEFAULT FALSE,
+      shown_to_patient BOOLEAN DEFAULT FALSE,
+      shown_at TIMESTAMPTZ,
+      patient_accepted BOOLEAN DEFAULT FALSE,
+      valid_until DATE,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_estimates_tenant
+      ON cost_estimates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_estimates_patient
+      ON cost_estimates(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_estimates_appointment
+      ON cost_estimates(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_estimates_valid
+      ON cost_estimates(valid_until);
+
+    ALTER TABLE patient_statements
+      ADD COLUMN IF NOT EXISTS previous_balance NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS new_charges NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS payments_received NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS adjustments NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS current_balance NUMERIC(10,2),
+      ADD COLUMN IF NOT EXISTS current_amount NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS days_30_amount NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS days_60_amount NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS days_90_plus_amount NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS line_items JSONB,
+      ADD COLUMN IF NOT EXISTS delivery_method TEXT,
+      ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS pdf_url TEXT,
+      ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+    UPDATE patient_statements
+    SET current_balance = COALESCE(current_balance, balance_cents::numeric / 100.0),
+        created_by = COALESCE(created_by, generated_by),
+        delivery_method = COALESCE(delivery_method, sent_via)
+    WHERE current_balance IS NULL
+       OR created_by IS NULL
+       OR delivery_method IS NULL;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'patient_statements'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%status%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE patient_statements DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE patient_statements
+        ADD CONSTRAINT patient_statements_status_check
+        CHECK (status IN ('draft', 'pending', 'sent', 'paid', 'partial', 'overdue', 'waived'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_statements_number
+      ON patient_statements(statement_number);
+
+    CREATE TABLE IF NOT EXISTS collection_stats (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      stat_date DATE NOT NULL,
+      stat_period TEXT NOT NULL,
+      total_charges_cents INTEGER NOT NULL DEFAULT 0,
+      collected_at_checkin_cents INTEGER NOT NULL DEFAULT 0,
+      collected_at_checkout_cents INTEGER NOT NULL DEFAULT 0,
+      collected_via_statement_cents INTEGER NOT NULL DEFAULT 0,
+      collected_via_portal_cents INTEGER NOT NULL DEFAULT 0,
+      collected_via_phone_cents INTEGER NOT NULL DEFAULT 0,
+      total_collected_cents INTEGER NOT NULL DEFAULT 0,
+      collection_rate_at_service NUMERIC(5,2),
+      overall_collection_rate NUMERIC(5,2),
+      total_attempts INTEGER DEFAULT 0,
+      successful_attempts INTEGER DEFAULT 0,
+      declined_attempts INTEGER DEFAULT 0,
+      skipped_attempts INTEGER DEFAULT 0,
+      payment_plans_created INTEGER DEFAULT 0,
+      payment_plans_completed INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, stat_date, stat_period)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collection_stats_tenant
+      ON collection_stats(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_collection_stats_date
+      ON collection_stats(stat_date);
+    CREATE INDEX IF NOT EXISTS idx_collection_stats_period
+      ON collection_stats(stat_period);
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collection_stats'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%stat_period%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collection_stats DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE collection_stats
+        ADD CONSTRAINT collection_stats_period_check
+        CHECK (stat_period IN ('day', 'week', 'month'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    ALTER TABLE patient_payments
+      ADD COLUMN IF NOT EXISTS collection_point TEXT,
+      ADD COLUMN IF NOT EXISTS encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS applied_to JSONB,
+      ADD COLUMN IF NOT EXISTS collected_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'patient_payments'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%collection_point%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE patient_payments DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE patient_payments
+        ADD CONSTRAINT patient_payments_collection_point_check
+        CHECK (collection_point IS NULL OR collection_point IN ('check_in', 'check_out', 'phone', 'statement', 'portal', 'text', 'other'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'patient_payments'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%payment_method%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE patient_payments DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE patient_payments
+        ADD CONSTRAINT patient_payments_payment_method_check
+        CHECK (payment_method IN ('cash', 'credit', 'debit', 'card', 'check', 'ach', 'hsa', 'other'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_patient_payments_collection_point
+      ON patient_payments(collection_point);
+    CREATE INDEX IF NOT EXISTS idx_patient_payments_encounter
+      ON patient_payments(encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_payments_collected_by
+      ON patient_payments(collected_by);
+
+    ALTER TABLE payment_plans
+      ADD COLUMN IF NOT EXISTS total_amount_cents INTEGER,
+      ADD COLUMN IF NOT EXISTS installment_amount_cents INTEGER,
+      ADD COLUMN IF NOT EXISTS frequency TEXT DEFAULT 'monthly',
+      ADD COLUMN IF NOT EXISTS paid_amount_cents INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS remaining_amount_cents INTEGER,
+      ADD COLUMN IF NOT EXISTS notes TEXT;
+
+    UPDATE payment_plans
+    SET total_amount_cents = COALESCE(total_amount_cents, ROUND(total_amount * 100)::integer),
+        installment_amount_cents = COALESCE(installment_amount_cents, ROUND(monthly_payment * 100)::integer),
+        remaining_amount_cents = COALESCE(remaining_amount_cents, ROUND(remaining_balance * 100)::integer),
+        paid_amount_cents = COALESCE(paid_amount_cents, 0),
+        frequency = COALESCE(frequency, 'monthly');
+
+    CREATE OR REPLACE FUNCTION update_patient_balance(
+      p_tenant_id TEXT,
+      p_patient_id TEXT
+    ) RETURNS VOID AS $$
+    DECLARE
+      v_current NUMERIC(10,2) := 0;
+      v_31_60 NUMERIC(10,2) := 0;
+      v_61_90 NUMERIC(10,2) := 0;
+      v_over_90 NUMERIC(10,2) := 0;
+      v_oldest DATE;
+      v_last_payment_date DATE;
+      v_last_payment_amount NUMERIC(10,2);
+    BEGIN
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN current_date - COALESCE(service_date, created_at::date, current_date) <= 30
+          THEN COALESCE(amount_cents, ROUND(COALESCE(amount, 0) * 100)::integer, 0)::numeric / 100.0
+          ELSE 0
+        END), 0),
+        COALESCE(SUM(CASE
+          WHEN current_date - COALESCE(service_date, created_at::date, current_date) BETWEEN 31 AND 60
+          THEN COALESCE(amount_cents, ROUND(COALESCE(amount, 0) * 100)::integer, 0)::numeric / 100.0
+          ELSE 0
+        END), 0),
+        COALESCE(SUM(CASE
+          WHEN current_date - COALESCE(service_date, created_at::date, current_date) BETWEEN 61 AND 90
+          THEN COALESCE(amount_cents, ROUND(COALESCE(amount, 0) * 100)::integer, 0)::numeric / 100.0
+          ELSE 0
+        END), 0),
+        COALESCE(SUM(CASE
+          WHEN current_date - COALESCE(service_date, created_at::date, current_date) > 90
+          THEN COALESCE(amount_cents, ROUND(COALESCE(amount, 0) * 100)::integer, 0)::numeric / 100.0
+          ELSE 0
+        END), 0),
+        MIN(COALESCE(service_date, created_at::date))
+      INTO v_current, v_31_60, v_61_90, v_over_90, v_oldest
+      FROM charges
+      WHERE tenant_id = p_tenant_id
+        AND patient_id = p_patient_id
+        AND COALESCE(transaction_type, 'charge') = 'charge'
+        AND COALESCE(status, 'pending') IN ('pending', 'open', 'billed', 'patient_balance');
+
+      SELECT payment_date, amount_cents::numeric / 100.0
+      INTO v_last_payment_date, v_last_payment_amount
+      FROM patient_payments
+      WHERE tenant_id = p_tenant_id
+        AND patient_id = p_patient_id
+        AND status = 'posted'
+      ORDER BY payment_date DESC, created_at DESC
+      LIMIT 1;
+
+      INSERT INTO patient_balances (
+        id, tenant_id, patient_id, total_balance,
+        current_balance, balance_31_60, balance_61_90, balance_over_90,
+        oldest_charge_date, last_payment_date, last_payment_amount, updated_at
+      ) VALUES (
+        gen_random_uuid()::text, p_tenant_id, p_patient_id,
+        COALESCE(v_current, 0) + COALESCE(v_31_60, 0) + COALESCE(v_61_90, 0) + COALESCE(v_over_90, 0),
+        COALESCE(v_current, 0),
+        COALESCE(v_31_60, 0),
+        COALESCE(v_61_90, 0),
+        COALESCE(v_over_90, 0),
+        v_oldest,
+        v_last_payment_date,
+        v_last_payment_amount,
+        NOW()
+      )
+      ON CONFLICT (tenant_id, patient_id) DO UPDATE SET
+        total_balance = EXCLUDED.total_balance,
+        current_balance = EXCLUDED.current_balance,
+        balance_31_60 = EXCLUDED.balance_31_60,
+        balance_61_90 = EXCLUDED.balance_61_90,
+        balance_over_90 = EXCLUDED.balance_over_90,
+        oldest_charge_date = EXCLUDED.oldest_charge_date,
+        last_payment_date = EXCLUDED.last_payment_date,
+        last_payment_amount = EXCLUDED.last_payment_amount,
+        updated_at = NOW();
+    END;
+    $$ LANGUAGE plpgsql;
+    `,
+  },
 
 ];
 

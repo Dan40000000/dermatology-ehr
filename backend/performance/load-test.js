@@ -2,13 +2,21 @@
  * Load Testing with Autocannon
  *
  * Usage:
- *   node performance/load-test.js [endpoint] [token]
+ *   npm exec --package autocannon -- node performance/load-test.js [endpoint] [token]
  *
  * Example:
- *   node performance/load-test.js /api/patients eyJhbGc...
+ *   npm exec --package autocannon -- node performance/load-test.js /api/patients eyJhbGc...
  */
 
-const autocannon = require('autocannon');
+let autocannon;
+try {
+  autocannon = require('autocannon');
+} catch {
+  console.error('Autocannon is an optional load-test tool and is not installed with project dependencies.');
+  console.error('Run this script with: npx autocannon --help');
+  console.error('Or install temporarily with: npm exec --package autocannon -- node performance/load-test.js /health');
+  process.exit(1);
+}
 
 // Configuration
 const BASE_URL = process.env.API_URL || 'http://localhost:4000';
@@ -65,20 +73,20 @@ const instance = autocannon(options, (err, result) => {
   // Check for performance issues
   const warnings = [];
   if (result.latency.p95 > 1000) {
-    warnings.push('⚠️  P95 latency exceeds 1 second');
+    warnings.push('P95 latency exceeds 1 second');
   }
   if (result.latency.p99 > 2000) {
-    warnings.push('⚠️  P99 latency exceeds 2 seconds');
+    warnings.push('P99 latency exceeds 2 seconds');
   }
   if (result.errors > 0) {
-    warnings.push(`⚠️  ${result.errors} errors occurred`);
+    warnings.push(`${result.errors} errors occurred`);
   }
 
   if (warnings.length > 0) {
-    console.log('\n⚠️  Performance Warnings:');
+    console.log('\nPerformance Warnings:');
     warnings.forEach(w => console.log(w));
   } else {
-    console.log('\n✓ Performance looks good!');
+    console.log('\nPerformance looks good.');
   }
 });
 

@@ -17,6 +17,7 @@ export interface InsuranceBenefits {
   outOfPocketMax: number;
   outOfPocketMet: number;
   isInNetwork: boolean;
+  verified: boolean;
 }
 
 export interface CostEstimate {
@@ -46,14 +47,75 @@ export async function getInsuranceBenefits(
   tenantId: string,
   patientId: string
 ): Promise<InsuranceBenefits | null> {
+  try {
+    const verificationResult = await pool.query(
+      `select
+        coalesce(nullif(plan_name, ''), nullif(payer_name, '')) as "planName",
+        (coalesce(deductible_total_cents, deductible_total, 0)::numeric / 100.0) as deductible,
+        (coalesce(deductible_met_cents, deductible_met, 0)::numeric / 100.0) as "deductibleMet",
+        (
+          coalesce(
+            deductible_remaining_cents,
+            deductible_remaining,
+            greatest(
+              coalesce(deductible_total_cents, deductible_total, 0) -
+              coalesce(deductible_met_cents, deductible_met, 0),
+              0
+            )
+          )::numeric / 100.0
+        ) as "deductibleRemaining",
+        coalesce(coinsurance_pct, coinsurance_percent, 20) as "coinsurancePercent",
+        (coalesce(copay_specialist_cents, copay_amount_cents, specialist_copay, copay_amount, 0)::numeric / 100.0) as copay,
+        (coalesce(oop_max_cents, out_of_pocket_max_cents, oop_max, 800000)::numeric / 100.0) as "outOfPocketMax",
+        (coalesce(oop_met_cents, out_of_pocket_met_cents, oop_met, 0)::numeric / 100.0) as "outOfPocketMet",
+        coalesce(in_network, true) as "isInNetwork"
+       from insurance_verifications
+       where patient_id = $1
+         and tenant_id = $2
+         and verification_status = 'active'
+         and coalesce(has_issues, false) = false
+         and (expires_at is null or expires_at > now())
+       order by verified_at desc
+       limit 1`,
+      [patientId, tenantId]
+    );
+
+    const verification = verificationResult.rows[0];
+    if (verification?.planName) {
+      return {
+        planName: verification.planName,
+        deductible: toNumber(verification.deductible),
+        deductibleMet: toNumber(verification.deductibleMet),
+        deductibleRemaining: toNumber(verification.deductibleRemaining),
+        coinsurancePercent: toNumber(verification.coinsurancePercent, 20),
+        copay: toNumber(verification.copay),
+        outOfPocketMax: toNumber(verification.outOfPocketMax, 8000),
+        outOfPocketMet: toNumber(verification.outOfPocketMet),
+        isInNetwork: verification.isInNetwork !== false,
+        verified: true,
+      };
+    }
+  } catch (error: any) {
+    if (!isMissingRelationError(error)) {
+      throw error;
+    }
+  }
+
   const result = await pool.query(
     `select
-      insurance_name as "planName",
-      insurance_deductible as deductible,
-      insurance_coinsurance_percent as "coinsurancePercent",
-      insurance_copay as copay
-    from patients
-    where id = $1 and tenant_id = $2`,
+      coalesce(
+        nullif(to_jsonb(p)->>'insurance_name', ''),
+        nullif(to_jsonb(p)->>'insurance_plan_name', ''),
+        nullif(to_jsonb(p)->>'insurance', '')
+      ) as "planName",
+      nullif(to_jsonb(p)->>'insurance_deductible', '')::numeric as deductible,
+      nullif(to_jsonb(p)->>'insurance_coinsurance_percent', '')::numeric as "coinsurancePercent",
+      coalesce(
+        nullif(to_jsonb(p)->>'insurance_copay', '')::numeric,
+        nullif(to_jsonb(p)->>'copay_amount_cents', '')::numeric / 100.0
+      ) as copay
+    from patients p
+    where p.id = $1 and p.tenant_id = $2`,
     [patientId, tenantId]
   );
 
@@ -63,9 +125,8 @@ export async function getInsuranceBenefits(
 
   const patient = result.rows[0];
 
-  // In production, this would call eligibility verification API
-  // For now, use simple calculation based on stored data
-  const deductible = patient.deductible || 0;
+  // Fallback for patients without a current real-time eligibility verification.
+  const deductible = toNumber(patient.deductible);
   const deductibleMet = 0; // Would come from claims history
   const deductibleRemaining = Math.max(0, deductible - deductibleMet);
 
@@ -74,11 +135,12 @@ export async function getInsuranceBenefits(
     deductible,
     deductibleMet,
     deductibleRemaining,
-    coinsurancePercent: patient.coinsurancePercent || 20,
-    copay: patient.copay || 0,
+    coinsurancePercent: toNumber(patient.coinsurancePercent, 20),
+    copay: toNumber(patient.copay),
     outOfPocketMax: 8000, // Typical ACA max
     outOfPocketMet: 0, // Would come from claims history
     isInNetwork: true, // Assume in-network for now
+    verified: false,
   };
 }
 
@@ -200,12 +262,12 @@ export async function createCostEstimate(
   patientResponsibility += breakdown.copay;
 
   // 2. Deductible (on amount after copay)
-  const afterCopay = insuranceAllowedAmount - breakdown.copay;
+  const afterCopay = Math.max(0, insuranceAllowedAmount - breakdown.copay);
   breakdown.deductible = Math.min(afterCopay, benefits.deductibleRemaining);
   patientResponsibility += breakdown.deductible;
 
   // 3. Coinsurance (on amount after copay and deductible)
-  const afterDeductible = afterCopay - breakdown.deductible;
+  const afterDeductible = Math.max(0, afterCopay - breakdown.deductible);
   breakdown.coinsurance = afterDeductible * (benefits.coinsurancePercent / 100);
   patientResponsibility += breakdown.coinsurance;
 
@@ -213,7 +275,8 @@ export async function createCostEstimate(
   breakdown.notCovered = totalCharges - insuranceAllowedAmount;
   patientResponsibility += breakdown.notCovered;
 
-  const insurancePays = insuranceAllowedAmount - patientResponsibility;
+  const coveredPatientResponsibility = breakdown.copay + breakdown.deductible + breakdown.coinsurance;
+  const insurancePays = Math.max(0, insuranceAllowedAmount - coveredPatientResponsibility);
 
   const estimate: CostEstimate = {
     id: estimateId,
@@ -226,7 +289,7 @@ export async function createCostEstimate(
     patientResponsibility,
     breakdown,
     isCosmetic: false,
-    insuranceVerified: false, // Set to true after real-time verification
+    insuranceVerified: benefits.verified,
     validUntil: getValidUntilDate(),
   };
 
@@ -403,6 +466,15 @@ function getValidUntilDate(): string {
   const date = new Date();
   date.setDate(date.getDate() + 30);
   return date.toISOString().split("T")[0]!;
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function isMissingRelationError(error: any): boolean {
+  return error?.code === "42P01" || String(error?.message || "").includes("does not exist");
 }
 
 /**

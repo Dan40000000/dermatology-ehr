@@ -10,12 +10,12 @@ We use [Autocannon](https://github.com/mcollina/autocannon) for HTTP load testin
 
 Test the health endpoint:
 ```bash
-node performance/load-test.js /health
+npm exec --package autocannon -- node performance/load-test.js /health
 ```
 
 Test authenticated endpoints:
 ```bash
-node performance/load-test.js /api/patients YOUR_JWT_TOKEN
+npm exec --package autocannon -- node performance/load-test.js /api/patients YOUR_JWT_TOKEN
 ```
 
 ### Custom Configuration

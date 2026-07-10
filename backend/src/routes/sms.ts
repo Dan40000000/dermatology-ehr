@@ -64,7 +64,7 @@ const smsTableExistsCache = new Map<string, boolean>();
 
 async function smsTableExists(tableName: string): Promise<boolean> {
   const cached = smsTableExistsCache.get(tableName);
-  if (cached !== undefined) {
+  if (process.env.NODE_ENV !== 'test' && cached !== undefined) {
     return cached;
   }
 
@@ -77,7 +77,9 @@ async function smsTableExists(tableName: string): Promise<boolean> {
     [tableName]
   );
   const exists = result.rows[0]?.exists === true;
-  smsTableExistsCache.set(tableName, exists);
+  if (process.env.NODE_ENV !== 'test') {
+    smsTableExistsCache.set(tableName, exists);
+  }
   return exists;
 }
 

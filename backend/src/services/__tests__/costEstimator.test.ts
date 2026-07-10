@@ -16,26 +16,54 @@ beforeEach(() => {
 
 describe("costEstimator", () => {
   it("getInsuranceBenefits returns null when missing plan", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{}], rowCount: 1 });
+    queryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [{}], rowCount: 1 });
     const result = await costEstimator.getInsuranceBenefits("tenant-1", "patient-1");
     expect(result).toBeNull();
   });
 
-  it("getInsuranceBenefits returns benefits", async () => {
+  it("getInsuranceBenefits returns live verification benefits", async () => {
     queryMock.mockResolvedValueOnce({
       rows: [
         {
-          planName: "Plan A",
-          deductible: 500,
+          planName: "Verified Plan",
+          deductible: "1000",
+          deductibleMet: "250",
+          deductibleRemaining: "750",
           coinsurancePercent: 20,
-          copay: 10,
+          copay: "35",
+          outOfPocketMax: "8000",
+          outOfPocketMet: "500",
+          isInNetwork: true,
         },
       ],
       rowCount: 1,
     });
     const result = await costEstimator.getInsuranceBenefits("tenant-1", "patient-1");
+    expect(result?.planName).toBe("Verified Plan");
+    expect(result?.deductibleRemaining).toBe(750);
+    expect(result?.verified).toBe(true);
+  });
+
+  it("getInsuranceBenefits falls back to patient insurance fields", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            planName: "Plan A",
+            deductible: 500,
+            coinsurancePercent: 20,
+            copay: 10,
+          },
+        ],
+        rowCount: 1,
+      });
+    const result = await costEstimator.getInsuranceBenefits("tenant-1", "patient-1");
     expect(result?.planName).toBe("Plan A");
     expect(result?.deductibleRemaining).toBe(500);
+    expect(result?.verified).toBe(false);
   });
 
   it("createCostEstimate handles cosmetic services", async () => {
@@ -64,6 +92,7 @@ describe("costEstimator", () => {
         rowCount: 1,
       })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({ rows: [] });
 
     const estimate = await costEstimator.createCostEstimate("tenant-1", "patient-1", {
@@ -82,6 +111,7 @@ describe("costEstimator", () => {
         rows: [{ fee_cents: 10000, cpt_description: "Test" }],
         rowCount: 1,
       })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({
         rows: [
           {
@@ -103,7 +133,7 @@ describe("costEstimator", () => {
 
     expect(estimate.insuranceAllowedAmount).toBe(80);
     expect(estimate.patientResponsibility).toBeCloseTo(48, 1);
-    expect(estimate.insurancePays).toBeCloseTo(32, 1);
+    expect(estimate.insurancePays).toBeCloseTo(52, 1);
   });
 
   it("getEstimate returns totals", async () => {
@@ -173,7 +203,7 @@ describe("costEstimator", () => {
         },
       ],
       rowCount: 1,
-    });
+    }).mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const result = await costEstimator.quickEstimate("tenant-1", "patient-1", "office-visit");
     expect(result.estimatedCost).toBe(40);

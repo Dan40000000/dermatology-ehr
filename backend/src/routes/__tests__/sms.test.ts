@@ -509,7 +509,9 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/conversations returns conversations', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ patientId: 'p1' }] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ exists: false }] })
+      .mockResolvedValueOnce({ rows: [{ patientId: 'p1' }] });
 
     const res = await request(app).get('/sms/conversations');
 
@@ -518,14 +520,16 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/conversations stays compatible with legacy sms_conversations schema', async () => {
-    queryMock.mockImplementationOnce(async (sql: string) => {
-      expect(sql).toContain(`COALESCE(NULLIF(BTRIM(p.phone), ''), NULLIF(BTRIM(c.phone_number), ''))`);
-      expect(sql).toContain('c.consent_status');
-      expect(sql).not.toContain('c.status');
-      expect(sql).not.toContain('c.last_message_direction');
-      expect(sql).not.toContain('c.last_message_preview');
-      return { rows: [{ patientId: 'p1', phone: '5550100' }] };
-    });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ exists: false }] })
+      .mockImplementationOnce(async (sql: string) => {
+        expect(sql).toContain(`COALESCE(NULLIF(BTRIM(p.phone), ''), NULLIF(BTRIM(c.phone_number), ''))`);
+        expect(sql).toContain('c.consent_status');
+        expect(sql).not.toContain('c.status');
+        expect(sql).not.toContain('c.last_message_direction');
+        expect(sql).not.toContain('c.last_message_preview');
+        return { rows: [{ patientId: 'p1', phone: '5550100' }] };
+      });
 
     const res = await request(app).get('/sms/conversations');
 
@@ -535,49 +539,51 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/conversations dedupes obvious same-person duplicate records', async () => {
-    queryMock.mockResolvedValueOnce({
-      rows: [
-        {
-          patientId: 'canonical',
-          firstName: 'Daniel',
-          lastName: 'Perry',
-          phone: '541-231-8693',
-          smsOptIn: true,
-          category: 'billing',
-          threadStatus: 'waiting-provider',
-          threadId: 'thread-1',
-          unreadCount: 1,
-          lastMessageAt: '2026-04-14T14:21:55.130Z',
-          lastMessageTime: '2026-04-14T14:21:55.130Z',
-        },
-        {
-          patientId: 'duplicate',
-          firstName: 'Perry',
-          lastName: 'Daniel ',
-          phone: '5412318693',
-          smsOptIn: true,
-          category: 'general',
-          threadStatus: 'open',
-          threadId: null,
-          unreadCount: 7,
-          lastMessageAt: '2026-04-14T14:20:34.971Z',
-          lastMessageTime: '2026-04-14T14:20:34.971Z',
-        },
-        {
-          patientId: 'shared-family',
-          firstName: 'Jamie',
-          lastName: 'Perry',
-          phone: '5412318693',
-          smsOptIn: true,
-          category: 'general',
-          threadStatus: 'open',
-          threadId: null,
-          unreadCount: 0,
-          lastMessageAt: '2026-04-14T13:00:00.000Z',
-          lastMessageTime: '2026-04-14T13:00:00.000Z',
-        },
-      ],
-    });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ exists: false }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            patientId: 'canonical',
+            firstName: 'Daniel',
+            lastName: 'Perry',
+            phone: '541-231-8693',
+            smsOptIn: true,
+            category: 'billing',
+            threadStatus: 'waiting-provider',
+            threadId: 'thread-1',
+            unreadCount: 1,
+            lastMessageAt: '2026-04-14T14:21:55.130Z',
+            lastMessageTime: '2026-04-14T14:21:55.130Z',
+          },
+          {
+            patientId: 'duplicate',
+            firstName: 'Perry',
+            lastName: 'Daniel ',
+            phone: '5412318693',
+            smsOptIn: true,
+            category: 'general',
+            threadStatus: 'open',
+            threadId: null,
+            unreadCount: 7,
+            lastMessageAt: '2026-04-14T14:20:34.971Z',
+            lastMessageTime: '2026-04-14T14:20:34.971Z',
+          },
+          {
+            patientId: 'shared-family',
+            firstName: 'Jamie',
+            lastName: 'Perry',
+            phone: '5412318693',
+            smsOptIn: true,
+            category: 'general',
+            threadStatus: 'open',
+            threadId: null,
+            unreadCount: 0,
+            lastMessageAt: '2026-04-14T13:00:00.000Z',
+            lastMessageTime: '2026-04-14T13:00:00.000Z',
+          },
+        ],
+      });
 
     const res = await request(app).get('/sms/conversations');
 
@@ -844,7 +850,9 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/templates returns templates', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: 't1' }] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ exists: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: 't1' }] });
 
     const res = await request(app).get('/sms/templates');
 
@@ -1507,7 +1515,9 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/templates supports filters', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: 't1' }] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ exists: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: 't1' }] });
 
     const res = await request(app).get('/sms/templates').query({ category: 'reminder', activeOnly: 'true' });
 

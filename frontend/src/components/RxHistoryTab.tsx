@@ -7,6 +7,108 @@ interface RxHistoryTabProps {
   onRefresh: () => void;
 }
 
+type PrescriptionRecord = Prescription & Record<string, unknown>;
+
+function firstString(record: PrescriptionRecord, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function firstNumber(record: PrescriptionRecord, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return undefined;
+}
+
+function firstBoolean(record: PrescriptionRecord, ...keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+    }
+  }
+  return undefined;
+}
+
+function firstValidDate(record: PrescriptionRecord, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return 'Not on file';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not on file';
+  return date.toLocaleDateString();
+}
+
+function normalizePrescription(rx: Prescription): Prescription {
+  const record = rx as PrescriptionRecord;
+  const medicationName = firstString(record, 'medicationName', 'medication_name', 'drugName', 'drug_name', 'name');
+  const genericName = firstString(record, 'genericName', 'generic_name');
+  const writtenDate = firstValidDate(record, 'writtenDate', 'written_date', 'prescribedDate', 'prescribed_date', 'createdAt', 'created_at');
+  const createdAt = firstValidDate(record, 'createdAt', 'created_at', 'writtenDate', 'written_date');
+
+  return {
+    ...rx,
+    tenantId: rx.tenantId || firstString(record, 'tenant_id') || '',
+    patientId: rx.patientId || firstString(record, 'patient_id') || '',
+    encounterId: rx.encounterId || firstString(record, 'encounter_id'),
+    providerId: rx.providerId || firstString(record, 'provider_id') || '',
+    providerName: rx.providerName || firstString(record, 'provider_name'),
+    medicationId: rx.medicationId || firstString(record, 'medication_id'),
+    medicationName: medicationName || 'Unknown medication',
+    genericName,
+    dosageForm: rx.dosageForm || firstString(record, 'dosage_form'),
+    quantity: firstNumber(record, 'quantity') ?? rx.quantity,
+    quantityUnit: rx.quantityUnit || firstString(record, 'quantity_unit'),
+    refills: firstNumber(record, 'refills') ?? rx.refills ?? 0,
+    daysSupply: firstNumber(record, 'daysSupply', 'days_supply'),
+    pharmacyId: rx.pharmacyId || firstString(record, 'pharmacy_id'),
+    pharmacyName: rx.pharmacyName || firstString(record, 'pharmacy_name'),
+    pharmacyPhone: rx.pharmacyPhone || firstString(record, 'pharmacy_phone'),
+    pharmacyAddress: rx.pharmacyAddress || firstString(record, 'pharmacy_address'),
+    pharmacyNcpdp: rx.pharmacyNcpdp || firstString(record, 'pharmacy_ncpdp'),
+    daw: rx.daw ?? firstBoolean(record, 'daw') ?? false,
+    isControlled: rx.isControlled ?? firstBoolean(record, 'isControlled', 'is_controlled') ?? false,
+    deaSchedule: rx.deaSchedule || firstString(record, 'dea_schedule'),
+    sentAt: rx.sentAt || firstValidDate(record, 'sent_at'),
+    transmittedAt: rx.transmittedAt || firstValidDate(record, 'transmitted_at'),
+    surescriptsMessageId: rx.surescriptsMessageId || firstString(record, 'surescripts_message_id'),
+    errorMessage: rx.errorMessage || firstString(record, 'error_message'),
+    errorCode: rx.errorCode || firstString(record, 'error_code'),
+    filledAt: rx.filledAt || firstValidDate(record, 'filled_at'),
+    writtenDate,
+    createdAt: createdAt || '',
+    updatedAt: rx.updatedAt || firstValidDate(record, 'updated_at'),
+    createdBy: rx.createdBy || firstString(record, 'created_by') || '',
+  };
+}
+
 // Helper component for displaying info rows
 function InfoRow({ label, value }: { label: string; value: string | number }) {
   return (
@@ -20,9 +122,10 @@ function InfoRow({ label, value }: { label: string; value: string | number }) {
 export function RxHistoryTab({ prescriptions, onRefresh }: RxHistoryTabProps) {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'discontinued'>('all');
   const [selectedPrescription, setSelectedPrescription] = useState<Prescription | null>(null);
+  const normalizedPrescriptions = prescriptions.map(normalizePrescription);
 
   // Filter prescriptions based on status
-  const filteredPrescriptions = prescriptions.filter((rx) => {
+  const filteredPrescriptions = normalizedPrescriptions.filter((rx) => {
     if (statusFilter === 'all') return true;
     if (statusFilter === 'active') return rx.status === 'sent' || rx.status === 'transmitted' || rx.status === 'pending';
     if (statusFilter === 'discontinued') return rx.status === 'discontinued' || rx.status === 'cancelled';
@@ -94,7 +197,7 @@ export function RxHistoryTab({ prescriptions, onRefresh }: RxHistoryTabProps) {
             fontWeight: 500
           }}
         >
-          All ({prescriptions.length})
+          All ({normalizedPrescriptions.length})
         </button>
         <button
           type="button"
@@ -110,7 +213,7 @@ export function RxHistoryTab({ prescriptions, onRefresh }: RxHistoryTabProps) {
             fontWeight: 500
           }}
         >
-          Active ({prescriptions.filter(rx => rx.status === 'sent' || rx.status === 'transmitted' || rx.status === 'pending').length})
+          Active ({normalizedPrescriptions.filter(rx => rx.status === 'sent' || rx.status === 'transmitted' || rx.status === 'pending').length})
         </button>
         <button
           type="button"
@@ -126,7 +229,7 @@ export function RxHistoryTab({ prescriptions, onRefresh }: RxHistoryTabProps) {
             fontWeight: 500
           }}
         >
-          Discontinued ({prescriptions.filter(rx => rx.status === 'discontinued' || rx.status === 'cancelled').length})
+          Discontinued ({normalizedPrescriptions.filter(rx => rx.status === 'discontinued' || rx.status === 'cancelled').length})
         </button>
       </div>
 
@@ -209,14 +312,11 @@ export function RxHistoryTab({ prescriptions, onRefresh }: RxHistoryTabProps) {
                   </td>
                   <td>
                     <div style={{ fontSize: '0.875rem' }}>
-                      {rx.writtenDate
-                        ? new Date(rx.writtenDate).toLocaleDateString()
-                        : new Date(rx.createdAt).toLocaleDateString()
-                      }
+                      {formatDate(rx.writtenDate || rx.createdAt)}
                     </div>
                     {rx.sentAt && (
                       <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                        Sent: {new Date(rx.sentAt).toLocaleDateString()}
+                        Sent: {formatDate(rx.sentAt)}
                       </div>
                     )}
                   </td>
@@ -390,16 +490,13 @@ export function RxHistoryTab({ prescriptions, onRefresh }: RxHistoryTabProps) {
                 <InfoRow label="Status" value={selectedPrescription.status} />
                 <InfoRow
                   label="Written Date"
-                  value={selectedPrescription.writtenDate
-                    ? new Date(selectedPrescription.writtenDate).toLocaleDateString()
-                    : new Date(selectedPrescription.createdAt).toLocaleDateString()
-                  }
+                  value={formatDate(selectedPrescription.writtenDate || selectedPrescription.createdAt)}
                 />
                 {selectedPrescription.sentAt && (
-                  <InfoRow label="Sent Date" value={new Date(selectedPrescription.sentAt).toLocaleDateString()} />
+                  <InfoRow label="Sent Date" value={formatDate(selectedPrescription.sentAt)} />
                 )}
                 {selectedPrescription.transmittedAt && (
-                  <InfoRow label="Transmitted Date" value={new Date(selectedPrescription.transmittedAt).toLocaleDateString()} />
+                  <InfoRow label="Transmitted Date" value={formatDate(selectedPrescription.transmittedAt)} />
                 )}
               </div>
             </div>

@@ -4,6 +4,7 @@ export { PatientEncountersList } from './PatientEncountersList';
 export { PatientInsuranceCard } from './PatientInsuranceCard';
 export { PatientPrescriptionsList } from './PatientPrescriptionsList';
 export { PatientBalanceSummary } from './PatientBalanceSummary';
+export { PatientCostEstimatePanel } from './PatientCostEstimatePanel';
 export { PatientPriorAuthsList } from './PatientPriorAuthsList';
 export { PatientBiopsyHistory } from './PatientBiopsyHistory';
 export { PatientPhotoGallery } from './PatientPhotoGallery';

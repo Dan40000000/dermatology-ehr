@@ -10,7 +10,13 @@ import { ScribePanel } from '../components/ScribePanel';
 import { ClinicalCopilotPanel } from '../components/ClinicalCopilotPanel';
 import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
 // Lesion type no longer needed - using PatientBodyDiagram with BodyMarker type
-import { TasksTab, PatientBalanceSummary, PatientScribeSummaries, PatientScribeSnapshot } from '../components/patient';
+import {
+  PatientBalanceSummary,
+  PatientCostEstimatePanel,
+  PatientScribeSnapshot,
+  PatientScribeSummaries,
+  TasksTab,
+} from '../components/patient';
 import { RxHistoryTab } from '../components/RxHistoryTab';
 import { ActiveMedicationsCard } from '../components/prescriptions';
 import { PharmacySearch, type Pharmacy } from '../components/prescriptions/PharmacySearch';
@@ -1759,7 +1765,10 @@ export function PatientDetailPage() {
         )}
 
         {activeTab === 'account' && patientId && (
-          <PatientBalanceSummary patientId={patientId} />
+          <div style={{ display: 'grid', gap: '1.25rem' }}>
+            <PatientCostEstimatePanel patientId={patientId} />
+            <PatientBalanceSummary patientId={patientId} />
+          </div>
         )}
 
         {activeTab === 'medical-history' && (
@@ -2440,6 +2449,8 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
             groupNumber={insuranceData.primaryGroupNumber || undefined}
           />
         </div>
+
+        <PatientCostEstimatePanel patientId={patient.id} />
       </div>
     </div>
   );

@@ -1818,6 +1818,7 @@ const authedGet = async (tenantId: string, accessToken: string, path: string) =>
       Authorization: `Bearer ${accessToken}`,
       [TENANT_HEADER]: tenantId,
     },
+    credentials: "include",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -1861,6 +1862,7 @@ const authedPost = async (tenantId: string, accessToken: string, path: string, b
       Authorization: `Bearer ${accessToken}`,
       [TENANT_HEADER]: tenantId,
     },
+    credentials: "include",
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -8895,6 +8897,40 @@ export async function fetchPatientBalance(
   });
   if (!res.ok) throw new Error('Failed to fetch patient balance');
   return res.json();
+}
+
+export interface PatientProcedureCostEstimate {
+  id: string;
+  patientId: string;
+  appointmentId?: string;
+  serviceType: string;
+  totalCharges: number;
+  insuranceAllowedAmount: number;
+  insurancePays: number;
+  patientResponsibility: number;
+  breakdown: {
+    copay: number;
+    deductible: number;
+    coinsurance: number;
+    notCovered: number;
+  };
+  isCosmetic: boolean;
+  insuranceVerified: boolean;
+  validUntil: string;
+}
+
+export async function createPatientProcedureCostEstimate(
+  tenantId: string,
+  accessToken: string,
+  payload: {
+    patientId: string;
+    appointmentId?: string;
+    serviceType: string;
+    cptCodes: string[];
+    isCosmetic?: boolean;
+  }
+): Promise<{ estimate: PatientProcedureCostEstimate }> {
+  return authedPost(tenantId, accessToken, '/api/collections/estimate', payload);
 }
 
 export async function fetchPatientPhotos(

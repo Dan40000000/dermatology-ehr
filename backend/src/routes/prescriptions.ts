@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { pool } from '../db/pool';
@@ -8,6 +8,7 @@ import { CLINICAL_ROLES } from '../lib/roles';
 import { validatePrescription, checkDrugInteractions, checkAllergies } from '../services/prescriptionValidator';
 import { sendNewRx, checkFormulary, getPatientBenefits } from '../services/surescriptsService';
 import { getPrescribingService, type PrescriptionSendRequest } from '../services/healthcareWorkflowServices';
+import { getIntegrationConfig } from '../integrations/baseAdapter';
 import { logger } from '../lib/logger';
 
 export const prescriptionsRouter = Router();
@@ -28,6 +29,20 @@ function toSafeErrorMessage(error: unknown): string {
 function logPrescriptionsError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
+  });
+}
+
+async function hasActiveRxBenefitIntegration(tenantId: string): Promise<boolean> {
+  const config = await getIntegrationConfig(tenantId, 'eprescribe');
+  return Boolean(config?.isActive);
+}
+
+function sendRxBenefitNotConnected(res: Response) {
+  return res.status(503).json({
+    code: 'RX_BENEFIT_NOT_CONNECTED',
+    error: 'Prescription benefit pricing is not connected.',
+    message:
+      'Connect an eRx/RTPB or pharmacy benefit vendor before showing medication cost estimates to patients.',
   });
 }
 
@@ -1057,9 +1072,14 @@ prescriptionsRouter.post(
   async (req: AuthedRequest, res) => {
     try {
       const { medicationName, ndc, payerId } = req.body;
+      const tenantId = req.user!.tenantId;
 
       if (!medicationName) {
         return res.status(400).json({ error: 'medicationName is required' });
+      }
+
+      if (!(await hasActiveRxBenefitIntegration(tenantId))) {
+        return sendRxBenefitNotConnected(res);
       }
 
       const formularyResult = await checkFormulary(medicationName, payerId, ndc);
@@ -1089,6 +1109,10 @@ prescriptionsRouter.get(
 
       if (patientCheck.rows.length === 0) {
         return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      if (!(await hasActiveRxBenefitIntegration(tenantId))) {
+        return sendRxBenefitNotConnected(res);
       }
 
       const benefits = await getPatientBenefits(patientId!, tenantId);

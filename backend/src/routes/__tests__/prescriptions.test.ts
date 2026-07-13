@@ -12,6 +12,7 @@ import {
   checkFormulary,
   getPatientBenefits,
 } from "../../services/surescriptsService";
+import { getIntegrationConfig } from "../../integrations/baseAdapter";
 import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
@@ -43,6 +44,10 @@ jest.mock("../../services/surescriptsService", () => ({
   getPatientBenefits: jest.fn(),
 }));
 
+jest.mock("../../integrations/baseAdapter", () => ({
+  getIntegrationConfig: jest.fn(),
+}));
+
 jest.mock("../../lib/logger", () => ({
   logger: {
     error: jest.fn(),
@@ -63,6 +68,7 @@ const allergiesMock = checkAllergies as jest.Mock;
 const sendNewRxMock = sendNewRx as jest.Mock;
 const checkFormularyMock = checkFormulary as jest.Mock;
 const getBenefitsMock = getPatientBenefits as jest.Mock;
+const getIntegrationConfigMock = getIntegrationConfig as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const uuid = "11111111-1111-1111-8111-111111111111";
@@ -77,6 +83,7 @@ beforeEach(() => {
   sendNewRxMock.mockReset();
   checkFormularyMock.mockReset();
   getBenefitsMock.mockReset();
+  getIntegrationConfigMock.mockReset();
   loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   validateMock.mockReturnValue({ valid: true, errors: [], warnings: [] });
@@ -85,6 +92,7 @@ beforeEach(() => {
   sendNewRxMock.mockResolvedValue({ success: true, messageId: "msg-1" });
   checkFormularyMock.mockResolvedValue({ covered: true });
   getBenefitsMock.mockResolvedValue({ plan: "basic" });
+  getIntegrationConfigMock.mockResolvedValue({ isActive: true });
 });
 
 describe("Prescription routes", () => {
@@ -476,6 +484,19 @@ describe("Prescription routes", () => {
     expect(res.body.covered).toBe(true);
   });
 
+  it("POST /prescriptions/check-formulary refuses disconnected Rx benefits", async () => {
+    getIntegrationConfigMock.mockResolvedValueOnce(null);
+
+    const res = await request(app).post("/prescriptions/check-formulary").send({
+      medicationName: "Test Med",
+      payerId: "payer-1",
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("RX_BENEFIT_NOT_CONNECTED");
+    expect(checkFormularyMock).not.toHaveBeenCalled();
+  });
+
   it("GET /prescriptions/patient-benefits/:patientId returns 404 when patient missing", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -501,6 +522,17 @@ describe("Prescription routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.plan).toBe("basic");
+  });
+
+  it("GET /prescriptions/patient-benefits/:patientId refuses disconnected Rx benefits", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: uuid }] });
+    getIntegrationConfigMock.mockResolvedValueOnce(null);
+
+    const res = await request(app).get(`/prescriptions/patient-benefits/${uuid}`);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("RX_BENEFIT_NOT_CONNECTED");
+    expect(getBenefitsMock).not.toHaveBeenCalled();
   });
 
   it("POST /prescriptions/:id/send returns 404 when missing", async () => {

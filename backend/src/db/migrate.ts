@@ -11364,6 +11364,32 @@ Consider age-appropriate treatments and include family counseling points.',
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS insurance_type TEXT DEFAULT 'primary';
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS payer_id TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS payer_name TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS plan_name TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS plan_type TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS member_id TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS group_number TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS subscriber_first_name TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS subscriber_last_name TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS subscriber_dob DATE;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS relationship_to_subscriber TEXT DEFAULT 'self';
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS effective_date DATE;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS termination_date DATE;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS claims_phone TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS prior_auth_phone TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS member_services_phone TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS front_card_image_url TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS back_card_image_url TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS rx_bin TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS rx_pcn TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS rx_group TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE patient_insurance ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_patient_insurance_primary
       ON patient_insurance(tenant_id, patient_id)
       WHERE is_primary = true;

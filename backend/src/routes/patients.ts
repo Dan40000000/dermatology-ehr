@@ -155,7 +155,7 @@ async function upsertPrimaryPatientInsurance(
 
   const existing = await pool.query(
     `SELECT id FROM patient_insurance
-     WHERE tenant_id = $1 AND patient_id = $2 AND is_primary = true
+     WHERE tenant_id = $1 AND patient_id::text = $2 AND is_primary = true
      LIMIT 1`,
     [tenantId, patientId],
   );
@@ -674,7 +674,7 @@ patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (
        from patients p
        left join patient_insurance pi
          on pi.tenant_id = p.tenant_id
-        and pi.patient_id = p.id
+        and pi.patient_id::text = p.id::text
         and pi.is_primary = true
        where p.id = $1 and p.tenant_id = $2`,
       [id, tenantId],
@@ -1767,7 +1767,7 @@ patientsRouter.get("/:id/insurance", requireAuth, requireModuleAccess("patients"
        FROM patients p
        LEFT JOIN patient_insurance pi
          ON pi.tenant_id = p.tenant_id
-        AND pi.patient_id = p.id
+        AND pi.patient_id::text = p.id::text
         AND pi.is_primary = true
        WHERE p.id = $1 AND p.tenant_id = $2`,
       [id, tenantId]

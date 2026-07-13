@@ -105,6 +105,116 @@ async function ensurePatientPortalScaffold(params: {
   }
 }
 
+type PrimaryInsuranceInput = {
+  insurance?: string | null;
+  insuranceId?: string | null;
+  insuranceMemberId?: string | null;
+  insurancePayerId?: string | null;
+  insuranceGroupNumber?: string | null;
+  rxBin?: string | null;
+  rxPcn?: string | null;
+  rxGroup?: string | null;
+};
+
+function cleanInsuranceValue(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function hasPrimaryInsuranceInput(input: PrimaryInsuranceInput): boolean {
+  return [
+    input.insurance,
+    input.insuranceId,
+    input.insuranceMemberId,
+    input.insurancePayerId,
+    input.insuranceGroupNumber,
+    input.rxBin,
+    input.rxPcn,
+    input.rxGroup,
+  ].some((value) => cleanInsuranceValue(value));
+}
+
+async function upsertPrimaryPatientInsurance(
+  tenantId: string,
+  patientId: string,
+  input: PrimaryInsuranceInput,
+  providedFields: Set<keyof PrimaryInsuranceInput> = new Set(Object.keys(input) as Array<keyof PrimaryInsuranceInput>),
+) {
+  if (!hasPrimaryInsuranceInput(input)) return;
+
+  const fieldValues = {
+    insurance: cleanInsuranceValue(input.insurance),
+    insurancePayerId: cleanInsuranceValue(input.insurancePayerId),
+    insuranceMemberId: cleanInsuranceValue(input.insuranceMemberId) || cleanInsuranceValue(input.insuranceId),
+    insuranceGroupNumber: cleanInsuranceValue(input.insuranceGroupNumber),
+    rxBin: cleanInsuranceValue(input.rxBin),
+    rxPcn: cleanInsuranceValue(input.rxPcn),
+    rxGroup: cleanInsuranceValue(input.rxGroup),
+  };
+
+  const existing = await pool.query(
+    `SELECT id FROM patient_insurance
+     WHERE tenant_id = $1 AND patient_id = $2 AND is_primary = true
+     LIMIT 1`,
+    [tenantId, patientId],
+  );
+
+  if (existing.rows.length === 0) {
+    await pool.query(
+      `INSERT INTO patient_insurance (
+        tenant_id, patient_id, insurance_type, is_primary,
+        payer_id, payer_name, plan_name, member_id, group_number,
+        rx_bin, rx_pcn, rx_group
+      )
+      VALUES ($1, $2, 'primary', true, $3, $4, $4, $5, $6, $7, $8, $9)`,
+      [
+        tenantId,
+        patientId,
+        fieldValues.insurancePayerId,
+        fieldValues.insurance,
+        fieldValues.insuranceMemberId,
+        fieldValues.insuranceGroupNumber,
+        fieldValues.rxBin,
+        fieldValues.rxPcn,
+        fieldValues.rxGroup,
+      ],
+    );
+    return;
+  }
+
+  const updates: string[] = [];
+  const values: any[] = [];
+  const addUpdate = (
+    column: string,
+    field: keyof typeof fieldValues,
+    isProvided = providedFields.has(field as keyof PrimaryInsuranceInput),
+  ) => {
+    if (!isProvided) return;
+    values.push(fieldValues[field]);
+    updates.push(`${column} = $${values.length}`);
+  };
+
+  addUpdate("payer_name", "insurance");
+  addUpdate("plan_name", "insurance");
+  addUpdate("payer_id", "insurancePayerId");
+  addUpdate("member_id", "insuranceMemberId", providedFields.has("insuranceMemberId") || providedFields.has("insuranceId"));
+  addUpdate("group_number", "insuranceGroupNumber");
+  addUpdate("rx_bin", "rxBin");
+  addUpdate("rx_pcn", "rxPcn");
+  addUpdate("rx_group", "rxGroup");
+
+  if (updates.length === 0) return;
+
+  values.push(existing.rows[0].id, tenantId);
+  await pool.query(
+    `UPDATE patient_insurance
+     SET ${updates.join(", ")}, updated_at = NOW()
+     WHERE id = $${values.length - 1} AND tenant_id = $${values.length}`,
+    values,
+  );
+}
+
 const createPatientSchema = z.object({
   firstName: z.string().min(1).max(100),
   lastName: z.string().min(1).max(100),
@@ -141,6 +251,9 @@ const createPatientSchema = z.object({
   insuranceMemberId: z.string().optional(),
   insurancePayerId: z.string().optional(),
   insuranceGroupNumber: z.string().optional(),
+  rxBin: z.string().max(50).optional(),
+  rxPcn: z.string().max(50).optional(),
+  rxGroup: z.string().max(50).optional(),
   accessibilityProfile: z.object({
     communicationSupport: z.array(z.string()).optional(),
     interpreterNeeded: z.boolean().optional(),
@@ -403,7 +516,7 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
     emergencyContactName, emergencyContactRelationship, emergencyContactPhone,
     pharmacyId, pharmacyNcpdp, pharmacyName, pharmacyPhone, pharmacyAddress,
     primaryCarePhysician, referralSource, insuranceId, insuranceMemberId, insurancePayerId, insuranceGroupNumber,
-    accessibilityProfile
+    rxBin, rxPcn, rxGroup, accessibilityProfile
   } = parsed.data;
   const { ssnLast4, ssnEncrypted } = buildSsnFields(ssn);
   const accountNumber = `ACCT-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
@@ -450,6 +563,16 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
   });
 
   await ensurePatientPortalScaffold({ tenantId, patientId: id });
+  await upsertPrimaryPatientInsurance(tenantId, id, {
+    insurance,
+    insuranceId,
+    insuranceMemberId: normalizedInsurance.insuranceMemberId || insuranceMemberId,
+    insurancePayerId: normalizedInsurance.insurancePayerId || insurancePayerId,
+    insuranceGroupNumber: normalizedInsurance.insuranceGroupNumber || insuranceGroupNumber,
+    rxBin,
+    rxPcn,
+    rxGroup,
+  });
 
   return res.status(201).json({
     id,
@@ -519,7 +642,7 @@ patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (
               nullif(to_jsonb(p)->>'city', '') as city,
               nullif(to_jsonb(p)->>'state', '') as state,
               nullif(to_jsonb(p)->>'zip', '') as zip,
-              nullif(to_jsonb(p)->>'insurance', '') as insurance,
+              coalesce(nullif(pi.payer_name, ''), nullif(to_jsonb(p)->>'insurance', '')) as insurance,
               nullif(to_jsonb(p)->>'allergies', '') as allergies,
               nullif(to_jsonb(p)->>'medications', '') as medications,
               nullif(to_jsonb(p)->>'sex', '') as sex,
@@ -534,17 +657,26 @@ patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (
               nullif(to_jsonb(p)->>'pharmacy_phone', '') as "pharmacyPhone",
               nullif(to_jsonb(p)->>'pharmacy_address', '') as "pharmacyAddress",
               coalesce(
+                nullif(pi.member_id, ''),
                 nullif(to_jsonb(p)->>'insurance_id', ''),
                 nullif(to_jsonb(p)->>'insurance_member_id', '')
               ) as "insuranceId",
-              nullif(to_jsonb(p)->>'insurance_payer_id', '') as "insurancePayerId",
-              nullif(to_jsonb(p)->>'insurance_group_number', '') as "insuranceGroupNumber",
+              coalesce(nullif(pi.payer_id, ''), nullif(to_jsonb(p)->>'insurance_payer_id', '')) as "insurancePayerId",
+              coalesce(nullif(pi.group_number, ''), nullif(to_jsonb(p)->>'insurance_group_number', '')) as "insuranceGroupNumber",
+              nullif(pi.rx_bin, '') as "rxBin",
+              nullif(pi.rx_pcn, '') as "rxPcn",
+              nullif(pi.rx_group, '') as "rxGroup",
               nullif(to_jsonb(p)->>'primary_care_physician', '') as "primaryCarePhysician",
               nullif(to_jsonb(p)->>'referral_source', '') as "referralSource",
               coalesce(to_jsonb(p)->'accessibility_profile', '{}'::jsonb) as "accessibilityProfile",
               nullif(to_jsonb(p)->>'created_at', '') as "createdAt",
               nullif(to_jsonb(p)->>'updated_at', '') as "updatedAt"
-       from patients p where p.id = $1 and p.tenant_id = $2`,
+       from patients p
+       left join patient_insurance pi
+         on pi.tenant_id = p.tenant_id
+        and pi.patient_id = p.id
+        and pi.is_primary = true
+       where p.id = $1 and p.tenant_id = $2`,
       [id, tenantId],
     );
 
@@ -601,6 +733,9 @@ const updatePatientSchema = z.object({
   insuranceMemberId: z.string().optional(),
   insurancePayerId: z.string().optional(),
   insuranceGroupNumber: z.string().optional(),
+  rxBin: z.string().max(50).optional(),
+  rxPcn: z.string().max(50).optional(),
+  rxGroup: z.string().max(50).optional(),
   primaryCarePhysician: z.string().optional(),
   referralSource: z.string().optional(),
   allergies: z.string().optional(),
@@ -694,13 +829,16 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
     return res.status(400).json({ error: parsed.error.format() });
   }
 
-  const { ssn, ...patientUpdates } = parsed.data;
+  const { ssn, rxBin, rxPcn, rxGroup, ...patientUpdates } = parsed.data;
   const hasInsuranceUpdates = [
     patientUpdates.insurance,
     patientUpdates.insuranceId,
     patientUpdates.insuranceMemberId,
     patientUpdates.insurancePayerId,
     patientUpdates.insuranceGroupNumber,
+    rxBin,
+    rxPcn,
+    rxGroup,
   ].some((value) => value !== undefined);
 
   if (hasInsuranceUpdates) {
@@ -755,25 +893,60 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
     paramIndex++;
   }
 
-  if (updates.length === 0) {
+  const providedInsuranceFields = new Set<keyof PrimaryInsuranceInput>();
+  ([
+    "insurance",
+    "insuranceId",
+    "insuranceMemberId",
+    "insurancePayerId",
+    "insuranceGroupNumber",
+  ] as Array<keyof PrimaryInsuranceInput>).forEach((field) => {
+    if (field in parsed.data) providedInsuranceFields.add(field);
+  });
+  if (rxBin !== undefined) providedInsuranceFields.add("rxBin");
+  if (rxPcn !== undefined) providedInsuranceFields.add("rxPcn");
+  if (rxGroup !== undefined) providedInsuranceFields.add("rxGroup");
+
+  if (updates.length === 0 && providedInsuranceFields.size === 0) {
     return res.status(400).json({ error: 'No fields to update' });
   }
 
-  // Add tenant_id and id to values
-  values.push(tenantId, id);
-
-  const query = `
-    UPDATE patients
-    SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
-    WHERE tenant_id = $${paramIndex} AND id = $${paramIndex + 1}
-    RETURNING id
-  `;
-
   try {
-    const result = await pool.query(query, values);
+    let result: { rows: any[] } = { rows: [{ id }] };
+    if (updates.length > 0) {
+      // Add tenant_id and id to values
+      values.push(tenantId, id);
+
+      const query = `
+        UPDATE patients
+        SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = $${paramIndex} AND id = $${paramIndex + 1}
+        RETURNING id
+      `;
+
+      result = await pool.query(query, values);
+    } else {
+      result = await pool.query(
+        `SELECT id FROM patients WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id],
+      );
+    }
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    if (providedInsuranceFields.size > 0) {
+      await upsertPrimaryPatientInsurance(tenantId, id, {
+        insurance: patientUpdates.insurance,
+        insuranceId: patientUpdates.insuranceId,
+        insuranceMemberId: patientUpdates.insuranceMemberId,
+        insurancePayerId: patientUpdates.insurancePayerId,
+        insuranceGroupNumber: patientUpdates.insuranceGroupNumber,
+        rxBin,
+        rxPcn,
+        rxGroup,
+      }, providedInsuranceFields);
     }
 
     await safeAuditPatientAccess({
@@ -1575,12 +1748,28 @@ patientsRouter.get("/:id/insurance", requireAuth, requireModuleAccess("patients"
   try {
     // Get patient insurance info
     const patientResult = await pool.query(
-      `SELECT insurance, insurance_id as "insuranceId",
-              insurance_member_id as "insuranceMemberId",
-              insurance_payer_id as "insurancePayerId",
-              insurance_group_number as "insuranceGroupNumber"
-       FROM patients
-       WHERE id = $1 AND tenant_id = $2`,
+      `SELECT
+              coalesce(nullif(pi.payer_name, ''), nullif(p.insurance, '')) as insurance,
+              coalesce(nullif(pi.member_id, ''), nullif(p.insurance_id, ''), nullif(p.insurance_member_id, '')) as "insuranceId",
+              coalesce(nullif(pi.member_id, ''), nullif(p.insurance_member_id, ''), nullif(p.insurance_id, '')) as "insuranceMemberId",
+              coalesce(nullif(pi.payer_id, ''), nullif(p.insurance_payer_id, '')) as "insurancePayerId",
+              coalesce(nullif(pi.group_number, ''), nullif(p.insurance_group_number, '')) as "insuranceGroupNumber",
+              nullif(pi.plan_name, '') as "planName",
+              nullif(pi.plan_type, '') as "planType",
+              nullif(pi.rx_bin, '') as "rxBin",
+              nullif(pi.rx_pcn, '') as "rxPcn",
+              nullif(pi.rx_group, '') as "rxGroup",
+              jsonb_build_object(
+                'rxBin', nullif(pi.rx_bin, ''),
+                'rxPcn', nullif(pi.rx_pcn, ''),
+                'rxGroup', nullif(pi.rx_group, '')
+              ) as "pharmacyBenefits"
+       FROM patients p
+       LEFT JOIN patient_insurance pi
+         ON pi.tenant_id = p.tenant_id
+        AND pi.patient_id = p.id
+        AND pi.is_primary = true
+       WHERE p.id = $1 AND p.tenant_id = $2`,
       [id, tenantId]
     );
 

@@ -39,6 +39,9 @@ export interface PatientInsurance {
   memberId: string;
   groupNumber?: string;
   copay?: number;
+  rxBin?: string;
+  rxPcn?: string;
+  rxGroup?: string;
 }
 
 export type PolicyType =
@@ -256,6 +259,13 @@ export interface Patient {
 
   // Backend returns string, but may be parsed as object
   insurance?: PatientInsurance | string;
+  insuranceId?: string;
+  insuranceMemberId?: string;
+  insurancePayerId?: string;
+  insuranceGroupNumber?: string;
+  rxBin?: string;
+  rxPcn?: string;
+  rxGroup?: string;
   // Backend returns string, but may be parsed as array
   allergies?: string[] | string;
   // Backend may not return this field, or may return string

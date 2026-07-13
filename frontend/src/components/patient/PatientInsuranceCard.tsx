@@ -57,7 +57,7 @@ export function PatientInsuranceCard({ patientId }: PatientInsuranceCardProps) {
     );
   }
 
-  if (!insurance?.insurance && !insurance?.insuranceId) {
+  if (!insurance?.insurance && !insurance?.insuranceId && !insurance?.rxBin && !insurance?.rxPcn && !insurance?.rxGroup) {
     return (
       <div style={{
         background: '#f9fafb',
@@ -128,6 +128,17 @@ export function PatientInsuranceCard({ patientId }: PatientInsuranceCardProps) {
       {/* Insurance Details */}
       <div style={{ padding: '1.5rem' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+          {insurance.insurance && (
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem', fontWeight: 500 }}>
+                Carrier
+              </div>
+              <div style={{ fontSize: '1rem', color: '#111827', fontWeight: 600 }}>
+                {insurance.insurance}
+              </div>
+            </div>
+          )}
+
           {insurance.insuranceId && (
             <div>
               <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem', fontWeight: 500 }}>
@@ -150,6 +161,44 @@ export function PatientInsuranceCard({ patientId }: PatientInsuranceCardProps) {
             </div>
           )}
         </div>
+
+        {(insurance.rxBin || insurance.rxPcn || insurance.rxGroup) && (
+          <div style={{
+            borderTop: '1px solid #e5e7eb',
+            paddingTop: '1.25rem',
+            marginBottom: '1.5rem',
+          }}>
+            <h4 style={{ margin: '0 0 0.85rem', fontSize: '0.875rem', fontWeight: 700, color: '#111827' }}>
+              Pharmacy Benefit
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem', fontWeight: 500 }}>
+                  RxBIN
+                </div>
+                <div style={{ fontFamily: 'monospace', fontSize: '1rem', color: '#111827', fontWeight: 600 }}>
+                  {insurance.rxBin || 'N/A'}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem', fontWeight: 500 }}>
+                  RxPCN
+                </div>
+                <div style={{ fontFamily: 'monospace', fontSize: '1rem', color: '#111827', fontWeight: 600 }}>
+                  {insurance.rxPcn || 'N/A'}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem', fontWeight: 500 }}>
+                  Rx Group
+                </div>
+                <div style={{ fontFamily: 'monospace', fontSize: '1rem', color: '#111827', fontWeight: 600 }}>
+                  {insurance.rxGroup || 'N/A'}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Eligibility Information */}
         {eligibility ? (

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -2350,6 +2350,9 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
     primaryPayerId: (patient as any).insurancePayerId || insuranceObject?.payerId || insuranceDetails.primaryPayerId,
     primaryPolicyNumber: (patient as any).insuranceId || insuranceObject?.memberId || insuranceDetails.primaryPolicyNumber,
     primaryGroupNumber: (patient as any).insuranceGroupNumber || insuranceObject?.groupNumber || insuranceDetails.primaryGroupNumber,
+    rxBin: (patient as any).rxBin || insuranceObject?.rxBin || insuranceDetails.rxBin,
+    rxPcn: (patient as any).rxPcn || insuranceObject?.rxPcn || insuranceDetails.rxPcn,
+    rxGroup: (patient as any).rxGroup || insuranceObject?.rxGroup || insuranceDetails.rxGroup,
     primarySubscriberName: insuranceDetails.primarySubscriberName,
     primaryRelationship: insuranceDetails.primaryRelationship,
     primaryEffectiveDate: insuranceDetails.primaryEffectiveDate,
@@ -2388,6 +2391,17 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
             <InfoRow label="Subscriber Name" value={insuranceData.primarySubscriberName || patient.firstName + ' ' + patient.lastName} />
             <InfoRow label="Relationship" value={insuranceData.primaryRelationship || 'Self'} />
             <InfoRow label="Effective Date" value={insuranceData.primaryEffectiveDate ? new Date(insuranceData.primaryEffectiveDate).toLocaleDateString() : 'Not provided'} />
+          </div>
+
+          <div style={{ borderTop: '1px solid #e5e7eb', marginTop: '1rem', paddingTop: '1rem' }}>
+            <h4 style={{ margin: '0 0 0.75rem', fontSize: '0.9rem', fontWeight: 700, color: '#374151' }}>
+              Pharmacy Benefit
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+              <InfoRow label="RxBIN" value={insuranceData.rxBin || 'Not provided'} />
+              <InfoRow label="RxPCN" value={insuranceData.rxPcn || 'Not provided'} />
+              <InfoRow label="Rx Group" value={insuranceData.rxGroup || 'Not provided'} />
+            </div>
           </div>
         </div>
 
@@ -4301,24 +4315,232 @@ function EditAccessibilityModal({
   );
 }
 
-// Edit Insurance Modal (Stub)
-function EditInsuranceModal({ isOpen, onClose }: any) {
+function EditInsuranceModal({
+  isOpen,
+  onClose,
+  patient,
+  onSave,
+  session,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  patient: Patient | null;
+  onSave: () => void;
+  session: any;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    insurance: '',
+    insurancePayerId: '',
+    insuranceId: '',
+    insuranceGroupNumber: '',
+    rxBin: '',
+    rxPcn: '',
+    rxGroup: '',
+  });
+
+  useEffect(() => {
+    if (!patient || !isOpen) return;
+    const rawInsurance = (patient as any).insurance;
+    const insuranceObject = typeof rawInsurance === 'object' && rawInsurance !== null ? rawInsurance : null;
+    setFormData({
+      insurance: typeof rawInsurance === 'string' ? rawInsurance : insuranceObject?.planName || '',
+      insurancePayerId: (patient as any).insurancePayerId || insuranceObject?.payerId || '',
+      insuranceId: (patient as any).insuranceId || insuranceObject?.memberId || '',
+      insuranceGroupNumber: (patient as any).insuranceGroupNumber || insuranceObject?.groupNumber || '',
+      rxBin: (patient as any).rxBin || insuranceObject?.rxBin || '',
+      rxPcn: (patient as any).rxPcn || insuranceObject?.rxPcn || '',
+      rxGroup: (patient as any).rxGroup || insuranceObject?.rxGroup || '',
+    });
+  }, [patient, isOpen]);
+
+  const updateField = (field: keyof typeof formData, value: string) => {
+    setFormData((previous) => ({ ...previous, [field]: value }));
+  };
+
+  const inputStyle: CSSProperties = {
+    width: '100%',
+    padding: '0.55rem 0.7rem',
+    border: '1px solid #d1d5db',
+    borderRadius: '4px',
+    fontSize: '0.875rem',
+  };
+
+  const labelStyle: CSSProperties = {
+    display: 'block',
+    fontSize: '0.78rem',
+    fontWeight: 700,
+    marginBottom: '0.25rem',
+    color: '#374151',
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!session || !patient) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/patients/${patient.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.accessToken}`,
+          [TENANT_HEADER_NAME]: session.tenantId,
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          insurance: formData.insurance,
+          insurancePayerId: formData.insurancePayerId,
+          insuranceId: formData.insuranceId,
+          insuranceMemberId: formData.insuranceId,
+          insuranceGroupNumber: formData.insuranceGroupNumber,
+          rxBin: formData.rxBin,
+          rxPcn: formData.rxPcn,
+          rxGroup: formData.rxGroup,
+        }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || 'Failed to update insurance');
+      }
+
+      onSave();
+      onClose();
+    } catch (error: any) {
+      alert(error.message || 'Failed to update insurance');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Edit Insurance" size="lg">
-      <p style={{ color: '#6b7280', marginBottom: '1rem' }}>Insurance editing form coming soon...</p>
-      <button
-        type="button"
-        onClick={onClose}
-        style={{
-          padding: '0.5rem 1rem',
-          background: '#f3f4f6',
-          border: '1px solid #d1d5db',
-          borderRadius: '4px',
-          cursor: 'pointer'
-        }}
-      >
-        Close
-      </button>
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'grid', gap: '1rem' }}>
+          <section style={{ display: 'grid', gap: '0.85rem' }}>
+            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#111827' }}>
+              Medical Insurance
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.85rem' }}>
+              <div>
+                <label style={labelStyle}>Insurance Carrier</label>
+                <input
+                  type="text"
+                  value={formData.insurance}
+                  onChange={(event) => updateField('insurance', event.target.value)}
+                  placeholder="e.g., UMR"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Payer ID</label>
+                <input
+                  type="text"
+                  value={formData.insurancePayerId}
+                  onChange={(event) => updateField('insurancePayerId', event.target.value)}
+                  placeholder="Eligibility payer ID"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Member ID</label>
+                <input
+                  type="text"
+                  value={formData.insuranceId}
+                  onChange={(event) => updateField('insuranceId', event.target.value)}
+                  placeholder="Member ID"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Group Number</label>
+                <input
+                  type="text"
+                  value={formData.insuranceGroupNumber}
+                  onChange={(event) => updateField('insuranceGroupNumber', event.target.value)}
+                  placeholder="Group number"
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section style={{ display: 'grid', gap: '0.85rem', borderTop: '1px solid #e5e7eb', paddingTop: '1rem' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#111827' }}>
+                Pharmacy Benefit
+              </h3>
+              <p style={{ margin: '0.25rem 0 0', color: '#64748b', fontSize: '0.82rem', lineHeight: 1.4 }}>
+                These Rx fields are part of the insurance card and are used for prescription benefit routing.
+              </p>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.85rem' }}>
+              <div>
+                <label style={labelStyle}>RxBIN</label>
+                <input
+                  type="text"
+                  value={formData.rxBin}
+                  onChange={(event) => updateField('rxBin', event.target.value)}
+                  placeholder="610020"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>RxPCN</label>
+                <input
+                  type="text"
+                  value={formData.rxPcn}
+                  onChange={(event) => updateField('rxPcn', event.target.value)}
+                  placeholder="ADV"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Rx Group</label>
+                <input
+                  type="text"
+                  value={formData.rxGroup}
+                  onChange={(event) => updateField('rxGroup', event.target.value)}
+                  placeholder="RX1234"
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+          </section>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', borderTop: '1px solid #e5e7eb', paddingTop: '1rem' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              style={{
+                padding: '0.55rem 1rem',
+                background: '#f3f4f6',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                cursor: saving ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              style={{
+                padding: '0.55rem 1rem',
+                background: '#0369a1',
+                color: '#ffffff',
+                border: '1px solid #0369a1',
+                borderRadius: '4px',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontWeight: 700,
+              }}
+            >
+              {saving ? 'Saving...' : 'Save Insurance'}
+            </button>
+          </div>
+        </div>
+      </form>
     </Modal>
   );
 }

@@ -1995,6 +1995,7 @@ const authedPut = async (tenantId: string, accessToken: string, path: string, bo
       Authorization: `Bearer ${accessToken}`,
       [TENANT_HEADER]: tenantId,
     },
+    credentials: "include",
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -8973,6 +8974,7 @@ export async function fetchPatientInsurance(
       Authorization: `Bearer ${accessToken}`,
       [TENANT_HEADER]: tenantId,
     },
+    credentials: "include",
   });
   if (!res.ok) throw new Error('Failed to fetch patient insurance');
   return res.json();

@@ -151,6 +151,27 @@ describe("Patients routes", () => {
     expect(res.body.id).toBeTruthy();
   });
 
+  it("POST /patients stores pharmacy benefit fields with primary insurance", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+
+    const res = await request(app).post("/patients").send({
+      firstName: "Riley",
+      lastName: "Rx",
+      insurance: "Best Insurance",
+      insuranceId: "MEM123",
+      insuranceGroupNumber: "GRP1",
+      rxBin: "610020",
+      rxPcn: "ADV",
+      rxGroup: "RX123",
+    });
+
+    expect(res.status).toBe(201);
+    const insuranceInsert = queryMock.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO patient_insurance"),
+    );
+    expect(insuranceInsert?.[1]).toEqual(expect.arrayContaining(["610020", "ADV", "RX123"]));
+  });
+
   it("POST /patients stores accessibility profile for visit prep", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -249,6 +270,39 @@ describe("Patients routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.id).toBe("patient-1");
+  });
+
+  it("PUT /patients/:id updates pharmacy benefit fields without writing them to patients", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "ins-1" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "patient-1",
+            first_name: "Jane",
+            last_name: "Doe",
+            dob: "1990-01-01",
+            phone: "555-111-2222",
+            email: "jane@example.com",
+            insurance: "Plan",
+          },
+        ],
+      });
+
+    const res = await request(app).put("/patients/patient-1").send({
+      rxBin: "610020",
+      rxPcn: "ADV",
+      rxGroup: "RX123",
+    });
+
+    expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[0][0]).toContain("SELECT id FROM patients");
+    expect(queryMock.mock.calls[2][0]).toContain("UPDATE patient_insurance");
+    expect(queryMock.mock.calls[2][0]).toContain("rx_bin");
+    expect(queryMock.mock.calls[2][1]).toEqual(expect.arrayContaining(["610020", "ADV", "RX123"]));
+    expect(queryMock.mock.calls.some(([sql]) => String(sql).includes("rx_bin =") && String(sql).includes("UPDATE patients"))).toBe(false);
   });
 
   it("PUT /patients/:id updates accessibility profile", async () => {
@@ -452,7 +506,7 @@ describe("Patients routes", () => {
   it("GET /patients/:id/insurance returns insurance and eligibility", async () => {
     queryMock
       .mockResolvedValueOnce({
-        rows: [{ insurance: "Plan", insuranceId: "id-1", insuranceGroupNumber: "g1" }],
+        rows: [{ insurance: "Plan", insuranceId: "id-1", insuranceGroupNumber: "g1", rxBin: "610020", rxPcn: "ADV", rxGroup: "RX123" }],
       })
       .mockResolvedValueOnce({
         rows: [{ status: "active", checkedAt: "2025-01-01" }],
@@ -462,6 +516,9 @@ describe("Patients routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.insurance.insurance).toBe("Plan");
+    expect(res.body.insurance.rxBin).toBe("610020");
+    expect(res.body.insurance.rxPcn).toBe("ADV");
+    expect(res.body.insurance.rxGroup).toBe("RX123");
     expect(res.body.eligibility.status).toBe("active");
   });
 });

@@ -29,6 +29,9 @@ interface PatientFormData {
   insurancePayerId: string;
   insuranceId: string;
   insuranceGroupNumber: string;
+  rxBin: string;
+  rxPcn: string;
+  rxGroup: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
   emergencyContactRelation: string;
@@ -104,6 +107,9 @@ export function NewPatientPage() {
     insurancePayerId: '',
     insuranceId: '',
     insuranceGroupNumber: '',
+    rxBin: '',
+    rxPcn: '',
+    rxGroup: '',
     emergencyContactName: '',
     emergencyContactPhone: '',
     emergencyContactRelation: '',
@@ -169,9 +175,7 @@ export function NewPatientPage() {
         city: formData.city || undefined,
         state: formData.state || undefined,
         zip: formData.zipCode || undefined,
-        insurance: formData.insuranceProvider
-          ? `${formData.insuranceProvider}${formData.insuranceId ? ` - ID: ${formData.insuranceId}` : ''}${formData.insuranceGroupNumber ? ` - Group: ${formData.insuranceGroupNumber}` : ''}`
-          : undefined,
+        insurance: formData.insuranceProvider || undefined,
         allergies: formData.allergies || undefined,
         medications: undefined,
         // Additional fields for complete patient record
@@ -190,6 +194,9 @@ export function NewPatientPage() {
         insurancePayerId: formData.insurancePayerId || undefined,
         insuranceId: formData.insuranceId || undefined,
         insuranceGroupNumber: formData.insuranceGroupNumber || undefined,
+        rxBin: formData.rxBin || undefined,
+        rxPcn: formData.rxPcn || undefined,
+        rxGroup: formData.rxGroup || undefined,
         accessibilityProfile: normalizeAccessibilityProfile({
           communicationSupport: formData.communicationSupport,
           interpreterNeeded: formData.interpreterNeeded,
@@ -792,6 +799,74 @@ export function NewPatientPage() {
                     fontSize: '0.875rem'
                   }}
                 />
+              </div>
+            </div>
+
+            <div style={{ marginTop: '1.25rem' }}>
+              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#374151', marginBottom: '0.35rem' }}>
+                Pharmacy Benefit
+              </div>
+              <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '0.75rem' }}>
+                Enter the Rx fields from the insurance card when present. These route prescription benefit checks through the pharmacy/PBM plan.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+                <div className="form-field">
+                  <label htmlFor="rx-bin" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                    RxBIN
+                  </label>
+                  <input
+                    id="rx-bin"
+                    type="text"
+                    value={formData.rxBin}
+                    onChange={(e) => updateField('rxBin', e.target.value)}
+                    placeholder="e.g., 610020"
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '4px',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="rx-pcn" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                    RxPCN
+                  </label>
+                  <input
+                    id="rx-pcn"
+                    type="text"
+                    value={formData.rxPcn}
+                    onChange={(e) => updateField('rxPcn', e.target.value)}
+                    placeholder="e.g., ADV"
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '4px',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="rx-group" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                    Rx Group
+                  </label>
+                  <input
+                    id="rx-group"
+                    type="text"
+                    value={formData.rxGroup}
+                    onChange={(e) => updateField('rxGroup', e.target.value)}
+                    placeholder="e.g., RX1234"
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '4px',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
               </div>
             </div>
 

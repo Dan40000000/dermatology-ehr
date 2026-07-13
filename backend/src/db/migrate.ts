@@ -15393,6 +15393,18 @@ Consider age-appropriate treatments and include family counseling points.',
       ON prescriptions(tenant_id, patient_id, created_at DESC);
     `,
   },
+  {
+    name: "217_prescription_audit_log_runtime_compat",
+    sql: `
+    ALTER TABLE prescription_audit_log ADD COLUMN IF NOT EXISTS changed_fields JSONB;
+    ALTER TABLE prescription_audit_log ADD COLUMN IF NOT EXISTS metadata JSONB;
+    ALTER TABLE prescription_audit_log ADD COLUMN IF NOT EXISTS ip_address TEXT;
+    ALTER TABLE prescription_audit_log ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();
+
+    CREATE INDEX IF NOT EXISTS idx_prescription_audit_prescription
+      ON prescription_audit_log(prescription_id, created_at DESC);
+    `,
+  },
 
 ];
 

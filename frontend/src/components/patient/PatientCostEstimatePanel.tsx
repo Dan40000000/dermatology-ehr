@@ -324,6 +324,27 @@ export function PatientCostEstimatePanel({
 
       {mode === 'procedure' ? (
         <div style={{ display: 'grid', gap: '0.9rem' }}>
+          {!eligibilityReady && !isCosmetic && (
+            <div style={{
+              border: '1px solid #fed7aa',
+              background: '#fff7ed',
+              color: '#9a3412',
+              borderRadius: 8,
+              padding: '0.85rem',
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-start',
+              fontSize: '0.84rem',
+              lineHeight: 1.45,
+            }}>
+              <AlertTriangle size={17} />
+              <div>
+                <strong>Live medical eligibility is not connected.</strong>
+                <div>This can still estimate from fee schedules, but payer benefits and patient insurance responsibility are not verified.</div>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(150px, 1fr)', gap: '0.75rem' }}>
             <label style={{ display: 'grid', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#334155' }}>
               CPT codes

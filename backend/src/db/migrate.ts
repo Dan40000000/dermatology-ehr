@@ -15368,6 +15368,31 @@ Consider age-appropriate treatments and include family counseling points.',
       ON patient_insurance(patient_id);
     `,
   },
+  {
+    name: "216_prescriptions_core_runtime_compat",
+    sql: `
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS sig TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS quantity NUMERIC(10,2);
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS quantity_unit TEXT DEFAULT 'each';
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS refills INTEGER DEFAULT 0;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS refills_remaining INTEGER;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS days_supply INTEGER;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS prescribed_date TIMESTAMPTZ;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_id TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_name TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_ncpdp TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS strength TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS drug_description TEXT;
+
+    UPDATE prescriptions
+    SET refills_remaining = COALESCE(refills_remaining, refills, 0)
+    WHERE refills_remaining IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_prescriptions_patient_created
+      ON prescriptions(tenant_id, patient_id, created_at DESC);
+    `,
+  },
 
 ];
 

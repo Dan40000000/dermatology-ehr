@@ -1749,11 +1749,19 @@ patientsRouter.get("/:id/insurance", requireAuth, requireModuleAccess("patients"
     // Get patient insurance info
     const patientResult = await pool.query(
       `SELECT
-              coalesce(nullif(pi.payer_name, ''), nullif(p.insurance, '')) as insurance,
-              coalesce(nullif(pi.member_id, ''), nullif(p.insurance_id, ''), nullif(p.insurance_member_id, '')) as "insuranceId",
-              coalesce(nullif(pi.member_id, ''), nullif(p.insurance_member_id, ''), nullif(p.insurance_id, '')) as "insuranceMemberId",
-              coalesce(nullif(pi.payer_id, ''), nullif(p.insurance_payer_id, '')) as "insurancePayerId",
-              coalesce(nullif(pi.group_number, ''), nullif(p.insurance_group_number, '')) as "insuranceGroupNumber",
+              coalesce(nullif(pi.payer_name, ''), nullif(to_jsonb(p)->>'insurance', '')) as insurance,
+              coalesce(
+                nullif(pi.member_id, ''),
+                nullif(to_jsonb(p)->>'insurance_id', ''),
+                nullif(to_jsonb(p)->>'insurance_member_id', '')
+              ) as "insuranceId",
+              coalesce(
+                nullif(pi.member_id, ''),
+                nullif(to_jsonb(p)->>'insurance_member_id', ''),
+                nullif(to_jsonb(p)->>'insurance_id', '')
+              ) as "insuranceMemberId",
+              coalesce(nullif(pi.payer_id, ''), nullif(to_jsonb(p)->>'insurance_payer_id', '')) as "insurancePayerId",
+              coalesce(nullif(pi.group_number, ''), nullif(to_jsonb(p)->>'insurance_group_number', '')) as "insuranceGroupNumber",
               nullif(pi.plan_name, '') as "planName",
               nullif(pi.plan_type, '') as "planType",
               nullif(pi.rx_bin, '') as "rxBin",
@@ -1779,16 +1787,45 @@ patientsRouter.get("/:id/insurance", requireAuth, requireModuleAccess("patients"
 
     // Get latest eligibility check
     const eligibilityResult = await pool.query(
-      `SELECT id, status, checked_at as "checkedAt",
-              coverage_active as "coverageActive", copay, deductible,
-              deductible_remaining as "deductibleRemaining",
-              out_of_pocket_max as "outOfPocketMax",
-              out_of_pocket_remaining as "outOfPocketRemaining",
-              benefits, raw_response as "rawResponse",
-              created_at as "createdAt"
-       FROM insurance_eligibility
+      `SELECT
+              nullif(to_jsonb(iv)->>'id', '') as id,
+              nullif(to_jsonb(iv)->>'verification_status', '') as status,
+              nullif(to_jsonb(iv)->>'verified_at', '') as "checkedAt",
+              CASE
+                WHEN lower(coalesce(to_jsonb(iv)->>'verification_status', '')) IN ('active', 'verified', 'eligible') THEN true
+                WHEN lower(coalesce(to_jsonb(iv)->>'verification_status', '')) IN ('inactive', 'ineligible', 'failed', 'error') THEN false
+                ELSE null
+              END as "coverageActive",
+              coalesce(
+                nullif(to_jsonb(iv)->>'copay_amount_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'copay_specialist_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'copay_amount', '')::numeric,
+                nullif(to_jsonb(iv)->>'specialist_copay', '')::numeric
+              ) as copay,
+              coalesce(
+                nullif(to_jsonb(iv)->>'deductible_total_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'deductible_total', '')::numeric
+              ) as deductible,
+              coalesce(
+                nullif(to_jsonb(iv)->>'deductible_remaining_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'deductible_remaining', '')::numeric
+              ) as "deductibleRemaining",
+              coalesce(
+                nullif(to_jsonb(iv)->>'out_of_pocket_max_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'oop_max_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'oop_max', '')::numeric
+              ) as "outOfPocketMax",
+              coalesce(
+                nullif(to_jsonb(iv)->>'out_of_pocket_remaining_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'oop_remaining_cents', '')::numeric / 100.0,
+                nullif(to_jsonb(iv)->>'oop_remaining', '')::numeric
+              ) as "outOfPocketRemaining",
+              coalesce(to_jsonb(iv)->'coverage_details', '{}'::jsonb) as benefits,
+              to_jsonb(iv)->'raw_response' as "rawResponse",
+              nullif(to_jsonb(iv)->>'created_at', '') as "createdAt"
+       FROM insurance_verifications iv
        WHERE patient_id = $1 AND tenant_id = $2
-       ORDER BY checked_at DESC
+       ORDER BY verified_at DESC
        LIMIT 1`,
       [id, tenantId]
     );

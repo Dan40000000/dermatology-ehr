@@ -7,6 +7,7 @@ import { RCMDashboard } from '../components/financials/RCMDashboard';
 import { PatientPaymentPortal } from '../components/financials/PatientPaymentPortal';
 import { PremiumAnalytics } from '../components/financials/PremiumAnalytics';
 import { BillStatementModal, openPrintableBillStatement } from '../components/financials/BillStatementModal';
+import { AgingBuckets, type AgingBucket, type AgingPatient } from '../components/Collections/AgingBuckets';
 import { FeeSchedulePage } from './FeeSchedulePage';
 import {
   BarChart3,
@@ -35,6 +36,7 @@ import {
   postBillAction,
   resolveFinancialWorkQueueItem,
 } from '../api/financials';
+import { api } from '../api';
 import { getClinicBusinessDate, ISO_DATE_PATTERN } from '../utils/practiceDateTime';
 
 type TabType = 'dashboard' | 'revenue' | 'snapshots' | 'insurance' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
@@ -150,6 +152,23 @@ interface DashboardAraBucket {
   percentage: number;
   color: string;
 }
+
+interface CollectionsAgingReport {
+  buckets: AgingBucket;
+  patients: AgingPatient[];
+}
+
+const EMPTY_COLLECTIONS_AGING_REPORT: CollectionsAgingReport = {
+  buckets: {
+    current: 0,
+    days31_60: 0,
+    days61_90: 0,
+    over90: 0,
+    total: 0,
+    patientCount: 0,
+  },
+  patients: [],
+};
 
 interface FinancialBill {
   id: string;
@@ -811,6 +830,9 @@ export function FinancialsHub() {
   const [dashboardBillsSummary, setDashboardBillsSummary] = useState<any>(null);
   const [dashboardWeekSummary, setDashboardWeekSummary] = useState<SnapshotTrendSummary | null>(null);
   const [dashboardDrilldownMetric, setDashboardDrilldownMetric] = useState<string | null>(null);
+  const [collectionsAgingReport, setCollectionsAgingReport] = useState<CollectionsAgingReport>(EMPTY_COLLECTIONS_AGING_REPORT);
+  const [collectionsAgingLoading, setCollectionsAgingLoading] = useState(false);
+  const [collectionsAgingError, setCollectionsAgingError] = useState('');
   const [revenueDrilldownCategory, setRevenueDrilldownCategory] = useState<string | null>(searchParams.get('revenueCategory') || null);
   const [revenueDetailsLoading, setRevenueDetailsLoading] = useState(false);
   const [revenueDetailsError, setRevenueDetailsError] = useState('');
@@ -835,6 +857,35 @@ export function FinancialsHub() {
     (categories || [])
       .slice(0, 3)
       .map((category) => `${category.label} ${formatCurrency(category.revenueCents)}`);
+
+  const loadCollectionsAging = useCallback(async () => {
+    if (!session) {
+      setCollectionsAgingReport(EMPTY_COLLECTIONS_AGING_REPORT);
+      return;
+    }
+
+    setCollectionsAgingLoading(true);
+    setCollectionsAgingError('');
+    try {
+      const response = await api.get(
+        session.tenantId,
+        session.accessToken,
+        '/api/collections/aging',
+      );
+      setCollectionsAgingReport({
+        buckets: {
+          ...EMPTY_COLLECTIONS_AGING_REPORT.buckets,
+          ...(response?.buckets || {}),
+        },
+        patients: Array.isArray(response?.patients) ? response.patients : [],
+      });
+    } catch (error: any) {
+      const message = error?.message || 'Unable to load A/R follow-up worklist';
+      setCollectionsAgingError(message);
+    } finally {
+      setCollectionsAgingLoading(false);
+    }
+  }, [session]);
 
   const loadData = useCallback(async () => {
     if (!session) {
@@ -971,6 +1022,13 @@ export function FinancialsHub() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (activeTab !== 'dashboard' && activeTab !== 'bills') {
+      return;
+    }
+    loadCollectionsAging();
+  }, [activeTab, loadCollectionsAging]);
 
   useEffect(() => {
     if (activeTab !== 'dashboard' && activeTab !== 'revenue') {
@@ -2078,6 +2136,95 @@ export function FinancialsHub() {
     );
   };
 
+  const renderCollectionsFollowUpWorkspace = () => (
+    <section style={{
+      marginTop: '1.5rem',
+      border: '1px solid #dbeafe',
+      borderRadius: '18px',
+      background: '#ffffff',
+      overflow: 'hidden',
+      boxShadow: '0 12px 30px rgba(15, 23, 42, 0.08)',
+    }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '1rem',
+        alignItems: 'flex-start',
+        padding: '1rem 1.1rem',
+        borderBottom: '1px solid #dbeafe',
+        background: 'linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)',
+        flexWrap: 'wrap',
+      }}>
+        <div>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            borderRadius: '999px',
+            background: '#dbeafe',
+            color: '#1d4ed8',
+            padding: '0.25rem 0.6rem',
+            fontSize: '0.72rem',
+            fontWeight: 900,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            marginBottom: '0.55rem',
+          }}>
+            Patient A/R follow-up
+          </div>
+          <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.2rem', fontWeight: 900 }}>
+            Collections Worklist & Contact Notes
+          </h3>
+          <p style={{ margin: '0.35rem 0 0', color: '#475569', fontSize: '0.88rem', lineHeight: 1.5, maxWidth: '900px' }}>
+            Work balances by aging bucket, document every contact attempt, keep what the patient said visible, and set the next follow-up owner/date before moving on.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={loadCollectionsAging}
+          disabled={collectionsAgingLoading}
+          style={{
+            border: '1px solid #bfdbfe',
+            background: collectionsAgingLoading ? '#eff6ff' : '#ffffff',
+            color: '#1d4ed8',
+            borderRadius: '10px',
+            padding: '0.55rem 0.85rem',
+            fontWeight: 800,
+            cursor: collectionsAgingLoading ? 'wait' : 'pointer',
+          }}
+        >
+          {collectionsAgingLoading ? 'Refreshing...' : 'Refresh Worklist'}
+        </button>
+      </div>
+
+      <div style={{ padding: '1rem' }}>
+        {collectionsAgingError ? (
+          <div style={{
+            border: '1px solid #fecaca',
+            background: '#fef2f2',
+            color: '#991b1b',
+            padding: '0.85rem 1rem',
+            borderRadius: '12px',
+            marginBottom: '1rem',
+            fontWeight: 800,
+          }}>
+            {collectionsAgingError}
+          </div>
+        ) : null}
+
+        {collectionsAgingLoading && collectionsAgingReport.patients.length === 0 ? (
+          <Skeleton variant="card" height={420} />
+        ) : (
+          <AgingBuckets
+            buckets={collectionsAgingReport.buckets}
+            patients={collectionsAgingReport.patients}
+            onContactSaved={loadCollectionsAging}
+          />
+        )}
+      </div>
+    </section>
+  );
+
   const renderRevenueDetailsDrilldown = () => {
     if (!revenueDrilldownCategory) return null;
 
@@ -2941,6 +3088,7 @@ export function FinancialsHub() {
                   }}
                 />
                 {renderDashboardDrilldown()}
+                {renderCollectionsFollowUpWorkspace()}
               </>
             )}
 
@@ -3959,6 +4107,8 @@ export function FinancialsHub() {
                     ))}
                   </div>
                 </div>
+
+                {renderCollectionsFollowUpWorkspace()}
 
                 {/* Recent Bills Table */}
                 <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151', marginBottom: '1rem' }}>

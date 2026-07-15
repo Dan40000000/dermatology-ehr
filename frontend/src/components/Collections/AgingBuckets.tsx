@@ -18,7 +18,7 @@ import {
 import { api } from "../../api";
 import { useAuth } from "../../contexts/AuthContext";
 
-interface AgingBucket {
+export interface AgingBucket {
   current: number;
   days31_60: number;
   days61_90: number;
@@ -27,7 +27,7 @@ interface AgingBucket {
   patientCount: number;
 }
 
-interface Patient {
+export interface AgingPatient {
   patientId: string;
   patientName: string;
   totalBalance: number;
@@ -85,7 +85,7 @@ interface CollectionActivity {
 
 interface AgingBucketsProps {
   buckets: AgingBucket;
-  patients: Patient[];
+  patients: AgingPatient[];
   onPatientClick?: (patientId: string) => void;
   onContactSaved?: () => void | Promise<void>;
 }
@@ -203,7 +203,7 @@ function iconForMethod(method?: string | null) {
   }
 }
 
-function sanitizePayload(form: AttemptFormState, patient: Patient) {
+function sanitizePayload(form: AttemptFormState, patient: AgingPatient) {
   const promisedAmount = form.patientPromisedAmount.trim()
     ? Number(form.patientPromisedAmount)
     : undefined;

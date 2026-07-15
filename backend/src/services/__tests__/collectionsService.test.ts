@@ -128,7 +128,6 @@ describe("collectionsService", () => {
 
   it("getAgingReport returns buckets and patients", async () => {
     queryMock
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
           {

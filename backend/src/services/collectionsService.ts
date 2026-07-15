@@ -109,8 +109,13 @@ export async function getPatientBalance(
   tenantId: string,
   patientId: string
 ): Promise<PatientBalance | null> {
-  // First, update the balance to ensure it's current
-  await pool.query("select update_patient_balance($1, $2)", [tenantId, patientId]);
+  // Best effort: keep the legacy charge-derived balance current, but do not
+  // block bill-based A/R lookups if an older balance function cannot run.
+  try {
+    await pool.query("select update_patient_balance($1, $2)", [tenantId, patientId]);
+  } catch {
+    // Open bills below are the current financial source of truth.
+  }
 
   const result = await pool.query(
     `select
@@ -130,9 +135,58 @@ export async function getPatientBalance(
     [tenantId, patientId]
   );
 
-  if (!result.rowCount) return null;
+  const legacyTotalBalance = result.rows[0]?.totalBalance;
+  if (
+    result.rowCount &&
+    (legacyTotalBalance === undefined || Number(legacyTotalBalance || 0) > 0)
+  ) {
+    return result.rows[0];
+  }
 
-  return result.rows[0];
+  const billBalanceResult = await pool.query(
+    `select
+      b.patient_id as "patientId",
+      coalesce(sum(b.balance_cents), 0) / 100.0 as "totalBalance",
+      coalesce(sum(case
+        when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) <= 30
+        then b.balance_cents else 0 end), 0) / 100.0 as "currentBalance",
+      coalesce(sum(case
+        when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) between 31 and 60
+        then b.balance_cents else 0 end), 0) / 100.0 as "balance31_60",
+      coalesce(sum(case
+        when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) between 61 and 90
+        then b.balance_cents else 0 end), 0) / 100.0 as "balance61_90",
+      coalesce(sum(case
+        when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) > 90
+        then b.balance_cents else 0 end), 0) / 100.0 as "balanceOver90",
+      min(coalesce(b.service_date_start, b.bill_date, b.due_date)) as "oldestChargeDate",
+      last_payment.payment_date as "lastPaymentDate",
+      last_payment.amount_cents / 100.0 as "lastPaymentAmount",
+      false as "hasPaymentPlan",
+      false as "hasAutopay"
+    from bills b
+    left join lateral (
+      select pp.payment_date, pp.amount_cents
+      from patient_payments pp
+      where pp.tenant_id = b.tenant_id
+        and pp.patient_id = b.patient_id
+        and pp.status = 'posted'
+      order by pp.payment_date desc
+      limit 1
+    ) last_payment on true
+    where b.tenant_id = $1
+      and b.patient_id = $2
+      and coalesce(b.balance_cents, 0) > 0
+      and coalesce(b.status, 'open') not in ('paid', 'written_off', 'cancelled', 'void', 'voided')
+    group by b.patient_id, last_payment.payment_date, last_payment.amount_cents`,
+    [tenantId, patientId]
+  );
+
+  if (!billBalanceResult.rowCount || Number(billBalanceResult.rows[0].totalBalance || 0) <= 0) {
+    return result.rowCount ? result.rows[0] : null;
+  }
+
+  return billBalanceResult.rows[0];
 }
 
 /**
@@ -439,39 +493,86 @@ export async function getAgingReport(tenantId: string): Promise<{
     financialAssistanceStatus: string | null;
   }>;
 }> {
-  // Update all patient balances first
-  await pool.query(
-    `select update_patient_balance(tenant_id, patient_id)
-     from patients
-     where tenant_id = $1`,
-    [tenantId]
-  );
+  const arSourceCte = `
+    with bill_source as (
+      select
+        b.tenant_id,
+        b.patient_id,
+        coalesce(sum(case
+          when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) <= 30
+          then b.balance_cents else 0 end), 0) / 100.0 as current_balance,
+        coalesce(sum(case
+          when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) between 31 and 60
+          then b.balance_cents else 0 end), 0) / 100.0 as balance_31_60,
+        coalesce(sum(case
+          when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) between 61 and 90
+          then b.balance_cents else 0 end), 0) / 100.0 as balance_61_90,
+        coalesce(sum(case
+          when current_date - coalesce(b.due_date, b.bill_date, b.service_date_start, current_date) > 90
+          then b.balance_cents else 0 end), 0) / 100.0 as balance_over_90,
+        coalesce(sum(b.balance_cents), 0) / 100.0 as total_balance,
+        min(coalesce(b.service_date_start, b.bill_date, b.due_date)) as oldest_charge_date
+      from bills b
+      where b.tenant_id = $1
+        and coalesce(b.balance_cents, 0) > 0
+        and coalesce(b.status, 'open') not in ('paid', 'written_off', 'cancelled', 'void', 'voided')
+      group by b.tenant_id, b.patient_id
+    ),
+    legacy_source as (
+      select
+        pb.tenant_id,
+        pb.patient_id,
+        pb.current_balance,
+        pb.balance_31_60,
+        pb.balance_61_90,
+        pb.balance_over_90,
+        pb.total_balance,
+        pb.oldest_charge_date
+      from patient_balances pb
+      where pb.tenant_id = $1
+        and pb.total_balance > 0
+        and not exists (
+          select 1
+          from bill_source bs
+          where bs.tenant_id = pb.tenant_id
+            and bs.patient_id = pb.patient_id
+        )
+    ),
+    ar_source as (
+      select * from bill_source
+      union all
+      select * from legacy_source
+    )
+  `;
 
-  // Get aggregate buckets
+  // Get aggregate buckets from open patient bills, falling back to legacy balances
+  // only when that patient has no open bills.
   const bucketResult = await pool.query(
-    `select
+    `${arSourceCte}
+    select
       coalesce(sum(current_balance), 0) as current,
       coalesce(sum(balance_31_60), 0) as "days31_60",
       coalesce(sum(balance_61_90), 0) as "days61_90",
       coalesce(sum(balance_over_90), 0) as "over90",
       coalesce(sum(total_balance), 0) as total,
-      count(*) as "patientCount"
-    from patient_balances
-    where tenant_id = $1 and total_balance > 0`,
+      count(*)::int as "patientCount"
+    from ar_source
+    where total_balance > 0`,
     [tenantId]
   );
 
-  // Get individual patients with balances
+  // Get individual patients with balances and latest follow-up metadata.
   const patientsResult = await pool.query(
-    `select
-      pb.patient_id as "patientId",
+    `${arSourceCte}
+    select
+      ars.patient_id as "patientId",
       p.first_name || ' ' || p.last_name as "patientName",
-      pb.total_balance as "totalBalance",
-      pb.current_balance as "currentBalance",
-      pb.balance_31_60 as "balance31_60",
-      pb.balance_61_90 as "balance61_90",
-      pb.balance_over_90 as "balanceOver90",
-      pb.oldest_charge_date as "oldestChargeDate",
+      ars.total_balance as "totalBalance",
+      ars.current_balance as "currentBalance",
+      ars.balance_31_60 as "balance31_60",
+      ars.balance_61_90 as "balance61_90",
+      ars.balance_over_90 as "balanceOver90",
+      ars.oldest_charge_date as "oldestChargeDate",
       coalesce(attempt_counts.attempt_count, 0)::int as "collectionAttemptCount",
       latest.attempt_date as "lastCollectionAttemptDate",
       latest.contact_method as "lastContactMethod",
@@ -485,13 +586,14 @@ export async function getAgingReport(tenantId: string): Promise<{
       coalesce(latest.do_not_contact, false) as "doNotContact",
       latest.dispute_status as "disputeStatus",
       latest.financial_assistance_status as "financialAssistanceStatus"
-    from patient_balances pb
-    join patients p on p.id = pb.patient_id
+    from ar_source ars
+    join patients p on p.id = ars.patient_id
+      and p.tenant_id = ars.tenant_id
     left join lateral (
       select count(*) as attempt_count
       from collection_attempts ca
-      where ca.tenant_id = pb.tenant_id
-        and ca.patient_id = pb.patient_id
+      where ca.tenant_id = ars.tenant_id
+        and ca.patient_id = ars.patient_id
     ) attempt_counts on true
     left join lateral (
       select
@@ -508,15 +610,15 @@ export async function getAgingReport(tenantId: string): Promise<{
         ca.dispute_status,
         ca.financial_assistance_status
       from collection_attempts ca
-      where ca.tenant_id = pb.tenant_id
-        and ca.patient_id = pb.patient_id
+      where ca.tenant_id = ars.tenant_id
+        and ca.patient_id = ars.patient_id
       order by ca.attempt_date desc, ca.created_at desc
       limit 1
     ) latest on true
     left join users assigned_user
       on assigned_user.id = latest.assigned_to
-      and assigned_user.tenant_id = pb.tenant_id
-    where pb.tenant_id = $1 and pb.total_balance > 0
+      and assigned_user.tenant_id = ars.tenant_id
+    where ars.total_balance > 0
     order by
       case
         when latest.next_follow_up_date is not null
@@ -525,8 +627,8 @@ export async function getAgingReport(tenantId: string): Promise<{
         then 0
         else 1
       end,
-      pb.balance_over_90 desc,
-      pb.total_balance desc`,
+      ars.balance_over_90 desc,
+      ars.total_balance desc`,
     [tenantId]
   );
 

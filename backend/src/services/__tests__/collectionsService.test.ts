@@ -71,7 +71,7 @@ describe("collectionsService", () => {
   });
 
   it("recordCollectionAttempt returns attempt id", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValue({ rows: [] });
     const id = await collectionsService.recordCollectionAttempt("tenant-1", {
       patientId: "patient-1",
       amountDue: 50,
@@ -79,6 +79,51 @@ describe("collectionsService", () => {
       result: "collected_full",
     });
     expect(id).toBeTruthy();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("insert into collection_attempts"),
+      expect.arrayContaining(["tenant-1", "patient-1"])
+    );
+  });
+
+  it("createCollectionContactAttempt records a rich follow-up note", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    const id = await collectionsService.createCollectionContactAttempt("tenant-1", {
+      patientId: "patient-1",
+      amountDue: 125,
+      contactMethod: "phone",
+      outcome: "promise_to_pay",
+      patientResponse: "Patient will pay Friday",
+      nextFollowUpDate: "2026-07-20",
+      patientPromisedAmount: 75,
+      attemptedBy: "user-1",
+    });
+
+    expect(id).toBeTruthy();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("patient_response"),
+      expect.arrayContaining([
+        "tenant-1",
+        "patient-1",
+        expect.anything(),
+        expect.anything(),
+        expect.any(Date),
+        125,
+        "phone",
+        "promise_to_pay",
+      ])
+    );
+  });
+
+  it("getPatientCollectionActivity returns balance and attempts", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id: "attempt-1", outcome: "spoke_patient" }] });
+
+    const result = await collectionsService.getPatientCollectionActivity("tenant-1", "patient-1");
+
+    expect(result.balance?.patientId).toBe("patient-1");
+    expect(result.attempts).toHaveLength(1);
   });
 
   it("getAgingReport returns buckets and patients", async () => {

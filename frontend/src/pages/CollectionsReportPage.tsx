@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { AgingBuckets } from "../components/Collections/AgingBuckets";
+import { useAuth } from "../contexts/AuthContext";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import {
   TrendingUp,
@@ -66,6 +67,7 @@ interface AgingReport {
 }
 
 export function CollectionsReportPage() {
+  const { session } = useAuth();
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
       .toISOString()
@@ -88,24 +90,35 @@ export function CollectionsReportPage() {
   );
 
   useEffect(() => {
-    fetchData();
-  }, [dateRange]);
+    if (session) {
+      fetchData();
+    }
+  }, [dateRange, session]);
 
   const fetchData = async () => {
+    if (!session) return;
+
     try {
       setLoading(true);
       setError(null);
 
       // Fetch collection stats
-      const statsResponse = await api.get("/api/collections/stats", {
-        params: dateRange,
-      });
-      setStats(statsResponse.data.stats);
-      setSummary(statsResponse.data.summary);
+      const params = new URLSearchParams(dateRange);
+      const statsResponse = await api.get(
+        session.tenantId,
+        session.accessToken,
+        `/api/collections/stats?${params.toString()}`
+      );
+      setStats(statsResponse.stats);
+      setSummary(statsResponse.summary);
 
       // Fetch aging report
-      const agingResponse = await api.get("/api/collections/aging");
-      setAgingReport(agingResponse.data);
+      const agingResponse = await api.get(
+        session.tenantId,
+        session.accessToken,
+        "/api/collections/aging"
+      );
+      setAgingReport(agingResponse);
     } catch (err) {
       console.error("Error fetching collections data:", err);
       setError("Failed to load collections data");
@@ -307,7 +320,7 @@ export function CollectionsReportPage() {
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
               }`}
             >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === "aging" ? "Aging & Follow-Up" : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </nav>
@@ -422,6 +435,7 @@ export function CollectionsReportPage() {
         <AgingBuckets
           buckets={agingReport.buckets}
           patients={agingReport.patients}
+          onContactSaved={fetchData}
         />
       )}
 

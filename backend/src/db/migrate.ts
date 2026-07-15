@@ -15405,6 +15405,173 @@ Consider age-appropriate treatments and include family counseling points.',
       ON prescription_audit_log(prescription_id, created_at DESC);
     `,
   },
+  {
+    name: "218_ar_collections_workflow",
+    sql: `
+    ALTER TABLE collection_attempts
+      ADD COLUMN IF NOT EXISTS contact_method TEXT,
+      ADD COLUMN IF NOT EXISTS contact_direction TEXT DEFAULT 'outbound',
+      ADD COLUMN IF NOT EXISTS contact_person TEXT,
+      ADD COLUMN IF NOT EXISTS outcome TEXT,
+      ADD COLUMN IF NOT EXISTS patient_response TEXT,
+      ADD COLUMN IF NOT EXISTS staff_next_step TEXT,
+      ADD COLUMN IF NOT EXISTS next_follow_up_date DATE,
+      ADD COLUMN IF NOT EXISTS follow_up_status TEXT DEFAULT 'open',
+      ADD COLUMN IF NOT EXISTS assigned_to TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS patient_promised_amount NUMERIC(10,2),
+      ADD COLUMN IF NOT EXISTS patient_promised_date DATE,
+      ADD COLUMN IF NOT EXISTS dispute_status TEXT,
+      ADD COLUMN IF NOT EXISTS financial_assistance_status TEXT,
+      ADD COLUMN IF NOT EXISTS payment_plan_discussed BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS financial_assistance_discussed BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS contact_preference_confirmed BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS do_not_contact BOOLEAN DEFAULT FALSE;
+
+    UPDATE collection_attempts
+    SET contact_method = COALESCE(contact_method, collection_point),
+        contact_direction = COALESCE(contact_direction, 'outbound'),
+        outcome = COALESCE(outcome, result),
+        follow_up_status = COALESCE(follow_up_status, 'open')
+    WHERE contact_method IS NULL
+       OR contact_direction IS NULL
+       OR outcome IS NULL
+       OR follow_up_status IS NULL;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collection_attempts'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%result%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collection_attempts DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE collection_attempts
+        ADD CONSTRAINT collection_attempts_result_check
+        CHECK (result IN (
+          'collected_full',
+          'collected_partial',
+          'payment_plan',
+          'declined',
+          'skipped',
+          'no_answer',
+          'left_voicemail',
+          'left_message',
+          'spoke_patient',
+          'spoke_guarantor',
+          'promise_to_pay',
+          'payment_plan_requested',
+          'partial_payment_expected',
+          'dispute_opened',
+          'financial_assistance_requested',
+          'insurance_follow_up',
+          'insurance_issue',
+          'wrong_number',
+          'bad_address',
+          'refused_to_pay',
+          'do_not_contact',
+          'resolved'
+        ));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collection_attempts'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%contact_method%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collection_attempts DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE collection_attempts
+        ADD CONSTRAINT collection_attempts_contact_method_check
+        CHECK (contact_method IS NULL OR contact_method IN (
+          'phone',
+          'text',
+          'email',
+          'mail',
+          'portal',
+          'in_person',
+          'statement',
+          'check_in',
+          'check_out',
+          'other'
+        ));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collection_attempts'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%contact_direction%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collection_attempts DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE collection_attempts
+        ADD CONSTRAINT collection_attempts_contact_direction_check
+        CHECK (contact_direction IN ('outbound', 'inbound'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    DO $$
+    DECLARE
+      v_constraint TEXT;
+    BEGIN
+      SELECT conname INTO v_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collection_attempts'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%follow_up_status%'
+      LIMIT 1;
+
+      IF v_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collection_attempts DROP CONSTRAINT %I', v_constraint);
+      END IF;
+
+      ALTER TABLE collection_attempts
+        ADD CONSTRAINT collection_attempts_follow_up_status_check
+        CHECK (follow_up_status IN ('open', 'scheduled', 'resolved', 'paused', 'do_not_contact'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_follow_up
+      ON collection_attempts(tenant_id, next_follow_up_date)
+      WHERE next_follow_up_date IS NOT NULL AND follow_up_status IN ('open', 'scheduled');
+
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_assigned_to
+      ON collection_attempts(tenant_id, assigned_to)
+      WHERE assigned_to IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_collection_attempts_do_not_contact
+      ON collection_attempts(tenant_id, patient_id)
+      WHERE do_not_contact = true;
+    `,
+  },
 
 ];
 

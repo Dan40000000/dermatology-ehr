@@ -35,6 +35,8 @@ jest.mock("../../services/collectionsService", () => ({
   processPayment: jest.fn(),
   recordCollectionAttempt: jest.fn(),
   getAgingReport: jest.fn(),
+  getPatientCollectionActivity: jest.fn(),
+  createCollectionContactAttempt: jest.fn(),
   getCollectionStats: jest.fn(),
   updateCollectionStats: jest.fn(),
 }));
@@ -78,6 +80,8 @@ beforeEach(() => {
   collectionsMock.processPayment.mockReset();
   collectionsMock.recordCollectionAttempt.mockReset();
   collectionsMock.getAgingReport.mockReset();
+  collectionsMock.getPatientCollectionActivity.mockReset();
+  collectionsMock.createCollectionContactAttempt.mockReset();
   collectionsMock.getCollectionStats.mockReset();
   collectionsMock.updateCollectionStats.mockReset();
   costEstimatorMock.createCostEstimate.mockReset();
@@ -246,6 +250,62 @@ describe("Collections routes", () => {
     const res = await request(app).get("/collections/aging");
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(10);
+  });
+
+  it("GET /collections/patient/:id/activity returns collection timeline", async () => {
+    collectionsMock.getPatientCollectionActivity.mockResolvedValueOnce({
+      balance: { patientId: "p1", totalBalance: 125 },
+      attempts: [{ id: "attempt-1", outcome: "promise_to_pay" }],
+    } as any);
+
+    const res = await request(app).get("/collections/patient/p1/activity");
+
+    expect(res.status).toBe(200);
+    expect(res.body.attempts).toHaveLength(1);
+    expect(collectionsMock.getPatientCollectionActivity).toHaveBeenCalledWith("tenant-1", "p1");
+  });
+
+  it("POST /collections/patient/:id/contact-attempts rejects invalid payload", async () => {
+    const res = await request(app).post("/collections/patient/p1/contact-attempts").send({
+      contactMethod: "fax",
+      outcome: "spoke_patient",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /collections/patient/:id/contact-attempts creates a contact note", async () => {
+    collectionsMock.createCollectionContactAttempt.mockResolvedValueOnce("attempt-1");
+
+    const res = await request(app).post("/collections/patient/p1/contact-attempts").send({
+      contactMethod: "phone",
+      contactDirection: "outbound",
+      outcome: "promise_to_pay",
+      patientResponse: "Patient will pay Friday",
+      notes: "Follow up if not paid",
+      nextFollowUpDate: "2026-07-20",
+      patientPromisedAmount: 75,
+      patientPromisedDate: "2026-07-17",
+      paymentPlanDiscussed: true,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("attempt-1");
+    expect(collectionsMock.createCollectionContactAttempt).toHaveBeenCalledWith(
+      "tenant-1",
+      expect.objectContaining({
+        patientId: "p1",
+        attemptedBy: "user-1",
+        outcome: "promise_to_pay",
+      })
+    );
+    expect(auditLog).toHaveBeenCalledWith(
+      "tenant-1",
+      "user-1",
+      "collection_contact_attempt_create",
+      "collection_attempt",
+      "attempt-1"
+    );
   });
 
   it("GET /collections/stats requires dates", async () => {

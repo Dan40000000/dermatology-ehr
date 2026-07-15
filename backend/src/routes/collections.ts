@@ -96,6 +96,65 @@ const paymentSchema = z.object({
   notes: z.string().optional(),
 });
 
+const optionalDateString = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+);
+
+const contactMethodSchema = z.enum([
+  "phone",
+  "text",
+  "email",
+  "mail",
+  "portal",
+  "in_person",
+  "statement",
+  "other",
+]);
+
+const contactOutcomeSchema = z.enum([
+  "no_answer",
+  "left_voicemail",
+  "left_message",
+  "spoke_patient",
+  "spoke_guarantor",
+  "promise_to_pay",
+  "payment_plan_requested",
+  "partial_payment_expected",
+  "dispute_opened",
+  "financial_assistance_requested",
+  "insurance_follow_up",
+  "insurance_issue",
+  "wrong_number",
+  "bad_address",
+  "refused_to_pay",
+  "do_not_contact",
+  "resolved",
+]);
+
+const collectionContactAttemptSchema = z.object({
+  amountDue: z.number().nonnegative().optional(),
+  amountCollected: z.number().nonnegative().optional(),
+  contactMethod: contactMethodSchema,
+  contactDirection: z.enum(["outbound", "inbound"]).optional(),
+  contactPerson: z.string().trim().max(120).optional(),
+  outcome: contactOutcomeSchema,
+  notes: z.string().trim().max(4000).optional(),
+  patientResponse: z.string().trim().max(4000).optional(),
+  staffNextStep: z.string().trim().max(1000).optional(),
+  nextFollowUpDate: optionalDateString,
+  followUpStatus: z.enum(["open", "scheduled", "resolved", "paused", "do_not_contact"]).optional(),
+  assignedTo: z.string().optional(),
+  patientPromisedAmount: z.number().nonnegative().optional(),
+  patientPromisedDate: optionalDateString,
+  disputeStatus: z.enum(["none", "opened", "under_review", "resolved"]).optional(),
+  financialAssistanceStatus: z.enum(["not_discussed", "discussed", "application_sent", "application_received", "approved", "denied"]).optional(),
+  paymentPlanDiscussed: z.boolean().optional(),
+  financialAssistanceDiscussed: z.boolean().optional(),
+  contactPreferenceConfirmed: z.boolean().optional(),
+  doNotContact: z.boolean().optional(),
+});
+
 // Process payment
 collectionsRouter.post(
   "/payment",
@@ -452,6 +511,66 @@ collectionsRouter.get("/aging", requireAuth, async (req: AuthedRequest, res) => 
     res.status(500).json({ error: "Failed to fetch aging report" });
   }
 });
+
+collectionsRouter.get(
+  "/patient/:id/activity",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const tenantId = req.user!.tenantId;
+    const patientId = String(req.params.id);
+
+    try {
+      const activity = await collectionsService.getPatientCollectionActivity(
+        tenantId,
+        patientId
+      );
+
+      res.json(activity);
+    } catch (error) {
+      logCollectionsError("Error fetching patient collection activity:", error);
+      res.status(500).json({ error: "Failed to fetch patient collection activity" });
+    }
+  }
+);
+
+collectionsRouter.post(
+  "/patient/:id/contact-attempts",
+  requireAuth,
+  requireRoles(["admin", "billing", "front_desk", "manager"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = collectionContactAttemptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const patientId = String(req.params.id);
+
+    try {
+      const attemptId = await collectionsService.createCollectionContactAttempt(
+        tenantId,
+        {
+          ...parsed.data,
+          patientId,
+          attemptedBy: req.user!.id,
+        }
+      );
+
+      await auditLog(
+        tenantId,
+        req.user!.id,
+        "collection_contact_attempt_create",
+        "collection_attempt",
+        attemptId
+      );
+
+      res.status(201).json({ id: attemptId });
+    } catch (error) {
+      logCollectionsError("Error recording collection contact attempt:", error);
+      res.status(500).json({ error: "Failed to record collection contact attempt" });
+    }
+  }
+);
 
 // ============================================
 // COLLECTION STATISTICS

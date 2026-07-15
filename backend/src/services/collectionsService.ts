@@ -41,6 +41,52 @@ export interface CollectionAttempt {
   skipReason?: string;
   notes?: string;
   attemptedBy?: string;
+  attemptedByName?: string | null;
+  contactMethod?: string | null;
+  contactDirection?: "outbound" | "inbound";
+  contactPerson?: string | null;
+  outcome?: string | null;
+  patientResponse?: string | null;
+  staffNextStep?: string | null;
+  nextFollowUpDate?: string | null;
+  followUpStatus?: string | null;
+  assignedTo?: string | null;
+  assignedToName?: string | null;
+  patientPromisedAmount?: number | null;
+  patientPromisedDate?: string | null;
+  disputeStatus?: string | null;
+  financialAssistanceStatus?: string | null;
+  paymentPlanDiscussed?: boolean;
+  financialAssistanceDiscussed?: boolean;
+  contactPreferenceConfirmed?: boolean;
+  doNotContact?: boolean;
+}
+
+export interface CollectionContactInput {
+  patientId: string;
+  encounterId?: string;
+  amountDue?: number;
+  amountCollected?: number;
+  collectionPoint?: string;
+  contactMethod: string;
+  contactDirection?: "outbound" | "inbound";
+  contactPerson?: string;
+  outcome: string;
+  notes?: string;
+  patientResponse?: string;
+  staffNextStep?: string;
+  nextFollowUpDate?: string;
+  followUpStatus?: string;
+  assignedTo?: string;
+  patientPromisedAmount?: number;
+  patientPromisedDate?: string;
+  disputeStatus?: string;
+  financialAssistanceStatus?: string;
+  paymentPlanDiscussed?: boolean;
+  financialAssistanceDiscussed?: boolean;
+  contactPreferenceConfirmed?: boolean;
+  doNotContact?: boolean;
+  attemptedBy?: string;
 }
 
 export interface CollectionStats {
@@ -264,39 +310,101 @@ export async function recordCollectionAttempt(
   attempt: {
     patientId: string;
     encounterId?: string;
-    amountDue: number;
+    amountDue?: number;
     collectionPoint: string;
-    result: string;
+    result?: string;
     amountCollected?: number;
     skipReason?: string;
     notes?: string;
     talkingPointsUsed?: string;
     attemptedBy?: string;
+    contactMethod?: string;
+    contactDirection?: "outbound" | "inbound";
+    contactPerson?: string;
+    outcome?: string;
+    patientResponse?: string;
+    staffNextStep?: string;
+    nextFollowUpDate?: string;
+    followUpStatus?: string;
+    assignedTo?: string;
+    patientPromisedAmount?: number;
+    patientPromisedDate?: string;
+    disputeStatus?: string;
+    financialAssistanceStatus?: string;
+    paymentPlanDiscussed?: boolean;
+    financialAssistanceDiscussed?: boolean;
+    contactPreferenceConfirmed?: boolean;
+    doNotContact?: boolean;
   }
 ): Promise<string> {
   const attemptId = crypto.randomUUID();
+  const result = attempt.result || attempt.outcome || "skipped";
+  const contactMethod = attempt.contactMethod || attempt.collectionPoint;
+  const followUpStatus = attempt.doNotContact
+    ? "do_not_contact"
+    : attempt.followUpStatus || (attempt.nextFollowUpDate ? "scheduled" : "open");
 
   await pool.query(
     `insert into collection_attempts (
       id, tenant_id, patient_id, encounter_id, attempt_date,
       amount_due, collection_point, result, amount_collected,
-      skip_reason, notes, talking_points_used, attempted_by
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      skip_reason, notes, talking_points_used, attempted_by,
+      contact_method, contact_direction, contact_person, outcome,
+      patient_response, staff_next_step, next_follow_up_date, follow_up_status,
+      assigned_to, patient_promised_amount, patient_promised_date, dispute_status,
+      financial_assistance_status, payment_plan_discussed, financial_assistance_discussed,
+      contact_preference_confirmed, do_not_contact
+    ) values (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+      $11, $12, $13, $14, $15, $16, $17, $18, $19,
+      $20, $21, $22, $23, $24, $25, $26, $27, $28,
+      $29, $30
+    )`,
     [
       attemptId,
       tenantId,
       attempt.patientId,
       attempt.encounterId || null,
       new Date(),
-      attempt.amountDue,
-      attempt.collectionPoint,
-      attempt.result,
+      attempt.amountDue || 0,
+      normalizeCollectionPoint(attempt.collectionPoint),
+      result,
       attempt.amountCollected || 0,
       attempt.skipReason || null,
       attempt.notes || null,
       attempt.talkingPointsUsed || null,
       attempt.attemptedBy || null,
+      normalizeContactMethod(contactMethod),
+      attempt.contactDirection || "outbound",
+      attempt.contactPerson || null,
+      attempt.outcome || result,
+      attempt.patientResponse || null,
+      attempt.staffNextStep || null,
+      attempt.nextFollowUpDate || null,
+      followUpStatus,
+      attempt.assignedTo || attempt.attemptedBy || null,
+      attempt.patientPromisedAmount ?? null,
+      attempt.patientPromisedDate || null,
+      attempt.disputeStatus || null,
+      attempt.financialAssistanceStatus || null,
+      attempt.paymentPlanDiscussed || false,
+      attempt.financialAssistanceDiscussed || false,
+      attempt.contactPreferenceConfirmed || false,
+      attempt.doNotContact || false,
     ]
+  );
+
+  await pool.query(
+    `update patient_balances
+     set last_collection_attempt_date = current_date,
+         is_in_collections = case
+           when $3 = 'resolved' then false
+           when total_balance > 0 then true
+           else is_in_collections
+         end,
+         updated_at = now()
+     where tenant_id = $1 and patient_id = $2`,
+    [tenantId, attempt.patientId, result]
   );
 
   return attemptId;
@@ -316,6 +424,19 @@ export async function getAgingReport(tenantId: string): Promise<{
     balance61_90: number;
     balanceOver90: number;
     oldestChargeDate: string | null;
+    collectionAttemptCount: number;
+    lastCollectionAttemptDate: string | null;
+    lastContactMethod: string | null;
+    lastContactOutcome: string | null;
+    lastCollectionNotes: string | null;
+    lastPatientResponse: string | null;
+    nextFollowUpDate: string | null;
+    followUpStatus: string | null;
+    assignedTo: string | null;
+    assignedToName: string | null;
+    doNotContact: boolean;
+    disputeStatus: string | null;
+    financialAssistanceStatus: string | null;
   }>;
 }> {
   // Update all patient balances first
@@ -350,11 +471,62 @@ export async function getAgingReport(tenantId: string): Promise<{
       pb.balance_31_60 as "balance31_60",
       pb.balance_61_90 as "balance61_90",
       pb.balance_over_90 as "balanceOver90",
-      pb.oldest_charge_date as "oldestChargeDate"
+      pb.oldest_charge_date as "oldestChargeDate",
+      coalesce(attempt_counts.attempt_count, 0)::int as "collectionAttemptCount",
+      latest.attempt_date as "lastCollectionAttemptDate",
+      latest.contact_method as "lastContactMethod",
+      coalesce(latest.outcome, latest.result) as "lastContactOutcome",
+      latest.notes as "lastCollectionNotes",
+      latest.patient_response as "lastPatientResponse",
+      latest.next_follow_up_date as "nextFollowUpDate",
+      latest.follow_up_status as "followUpStatus",
+      latest.assigned_to as "assignedTo",
+      assigned_user.full_name as "assignedToName",
+      coalesce(latest.do_not_contact, false) as "doNotContact",
+      latest.dispute_status as "disputeStatus",
+      latest.financial_assistance_status as "financialAssistanceStatus"
     from patient_balances pb
     join patients p on p.id = pb.patient_id
+    left join lateral (
+      select count(*) as attempt_count
+      from collection_attempts ca
+      where ca.tenant_id = pb.tenant_id
+        and ca.patient_id = pb.patient_id
+    ) attempt_counts on true
+    left join lateral (
+      select
+        ca.attempt_date,
+        ca.contact_method,
+        ca.outcome,
+        ca.result,
+        ca.notes,
+        ca.patient_response,
+        ca.next_follow_up_date,
+        ca.follow_up_status,
+        ca.assigned_to,
+        ca.do_not_contact,
+        ca.dispute_status,
+        ca.financial_assistance_status
+      from collection_attempts ca
+      where ca.tenant_id = pb.tenant_id
+        and ca.patient_id = pb.patient_id
+      order by ca.attempt_date desc, ca.created_at desc
+      limit 1
+    ) latest on true
+    left join users assigned_user
+      on assigned_user.id = latest.assigned_to
+      and assigned_user.tenant_id = pb.tenant_id
     where pb.tenant_id = $1 and pb.total_balance > 0
-    order by pb.balance_over_90 desc, pb.total_balance desc`,
+    order by
+      case
+        when latest.next_follow_up_date is not null
+         and latest.next_follow_up_date <= current_date
+         and coalesce(latest.follow_up_status, 'open') in ('open', 'scheduled')
+        then 0
+        else 1
+      end,
+      pb.balance_over_90 desc,
+      pb.total_balance desc`,
     [tenantId]
   );
 
@@ -369,6 +541,99 @@ export async function getAgingReport(tenantId: string): Promise<{
     },
     patients: patientsResult.rows,
   };
+}
+
+export async function getPatientCollectionActivity(
+  tenantId: string,
+  patientId: string
+): Promise<{
+  balance: PatientBalance | null;
+  attempts: CollectionAttempt[];
+}> {
+  const balance = await getPatientBalance(tenantId, patientId);
+  const attemptsResult = await pool.query(
+    `select
+      ca.id,
+      ca.patient_id as "patientId",
+      ca.encounter_id as "encounterId",
+      ca.attempt_date as "attemptDate",
+      ca.amount_due as "amountDue",
+      ca.collection_point as "collectionPoint",
+      ca.result,
+      ca.amount_collected as "amountCollected",
+      ca.skip_reason as "skipReason",
+      ca.notes,
+      ca.attempted_by as "attemptedBy",
+      attempted_user.full_name as "attemptedByName",
+      ca.contact_method as "contactMethod",
+      ca.contact_direction as "contactDirection",
+      ca.contact_person as "contactPerson",
+      ca.outcome,
+      ca.patient_response as "patientResponse",
+      ca.staff_next_step as "staffNextStep",
+      ca.next_follow_up_date as "nextFollowUpDate",
+      ca.follow_up_status as "followUpStatus",
+      ca.assigned_to as "assignedTo",
+      assigned_user.full_name as "assignedToName",
+      ca.patient_promised_amount as "patientPromisedAmount",
+      ca.patient_promised_date as "patientPromisedDate",
+      ca.dispute_status as "disputeStatus",
+      ca.financial_assistance_status as "financialAssistanceStatus",
+      ca.payment_plan_discussed as "paymentPlanDiscussed",
+      ca.financial_assistance_discussed as "financialAssistanceDiscussed",
+      ca.contact_preference_confirmed as "contactPreferenceConfirmed",
+      ca.do_not_contact as "doNotContact"
+    from collection_attempts ca
+    left join users attempted_user
+      on attempted_user.id = ca.attempted_by
+      and attempted_user.tenant_id = ca.tenant_id
+    left join users assigned_user
+      on assigned_user.id = ca.assigned_to
+      and assigned_user.tenant_id = ca.tenant_id
+    where ca.tenant_id = $1
+      and ca.patient_id = $2
+    order by ca.attempt_date desc, ca.created_at desc
+    limit 100`,
+    [tenantId, patientId]
+  );
+
+  return {
+    balance,
+    attempts: attemptsResult.rows,
+  };
+}
+
+export async function createCollectionContactAttempt(
+  tenantId: string,
+  input: CollectionContactInput
+): Promise<string> {
+  return recordCollectionAttempt(tenantId, {
+    patientId: input.patientId,
+    encounterId: input.encounterId,
+    amountDue: input.amountDue || 0,
+    amountCollected: input.amountCollected || 0,
+    collectionPoint: normalizeCollectionPoint(input.collectionPoint || input.contactMethod),
+    result: input.outcome,
+    contactMethod: input.contactMethod,
+    contactDirection: input.contactDirection || "outbound",
+    contactPerson: input.contactPerson,
+    outcome: input.outcome,
+    notes: input.notes,
+    patientResponse: input.patientResponse,
+    staffNextStep: input.staffNextStep,
+    nextFollowUpDate: input.nextFollowUpDate,
+    followUpStatus: input.followUpStatus,
+    assignedTo: input.assignedTo,
+    patientPromisedAmount: input.patientPromisedAmount,
+    patientPromisedDate: input.patientPromisedDate,
+    disputeStatus: input.disputeStatus,
+    financialAssistanceStatus: input.financialAssistanceStatus,
+    paymentPlanDiscussed: input.paymentPlanDiscussed,
+    financialAssistanceDiscussed: input.financialAssistanceDiscussed,
+    contactPreferenceConfirmed: input.contactPreferenceConfirmed,
+    doNotContact: input.doNotContact,
+    attemptedBy: input.attemptedBy,
+  });
 }
 
 /**
@@ -545,6 +810,43 @@ export function getCollectionTalkingPoints(
         "Consider collections agency referral if no resolution",
       ],
     };
+  }
+}
+
+function normalizeCollectionPoint(collectionPoint?: string): string {
+  switch (collectionPoint) {
+    case "check_in":
+    case "check_out":
+    case "phone":
+    case "statement":
+    case "portal":
+    case "text":
+    case "other":
+      return collectionPoint;
+    case "email":
+    case "mail":
+    case "in_person":
+      return "other";
+    default:
+      return "other";
+  }
+}
+
+function normalizeContactMethod(contactMethod?: string): string {
+  switch (contactMethod) {
+    case "phone":
+    case "text":
+    case "email":
+    case "mail":
+    case "portal":
+    case "in_person":
+    case "statement":
+    case "check_in":
+    case "check_out":
+    case "other":
+      return contactMethod;
+    default:
+      return "other";
   }
 }
 

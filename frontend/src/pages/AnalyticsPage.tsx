@@ -28,6 +28,7 @@ import {
   fetchTopDiagnoses,
   fetchTopProcedures,
   fetchProviderProductivity,
+  fetchTeamProductivity,
   fetchPatientDemographics,
   fetchAppointmentTypesAnalytics,
   fetchAnalyticsOverview,
@@ -202,6 +203,103 @@ interface ProviderAnalyticsRow {
   avg_visit_duration_minutes: number | string;
 }
 
+interface TeamLinkedProvider {
+  id?: string;
+  name?: string;
+  specialty?: string;
+}
+
+interface TeamProductivitySummary {
+  startDate?: string;
+  endDate?: string;
+  totalUsers?: number | string;
+  activeUsers?: number | string;
+  productiveActions?: number | string;
+  complianceEvents?: number | string;
+  uniquePatientsTouched?: number | string;
+  patientsSeen?: number | string;
+  notesSigned?: number | string;
+  tasksCompleted?: number | string;
+  messagesHandled?: number | string;
+  claimsReleased?: number | string;
+  flowActions?: number | string;
+  inventoryStoreActions?: number | string;
+  aiRequests?: number | string;
+  aiCostCents?: number | string;
+  phiAccessEvents?: number | string;
+  complianceFlags?: number | string;
+}
+
+interface TeamProductivityUser {
+  userId: string;
+  fullName: string;
+  email?: string;
+  role?: string;
+  linkedProviders?: TeamLinkedProvider[];
+  productiveActions?: number | string;
+  complianceEvents?: number | string;
+  uniquePatientsTouched?: number | string;
+  patientsSeen?: number | string;
+  completedAppointments?: number | string;
+  notesCreated?: number | string;
+  notesEdited?: number | string;
+  notesSigned?: number | string;
+  flowActions?: number | string;
+  tasksCompleted?: number | string;
+  messagesHandled?: number | string;
+  claimsReleased?: number | string;
+  chargesCreated?: number | string;
+  paymentsPosted?: number | string;
+  prescriptionsCreated?: number | string;
+  ordersCreated?: number | string;
+  inventoryStoreActions?: number | string;
+  aiRequests?: number | string;
+  aiCostCents?: number | string;
+  phiAccessEvents?: number | string;
+  complianceFlags?: number | string;
+  lastActivityAt?: string | null;
+}
+
+interface TeamProductivityCategory {
+  category: string;
+  productiveActions?: number | string;
+  complianceEvents?: number | string;
+  activeUsers?: number | string;
+  lastActivityAt?: string | null;
+}
+
+interface TeamProductivityTrendPoint {
+  date: string;
+  productiveActions?: number | string;
+  complianceEvents?: number | string;
+  activeUsers?: number | string;
+}
+
+interface TeamProductivityEvent {
+  userId: string;
+  fullName: string;
+  role?: string;
+  category: string;
+  action: string;
+  actionLabel: string;
+  resourceType?: string;
+  resourceId?: string;
+  patientId?: string;
+  appointmentId?: string;
+  occurredAt: string;
+  productivityWeight?: number | string;
+  complianceWeight?: number | string;
+  metadata?: Record<string, unknown>;
+}
+
+interface TeamProductivityPayload {
+  summary?: TeamProductivitySummary;
+  users?: TeamProductivityUser[];
+  categories?: TeamProductivityCategory[];
+  trend?: TeamProductivityTrendPoint[];
+  recentEvents?: TeamProductivityEvent[];
+}
+
 interface RevenueCategorySummary {
   key: string;
   label: string;
@@ -322,7 +420,7 @@ interface FinancialWorkQueueItem {
 }
 
 type DateRangePreset = 'today' | 'week' | 'month' | '30days' | 'year';
-type AnalyticsTab = 'financials' | 'ai' | 'clinical' | 'compliance' | 'inventory' | 'dermatology';
+type AnalyticsTab = 'financials' | 'ai' | 'team' | 'clinical' | 'compliance' | 'inventory' | 'dermatology';
 
 const ANALYTICS_TAB_QUERY_MAP: Record<string, AnalyticsTab> = {
   financials: 'financials',
@@ -333,9 +431,15 @@ const ANALYTICS_TAB_QUERY_MAP: Record<string, AnalyticsTab> = {
   openai: 'ai',
   artificial_intelligence: 'ai',
   usage: 'ai',
+  team: 'team',
+  staff: 'team',
+  employee: 'team',
+  employees: 'team',
+  productivity: 'team',
+  team_productivity: 'team',
+  employee_productivity: 'team',
   clinical: 'clinical',
   operational: 'clinical',
-  productivity: 'clinical',
   compliance: 'compliance',
   inventory: 'inventory',
   dermatology: 'dermatology',
@@ -355,6 +459,8 @@ export function AnalyticsPage() {
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [useCustomRange, setUseCustomRange] = useState(false);
+  const [teamRoleFilter, setTeamRoleFilter] = useState('all');
+  const [selectedTeamUserId, setSelectedTeamUserId] = useState('all');
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [appointmentsTrend, setAppointmentsTrend] = useState<TrendData[]>([]);
@@ -370,6 +476,7 @@ export function AnalyticsPage() {
   const [analyticsOverview, setAnalyticsOverview] = useState<AnalyticsOverview | null>(null);
   const [appointmentAnalytics, setAppointmentAnalytics] = useState<AppointmentAnalytics | null>(null);
   const [providerAnalytics, setProviderAnalytics] = useState<ProviderAnalyticsRow[]>([]);
+  const [teamProductivity, setTeamProductivity] = useState<TeamProductivityPayload | null>(null);
   const [financialDashboard, setFinancialDashboard] = useState<FinancialDashboard | null>(null);
   const [collectionsTrend, setCollectionsTrend] = useState<CollectionsTrendRow[]>([]);
   const [collectionsSummary, setCollectionsSummary] = useState<CollectionsTrendSummary | null>(null);
@@ -454,6 +561,7 @@ export function AnalyticsPage() {
         analyticsOverviewRes,
         appointmentAnalyticsRes,
         providerAnalyticsRes,
+        teamProductivityRes,
         dermMetricsRes,
         yoyComparisonRes,
         noShowRiskRes,
@@ -476,6 +584,7 @@ export function AnalyticsPage() {
         fetchAnalyticsOverview(session.tenantId, session.accessToken, filter).catch(() => null),
         fetchAppointmentAnalytics(session.tenantId, session.accessToken, filter).catch(() => null),
         fetchProviderAnalytics(session.tenantId, session.accessToken, filter).catch(() => ({ data: [] })),
+        fetchTeamProductivity(session.tenantId, session.accessToken, filter).catch(() => null),
         fetchDermatologyMetrics(session.tenantId, session.accessToken, filter).catch(() => null),
         fetchYoYComparison(session.tenantId, session.accessToken, filter).catch(() => null),
         fetchNoShowRiskAnalysis(session.tenantId, session.accessToken, filter).catch(() => null),
@@ -517,6 +626,7 @@ export function AnalyticsPage() {
       setAnalyticsOverview(analyticsOverviewRes);
       setAppointmentAnalytics(appointmentAnalyticsRes);
       setProviderAnalytics(Array.isArray(providerAnalyticsRes?.data) ? providerAnalyticsRes.data : []);
+      setTeamProductivity(teamProductivityRes);
       setDermMetrics(dermMetricsRes);
       setYoyComparison(yoyComparisonRes);
       setNoShowRisk(noShowRiskRes);
@@ -748,6 +858,50 @@ export function AnalyticsPage() {
         revenue: toNumber(provider.revenue_cents),
       }));
   const topWorkQueueItems = financialWorkQueue.slice(0, 5);
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return 'No activity';
+    return new Date(value).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+  const formatRoleLabel = (value?: string) => {
+    if (!value) return 'Unassigned';
+    return value
+      .split(/[_\s-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  };
+  const teamSummary = teamProductivity?.summary || {};
+  const teamUsers = Array.isArray(teamProductivity?.users) ? teamProductivity.users : [];
+  const teamCategories = Array.isArray(teamProductivity?.categories) ? teamProductivity.categories : [];
+  const teamTrend = Array.isArray(teamProductivity?.trend) ? teamProductivity.trend : [];
+  const teamRecentEvents = Array.isArray(teamProductivity?.recentEvents) ? teamProductivity.recentEvents : [];
+  const teamRoles = Array.from(new Set(teamUsers.map((user) => user.role).filter((role): role is string => Boolean(role)))).sort();
+  const displayedTeamUsers = teamUsers.filter((user) => {
+    const roleMatch = teamRoleFilter === 'all' || user.role === teamRoleFilter;
+    const userMatch = selectedTeamUserId === 'all' || user.userId === selectedTeamUserId;
+    return roleMatch && userMatch;
+  });
+  const selectedTeamUser = selectedTeamUserId === 'all'
+    ? null
+    : teamUsers.find((user) => user.userId === selectedTeamUserId) || null;
+  const maxTeamActions = Math.max(1, ...teamUsers.map((user) => toNumber(user.productiveActions)));
+  const maxCategoryActions = Math.max(1, ...teamCategories.map((category) => toNumber(category.productiveActions) + toNumber(category.complianceEvents)));
+  const filteredTeamRecentEvents = teamRecentEvents.filter((event) => {
+    const roleMatch = teamRoleFilter === 'all' || event.role === teamRoleFilter;
+    const userMatch = selectedTeamUserId === 'all' || event.userId === selectedTeamUserId;
+    return roleMatch && userMatch;
+  });
+  const teamTrendData = teamTrend.map((point) => ({
+    date: point.date,
+    productiveActions: toNumber(point.productiveActions),
+    complianceEvents: toNumber(point.complianceEvents),
+    activeUsers: toNumber(point.activeUsers),
+  }));
 
   return (
     <div className="analytics-page">
@@ -783,6 +937,13 @@ export function AnalyticsPage() {
           onClick={() => setAnalyticsTab('ai')}
         >
           AI
+        </button>
+        <button
+          type="button"
+          className={`analytics-tab ${activeTab === 'team' ? 'active' : ''}`}
+          onClick={() => setAnalyticsTab('team')}
+        >
+          Team Productivity
         </button>
         <button
           type="button"
@@ -929,6 +1090,265 @@ export function AnalyticsPage() {
             </div>
           </div>
           <OpenAiAuditPage embedded externalDateRange={analyticsDateFilter} />
+        </div>
+      )}
+
+      {activeTab === 'team' && (
+        <div className="tab-content">
+          <div className="analytics-section-header team-productivity-header">
+            <div className="section-icon team-icon">
+              <Users size={34} aria-hidden="true" />
+            </div>
+            <div className="section-header-content">
+              <h2>Team Productivity</h2>
+              <p>Staff activity, workflow throughput, AI usage, and compliance signals for the selected date range.</p>
+            </div>
+            <div className="story-actions">
+              <Link to="/audit" className="story-link-button subtle">
+                Audit Log <ArrowRight size={16} aria-hidden="true" />
+              </Link>
+            </div>
+          </div>
+
+          <div className="team-filter-bar">
+            <label>
+              <span>Role</span>
+              <select value={teamRoleFilter} onChange={(event) => setTeamRoleFilter(event.target.value)}>
+                <option value="all">All roles</option>
+                {teamRoles.map((role) => (
+                  <option key={role} value={role}>{formatRoleLabel(role)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Person</span>
+              <select value={selectedTeamUserId} onChange={(event) => setSelectedTeamUserId(event.target.value)}>
+                <option value="all">All people</option>
+                {teamUsers.map((user) => (
+                  <option key={user.userId} value={user.userId}>{user.fullName}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setTeamRoleFilter('all');
+                setSelectedTeamUserId('all');
+              }}
+            >
+              Reset
+            </button>
+          </div>
+
+          <div className="team-score-grid">
+            <div className="team-score-card">
+              <span className="team-score-label">Active Staff</span>
+              <strong>{toNumber(teamSummary.activeUsers).toLocaleString()}</strong>
+              <span>{toNumber(teamSummary.totalUsers).toLocaleString()} total users</span>
+            </div>
+            <div className="team-score-card">
+              <span className="team-score-label">Productive Actions</span>
+              <strong>{toNumber(teamSummary.productiveActions).toLocaleString()}</strong>
+              <span>{toNumber(teamSummary.uniquePatientsTouched).toLocaleString()} patients touched</span>
+            </div>
+            <div className="team-score-card">
+              <span className="team-score-label">Patients Seen</span>
+              <strong>{toNumber(teamSummary.patientsSeen).toLocaleString()}</strong>
+              <span>{toNumber(teamSummary.flowActions).toLocaleString()} office-flow steps</span>
+            </div>
+            <div className="team-score-card">
+              <span className="team-score-label">Notes Signed</span>
+              <strong>{toNumber(teamSummary.notesSigned).toLocaleString()}</strong>
+              <span>{toNumber(teamSummary.tasksCompleted).toLocaleString()} tasks completed</span>
+            </div>
+            <div className="team-score-card">
+              <span className="team-score-label">Communication</span>
+              <strong>{toNumber(teamSummary.messagesHandled).toLocaleString()}</strong>
+              <span>{toNumber(teamSummary.claimsReleased).toLocaleString()} claims released</span>
+            </div>
+            <div className="team-score-card risk">
+              <span className="team-score-label">Compliance Flags</span>
+              <strong>{toNumber(teamSummary.complianceFlags).toLocaleString()}</strong>
+              <span>{toNumber(teamSummary.phiAccessEvents).toLocaleString()} PHI access events</span>
+            </div>
+            <div className="team-score-card ai">
+              <span className="team-score-label">AI Usage</span>
+              <strong>{toNumber(teamSummary.aiRequests).toLocaleString()}</strong>
+              <span>{formatCurrency(toNumber(teamSummary.aiCostCents))} tracked cost</span>
+            </div>
+          </div>
+
+          <div className="team-productivity-grid">
+            <Panel title="Person-by-Person Activity">
+              {displayedTeamUsers.length === 0 ? (
+                <div className="clean-state">
+                  <CheckCircle2 size={28} aria-hidden="true" />
+                  <strong>No activity for this filter</strong>
+                  <span>Try a wider date range or clear the role/person filters.</span>
+                </div>
+              ) : (
+                <div className="team-table-wrap">
+                  <table className="data-table team-productivity-table">
+                    <thead>
+                      <tr>
+                        <th>Person</th>
+                        <th>Role</th>
+                        <th>Work</th>
+                        <th>Clinical</th>
+                        <th>Messages</th>
+                        <th>Billing</th>
+                        <th>Compliance</th>
+                        <th>Last Activity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayedTeamUsers.map((user) => {
+                        const productiveActions = toNumber(user.productiveActions);
+                        const clinicalTotal = toNumber(user.patientsSeen) + toNumber(user.notesSigned) + toNumber(user.prescriptionsCreated) + toNumber(user.ordersCreated);
+                        const billingTotal = toNumber(user.claimsReleased) + toNumber(user.chargesCreated) + toNumber(user.paymentsPosted);
+                        return (
+                          <tr
+                            key={user.userId}
+                            className={selectedTeamUserId === user.userId ? 'selected-row' : ''}
+                            onClick={() => setSelectedTeamUserId(user.userId)}
+                          >
+                            <td>
+                              <div className="team-person-cell">
+                                <strong>{user.fullName || 'Unknown user'}</strong>
+                                <span>{user.email}</span>
+                                {user.linkedProviders?.length ? (
+                                  <em>{user.linkedProviders.map((provider) => provider.name).filter(Boolean).join(', ')}</em>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td><span className="role-pill">{formatRoleLabel(user.role)}</span></td>
+                            <td>
+                              <div className="activity-meter-cell">
+                                <strong>{productiveActions.toLocaleString()}</strong>
+                                <span className="activity-meter">
+                                  <span style={{ width: `${Math.max(4, (productiveActions / maxTeamActions) * 100)}%` }} />
+                                </span>
+                              </div>
+                            </td>
+                            <td>{clinicalTotal.toLocaleString()}</td>
+                            <td>{toNumber(user.messagesHandled).toLocaleString()}</td>
+                            <td>{billingTotal.toLocaleString()}</td>
+                            <td>
+                              <span className={toNumber(user.complianceFlags) > 0 ? 'team-risk-count' : 'quiet-count'}>
+                                {toNumber(user.complianceFlags).toLocaleString()} flags
+                              </span>
+                            </td>
+                            <td>{formatDateTime(user.lastActivityAt)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+
+            <Panel title={selectedTeamUser ? `${selectedTeamUser.fullName} Detail` : 'Selected Staff Detail'}>
+              {!selectedTeamUser ? (
+                <div className="empty-state team-empty-detail">
+                  <p className="muted">Select a person to review their activity mix, clinical work, billing work, and compliance signals.</p>
+                </div>
+              ) : (
+                <div className="team-detail-panel">
+                  <div className="team-detail-header">
+                    <div>
+                      <strong>{selectedTeamUser.fullName}</strong>
+                      <span>{formatRoleLabel(selectedTeamUser.role)} - {selectedTeamUser.email}</span>
+                    </div>
+                    <span className="role-pill">{toNumber(selectedTeamUser.productiveActions).toLocaleString()} actions</span>
+                  </div>
+                  <div className="team-detail-metrics">
+                    <div><span>Patients</span><strong>{toNumber(selectedTeamUser.patientsSeen)}</strong></div>
+                    <div><span>Notes</span><strong>{toNumber(selectedTeamUser.notesCreated) + toNumber(selectedTeamUser.notesEdited) + toNumber(selectedTeamUser.notesSigned)}</strong></div>
+                    <div><span>Tasks</span><strong>{toNumber(selectedTeamUser.tasksCompleted)}</strong></div>
+                    <div><span>Messages</span><strong>{toNumber(selectedTeamUser.messagesHandled)}</strong></div>
+                    <div><span>Claims</span><strong>{toNumber(selectedTeamUser.claimsReleased)}</strong></div>
+                    <div><span>Inventory/Store</span><strong>{toNumber(selectedTeamUser.inventoryStoreActions)}</strong></div>
+                    <div><span>AI Requests</span><strong>{toNumber(selectedTeamUser.aiRequests)}</strong></div>
+                    <div><span>PHI Access</span><strong>{toNumber(selectedTeamUser.phiAccessEvents)}</strong></div>
+                  </div>
+                  <div className="team-detail-note">
+                    <ShieldAlert size={18} aria-hidden="true" />
+                    <span>{toNumber(selectedTeamUser.complianceFlags)} compliance flags and {formatCurrency(toNumber(selectedTeamUser.aiCostCents))} AI cost in this range.</span>
+                  </div>
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Activity Categories">
+              {teamCategories.length === 0 ? (
+                <div className="empty-state">
+                  <p className="muted">No activity categories yet.</p>
+                </div>
+              ) : (
+                <div className="team-category-list">
+                  {teamCategories.map((category) => {
+                    const total = toNumber(category.productiveActions) + toNumber(category.complianceEvents);
+                    return (
+                      <div key={category.category} className="team-category-row">
+                        <div>
+                          <strong>{category.category}</strong>
+                          <span>{toNumber(category.activeUsers)} active users - last {formatDateTime(category.lastActivityAt)}</span>
+                        </div>
+                        <div className="category-bar-wrap">
+                          <span className="category-bar">
+                            <span style={{ width: `${Math.max(4, (total / maxCategoryActions) * 100)}%` }} />
+                          </span>
+                          <strong>{total.toLocaleString()}</strong>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Daily Team Activity">
+              {teamTrendData.length === 0 ? (
+                <div className="empty-chart">
+                  <p className="muted">No daily activity trend available for this range.</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <AreaChart data={teamTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="date" tickFormatter={formatDate} />
+                    <YAxis />
+                    <Tooltip labelFormatter={formatDate} />
+                    <Legend />
+                    <Area type="monotone" dataKey="productiveActions" name="Productive actions" stroke="#0f766e" fill="#ccfbf1" />
+                    <Area type="monotone" dataKey="complianceEvents" name="Compliance events" stroke="#b45309" fill="#fef3c7" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </Panel>
+
+            <Panel title="Recent Activity">
+              {filteredTeamRecentEvents.length === 0 ? (
+                <div className="empty-state">
+                  <p className="muted">No recent events match the current filters.</p>
+                </div>
+              ) : (
+                <div className="team-timeline">
+                  {filteredTeamRecentEvents.slice(0, 14).map((event, index) => (
+                    <div key={`${event.userId}-${event.resourceId}-${event.occurredAt}-${index}`} className="team-timeline-item">
+                      <span className={`timeline-dot ${toNumber(event.complianceWeight) > 0 ? 'compliance' : 'productivity'}`} />
+                      <div>
+                        <strong>{event.actionLabel}</strong>
+                        <span>{event.fullName} - {event.category} - {formatDateTime(event.occurredAt)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+          </div>
         </div>
       )}
 
@@ -3085,7 +3505,379 @@ export function AnalyticsPage() {
           font-size: 0.9rem;
         }
 
+        .team-productivity-header {
+          background: linear-gradient(135deg, #ecfeff 0%, #f0fdf4 100%);
+          border: 1px solid #bae6fd;
+          border-radius: 8px;
+          padding: 1.25rem;
+        }
+
+        .team-icon {
+          background: #0f766e;
+          color: white;
+        }
+
+        .team-filter-bar {
+          display: flex;
+          align-items: end;
+          gap: 1rem;
+          margin: 1rem 0;
+          padding: 1rem;
+          background: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+
+        .team-filter-bar label {
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          min-width: 220px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          color: #475569;
+        }
+
+        .team-filter-bar select {
+          min-height: 40px;
+          padding: 0.5rem 0.75rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          background: white;
+          color: #0f172a;
+          font-size: 0.95rem;
+        }
+
+        .team-score-grid {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 0.85rem;
+          margin: 1rem 0 1.25rem;
+        }
+
+        .team-score-card {
+          min-height: 118px;
+          padding: 1rem;
+          background: white;
+          border: 1px solid #dbeafe;
+          border-radius: 8px;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
+
+        .team-score-card strong {
+          color: #0f766e;
+          font-size: 1.8rem;
+          line-height: 1;
+        }
+
+        .team-score-card span:last-child {
+          color: #64748b;
+          font-size: 0.82rem;
+        }
+
+        .team-score-card.risk {
+          border-color: #fecaca;
+          background: #fff7ed;
+        }
+
+        .team-score-card.risk strong {
+          color: #b45309;
+        }
+
+        .team-score-card.ai {
+          border-color: #ddd6fe;
+          background: #faf5ff;
+        }
+
+        .team-score-card.ai strong {
+          color: #6d28d9;
+        }
+
+        .team-score-label {
+          color: #334155;
+          font-size: 0.78rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+
+        .team-productivity-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.85fr);
+          gap: 1rem;
+          align-items: start;
+        }
+
+        .team-productivity-grid > :first-child {
+          grid-row: span 3;
+        }
+
+        .team-table-wrap {
+          overflow-x: auto;
+        }
+
+        .team-productivity-table th,
+        .team-productivity-table td {
+          vertical-align: top;
+        }
+
+        .team-productivity-table tbody tr {
+          cursor: pointer;
+        }
+
+        .team-productivity-table tbody tr:hover,
+        .team-productivity-table tbody tr.selected-row {
+          background: #f0fdfa;
+        }
+
+        .team-person-cell {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+          min-width: 220px;
+        }
+
+        .team-person-cell strong {
+          color: #0f172a;
+        }
+
+        .team-person-cell span,
+        .team-person-cell em {
+          color: #64748b;
+          font-size: 0.78rem;
+          font-style: normal;
+        }
+
+        .role-pill {
+          display: inline-flex;
+          align-items: center;
+          min-height: 28px;
+          padding: 0.25rem 0.55rem;
+          border-radius: 999px;
+          background: #e0f2fe;
+          color: #075985;
+          font-size: 0.78rem;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+
+        .activity-meter-cell {
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          min-width: 120px;
+        }
+
+        .activity-meter {
+          display: block;
+          height: 7px;
+          width: 100%;
+          background: #e2e8f0;
+          border-radius: 999px;
+          overflow: hidden;
+        }
+
+        .activity-meter span,
+        .category-bar span {
+          display: block;
+          height: 100%;
+          background: linear-gradient(90deg, #0f766e, #14b8a6);
+          border-radius: inherit;
+        }
+
+        .quiet-count {
+          color: #64748b;
+          font-weight: 700;
+        }
+
+        .team-risk-count {
+          color: #b91c1c;
+          font-weight: 800;
+        }
+
+        .team-empty-detail {
+          min-height: 180px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .team-detail-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+
+        .team-detail-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 1rem;
+          align-items: start;
+          padding-bottom: 0.75rem;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .team-detail-header div {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .team-detail-header strong {
+          color: #0f172a;
+          font-size: 1rem;
+        }
+
+        .team-detail-header span:not(.role-pill) {
+          color: #64748b;
+          font-size: 0.85rem;
+        }
+
+        .team-detail-metrics {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.65rem;
+        }
+
+        .team-detail-metrics div {
+          padding: 0.75rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #f8fafc;
+        }
+
+        .team-detail-metrics span {
+          display: block;
+          color: #64748b;
+          font-size: 0.76rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+
+        .team-detail-metrics strong {
+          display: block;
+          margin-top: 0.35rem;
+          color: #0f766e;
+          font-size: 1.35rem;
+        }
+
+        .team-detail-note {
+          display: flex;
+          gap: 0.6rem;
+          align-items: center;
+          padding: 0.75rem;
+          background: #fff7ed;
+          border: 1px solid #fed7aa;
+          border-radius: 8px;
+          color: #9a3412;
+          font-weight: 600;
+          font-size: 0.88rem;
+        }
+
+        .team-category-list,
+        .team-timeline {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .team-category-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(150px, 0.8fr);
+          gap: 1rem;
+          align-items: center;
+          padding: 0.75rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #f8fafc;
+        }
+
+        .team-category-row div:first-child {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+
+        .team-category-row strong {
+          color: #0f172a;
+        }
+
+        .team-category-row span {
+          color: #64748b;
+          font-size: 0.8rem;
+        }
+
+        .category-bar-wrap {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .category-bar {
+          flex: 1;
+          height: 8px;
+          background: #e2e8f0;
+          border-radius: 999px;
+          overflow: hidden;
+        }
+
+        .team-timeline-item {
+          display: grid;
+          grid-template-columns: 14px minmax(0, 1fr);
+          gap: 0.7rem;
+          padding: 0.6rem 0;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .timeline-dot {
+          width: 10px;
+          height: 10px;
+          margin-top: 0.25rem;
+          border-radius: 999px;
+          background: #0f766e;
+        }
+
+        .timeline-dot.compliance {
+          background: #b45309;
+        }
+
+        .team-timeline-item div {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+
+        .team-timeline-item strong {
+          color: #0f172a;
+        }
+
+        .team-timeline-item span {
+          color: #64748b;
+          font-size: 0.82rem;
+        }
+
         @media (max-width: 768px) {
+          .team-filter-bar {
+            align-items: stretch;
+            flex-direction: column;
+          }
+
+          .team-filter-bar label {
+            min-width: 0;
+          }
+
+          .team-score-grid,
+          .team-productivity-grid,
+          .team-detail-metrics,
+          .team-category-row {
+            grid-template-columns: 1fr;
+          }
+
           .derm-metrics-grid {
             grid-template-columns: 1fr;
           }

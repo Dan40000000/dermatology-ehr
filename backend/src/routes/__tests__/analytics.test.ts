@@ -125,6 +125,52 @@ describe("Analytics routes", () => {
     expect(res.status).toBe(200);
   });
 
+  it("GET /analytics/team-productivity", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          { table_name: "appointments" },
+          { table_name: "providers" },
+          { table_name: "encounters" },
+          { table_name: "tasks" },
+          { table_name: "audit_log" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          summary: {
+            totalUsers: 2,
+            activeUsers: 1,
+            productiveActions: 4,
+            patientsSeen: 1,
+            complianceFlags: 0,
+          },
+          users: [{
+            userId: "user-1",
+            fullName: "Dr A",
+            role: "provider",
+            productiveActions: 4,
+            patientsSeen: 1,
+          }],
+          categories: [{ category: "Clinical", productiveActions: 3 }],
+          trend: [{ date: "2026-05-28", productiveActions: 4 }],
+          recentEvents: [{ userId: "user-1", actionLabel: "Patient seen" }],
+        }],
+      });
+
+    const res = await request(app).get("/analytics/team-productivity?startDate=2026-05-01&endDate=2026-05-31");
+
+    expect(res.status).toBe(200);
+    expect(res.body.summary.productiveActions).toBe(4);
+    expect(res.body.users[0].fullName).toBe("Dr A");
+    expect(String(queryMock.mock.calls[1][0])).toContain("patient_seen");
+    expect(queryMock.mock.calls[1][1]).toEqual(expect.arrayContaining([
+      "tenant-1",
+      "2026-05-01T00:00:00.000Z",
+      "2026-06-01T00:00:00.000Z",
+    ]));
+  });
+
   it("GET /analytics/patient-demographics", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ label: "18-24", count: "1" }] });
     const res = await request(app).get("/analytics/patient-demographics");

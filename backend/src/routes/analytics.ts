@@ -79,6 +79,567 @@ function toDateRangeExclusiveEnd(value: unknown, fallback: Date): Date {
   return fallback;
 }
 
+type TeamActivitySource = {
+  tableName: string;
+  sql: string;
+};
+
+const TEAM_ACTIVITY_TABLES = [
+  "appointments",
+  "providers",
+  "encounters",
+  "patient_flow",
+  "flow_status_history",
+  "tasks",
+  "patient_messages",
+  "patient_message_threads",
+  "claims",
+  "charges",
+  "patient_payments",
+  "prescriptions",
+  "orders",
+  "inventory_usage",
+  "product_sales",
+  "audit_log",
+  "phi_access_log",
+  "login_activity_log",
+  "suspicious_activity_log",
+  "openai_usage_audit",
+] as const;
+
+function hasTables(existingTables: Set<string>, tableNames: string[]): boolean {
+  return tableNames.every((tableName) => existingTables.has(tableName));
+}
+
+function buildTeamActivitySources(existingTables: Set<string>): TeamActivitySource[] {
+  const sources: TeamActivitySource[] = [];
+
+  if (hasTables(existingTables, ["appointments", "providers"])) {
+    sources.push({
+      tableName: "appointments",
+      sql: `
+        SELECT
+          p.user_id AS actor_user_id,
+          'Clinical'::text AS category,
+          'patient_seen'::text AS action,
+          'Patient seen'::text AS action_label,
+          'appointment'::text AS resource_type,
+          a.id::text AS resource_id,
+          a.patient_id::text AS patient_id,
+          a.id::text AS appointment_id,
+          COALESCE((to_jsonb(a)->>'completed_at')::timestamptz, a.scheduled_start, a.created_at) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('status', a.status, 'providerId', a.provider_id) AS metadata
+        FROM appointments a
+        JOIN providers p ON p.id = a.provider_id AND p.tenant_id = a.tenant_id
+        WHERE a.tenant_id = $1
+          AND p.user_id IS NOT NULL
+          AND lower(a.status) IN ('completed', 'checked_out', 'checked out')
+          AND COALESCE((to_jsonb(a)->>'completed_at')::timestamptz, a.scheduled_start, a.created_at) >= $2::timestamptz
+          AND COALESCE((to_jsonb(a)->>'completed_at')::timestamptz, a.scheduled_start, a.created_at) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (hasTables(existingTables, ["encounters", "providers"])) {
+    sources.push(
+      {
+        tableName: "encounters",
+        sql: `
+          SELECT
+            COALESCE(NULLIF(to_jsonb(e)->>'created_by', ''), p.user_id) AS actor_user_id,
+            'Clinical'::text AS category,
+            'note_created'::text AS action,
+            'Note created'::text AS action_label,
+            'encounter'::text AS resource_type,
+            e.id::text AS resource_id,
+            e.patient_id::text AS patient_id,
+            e.appointment_id::text AS appointment_id,
+            e.created_at AS occurred_at,
+            1::numeric AS productivity_weight,
+            0::numeric AS compliance_weight,
+            jsonb_build_object('status', e.status, 'providerId', e.provider_id) AS metadata
+          FROM encounters e
+          LEFT JOIN providers p ON p.id = e.provider_id AND p.tenant_id = e.tenant_id
+          WHERE e.tenant_id = $1
+            AND e.created_at >= $2::timestamptz
+            AND e.created_at < $3::timestamptz
+        `,
+      },
+      {
+        tableName: "encounters",
+        sql: `
+          SELECT
+            COALESCE(NULLIF(to_jsonb(e)->>'updated_by', ''), p.user_id) AS actor_user_id,
+            'Clinical'::text AS category,
+            CASE WHEN lower(e.status) IN ('signed', 'final', 'finalized', 'locked') THEN 'note_signed' ELSE 'note_edited' END AS action,
+            CASE WHEN lower(e.status) IN ('signed', 'final', 'finalized', 'locked') THEN 'Note signed' ELSE 'Note edited' END AS action_label,
+            'encounter'::text AS resource_type,
+            e.id::text AS resource_id,
+            e.patient_id::text AS patient_id,
+            e.appointment_id::text AS appointment_id,
+            COALESCE((to_jsonb(e)->>'signed_at')::timestamptz, e.updated_at, e.created_at) AS occurred_at,
+            1::numeric AS productivity_weight,
+            0::numeric AS compliance_weight,
+            jsonb_build_object('status', e.status, 'providerId', e.provider_id) AS metadata
+          FROM encounters e
+          LEFT JOIN providers p ON p.id = e.provider_id AND p.tenant_id = e.tenant_id
+          WHERE e.tenant_id = $1
+            AND COALESCE((to_jsonb(e)->>'signed_at')::timestamptz, e.updated_at, e.created_at) >= $2::timestamptz
+            AND COALESCE((to_jsonb(e)->>'signed_at')::timestamptz, e.updated_at, e.created_at) < $3::timestamptz
+            AND COALESCE(e.updated_at, e.created_at) IS NOT NULL
+        `,
+      },
+    );
+  }
+
+  if (hasTables(existingTables, ["patient_flow", "flow_status_history"])) {
+    sources.push({
+      tableName: "flow_status_history",
+      sql: `
+        SELECT
+          fsh.changed_by AS actor_user_id,
+          'Office Flow'::text AS category,
+          CASE
+            WHEN fsh.to_status = 'checked_in' THEN 'patient_checked_in'
+            WHEN fsh.to_status = 'rooming' THEN 'patient_roomed'
+            WHEN fsh.to_status = 'vitals_complete' THEN 'vitals_completed'
+            WHEN fsh.to_status = 'checkout' THEN 'checkout_started'
+            WHEN fsh.to_status = 'completed' THEN 'checkout_completed'
+            ELSE 'flow_updated'
+          END AS action,
+          CASE
+            WHEN fsh.to_status = 'checked_in' THEN 'Patient checked in'
+            WHEN fsh.to_status = 'rooming' THEN 'Patient roomed'
+            WHEN fsh.to_status = 'vitals_complete' THEN 'Vitals completed'
+            WHEN fsh.to_status = 'checkout' THEN 'Checkout started'
+            WHEN fsh.to_status = 'completed' THEN 'Checkout completed'
+            ELSE 'Flow updated'
+          END AS action_label,
+          'patient_flow'::text AS resource_type,
+          pf.id::text AS resource_id,
+          pf.patient_id::text AS patient_id,
+          pf.appointment_id::text AS appointment_id,
+          fsh.changed_at AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('fromStatus', fsh.from_status, 'toStatus', fsh.to_status, 'roomId', fsh.room_id) AS metadata
+        FROM flow_status_history fsh
+        JOIN patient_flow pf ON pf.id = fsh.flow_id AND pf.tenant_id = fsh.tenant_id
+        WHERE fsh.tenant_id = $1
+          AND fsh.changed_by IS NOT NULL
+          AND fsh.changed_at >= $2::timestamptz
+          AND fsh.changed_at < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("tasks")) {
+    sources.push({
+      tableName: "tasks",
+      sql: `
+        SELECT
+          COALESCE(NULLIF(to_jsonb(t)->>'completed_by', ''), t.assigned_to, NULLIF(to_jsonb(t)->>'created_by', '')) AS actor_user_id,
+          'Tasks'::text AS category,
+          'task_completed'::text AS action,
+          'Task completed'::text AS action_label,
+          'task'::text AS resource_type,
+          t.id::text AS resource_id,
+          t.patient_id::text AS patient_id,
+          t.encounter_id::text AS appointment_id,
+          COALESCE(
+            (NULLIF(to_jsonb(t)->>'completed_at', ''))::timestamptz,
+            (NULLIF(to_jsonb(t)->>'updated_at', ''))::timestamptz,
+            t.created_at
+          ) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('status', t.status, 'title', t.title, 'priority', to_jsonb(t)->>'priority') AS metadata
+        FROM tasks t
+        WHERE t.tenant_id = $1
+          AND lower(t.status) IN ('completed', 'done', 'closed')
+          AND COALESCE(
+            (NULLIF(to_jsonb(t)->>'completed_at', ''))::timestamptz,
+            (NULLIF(to_jsonb(t)->>'updated_at', ''))::timestamptz,
+            t.created_at
+          ) >= $2::timestamptz
+          AND COALESCE(
+            (NULLIF(to_jsonb(t)->>'completed_at', ''))::timestamptz,
+            (NULLIF(to_jsonb(t)->>'updated_at', ''))::timestamptz,
+            t.created_at
+          ) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (hasTables(existingTables, ["patient_messages", "patient_message_threads"])) {
+    sources.push({
+      tableName: "patient_messages",
+      sql: `
+        SELECT
+          pm.sender_user_id AS actor_user_id,
+          'Communication'::text AS category,
+          CASE WHEN pm.is_internal_note THEN 'internal_note_added' ELSE 'patient_message_sent' END AS action,
+          CASE WHEN pm.is_internal_note THEN 'Internal note added' ELSE 'Patient message sent' END AS action_label,
+          'patient_message'::text AS resource_type,
+          pm.id::text AS resource_id,
+          pmt.patient_id::text AS patient_id,
+          NULL::text AS appointment_id,
+          COALESCE(pm.sent_at, pm.created_at) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('threadId', pm.thread_id, 'category', pmt.category, 'internal', pm.is_internal_note) AS metadata
+        FROM patient_messages pm
+        JOIN patient_message_threads pmt ON pmt.id = pm.thread_id
+        WHERE pmt.tenant_id = $1
+          AND pm.sender_type = 'staff'
+          AND pm.sender_user_id IS NOT NULL
+          AND COALESCE(pm.sent_at, pm.created_at) >= $2::timestamptz
+          AND COALESCE(pm.sent_at, pm.created_at) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("claims")) {
+    sources.push({
+      tableName: "claims",
+      sql: `
+        SELECT
+          COALESCE(NULLIF(to_jsonb(c)->>'coding_reviewed_by', ''), NULLIF(to_jsonb(c)->>'updated_by', ''), NULLIF(to_jsonb(c)->>'created_by', '')) AS actor_user_id,
+          'Billing'::text AS category,
+          'claim_released'::text AS action,
+          'Claim released from coding review'::text AS action_label,
+          'claim'::text AS resource_type,
+          c.id::text AS resource_id,
+          c.patient_id::text AS patient_id,
+          NULL::text AS appointment_id,
+          COALESCE((to_jsonb(c)->>'coding_reviewed_at')::timestamptz, c.updated_at, c.created_at) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('status', c.status, 'claimNumber', c.claim_number, 'codingReviewStatus', to_jsonb(c)->>'coding_review_status') AS metadata
+        FROM claims c
+        WHERE c.tenant_id = $1
+          AND lower(COALESCE(to_jsonb(c)->>'coding_review_status', c.status, '')) IN ('released', 'ready', 'submitted', 'accepted', 'paid')
+          AND COALESCE((to_jsonb(c)->>'coding_reviewed_at')::timestamptz, c.updated_at, c.created_at) >= $2::timestamptz
+          AND COALESCE((to_jsonb(c)->>'coding_reviewed_at')::timestamptz, c.updated_at, c.created_at) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("charges")) {
+    sources.push({
+      tableName: "charges",
+      sql: `
+        SELECT
+          NULLIF(to_jsonb(c)->>'created_by', '') AS actor_user_id,
+          'Billing'::text AS category,
+          'charge_created'::text AS action,
+          'Charge created'::text AS action_label,
+          'charge'::text AS resource_type,
+          c.id::text AS resource_id,
+          NULL::text AS patient_id,
+          c.encounter_id::text AS appointment_id,
+          c.created_at AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('cptCode', c.cpt_code, 'amountCents', c.amount_cents, 'status', c.status) AS metadata
+        FROM charges c
+        WHERE c.tenant_id = $1
+          AND c.created_at >= $2::timestamptz
+          AND c.created_at < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("patient_payments")) {
+    sources.push({
+      tableName: "patient_payments",
+      sql: `
+        SELECT
+          COALESCE(NULLIF(to_jsonb(pp)->>'processed_by', ''), NULLIF(to_jsonb(pp)->>'created_by', '')) AS actor_user_id,
+          'Billing'::text AS category,
+          'payment_posted'::text AS action,
+          'Payment posted'::text AS action_label,
+          'patient_payment'::text AS resource_type,
+          pp.id::text AS resource_id,
+          pp.patient_id::text AS patient_id,
+          NULL::text AS appointment_id,
+          COALESCE((to_jsonb(pp)->>'payment_date')::timestamptz, pp.created_at) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('amountCents', pp.amount_cents, 'method', pp.payment_method, 'status', pp.status) AS metadata
+        FROM patient_payments pp
+        WHERE pp.tenant_id = $1
+          AND COALESCE((to_jsonb(pp)->>'payment_date')::timestamptz, pp.created_at) >= $2::timestamptz
+          AND COALESCE((to_jsonb(pp)->>'payment_date')::timestamptz, pp.created_at) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("prescriptions")) {
+    sources.push({
+      tableName: "prescriptions",
+      sql: `
+        SELECT
+          COALESCE(NULLIF(to_jsonb(rx)->>'created_by', ''), NULLIF(rx.provider_id, '')) AS actor_user_id,
+          'Clinical'::text AS category,
+          'prescription_created'::text AS action,
+          'Prescription created'::text AS action_label,
+          'prescription'::text AS resource_type,
+          rx.id::text AS resource_id,
+          rx.patient_id::text AS patient_id,
+          NULLIF(to_jsonb(rx)->>'encounter_id', '') AS appointment_id,
+          COALESCE((to_jsonb(rx)->>'prescribed_date')::timestamptz, rx.created_at) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('medicationName', rx.medication_name, 'status', to_jsonb(rx)->>'status') AS metadata
+        FROM prescriptions rx
+        WHERE rx.tenant_id = $1
+          AND COALESCE((to_jsonb(rx)->>'prescribed_date')::timestamptz, rx.created_at) >= $2::timestamptz
+          AND COALESCE((to_jsonb(rx)->>'prescribed_date')::timestamptz, rx.created_at) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (hasTables(existingTables, ["orders", "providers"])) {
+    sources.push({
+      tableName: "orders",
+      sql: `
+        SELECT
+          COALESCE(NULLIF(to_jsonb(o)->>'created_by', ''), p.user_id) AS actor_user_id,
+          'Clinical'::text AS category,
+          'order_created'::text AS action,
+          'Order created'::text AS action_label,
+          'order'::text AS resource_type,
+          o.id::text AS resource_id,
+          o.patient_id::text AS patient_id,
+          o.encounter_id::text AS appointment_id,
+          o.created_at AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('type', o.type, 'status', o.status, 'priority', to_jsonb(o)->>'priority') AS metadata
+        FROM orders o
+        LEFT JOIN providers p ON p.id = o.provider_id AND p.tenant_id = o.tenant_id
+        WHERE o.tenant_id = $1
+          AND o.created_at >= $2::timestamptz
+          AND o.created_at < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("inventory_usage")) {
+    sources.push({
+      tableName: "inventory_usage",
+      sql: `
+        SELECT
+          NULLIF(to_jsonb(iu)->>'created_by', '') AS actor_user_id,
+          'Inventory'::text AS category,
+          'inventory_used'::text AS action,
+          'Inventory used'::text AS action_label,
+          'inventory_usage'::text AS resource_type,
+          iu.id::text AS resource_id,
+          iu.patient_id::text AS patient_id,
+          COALESCE(iu.appointment_id, iu.encounter_id)::text AS appointment_id,
+          COALESCE(iu.used_at, iu.created_at) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('itemId', iu.item_id, 'quantityUsed', iu.quantity_used, 'givenAsSample', to_jsonb(iu)->>'given_as_sample') AS metadata
+        FROM inventory_usage iu
+        WHERE iu.tenant_id = $1
+          AND COALESCE(iu.used_at, iu.created_at) >= $2::timestamptz
+          AND COALESCE(iu.used_at, iu.created_at) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("product_sales")) {
+    sources.push({
+      tableName: "product_sales",
+      sql: `
+        SELECT
+          ps.sold_by AS actor_user_id,
+          'Store'::text AS category,
+          'store_sale'::text AS action,
+          'Store sale completed'::text AS action_label,
+          'product_sale'::text AS resource_type,
+          ps.id::text AS resource_id,
+          ps.patient_id::text AS patient_id,
+          ps.encounter_id::text AS appointment_id,
+          COALESCE(ps.sale_date, ps.created_at) AS occurred_at,
+          1::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object('saleNumber', ps.sale_number, 'totalAmount', ps.total_amount, 'status', ps.status) AS metadata
+        FROM product_sales ps
+        WHERE ps.tenant_id = $1
+          AND COALESCE(ps.sale_date, ps.created_at) >= $2::timestamptz
+          AND COALESCE(ps.sale_date, ps.created_at) < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("openai_usage_audit")) {
+    sources.push({
+      tableName: "openai_usage_audit",
+      sql: `
+        SELECT
+          ou.user_id AS actor_user_id,
+          'AI'::text AS category,
+          'ai_request'::text AS action,
+          'AI request'::text AS action_label,
+          COALESCE(ou.resource_type, 'ai_usage')::text AS resource_type,
+          ou.id::text AS resource_id,
+          NULL::text AS patient_id,
+          NULL::text AS appointment_id,
+          ou.created_at AS occurred_at,
+          0::numeric AS productivity_weight,
+          0::numeric AS compliance_weight,
+          jsonb_build_object(
+            'feature', ou.feature,
+            'model', ou.model,
+            'provider', to_jsonb(ou)->>'provider',
+            'estimatedCostCents', ou.estimated_cost_cents,
+            'totalTokens', ou.total_tokens
+          ) AS metadata
+        FROM openai_usage_audit ou
+        WHERE ou.tenant_id = $1
+          AND ou.user_id IS NOT NULL
+          AND ou.created_at >= $2::timestamptz
+          AND ou.created_at < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("audit_log")) {
+    sources.push({
+      tableName: "audit_log",
+      sql: `
+        SELECT
+          COALESCE(NULLIF(to_jsonb(al)->>'user_id', ''), NULLIF(to_jsonb(al)->>'actor_id', '')) AS actor_user_id,
+          'Audit'::text AS category,
+          'audit_event'::text AS action,
+          COALESCE(NULLIF(replace(al.action, '_', ' '), ''), 'Audit event') AS action_label,
+          COALESCE(NULLIF(to_jsonb(al)->>'resource_type', ''), NULLIF(to_jsonb(al)->>'entity', ''), 'audit') AS resource_type,
+          COALESCE(NULLIF(to_jsonb(al)->>'resource_id', ''), NULLIF(to_jsonb(al)->>'entity_id', '')) AS resource_id,
+          NULL::text AS patient_id,
+          NULL::text AS appointment_id,
+          al.created_at AS occurred_at,
+          0::numeric AS productivity_weight,
+          1::numeric AS compliance_weight,
+          jsonb_build_object('severity', to_jsonb(al)->>'severity', 'status', to_jsonb(al)->>'status', 'action', al.action) AS metadata
+        FROM audit_log al
+        WHERE al.tenant_id = $1
+          AND COALESCE(NULLIF(to_jsonb(al)->>'user_id', ''), NULLIF(to_jsonb(al)->>'actor_id', '')) IS NOT NULL
+          AND al.created_at >= $2::timestamptz
+          AND al.created_at < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("phi_access_log")) {
+    sources.push({
+      tableName: "phi_access_log",
+      sql: `
+        SELECT
+          pal.user_id AS actor_user_id,
+          'Compliance'::text AS category,
+          CASE WHEN pal.is_break_glass THEN 'break_glass' ELSE 'phi_access' END AS action,
+          CASE WHEN pal.is_break_glass THEN 'Break-glass PHI access' ELSE 'PHI access' END AS action_label,
+          pal.resource_type::text AS resource_type,
+          pal.resource_id::text AS resource_id,
+          pal.patient_id::text AS patient_id,
+          NULL::text AS appointment_id,
+          pal.accessed_at AS occurred_at,
+          0::numeric AS productivity_weight,
+          CASE WHEN pal.is_break_glass THEN 2::numeric ELSE 1::numeric END AS compliance_weight,
+          jsonb_build_object('accessType', pal.access_type, 'breakGlass', pal.is_break_glass, 'ownRecord', pal.is_own_record) AS metadata
+        FROM phi_access_log pal
+        WHERE pal.tenant_id = $1
+          AND pal.user_id IS NOT NULL
+          AND pal.accessed_at >= $2::timestamptz
+          AND pal.accessed_at < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("login_activity_log")) {
+    sources.push({
+      tableName: "login_activity_log",
+      sql: `
+        SELECT
+          lal.user_id AS actor_user_id,
+          'Security'::text AS category,
+          CASE WHEN lower(lal.event_type) LIKE '%fail%' THEN 'failed_login' ELSE 'login_event' END AS action,
+          CASE WHEN lower(lal.event_type) LIKE '%fail%' THEN 'Failed login' ELSE 'Login event' END AS action_label,
+          'login'::text AS resource_type,
+          lal.id::text AS resource_id,
+          NULL::text AS patient_id,
+          NULL::text AS appointment_id,
+          lal.created_at AS occurred_at,
+          0::numeric AS productivity_weight,
+          CASE WHEN lal.is_suspicious OR lower(lal.event_type) LIKE '%fail%' THEN 2::numeric ELSE 1::numeric END AS compliance_weight,
+          jsonb_build_object('eventType', lal.event_type, 'suspicious', lal.is_suspicious, 'failureReason', lal.failure_reason) AS metadata
+        FROM login_activity_log lal
+        WHERE lal.tenant_id = $1
+          AND lal.user_id IS NOT NULL
+          AND lal.created_at >= $2::timestamptz
+          AND lal.created_at < $3::timestamptz
+      `,
+    });
+  }
+
+  if (existingTables.has("suspicious_activity_log")) {
+    sources.push({
+      tableName: "suspicious_activity_log",
+      sql: `
+        SELECT
+          sal.user_id AS actor_user_id,
+          'Security'::text AS category,
+          'suspicious_activity'::text AS action,
+          'Suspicious activity flag'::text AS action_label,
+          'suspicious_activity'::text AS resource_type,
+          sal.id::text AS resource_id,
+          NULL::text AS patient_id,
+          NULL::text AS appointment_id,
+          sal.detected_at AS occurred_at,
+          0::numeric AS productivity_weight,
+          3::numeric AS compliance_weight,
+          jsonb_build_object('activityType', sal.activity_type, 'riskScore', sal.risk_score, 'reviewed', sal.reviewed) AS metadata
+        FROM suspicious_activity_log sal
+        WHERE sal.tenant_id = $1
+          AND sal.user_id IS NOT NULL
+          AND sal.detected_at >= $2::timestamptz
+          AND sal.detected_at < $3::timestamptz
+      `,
+    });
+  }
+
+  return sources;
+}
+
+function buildTeamActivityUnion(sources: TeamActivitySource[]): string {
+  if (sources.length === 0) {
+    return `
+      SELECT
+        NULL::text AS actor_user_id,
+        NULL::text AS category,
+        NULL::text AS action,
+        NULL::text AS action_label,
+        NULL::text AS resource_type,
+        NULL::text AS resource_id,
+        NULL::text AS patient_id,
+        NULL::text AS appointment_id,
+        NULL::timestamptz AS occurred_at,
+        0::numeric AS productivity_weight,
+        0::numeric AS compliance_weight,
+        '{}'::jsonb AS metadata
+      WHERE false
+    `;
+  }
+
+  return sources.map((source) => source.sql.trim()).join("\nUNION ALL\n");
+}
+
 analyticsRouter.use(rateLimit({ windowMs: 60_000, max: 120 }));
 analyticsRouter.use(requireAuth, requireModuleAccess("analytics"));
 
@@ -366,6 +927,194 @@ analyticsRouter.get("/provider-productivity", async (req: AuthedRequest, res) =>
   );
 
   res.json({ data: result.rows });
+});
+
+// GET /api/analytics/team-productivity - Staff activity, productivity, and compliance summary
+analyticsRouter.get("/team-productivity", async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const start = toDateRangeStart(req.query.startDate, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+    const endExclusive = toDateRangeExclusiveEnd(req.query.endDate, new Date());
+    const selectedUserId = typeof req.query.userId === "string" && req.query.userId !== "all" ? req.query.userId : null;
+    const selectedRole = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : null;
+
+    const existingTablesResult = await pool.query(
+      `SELECT table_name
+       FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name = ANY($1::text[])`,
+      [TEAM_ACTIVITY_TABLES],
+    );
+    const existingTables = new Set(
+      existingTablesResult.rows
+        .map((row: { table_name?: string }) => row.table_name)
+        .filter((tableName): tableName is string => Boolean(tableName)),
+    );
+    const sources = buildTeamActivitySources(existingTables);
+    const eventUnion = buildTeamActivityUnion(sources);
+
+    const result = await pool.query(
+      `
+      WITH user_base AS (
+        SELECT
+          u.id,
+          u.full_name,
+          u.email,
+          u.role,
+          u.created_at,
+          COALESCE(
+            jsonb_agg(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name, 'specialty', p.specialty))
+              FILTER (WHERE p.id IS NOT NULL),
+            '[]'::jsonb
+          ) AS linked_providers
+        FROM users u
+        LEFT JOIN providers p ON p.user_id = u.id AND p.tenant_id = u.tenant_id
+        WHERE u.tenant_id = $1
+          AND ($4::text IS NULL OR u.id = $4::text)
+          AND ($5::text IS NULL OR u.role = $5::text)
+        GROUP BY u.id, u.full_name, u.email, u.role, u.created_at
+      ),
+      events AS (
+        SELECT *
+        FROM (${eventUnion}) raw_events
+        WHERE raw_events.actor_user_id IS NOT NULL
+          AND raw_events.occurred_at IS NOT NULL
+      ),
+      scoped_events AS (
+        SELECT e.*
+        FROM events e
+        JOIN user_base u ON u.id = e.actor_user_id
+      ),
+      user_metrics AS (
+        SELECT
+          u.id AS "userId",
+          u.full_name AS "fullName",
+          u.email,
+          u.role,
+          u.linked_providers AS "linkedProviders",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.productivity_weight > 0), 0)::int AS "productiveActions",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.compliance_weight > 0), 0)::int AS "complianceEvents",
+          COALESCE(COUNT(DISTINCT e.patient_id) FILTER (WHERE e.patient_id IS NOT NULL), 0)::int AS "uniquePatientsTouched",
+          COALESCE(COUNT(DISTINCT e.patient_id) FILTER (WHERE e.action = 'patient_seen'), 0)::int AS "patientsSeen",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'patient_seen'), 0)::int AS "completedAppointments",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'note_created'), 0)::int AS "notesCreated",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'note_edited'), 0)::int AS "notesEdited",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'note_signed'), 0)::int AS "notesSigned",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action IN ('patient_checked_in', 'patient_roomed', 'vitals_completed', 'checkout_started', 'checkout_completed', 'flow_updated')), 0)::int AS "flowActions",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'task_completed'), 0)::int AS "tasksCompleted",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action IN ('patient_message_sent', 'internal_note_added')), 0)::int AS "messagesHandled",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'claim_released'), 0)::int AS "claimsReleased",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'charge_created'), 0)::int AS "chargesCreated",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'payment_posted'), 0)::int AS "paymentsPosted",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'prescription_created'), 0)::int AS "prescriptionsCreated",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'order_created'), 0)::int AS "ordersCreated",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action IN ('inventory_used', 'store_sale')), 0)::int AS "inventoryStoreActions",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'ai_request'), 0)::int AS "aiRequests",
+          COALESCE(ROUND(SUM((e.metadata->>'estimatedCostCents')::numeric) FILTER (WHERE e.action = 'ai_request'), 6), 0)::float AS "aiCostCents",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action = 'phi_access'), 0)::int AS "phiAccessEvents",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.action IN ('failed_login', 'suspicious_activity', 'break_glass')), 0)::int AS "complianceFlags",
+          MAX(e.occurred_at) AS "lastActivityAt"
+        FROM user_base u
+        LEFT JOIN scoped_events e ON e.actor_user_id = u.id
+        GROUP BY u.id, u.full_name, u.email, u.role, u.linked_providers
+        ORDER BY "productiveActions" DESC, "complianceFlags" DESC, "fullName" ASC
+      ),
+      category_metrics AS (
+        SELECT
+          e.category,
+          COALESCE(COUNT(e.*) FILTER (WHERE e.productivity_weight > 0), 0)::int AS "productiveActions",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.compliance_weight > 0), 0)::int AS "complianceEvents",
+          COALESCE(COUNT(DISTINCT e.actor_user_id), 0)::int AS "activeUsers",
+          MAX(e.occurred_at) AS "lastActivityAt"
+        FROM scoped_events e
+        GROUP BY e.category
+        ORDER BY "productiveActions" DESC, "complianceEvents" DESC, e.category ASC
+      ),
+      trend_points AS (
+        SELECT
+          date_trunc('day', e.occurred_at)::date AS date,
+          COALESCE(COUNT(e.*) FILTER (WHERE e.productivity_weight > 0), 0)::int AS "productiveActions",
+          COALESCE(COUNT(e.*) FILTER (WHERE e.compliance_weight > 0), 0)::int AS "complianceEvents",
+          COALESCE(COUNT(DISTINCT e.actor_user_id), 0)::int AS "activeUsers"
+        FROM scoped_events e
+        GROUP BY date_trunc('day', e.occurred_at)::date
+        ORDER BY date ASC
+      ),
+      recent_events AS (
+        SELECT
+          e.actor_user_id AS "userId",
+          u.full_name AS "fullName",
+          u.role,
+          e.category,
+          e.action,
+          e.action_label AS "actionLabel",
+          e.resource_type AS "resourceType",
+          e.resource_id AS "resourceId",
+          e.patient_id AS "patientId",
+          e.appointment_id AS "appointmentId",
+          e.occurred_at AS "occurredAt",
+          e.productivity_weight AS "productivityWeight",
+          e.compliance_weight AS "complianceWeight",
+          e.metadata
+        FROM scoped_events e
+        JOIN user_base u ON u.id = e.actor_user_id
+        ORDER BY e.occurred_at DESC
+        LIMIT 80
+      ),
+      summary AS (
+        SELECT
+          jsonb_build_object(
+            'startDate', $2::timestamptz,
+            'endDate', $3::timestamptz,
+            'sourceTables', $6::text[],
+            'totalUsers', COALESCE((SELECT COUNT(*) FROM user_base), 0),
+            'activeUsers', COALESCE(COUNT(DISTINCT actor_user_id), 0),
+            'productiveActions', COALESCE(COUNT(*) FILTER (WHERE productivity_weight > 0), 0),
+            'complianceEvents', COALESCE(COUNT(*) FILTER (WHERE compliance_weight > 0), 0),
+            'uniquePatientsTouched', COALESCE(COUNT(DISTINCT patient_id) FILTER (WHERE patient_id IS NOT NULL), 0),
+            'patientsSeen', COALESCE(COUNT(DISTINCT patient_id) FILTER (WHERE action = 'patient_seen'), 0),
+            'notesSigned', COALESCE(COUNT(*) FILTER (WHERE action = 'note_signed'), 0),
+            'tasksCompleted', COALESCE(COUNT(*) FILTER (WHERE action = 'task_completed'), 0),
+            'messagesHandled', COALESCE(COUNT(*) FILTER (WHERE action IN ('patient_message_sent', 'internal_note_added')), 0),
+            'claimsReleased', COALESCE(COUNT(*) FILTER (WHERE action = 'claim_released'), 0),
+            'flowActions', COALESCE(COUNT(*) FILTER (WHERE action IN ('patient_checked_in', 'patient_roomed', 'vitals_completed', 'checkout_started', 'checkout_completed', 'flow_updated')), 0),
+            'inventoryStoreActions', COALESCE(COUNT(*) FILTER (WHERE action IN ('inventory_used', 'store_sale')), 0),
+            'aiRequests', COALESCE(COUNT(*) FILTER (WHERE action = 'ai_request'), 0),
+            'aiCostCents', COALESCE(ROUND(SUM((metadata->>'estimatedCostCents')::numeric) FILTER (WHERE action = 'ai_request'), 6), 0),
+            'phiAccessEvents', COALESCE(COUNT(*) FILTER (WHERE action = 'phi_access'), 0),
+            'complianceFlags', COALESCE(COUNT(*) FILTER (WHERE action IN ('failed_login', 'suspicious_activity', 'break_glass')), 0)
+          ) AS payload
+        FROM scoped_events
+      )
+      SELECT
+        COALESCE((SELECT payload FROM summary), '{}'::jsonb) AS summary,
+        COALESCE((SELECT jsonb_agg(to_jsonb(user_metrics)) FROM user_metrics), '[]'::jsonb) AS users,
+        COALESCE((SELECT jsonb_agg(to_jsonb(category_metrics)) FROM category_metrics), '[]'::jsonb) AS categories,
+        COALESCE((SELECT jsonb_agg(to_jsonb(trend_points)) FROM trend_points), '[]'::jsonb) AS trend,
+        COALESCE((SELECT jsonb_agg(to_jsonb(recent_events)) FROM recent_events), '[]'::jsonb) AS "recentEvents"
+      `,
+      [
+        tenantId,
+        start.toISOString(),
+        endExclusive.toISOString(),
+        selectedUserId,
+        selectedRole,
+        sources.map((source) => source.tableName),
+      ],
+    );
+
+    const row = result.rows[0] || {};
+    return res.json({
+      summary: row.summary || {},
+      users: Array.isArray(row.users) ? row.users : [],
+      categories: Array.isArray(row.categories) ? row.categories : [],
+      trend: Array.isArray(row.trend) ? row.trend : [],
+      recentEvents: Array.isArray(row.recentEvents) ? row.recentEvents : [],
+    });
+  } catch (error) {
+    logger.error("Error getting team productivity analytics", { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: "Failed to get team productivity analytics" });
+  }
 });
 
 // GET /api/analytics/patient-demographics - Age groups, gender distribution

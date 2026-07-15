@@ -36,6 +36,7 @@ import {
   fetchStatusCounts,
   fetchDashboardKPIs,
   fetchProviderProductivity,
+  fetchTeamProductivity,
   fetchPatientDemographics,
   fetchAppointmentTypesAnalytics,
   updatePhotoAnnotations,
@@ -437,6 +438,11 @@ describe('api.ts', () => {
       label: 'provider productivity',
       call: () => fetchProviderProductivity(tenantId, token),
       path: '/api/analytics/provider-productivity',
+    },
+    {
+      label: 'team productivity',
+      call: () => fetchTeamProductivity(tenantId, token),
+      path: '/api/analytics/team-productivity',
     },
     {
       label: 'patient demographics',
@@ -874,6 +880,19 @@ describe('api.ts', () => {
 
     [url] = fetchMock.mock.calls[3];
     expect(url).toBe(`${API_BASE_URL}/api/analytics/dashboard?startDate=2024-01-01`);
+
+    fetchMock.mockResolvedValueOnce(okResponse({}));
+    await fetchTeamProductivity(tenantId, token, {
+      startDate: '2024-01-01',
+      endDate: '2024-01-31',
+      userId: 'user-1',
+      role: 'provider',
+    });
+
+    [url] = fetchMock.mock.calls[4];
+    expect(url).toBe(
+      `${API_BASE_URL}/api/analytics/team-productivity?startDate=2024-01-01&endDate=2024-01-31&userId=user-1&role=provider`
+    );
   });
 
   it('surfaces auth helper errors', async () => {

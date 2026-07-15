@@ -1380,13 +1380,15 @@ export async function fetchAudit(tenantId: string, accessToken: string) {
   return res.json();
 }
 
-type AnalyticsFilter = { startDate?: string; endDate?: string; providerId?: string };
+type AnalyticsFilter = { startDate?: string; endDate?: string; providerId?: string; userId?: string; role?: string };
 
 const buildQuery = (filter?: AnalyticsFilter) => {
   const params = new URLSearchParams();
   if (filter?.startDate) params.append("startDate", filter.startDate);
   if (filter?.endDate) params.append("endDate", filter.endDate);
   if (filter?.providerId && filter.providerId !== "all") params.append("providerId", filter.providerId);
+  if (filter?.userId && filter.userId !== "all") params.append("userId", filter.userId);
+  if (filter?.role && filter.role !== "all") params.append("role", filter.role);
   const query = params.toString();
   return query ? `?${query}` : "";
 };
@@ -1602,6 +1604,14 @@ export async function fetchProviderProductivity(tenantId: string, accessToken: s
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
   });
   if (!res.ok) throw new Error("Failed to load provider productivity");
+  return res.json();
+}
+
+export async function fetchTeamProductivity(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/team-productivity${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load team productivity");
   return res.json();
 }
 

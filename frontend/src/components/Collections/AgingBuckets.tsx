@@ -167,7 +167,8 @@ function formatMoney(value?: number | string | null): string {
 
 function formatDate(value?: string | null): string {
   if (!value) return "None";
-  return new Date(value).toLocaleDateString();
+  const date = toLocalCalendarDate(value);
+  return Number.isNaN(date.getTime()) ? "None" : date.toLocaleDateString();
 }
 
 function labelize(value?: string | null): string {
@@ -179,15 +180,30 @@ function labelize(value?: string | null): string {
 
 function daysOld(value?: string | null): number | null {
   if (!value) return null;
-  return Math.floor((Date.now() - new Date(value).getTime()) / (1000 * 60 * 60 * 24));
+  const date = toLocalCalendarDate(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function isDue(value?: string | null): boolean {
   if (!value) return false;
-  const due = new Date(`${value}T00:00:00`);
+  const due = toLocalCalendarDate(value);
+  if (Number.isNaN(due.getTime())) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return due <= today;
+}
+
+function toLocalCalendarDate(value: string): Date {
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnly) {
+    return new Date(
+      Number(dateOnly[1]),
+      Number(dateOnly[2]) - 1,
+      Number(dateOnly[3])
+    );
+  }
+  return new Date(value);
 }
 
 function iconForMethod(method?: string | null) {

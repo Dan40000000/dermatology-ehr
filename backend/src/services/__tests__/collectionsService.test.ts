@@ -37,6 +37,46 @@ describe("collectionsService", () => {
     expect(result?.patientId).toBe("patient-1");
   });
 
+  it("getPatientBalance falls back to open bills when legacy balance is stale", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            patientId: "patient-1",
+            totalBalance: 0,
+            currentBalance: 0,
+            balance31_60: 0,
+            balance61_90: 0,
+            balanceOver90: 0,
+          },
+        ],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            patientId: "patient-1",
+            totalBalance: 325,
+            currentBalance: 125,
+            balance31_60: 200,
+            balance61_90: 0,
+            balanceOver90: 0,
+          },
+        ],
+        rowCount: 1,
+      });
+
+    const result = await collectionsService.getPatientBalance("tenant-1", "patient-1");
+
+    expect(result?.totalBalance).toBe(325);
+    expect(result?.currentBalance).toBe(125);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("from bills b"),
+      ["tenant-1", "patient-1"]
+    );
+  });
+
   it("calculateEstimate returns breakdown", async () => {
     queryMock
       .mockResolvedValueOnce({

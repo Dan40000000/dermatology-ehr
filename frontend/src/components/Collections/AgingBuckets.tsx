@@ -220,12 +220,16 @@ function iconForMethod(method?: string | null) {
 }
 
 function sanitizePayload(form: AttemptFormState, patient: AgingPatient) {
-  const promisedAmount = form.patientPromisedAmount.trim()
+  const parsedPromisedAmount = form.patientPromisedAmount.trim()
     ? Number(form.patientPromisedAmount)
     : undefined;
+  const promisedAmount = Number.isFinite(parsedPromisedAmount)
+    ? parsedPromisedAmount
+    : undefined;
+  const amountDue = Number(patient.totalBalance || 0);
 
   return {
-    amountDue: patient.totalBalance,
+    amountDue: Number.isFinite(amountDue) ? amountDue : 0,
     contactMethod: form.contactMethod,
     contactDirection: form.contactDirection,
     contactPerson: form.contactPerson.trim() || undefined,

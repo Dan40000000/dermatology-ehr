@@ -35,8 +35,8 @@ const RETEST_APPOINTMENTS = [
     providerId: 'prov-demo',
     locationId: 'loc-demo',
     appointmentTypeId: 'appttype-fu',
-    startUtc: '16:00',
-    endUtc: '16:20',
+    startUtc: '21:00',
+    endUtc: '21:20',
   },
   {
     id: 'appt-retest-jamie-balance',
@@ -44,8 +44,8 @@ const RETEST_APPOINTMENTS = [
     providerId: 'prov-demo',
     locationId: 'loc-demo',
     appointmentTypeId: 'appttype-fu',
-    startUtc: '16:30',
-    endUtc: '16:50',
+    startUtc: '21:25',
+    endUtc: '21:45',
   },
   {
     id: 'appt-retest-sarah-cosmetic-consult',
@@ -53,8 +53,8 @@ const RETEST_APPOINTMENTS = [
     providerId: 'prov-cosmetic-pa',
     locationId: 'loc-demo',
     appointmentTypeId: 'appttype-cosmetic-consult',
-    startUtc: '17:00',
-    endUtc: '17:30',
+    startUtc: '20:30',
+    endUtc: '21:00',
   },
   {
     id: 'appt-retest-daniel-hydrafacial',
@@ -62,8 +62,8 @@ const RETEST_APPOINTMENTS = [
     providerId: 'prov-cosmetic-pa',
     locationId: 'loc-demo',
     appointmentTypeId: 'appttype-hydrafacial',
-    startUtc: '17:45',
-    endUtc: '18:30',
+    startUtc: '21:05',
+    endUtc: '21:50',
   },
   {
     id: 'appt-retest-karen-biopsy',
@@ -71,8 +71,8 @@ const RETEST_APPOINTMENTS = [
     providerId: 'prov-demo-3',
     locationId: 'loc-east',
     appointmentTypeId: 'appttype-lesion-biopsy',
-    startUtc: '18:00',
-    endUtc: '18:30',
+    startUtc: '21:35',
+    endUtc: '22:05',
   },
   {
     id: 'appt-retest-emma-melanoma',
@@ -80,8 +80,8 @@ const RETEST_APPOINTMENTS = [
     providerId: 'prov-demo-3',
     locationId: 'loc-demo',
     appointmentTypeId: 'appttype-melanoma-check',
-    startUtc: '18:40',
-    endUtc: '19:10',
+    startUtc: '22:15',
+    endUtc: '22:45',
   },
   {
     id: 'appt-retest-stephanie-microneedling',
@@ -89,13 +89,24 @@ const RETEST_APPOINTMENTS = [
     providerId: 'prov-cosmetic-pa',
     locationId: 'loc-demo',
     appointmentTypeId: 'appttype-microneedling',
-    startUtc: '19:15',
-    endUtc: '20:15',
+    startUtc: '22:00',
+    endUtc: '23:00',
   },
 ];
 
+function clinicDateToday() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Denver',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function isoForToday(timeUtc) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = clinicDateToday();
   return `${today}T${timeUtc}:00.000Z`;
 }
 
@@ -186,6 +197,7 @@ async function cleanDemoPatients(client) {
 }
 
 async function reseedRetestAppointments(client) {
+  const clinicDate = clinicDateToday();
   const scenarioPatientIds = Array.from(new Set(RETEST_APPOINTMENTS.map((appt) => appt.patientId)));
   const scenarioAppointmentIds = RETEST_APPOINTMENTS.map((appt) => appt.id);
 
@@ -193,9 +205,9 @@ async function reseedRetestAppointments(client) {
     `DELETE FROM appointments
      WHERE tenant_id = $1
        AND patient_id = ANY($2::text[])
-       AND DATE(scheduled_start) = CURRENT_DATE
+       AND (scheduled_start AT TIME ZONE 'America/Denver')::date = $4::date
        AND id <> ALL($3::text[])`,
-    [TENANT_ID, scenarioPatientIds, scenarioAppointmentIds]
+    [TENANT_ID, scenarioPatientIds, scenarioAppointmentIds, clinicDate]
   );
 
   for (const appointment of RETEST_APPOINTMENTS) {

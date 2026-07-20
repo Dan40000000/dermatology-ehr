@@ -67,11 +67,6 @@ function toCents(dollars: number) {
   return Math.round(dollars * 100);
 }
 
-function makeJwt() {
-  const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: 'admin@demo.practice', role: 'admin', exp: 9_999_999_999 })}.sig`;
-}
-
 function makeAppointment(
   id: string,
   patientId: string,
@@ -1133,8 +1128,8 @@ async function installFullDayRoutes(page: Page, state: ReturnType<typeof buildCl
 async function seedAuthenticatedSession(page: Page) {
   const session = {
     tenantId: TENANT_ID,
-    accessToken: makeJwt(),
-    refreshToken: 'full-day-refresh-token',
+    accessToken: '__http_only_cookie__',
+    refreshToken: '__http_only_cookie__',
     user: {
       id: 'user-day-admin',
       email: 'admin@demo.practice',
@@ -1311,8 +1306,10 @@ test.describe('Full clinic day simulation', () => {
     const inboxDetail = page.locator('.clinical-inbox-detail-panel');
 
     await page.getByRole('button', { name: /Portal rash photo review/ }).click();
-    await page.getByPlaceholder('Write the reply or internal note...').fill('Reviewed photo. Keep the site covered and we will call today.');
-    await inboxDetail.getByRole('button', { name: 'Send' }).click();
+    await inboxDetail.getByPlaceholder('Write the reply or internal note...').fill('Reviewed photo. Keep the site covered and we will call today.');
+    const sendReplyButton = inboxDetail.getByRole('button', { name: 'Send' });
+    await expect(sendReplyButton).toBeEnabled();
+    await sendReplyButton.click();
     await expect.poll(() => state.portalMessagesByThread['portal-day-001'].length).toBe(2);
 
     await inboxTabs.getByRole('button', { name: /Messages/ }).click();

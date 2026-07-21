@@ -16,6 +16,13 @@ const formatCurrency = (value?: number) => {
   return `$${Number(value).toFixed(2)}`;
 };
 
+const formatLookupMode = (result: any) => {
+  if (result?.environment === 'sandbox') return 'Stedi sandbox';
+  if (result?.environment === 'production') return 'Production vendor';
+  if (result?.mode === 'live') return 'Live vendor';
+  return 'Internal demo';
+};
+
 export function InsuranceLookupPanel({
   patientId,
   payerId,
@@ -37,16 +44,12 @@ export function InsuranceLookupPanel({
 
   const handleCheck = async () => {
     if (!session) return;
-    if (!form.payerId.trim()) {
-      showError('Payer ID is required for an eligibility check');
-      return;
-    }
 
     setChecking(true);
     try {
       const response = await checkEligibilityWorkflow(session.tenantId, session.accessToken, {
         patientId,
-        payerId: form.payerId.trim(),
+        payerId: form.payerId.trim() || undefined,
         payerName: form.payerName.trim() || undefined,
         memberId: form.memberId.trim() || undefined,
         serviceDate: form.serviceDate,
@@ -139,6 +142,7 @@ export function InsuranceLookupPanel({
             <span>Deductible left: <strong>{formatCurrency(result.deductibleRemaining)}</strong></span>
             <span>Coinsurance: <strong>{result.coinsurancePct ?? 0}%</strong></span>
             <span>Provider: <strong>{result.provider}</strong></span>
+            <span>Mode: <strong>{formatLookupMode(result)}</strong></span>
           </div>
         ) : (
           <div style={{ color: '#64748b', fontSize: '0.8rem' }}>No lookup run yet.</div>

@@ -16,7 +16,8 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { createAuditLog } from '../services/audit';
 import { logger } from '../lib/logger';
-import { getEligibilityService } from '../services/healthcareWorkflowServices';
+import { getIntegrationService } from '../services/integrationService';
+import { normalizeInsuranceFields } from '../services/insuranceNormalization';
 import {
   verifyPatientEligibility,
   batchVerifyEligibility,
@@ -25,6 +26,7 @@ import {
   getPatientsWithIssues,
   getPatientsNeedingVerification,
   getTomorrowsPatients,
+  getPatientEligibility,
 } from '../services/eligibilityService';
 import { pool } from '../db/pool';
 
@@ -1107,13 +1109,11 @@ eligibilityRouter.get(
  *       500:
  *         description: Server error
  */
-import {
-  getPatientEligibility,
-} from '../services/eligibilityService';
-
 const checkEligibilitySchema = z.object({
   patientId: z.string().uuid(),
-  payerId: z.string().min(1),
+  payerId: z.string().optional(),
+  payerName: z.string().optional(),
+  memberId: z.string().optional(),
   serviceDate: z.string().optional(),
   serviceType: z.string().default('30'),
   bypassCache: z.boolean().default(false),
@@ -1137,14 +1137,177 @@ eligibilityRouter.post(
         bypassCache: validatedData.bypassCache,
       });
 
-      const result = await getEligibilityService().checkEligibility({
-        tenantId,
-        patientId: validatedData.patientId,
+      const patientResult = await pool.query(
+        `SELECT id, first_name, last_name, dob, insurance, insurance_plan_name,
+                insurance_payer_id, insurance_member_id, insurance_group_number
+         FROM patients
+         WHERE id = $1 AND tenant_id = $2`,
+        [validatedData.patientId, tenantId]
+      );
+
+      if (patientResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Patient not found',
+        });
+      }
+
+      const patient = patientResult.rows[0];
+      const normalizedInsurance = await normalizeInsuranceFields(tenantId, {
+        insurance: patient.insurance,
         payerId: validatedData.payerId,
-        serviceDate: validatedData.serviceDate,
-        serviceType: validatedData.serviceType,
-        bypassCache: validatedData.bypassCache,
+        payerName: validatedData.payerName || patient.insurance_plan_name,
+        memberId: validatedData.memberId || patient.insurance_member_id,
+        insuranceGroupNumber: patient.insurance_group_number,
       });
+
+      const payerId = normalizedInsurance.insurancePayerId;
+      const memberId = normalizedInsurance.insuranceMemberId;
+
+      if (!payerId || !memberId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Patient insurance is missing the payer ID or member ID required for live eligibility checks',
+          missing: {
+            payerId: !payerId,
+            memberId: !memberId,
+          },
+        });
+      }
+
+      await pool.query(
+        `UPDATE patients
+         SET insurance_payer_id = $1,
+             insurance_member_id = $2,
+             insurance_group_number = COALESCE($3, insurance_group_number),
+             insurance_plan_name = COALESCE($4, insurance_plan_name),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $5 AND tenant_id = $6`,
+        [
+          payerId,
+          memberId,
+          normalizedInsurance.insuranceGroupNumber || null,
+          normalizedInsurance.payerName || null,
+          validatedData.patientId,
+          tenantId,
+        ]
+      );
+
+      const adapter = await getIntegrationService(tenantId).getEligibilityAdapter();
+      const eligibility = await adapter.checkEligibility({
+        patientId: validatedData.patientId,
+        payerId,
+        memberId,
+        patientFirstName: patient.first_name,
+        patientLastName: patient.last_name,
+        patientDob: patient.dob instanceof Date
+          ? patient.dob.toISOString().split('T')[0]
+          : String(patient.dob || '').split('T')[0],
+        serviceDate: validatedData.serviceDate || new Date().toISOString().split('T')[0],
+        serviceType: validatedData.serviceType,
+      });
+
+      const centsToDollars = (value?: number) =>
+        typeof value === 'number' ? Math.round(value) / 100 : undefined;
+      const isStediSandbox = adapter.getProvider() === 'stedi' &&
+        !adapter.isMockMode() &&
+        String(process.env.STEDI_API_KEY || '').startsWith('test_');
+      const result = {
+        success: eligibility.success,
+        provider: adapter.getProvider(),
+        mode: adapter.isMockMode() ? 'mock' : 'live',
+        environment: adapter.isMockMode() ? 'mock' : isStediSandbox ? 'sandbox' : 'production',
+        requestId: eligibility.requestId,
+        responseId: eligibility.requestId,
+        checkedAt: new Date().toISOString(),
+        cached: false,
+        coverageActive: eligibility.coverage.status === 'active',
+        eligibilityStatus: eligibility.status === 'unknown' ? 'error' : eligibility.status,
+        copayAmount: centsToDollars(eligibility.benefits.copays?.specialist),
+        deductibleRemaining: centsToDollars(eligibility.benefits.deductible?.individual?.remaining),
+        coinsurancePct: eligibility.benefits.coinsurance?.percentage,
+        outOfPocketRemaining: centsToDollars(eligibility.benefits.outOfPocketMax?.individual?.remaining),
+        priorAuthRequired: Boolean(eligibility.benefits.priorAuth?.required),
+        referralRequired: Boolean(eligibility.benefits.referral?.required),
+        payer: eligibility.payer,
+        coverageDetails: {
+          planName: eligibility.coverage.planName || '',
+          planType: eligibility.coverage.planType || '',
+          effectiveDate: eligibility.coverage.effectiveDate || '',
+          terminationDate: eligibility.coverage.terminationDate || null,
+          network: eligibility.network?.inNetwork === false ? 'Out of Network' : 'In Network',
+          serviceType: validatedData.serviceType,
+          message: eligibility.messages?.map((message) => message.message).join(' ') ||
+            (eligibility.success ? 'Eligibility check completed.' : 'Eligibility check failed.'),
+        },
+      };
+
+      if (!eligibility.success) {
+        return res.status(502).json({
+          success: false,
+          provider: result.provider,
+          mode: result.mode,
+          environment: result.environment,
+          result,
+          error: result.coverageDetails.message,
+        });
+      }
+
+      await pool.query(
+        `INSERT INTO insurance_verifications (
+          tenant_id, patient_id, payer_id, payer_name, member_id, group_number,
+          plan_name, plan_type, verification_status, effective_date, termination_date,
+          copay_specialist_cents, deductible_remaining_cents, coinsurance_pct,
+          oop_remaining_cents, prior_auth_required, referral_required,
+          in_network, network_name, verified_at, verified_by, verification_source,
+          verification_method, raw_response, has_issues, issue_type, issue_notes
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+          $12, $13, $14, $15, $16, $17, $18, $19, NOW(), $20,
+          $21, 'real_time', $22, $23, $24, $25
+        )`,
+        [
+          tenantId,
+          validatedData.patientId,
+          eligibility.payer.payerId,
+          eligibility.payer.payerName,
+          eligibility.patient.memberId,
+          eligibility.patient.groupNumber || normalizedInsurance.insuranceGroupNumber || null,
+          eligibility.coverage.planName || null,
+          eligibility.coverage.planType || null,
+          eligibility.coverage.status,
+          eligibility.coverage.effectiveDate || null,
+          eligibility.coverage.terminationDate || null,
+          eligibility.benefits.copays?.specialist || null,
+          eligibility.benefits.deductible?.individual?.remaining || null,
+          eligibility.benefits.coinsurance?.percentage || null,
+          eligibility.benefits.outOfPocketMax?.individual?.remaining || null,
+          Boolean(eligibility.benefits.priorAuth?.required),
+          Boolean(eligibility.benefits.referral?.required),
+          eligibility.network?.inNetwork ?? true,
+          eligibility.network?.networkName || null,
+          userId || null,
+          adapter.isMockMode() ? `${adapter.getProvider()}_mock` : adapter.getProvider(),
+          JSON.stringify(eligibility),
+          eligibility.coverage.status !== 'active',
+          eligibility.coverage.status !== 'active' ? 'coverage_not_active' : null,
+          eligibility.messages?.map((message) => `[${message.type.toUpperCase()}] ${message.message}`).join('\n') || null,
+        ]
+      );
+
+      await pool.query(
+        `UPDATE patients
+         SET eligibility_status = $1,
+             eligibility_checked_at = CURRENT_TIMESTAMP,
+             copay_amount_cents = $2
+         WHERE id = $3 AND tenant_id = $4`,
+        [
+          eligibility.status,
+          eligibility.benefits.copays?.specialist || null,
+          validatedData.patientId,
+          tenantId,
+        ]
+      );
 
       // Audit log
       await createAuditLog({
@@ -1154,9 +1317,12 @@ eligibilityRouter.post(
         resourceType: 'patient',
         resourceId: validatedData.patientId,
         metadata: {
-          payerId: validatedData.payerId,
+          payerId,
           cached: result.cached,
           coverageActive: result.coverageActive,
+          provider: result.provider,
+          mode: result.mode,
+          environment: result.environment,
         },
       });
 
@@ -1164,6 +1330,7 @@ eligibilityRouter.post(
         success: true,
         provider: result.provider,
         mode: result.mode,
+        environment: result.environment,
         result,
       });
     } catch (error) {

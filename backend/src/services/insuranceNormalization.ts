@@ -24,7 +24,7 @@ export interface NormalizedInsuranceFields {
 
 const FALLBACK_PAYERS: Array<{ payerId: string; payerName: string; aliases: string[] }> = [
   { payerId: "UHC", payerName: "UnitedHealthcare", aliases: ["united healthcare", "unitedhealthcare", "uhc", "united health care", "united health"] },
-  { payerId: "UMR", payerName: "UMR", aliases: ["umr", "united medical resources"] },
+  { payerId: "39026", payerName: "UMR", aliases: ["umr", "united medical resources", "umr wausau"] },
   { payerId: "AETNA", payerName: "Aetna", aliases: ["aetna", "cvs aetna"] },
   { payerId: "CIGNA", payerName: "Cigna", aliases: ["cigna", "cigna healthcare"] },
   { payerId: "BCBS", payerName: "Blue Cross Blue Shield", aliases: ["bcbs", "blue cross", "blue shield", "anthem", "regence"] },

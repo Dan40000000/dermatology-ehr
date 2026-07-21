@@ -31,7 +31,7 @@ describe("insuranceNormalization", () => {
 
     const payer = await resolveInsurancePayer("tenant-1", "United Medical Resources");
 
-    expect(payer).toEqual({ payerId: "UMR", payerName: "UMR" });
+    expect(payer).toEqual({ payerId: "39026", payerName: "UMR" });
   });
 
   it("normalizes explicit member/group with a payer alias", async () => {
@@ -45,7 +45,7 @@ describe("insuranceNormalization", () => {
 
     expect(normalized).toMatchObject({
       payerName: "UMR",
-      insurancePayerId: "UMR",
+      insurancePayerId: "39026",
       insuranceMemberId: "M123",
       insuranceGroupNumber: "G456",
     });

@@ -1110,7 +1110,7 @@ eligibilityRouter.get(
  *         description: Server error
  */
 const checkEligibilitySchema = z.object({
-  patientId: z.string().uuid(),
+  patientId: z.string().min(1),
   payerId: z.string().optional(),
   payerName: z.string().optional(),
   memberId: z.string().optional(),

@@ -1176,6 +1176,25 @@ async function isPatientOptedOut(tenantId: string, patientId: string, client: an
   return !result.rows[0].opted_in;
 }
 
+let smsAutoResponsesTableExists: boolean | null = null;
+
+async function hasSMSAutoResponsesTable(client: QueryableClient): Promise<boolean> {
+  if (smsAutoResponsesTableExists !== null) {
+    return smsAutoResponsesTableExists;
+  }
+
+  const result = await client.query(
+    `SELECT to_regclass('sms_auto_responses') IS NOT NULL as exists`
+  );
+  smsAutoResponsesTableExists = result.rows[0]?.exists === true;
+
+  if (!smsAutoResponsesTableExists) {
+    logger.warn('SMS auto-response table missing; continuing without keyword replies');
+  }
+
+  return smsAutoResponsesTableExists;
+}
+
 /**
  * Extract keyword from message body
  * Returns first word in uppercase
@@ -1190,6 +1209,10 @@ function extractKeyword(messageBody: string): string {
  * Find auto-response by keyword
  */
 async function findAutoResponse(tenantId: string, keyword: string, client: any): Promise<any> {
+  if (!(await hasSMSAutoResponsesTable(client))) {
+    return null;
+  }
+
   try {
     const result = await client.query(
       `SELECT * FROM sms_auto_responses

@@ -1190,15 +1190,26 @@ function extractKeyword(messageBody: string): string {
  * Find auto-response by keyword
  */
 async function findAutoResponse(tenantId: string, keyword: string, client: any): Promise<any> {
-  const result = await client.query(
-    `SELECT * FROM sms_auto_responses
-     WHERE tenant_id = $1 AND keyword = $2 AND is_active = true
-     ORDER BY priority DESC
-     LIMIT 1`,
-    [tenantId, keyword]
-  );
+  try {
+    const result = await client.query(
+      `SELECT * FROM sms_auto_responses
+       WHERE tenant_id = $1 AND keyword = $2 AND is_active = true
+       ORDER BY priority DESC
+       LIMIT 1`,
+      [tenantId, keyword]
+    );
 
-  return result.rows[0] || null;
+    return result.rows[0] || null;
+  } catch (error: any) {
+    if (error?.code === '42P01') {
+      logger.warn('SMS auto-response table missing; continuing without keyword reply', {
+        tenantId,
+      });
+      return null;
+    }
+
+    throw error;
+  }
 }
 
 /**

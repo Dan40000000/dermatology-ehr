@@ -15572,6 +15572,42 @@ Consider age-appropriate treatments and include family counseling points.',
       WHERE do_not_contact = true;
     `,
   },
+  {
+    name: "219_charges_runtime_financial_compat",
+    sql: `
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS patient_id TEXT REFERENCES patients(id);
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS service_date DATE;
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS amount NUMERIC(10,2);
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'charge';
+
+    UPDATE charges c
+    SET patient_id = COALESCE(c.patient_id, e.patient_id),
+        service_date = COALESCE(c.service_date, e.service_date, c.created_at::date),
+        amount = COALESCE(
+          c.amount,
+          ROUND((COALESCE(c.amount_cents, c.fee_cents * COALESCE(c.quantity, 1), 0)::numeric / 100), 2)
+        ),
+        transaction_type = COALESCE(c.transaction_type, 'charge')
+    FROM encounters e
+    WHERE c.encounter_id = e.id
+      AND c.tenant_id = e.tenant_id;
+
+    UPDATE charges
+    SET service_date = COALESCE(service_date, created_at::date),
+        amount = COALESCE(
+          amount,
+          ROUND((COALESCE(amount_cents, fee_cents * COALESCE(quantity, 1), 0)::numeric / 100), 2)
+        ),
+        transaction_type = COALESCE(transaction_type, 'charge')
+    WHERE service_date IS NULL
+       OR amount IS NULL
+       OR transaction_type IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_charges_patient_service_date
+      ON charges(tenant_id, patient_id, service_date)
+      WHERE patient_id IS NOT NULL;
+    `,
+  },
 
 ];
 

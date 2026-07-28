@@ -15582,7 +15582,13 @@ Consider age-appropriate treatments and include family counseling points.',
 
     UPDATE charges c
     SET patient_id = COALESCE(c.patient_id, e.patient_id),
-        service_date = COALESCE(c.service_date, e.service_date, c.created_at::date),
+        service_date = COALESCE(
+          c.service_date,
+          NULLIF(to_jsonb(e)->>'service_date', '')::date,
+          NULLIF(to_jsonb(e)->>'date_of_service', '')::date,
+          e.created_at::date,
+          c.created_at::date
+        ),
         amount = COALESCE(
           c.amount,
           ROUND((COALESCE(c.amount_cents, c.fee_cents * COALESCE(c.quantity, 1), 0)::numeric / 100), 2)

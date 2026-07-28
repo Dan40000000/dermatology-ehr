@@ -1449,18 +1449,28 @@ eligibilityRouter.get(
 
       const result = await pool.query(
         `SELECT
-          payer_id,
-          payer_name,
-          payer_type,
-          supports_real_time,
-          supports_270_271,
-          cache_duration_hours,
-          last_successful_check,
-          is_active
-         FROM payer_configurations
-         WHERE (tenant_id = $1 OR tenant_id = 'default')
-           AND is_active = true
-         ORDER BY payer_name`,
+          pc.payer_id,
+          COALESCE(NULLIF(pc.payer_name, ''), NULLIF(to_jsonb(pc)->>'name', ''), pc.payer_id) as payer_name,
+          COALESCE(NULLIF(to_jsonb(pc)->>'payer_type', ''), NULLIF(to_jsonb(pc)->>'clearinghouse', ''), 'medical') as payer_type,
+          COALESCE(
+            NULLIF(to_jsonb(pc)->>'supports_real_time', '')::BOOLEAN,
+            NULLIF(to_jsonb(pc)->>'supports_realtime', '')::BOOLEAN,
+            NULLIF(to_jsonb(pc)->>'supports_realtime_eligibility', '')::BOOLEAN,
+            false
+          ) as supports_real_time,
+          COALESCE(
+            NULLIF(to_jsonb(pc)->>'supports_270_271', '')::BOOLEAN,
+            NULLIF(to_jsonb(pc)->>'supports_realtime', '')::BOOLEAN,
+            NULLIF(to_jsonb(pc)->>'supports_realtime_eligibility', '')::BOOLEAN,
+            false
+          ) as supports_270_271,
+          COALESCE(NULLIF(to_jsonb(pc)->>'cache_duration_hours', '')::INTEGER, 24) as cache_duration_hours,
+          NULLIF(to_jsonb(pc)->>'last_successful_check', '')::TIMESTAMPTZ as last_successful_check,
+          COALESCE(NULLIF(to_jsonb(pc)->>'is_active', '')::BOOLEAN, true) as is_active
+         FROM payer_configurations pc
+         WHERE (pc.tenant_id = $1 OR pc.tenant_id = 'default')
+           AND COALESCE(NULLIF(to_jsonb(pc)->>'is_active', '')::BOOLEAN, true) = true
+         ORDER BY COALESCE(NULLIF(pc.payer_name, ''), NULLIF(to_jsonb(pc)->>'name', ''), pc.payer_id)`,
         [tenantId]
       );
 

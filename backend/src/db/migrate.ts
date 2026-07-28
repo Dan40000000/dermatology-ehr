@@ -15706,6 +15706,36 @@ Consider age-appropriate treatments and include family counseling points.',
       EXECUTE FUNCTION sync_providers_split_name();
     `,
   },
+  {
+    name: "221_payer_configuration_runtime_compat",
+    sql: `
+    ALTER TABLE IF EXISTS payer_configurations
+      ADD COLUMN IF NOT EXISTS payer_type TEXT,
+      ADD COLUMN IF NOT EXISTS supports_real_time BOOLEAN,
+      ADD COLUMN IF NOT EXISTS supports_270_271 BOOLEAN,
+      ADD COLUMN IF NOT EXISTS cache_duration_hours INTEGER DEFAULT 24,
+      ADD COLUMN IF NOT EXISTS last_successful_check TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS timeout_ms INTEGER,
+      ADD COLUMN IF NOT EXISTS max_retries INTEGER DEFAULT 3,
+      ADD COLUMN IF NOT EXISTS eligibility_endpoint TEXT;
+
+    UPDATE payer_configurations
+    SET payer_type = COALESCE(NULLIF(payer_type, ''), NULLIF(clearinghouse, ''), 'medical'),
+        supports_real_time = COALESCE(supports_real_time, supports_realtime, false),
+        supports_270_271 = COALESCE(supports_270_271, supports_realtime, false),
+        cache_duration_hours = COALESCE(cache_duration_hours, 24),
+        timeout_ms = COALESCE(timeout_ms, timeout_seconds * 1000, 30000),
+        max_retries = COALESCE(max_retries, 3),
+        eligibility_endpoint = COALESCE(NULLIF(eligibility_endpoint, ''), NULLIF(api_endpoint, ''))
+    WHERE payer_type IS NULL
+       OR supports_real_time IS NULL
+       OR supports_270_271 IS NULL
+       OR cache_duration_hours IS NULL
+       OR timeout_ms IS NULL
+       OR max_retries IS NULL
+       OR eligibility_endpoint IS NULL;
+    `,
+  },
 
 ];
 

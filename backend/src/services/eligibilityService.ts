@@ -1416,12 +1416,19 @@ async function getPayerConfiguration(tenantId: string, payerId: string): Promise
 }> {
   try {
     const result = await pool.query(
-      `SELECT timeout_ms, max_retries, cache_duration_hours, eligibility_endpoint
-       FROM payer_configurations
-       WHERE (tenant_id = $1 OR tenant_id = 'default')
-         AND payer_id = $2
-         AND is_active = true
-       ORDER BY CASE WHEN tenant_id = $1 THEN 0 ELSE 1 END
+      `SELECT
+         COALESCE(
+           NULLIF(to_jsonb(pc)->>'timeout_ms', '')::INTEGER,
+           COALESCE(NULLIF(to_jsonb(pc)->>'timeout_seconds', '')::INTEGER, 30) * 1000
+         ) as "timeoutMs",
+         COALESCE(NULLIF(to_jsonb(pc)->>'max_retries', '')::INTEGER, 3) as "maxRetries",
+         COALESCE(NULLIF(to_jsonb(pc)->>'cache_duration_hours', '')::INTEGER, 24) as "cacheDurationHours",
+         COALESCE(NULLIF(to_jsonb(pc)->>'eligibility_endpoint', ''), NULLIF(to_jsonb(pc)->>'api_endpoint', '')) as "eligibilityEndpoint"
+       FROM payer_configurations pc
+       WHERE (pc.tenant_id = $1 OR pc.tenant_id = 'default')
+         AND pc.payer_id = $2
+         AND COALESCE(NULLIF(to_jsonb(pc)->>'is_active', '')::BOOLEAN, true) = true
+       ORDER BY CASE WHEN pc.tenant_id = $1 THEN 0 ELSE 1 END
        LIMIT 1`,
       [tenantId, payerId]
     );

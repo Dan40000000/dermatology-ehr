@@ -796,7 +796,7 @@ async function claimsRevenueFlow(admin) {
       patientId: state.patientId,
       billId: state.billId,
       amountCents: 1000,
-      paymentMethod: "card",
+      paymentMethod: "credit",
       paymentDate: nowDateOnly(),
       referenceNumber: `AUDIT-PAY-${RUN_ID}`,
       notes: "Synthetic audit patient payment",

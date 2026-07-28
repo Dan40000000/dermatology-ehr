@@ -1127,69 +1127,134 @@ export class InventoryService {
     recentTransactions: any[];
   }> {
     try {
-      // Get summary stats
       const summaryResult = await pool.query(
-        `SELECT * FROM get_inventory_dashboard($1)`,
-        [tenantId]
-      );
-      const summary = summaryResult.rows[0];
-
-      // Get low stock items
-      const lowStockResult = await pool.query(
-        `SELECT * FROM get_reorder_items($1) LIMIT 10`,
-        [tenantId]
-      );
-
-      // Get expiring items
-      const expiringResult = await pool.query(
-        `SELECT * FROM get_expiring_lots($1, 90) LIMIT 10`,
-        [tenantId]
-      );
-
-      // Get pending orders
-      const ordersResult = await pool.query(
         `SELECT
-          po.id, po.po_number as "poNumber", po.status,
-          po.order_date as "orderDate", po.expected_date as "expectedDate",
-          po.total_amount_cents as "totalAmountCents",
-          v.name as "vendorName"
-        FROM purchase_orders po
-        JOIN vendors v ON po.vendor_id = v.id
-        WHERE po.tenant_id = $1 AND po.status IN ('submitted', 'partial')
-        ORDER BY po.expected_date ASC
+          COUNT(*)::INTEGER as "totalItems",
+          COALESCE(SUM(quantity * unit_cost_cents), 0)::BIGINT as "totalValueCents",
+          COUNT(*) FILTER (WHERE quantity <= reorder_level)::INTEGER as "lowStockCount",
+          COUNT(*) FILTER (
+            WHERE expiration_date IS NOT NULL
+              AND expiration_date <= CURRENT_DATE + INTERVAL '90 days'
+          )::INTEGER as "expiringCount"
+        FROM inventory_items
+        WHERE tenant_id = $1`,
+        [tenantId]
+      );
+      const summary = summaryResult.rows[0] || {};
+
+      const lowStockResult = await pool.query(
+        `SELECT
+          i.id,
+          i.name,
+          i.sku,
+          i.category,
+          i.quantity,
+          i.reorder_level as "reorderLevel",
+          COALESCE(NULLIF(to_jsonb(i)->>'reorder_quantity', '')::INTEGER, i.reorder_level) as "reorderQuantity",
+          i.unit_cost_cents as "unitCostCents",
+          i.supplier
+        FROM inventory_items i
+        WHERE i.tenant_id = $1
+          AND i.quantity <= i.reorder_level
+        ORDER BY i.quantity - i.reorder_level ASC, i.name ASC
         LIMIT 10`,
         [tenantId]
       );
 
-      // Get equipment due maintenance
-      const maintenanceResult = await pool.query(
-        `SELECT * FROM get_equipment_due_maintenance($1, 30) LIMIT 10`,
+      const expiringResult = await pool.query(
+        `SELECT
+          i.id,
+          i.id as "itemId",
+          i.name as "itemName",
+          i.sku,
+          i.lot_number as "lotNumber",
+          i.expiration_date as "expirationDate",
+          (i.expiration_date - CURRENT_DATE)::INTEGER as "daysUntilExpiration",
+          i.quantity,
+          'active' as status
+        FROM inventory_items i
+        WHERE i.tenant_id = $1
+          AND i.expiration_date IS NOT NULL
+          AND i.expiration_date <= CURRENT_DATE + INTERVAL '90 days'
+          AND i.quantity > 0
+        ORDER BY i.expiration_date ASC, i.name ASC
+        LIMIT 10`,
         [tenantId]
       );
 
-      // Get recent transactions
-      const transactionsResult = await pool.query(
-        `SELECT
-          t.id, t.transaction_type as "transactionType",
-          t.quantity, t.created_at as "createdAt",
-          t.notes, t.reference_type as "referenceType",
-          i.name as "itemName", i.sku as "itemSku"
-        FROM inventory_transactions t
-        JOIN inventory_items i ON t.item_id = i.id
-        WHERE t.tenant_id = $1
-        ORDER BY t.created_at DESC
-        LIMIT 20`,
-        [tenantId]
-      );
+      const hasPurchaseOrders = await this.tableExists('purchase_orders');
+      const hasVendors = await this.tableExists('vendors');
+      const ordersResult = hasPurchaseOrders
+        ? await pool.query(
+          `SELECT
+            po.id,
+            po.po_number as "poNumber",
+            po.status,
+            po.order_date as "orderDate",
+            po.expected_date as "expectedDate",
+            po.total_amount_cents as "totalAmountCents",
+            ${hasVendors ? 'v.name' : 'NULL'} as "vendorName"
+          FROM purchase_orders po
+          ${hasVendors ? 'LEFT JOIN vendors v ON po.vendor_id = v.id' : ''}
+          WHERE po.tenant_id = $1 AND po.status IN ('submitted', 'partial')
+          ORDER BY po.expected_date ASC NULLS LAST, po.created_at DESC
+          LIMIT 10`,
+          [tenantId]
+        )
+        : { rows: [] };
+
+      const hasEquipment = await this.tableExists('equipment');
+      const maintenanceResult = hasEquipment
+        ? await pool.query(
+          `SELECT
+            e.id,
+            e.name,
+            e.serial_number as "serialNumber",
+            e.category,
+            e.last_maintenance as "lastMaintenance",
+            e.next_maintenance as "nextMaintenance",
+            (e.next_maintenance - CURRENT_DATE)::INTEGER as "daysUntilDue",
+            e.status
+          FROM equipment e
+          WHERE e.tenant_id = $1
+            AND e.next_maintenance IS NOT NULL
+            AND e.next_maintenance <= CURRENT_DATE + INTERVAL '30 days'
+            AND e.status != 'retired'
+          ORDER BY e.next_maintenance ASC
+          LIMIT 10`,
+          [tenantId]
+        )
+        : { rows: [] };
+
+      const hasInventoryTransactions = await this.tableExists('inventory_transactions');
+      const transactionsResult = hasInventoryTransactions
+        ? await pool.query(
+          `SELECT
+            t.id,
+            t.transaction_type as "transactionType",
+            t.quantity,
+            t.created_at as "createdAt",
+            t.notes,
+            t.reference_type as "referenceType",
+            i.name as "itemName",
+            i.sku as "itemSku"
+          FROM inventory_transactions t
+          JOIN inventory_items i ON t.item_id = i.id
+          WHERE t.tenant_id = $1
+          ORDER BY t.created_at DESC
+          LIMIT 20`,
+          [tenantId]
+        )
+        : { rows: [] };
 
       return {
         summary: {
-          totalItems: parseInt(summary.total_items),
-          totalValueCents: parseInt(summary.total_value_cents),
-          lowStockCount: parseInt(summary.low_stock_count),
-          expiringCount: parseInt(summary.expiring_count),
-          pendingOrders: parseInt(summary.pending_orders),
-          equipmentMaintenanceDue: parseInt(summary.equipment_maintenance_due),
+          totalItems: Number(summary.totalItems || 0),
+          totalValueCents: Number(summary.totalValueCents || 0),
+          lowStockCount: Number(summary.lowStockCount || 0),
+          expiringCount: Number(summary.expiringCount || 0),
+          pendingOrders: ordersResult.rows.length,
+          equipmentMaintenanceDue: maintenanceResult.rows.length,
         },
         lowStockItems: lowStockResult.rows,
         expiringItems: expiringResult.rows,
@@ -1201,6 +1266,14 @@ export class InventoryService {
       logger.error('Error getting inventory dashboard:', error);
       throw error;
     }
+  }
+
+  private async tableExists(tableName: string): Promise<boolean> {
+    const result = await pool.query(
+      `SELECT to_regclass($1) IS NOT NULL as "exists"`,
+      [`public.${tableName}`]
+    );
+    return Boolean(result.rows[0]?.exists);
   }
 
   /**

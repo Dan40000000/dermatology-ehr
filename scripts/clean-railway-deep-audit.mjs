@@ -1227,8 +1227,17 @@ async function staffLockoutFlow(admin) {
     }), { expected: [200] });
 
   const resetLogin = await loginStaff(lockedEmail, resetPassword);
-  await expectRequest(area, "reset staff login blocked from app routes until password changed", () =>
-    resetLogin.client.get("/api/auth/users?workforceOnly=true"), { expected: [403] });
+  await expectRequest(area, "reset staff session reports temporary password reset required", () =>
+    resetLogin.client.get("/api/auth/me"), {
+      expected: [200],
+      assertBody: (body) => assert(body?.user?.passwordResetRequired === true, "Temporary password reset flag was not present"),
+    });
+
+  await expectRequest(area, "reset staff app route blocked until password changed", () =>
+    resetLogin.client.get(`/api/appointments?date=${encodeURIComponent(nowDateOnly())}`), {
+      expected: [403],
+      assertBody: (body) => assert(body?.passwordResetRequired === true, "App route was blocked for a reason other than password reset"),
+    });
 
   await expectRequest(area, "reset staff changes password", () =>
     resetLogin.client.post("/api/auth/change-password", {
@@ -1236,8 +1245,14 @@ async function staffLockoutFlow(admin) {
       newPassword: `ResetStaffFinal${RUN_ID}!Aa1`,
     }), { expected: [200] });
 
+  await expectRequest(area, "reset staff session clears password reset flag after password change", () =>
+    resetLogin.client.get("/api/auth/me"), {
+      expected: [200],
+      assertBody: (body) => assert(body?.user?.passwordResetRequired === false, "Password reset flag was not cleared"),
+    });
+
   await expectRequest(area, "reset staff app route works after password change", () =>
-    resetLogin.client.get("/api/auth/users?workforceOnly=true"), { expected: [200] });
+    resetLogin.client.get(`/api/appointments?date=${encodeURIComponent(nowDateOnly())}`), { expected: [200] });
 }
 
 main().catch((error) => {

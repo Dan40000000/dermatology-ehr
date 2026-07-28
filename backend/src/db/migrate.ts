@@ -15614,6 +15614,98 @@ Consider age-appropriate treatments and include family counseling points.',
       WHERE patient_id IS NOT NULL;
     `,
   },
+  {
+    name: "220_staff_provider_split_name_compat",
+    sql: `
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS first_name TEXT,
+      ADD COLUMN IF NOT EXISTS last_name TEXT;
+
+    ALTER TABLE providers
+      ADD COLUMN IF NOT EXISTS first_name TEXT,
+      ADD COLUMN IF NOT EXISTS last_name TEXT;
+
+    CREATE OR REPLACE FUNCTION split_display_name_first_part(display_name TEXT)
+    RETURNS TEXT AS $$
+    DECLARE
+      cleaned TEXT;
+      first_part TEXT;
+    BEGIN
+      cleaned := btrim(coalesce(display_name, ''));
+      IF cleaned = '' THEN
+        RETURN NULL;
+      END IF;
+
+      cleaned := regexp_replace(cleaned, '^(Dr\\.?|Doctor|Nurse)\\s+', '', 'i');
+      first_part := split_part(cleaned, ' ', 1);
+      RETURN NULLIF(first_part, '');
+    END;
+    $$ LANGUAGE plpgsql IMMUTABLE;
+
+    CREATE OR REPLACE FUNCTION split_display_name_last_part(display_name TEXT)
+    RETURNS TEXT AS $$
+    DECLARE
+      cleaned TEXT;
+      remaining TEXT;
+    BEGIN
+      cleaned := btrim(coalesce(display_name, ''));
+      IF cleaned = '' THEN
+        RETURN NULL;
+      END IF;
+
+      cleaned := regexp_replace(cleaned, '^(Dr\\.?|Doctor|Nurse)\\s+', '', 'i');
+      remaining := btrim(regexp_replace(cleaned, '^\\S+\\s*', ''));
+      RETURN NULLIF(remaining, '');
+    END;
+    $$ LANGUAGE plpgsql IMMUTABLE;
+
+    UPDATE users
+    SET first_name = COALESCE(NULLIF(first_name, ''), split_display_name_first_part(full_name)),
+        last_name = COALESCE(NULLIF(last_name, ''), split_display_name_last_part(full_name), split_display_name_first_part(full_name))
+    WHERE full_name IS NOT NULL
+      AND (first_name IS NULL OR first_name = '' OR last_name IS NULL OR last_name = '');
+
+    UPDATE providers
+    SET first_name = COALESCE(NULLIF(first_name, ''), split_display_name_first_part(full_name)),
+        last_name = COALESCE(NULLIF(last_name, ''), split_display_name_last_part(full_name), split_display_name_first_part(full_name))
+    WHERE full_name IS NOT NULL
+      AND (first_name IS NULL OR first_name = '' OR last_name IS NULL OR last_name = '');
+
+    CREATE OR REPLACE FUNCTION sync_users_split_name()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' OR NEW.full_name IS DISTINCT FROM OLD.full_name THEN
+        NEW.first_name := split_display_name_first_part(NEW.full_name);
+        NEW.last_name := COALESCE(split_display_name_last_part(NEW.full_name), NEW.first_name);
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE FUNCTION sync_providers_split_name()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' OR NEW.full_name IS DISTINCT FROM OLD.full_name THEN
+        NEW.first_name := split_display_name_first_part(NEW.full_name);
+        NEW.last_name := COALESCE(split_display_name_last_part(NEW.full_name), NEW.first_name);
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trg_users_sync_split_name ON users;
+    CREATE TRIGGER trg_users_sync_split_name
+      BEFORE INSERT OR UPDATE OF full_name ON users
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_users_split_name();
+
+    DROP TRIGGER IF EXISTS trg_providers_sync_split_name ON providers;
+    CREATE TRIGGER trg_providers_sync_split_name
+      BEFORE INSERT OR UPDATE OF full_name ON providers
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_providers_split_name();
+    `,
+  },
 
 ];
 

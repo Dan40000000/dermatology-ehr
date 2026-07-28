@@ -1060,11 +1060,35 @@ async function fetchSuperbillData(
 
   // Get patient insurance
   const insuranceResult = await pool.query(
-    `SELECT insurance_details as details FROM patients WHERE id = $1 AND tenant_id = $2`,
+    `SELECT
+       to_jsonb(p)->'insurance_details' as details,
+       pi.payer_id as "payerId",
+       pi.payer_name as "payerName",
+       pi.plan_name as "planName",
+       pi.member_id as "memberId",
+       pi.group_number as "groupNumber"
+     FROM patients p
+     LEFT JOIN LATERAL (
+       SELECT payer_id, payer_name, plan_name, member_id, group_number
+       FROM patient_insurance pi
+       WHERE pi.tenant_id = p.tenant_id
+         AND pi.patient_id = p.id
+         AND (pi.is_primary = true OR pi.insurance_type = 'primary')
+         AND (pi.termination_date IS NULL OR pi.termination_date >= CURRENT_DATE)
+       ORDER BY pi.is_primary DESC, pi.updated_at DESC NULLS LAST, pi.created_at DESC NULLS LAST
+       LIMIT 1
+     ) pi ON true
+     WHERE p.id = $1 AND p.tenant_id = $2`,
     [encounter.patient_id, tenantId]
   );
 
-  const insurance = insuranceResult.rows[0]?.details?.primary || {};
+  const insuranceRow = insuranceResult.rows[0] || {};
+  const insurance = insuranceRow.details?.primary || {
+    policyNumber: insuranceRow.memberId,
+    groupNumber: insuranceRow.groupNumber,
+    planName: insuranceRow.planName || insuranceRow.payerName,
+    payer: insuranceRow.payerId,
+  };
   const diagnoses = diagnosesResult.rows;
   const diagnosisPointerById = new Map<string, number>();
   const diagnosisPointerByCode = new Map<string, number>();

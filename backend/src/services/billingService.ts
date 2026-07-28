@@ -255,12 +255,25 @@ export class BillingService {
       // Get encounter details
       const encounterResult = await client.query(
         `SELECT e.id, e.patient_id, e.provider_id,
-                p.insurance_details,
+                to_jsonb(p)->'insurance_details' as insurance_details,
                 p.insurance_plan_name,
                 p.insurance_payer_id,
-                p.insurance as insurance_fallback
+                p.insurance as insurance_fallback,
+                pi.payer_id as primary_payer_id,
+                pi.payer_name as primary_payer_name,
+                pi.plan_name as primary_plan_name
          FROM encounters e
-         JOIN patients p ON p.id = e.patient_id
+         JOIN patients p ON p.id = e.patient_id AND p.tenant_id = e.tenant_id
+         LEFT JOIN LATERAL (
+           SELECT payer_id, payer_name, plan_name, member_id
+           FROM patient_insurance pi
+           WHERE pi.tenant_id = p.tenant_id
+             AND pi.patient_id = p.id
+             AND (pi.is_primary = true OR pi.insurance_type = 'primary')
+             AND (pi.termination_date IS NULL OR pi.termination_date >= CURRENT_DATE)
+           ORDER BY pi.is_primary DESC, pi.updated_at DESC NULLS LAST, pi.created_at DESC NULLS LAST
+           LIMIT 1
+         ) pi ON true
          WHERE e.id = $1 AND e.tenant_id = $2`,
         [encounterId, tenantId]
       );
@@ -291,8 +304,14 @@ export class BillingService {
         );
       }
 
-      payer = firstNonEmpty(payer, encounter.insurance_plan_name, encounter.insurance_fallback);
-      payerId = firstNonEmpty(payerId, encounter.insurance_payer_id);
+      payer = firstNonEmpty(
+        payer,
+        encounter.primary_payer_name,
+        encounter.primary_plan_name,
+        encounter.insurance_plan_name,
+        encounter.insurance_fallback
+      );
+      payerId = firstNonEmpty(payerId, encounter.primary_payer_id, encounter.insurance_payer_id);
 
       // Check if claim already exists for this encounter
       const existingClaimResult = await client.query(
@@ -544,11 +563,11 @@ export class BillingService {
       const claimResult = await pool.query(
         `SELECT c.*,
                 p.first_name, p.last_name, p.dob,
-                p.insurance_details,
+                to_jsonb(p)->'insurance_details' as insurance_details,
                 e.id as encounter_id
          FROM claims c
-         JOIN patients p ON p.id = c.patient_id
-         LEFT JOIN encounters e ON e.id = c.encounter_id
+         JOIN patients p ON p.id = c.patient_id AND p.tenant_id = c.tenant_id
+         LEFT JOIN encounters e ON e.id = c.encounter_id AND e.tenant_id = c.tenant_id
          WHERE c.id = $1 AND c.tenant_id = $2`,
         [claimId, tenantId]
       );

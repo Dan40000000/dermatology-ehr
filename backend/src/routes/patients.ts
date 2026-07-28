@@ -1419,17 +1419,56 @@ patientsRouter.get("/:id/prior-auths", requireAuth, requireModuleAccess("epa"), 
 
   try {
     const result = await pool.query(
-      `SELECT pa.id, pa.patient_id as "patientId", pa.prescription_id as "prescriptionId",
-              pa.medication_name as "medicationName", pa.status, pa.submitted_date as "submittedDate",
-              pa.decision_date as "decisionDate", pa.approval_number as "approvalNumber",
-              pa.denial_reason as "denialReason", pa.expires_at as "expiresAt",
-              pa.insurance_company as "insuranceCompany", pa.notes,
+      `SELECT pa.id,
+              pa.patient_id as "patientId",
+              nullif(to_jsonb(pa)->>'prescription_id', '') as "prescriptionId",
+              coalesce(
+                nullif(to_jsonb(pa)->>'medication_name', ''),
+                nullif(to_jsonb(pa)->>'procedure_code', ''),
+                nullif(to_jsonb(pa)->>'service_description', '')
+              ) as "medicationName",
+              pa.status,
+              coalesce(
+                nullif(to_jsonb(pa)->>'submitted_date', ''),
+                nullif(to_jsonb(pa)->>'submitted_at', ''),
+                nullif(to_jsonb(pa)->>'first_submission_date', '')
+              ) as "submittedDate",
+              coalesce(
+                nullif(to_jsonb(pa)->>'decision_date', ''),
+                nullif(to_jsonb(pa)->>'decision_at', ''),
+                nullif(to_jsonb(pa)->>'approved_at', ''),
+                nullif(to_jsonb(pa)->>'denied_at', '')
+              ) as "decisionDate",
+              coalesce(
+                nullif(to_jsonb(pa)->>'approval_number', ''),
+                nullif(to_jsonb(pa)->>'insurance_auth_number', ''),
+                nullif(to_jsonb(pa)->>'auth_number', ''),
+                nullif(to_jsonb(pa)->>'reference_number', '')
+              ) as "approvalNumber",
+              pa.denial_reason as "denialReason",
+              coalesce(
+                nullif(to_jsonb(pa)->>'expires_at', ''),
+                nullif(to_jsonb(pa)->>'expiration_date', '')
+              ) as "expiresAt",
+              coalesce(
+                nullif(to_jsonb(pa)->>'insurance_company', ''),
+                nullif(to_jsonb(pa)->>'insurance_name', ''),
+                nullif(to_jsonb(pa)->>'payer_name', '')
+              ) as "insuranceCompany",
+              pa.notes,
               pa.created_at as "createdAt", pa.updated_at as "updatedAt",
               p.medication_name as "prescriptionMedication"
-       FROM prior_auths pa
-       LEFT JOIN prescriptions p ON pa.prescription_id = p.id
+       FROM prior_authorizations pa
+       LEFT JOIN prescriptions p
+         ON p.id = nullif(to_jsonb(pa)->>'prescription_id', '')
+        AND p.tenant_id = pa.tenant_id
        WHERE pa.patient_id = $1 AND pa.tenant_id = $2
-       ORDER BY pa.submitted_date DESC`,
+       ORDER BY coalesce(
+          nullif(to_jsonb(pa)->>'submitted_date', ''),
+          nullif(to_jsonb(pa)->>'submitted_at', ''),
+          nullif(to_jsonb(pa)->>'first_submission_date', ''),
+          nullif(to_jsonb(pa)->>'created_at', '')
+        ) DESC NULLS LAST`,
       [id, tenantId]
     );
 

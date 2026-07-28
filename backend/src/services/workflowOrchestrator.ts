@@ -12,6 +12,7 @@ import { encounterService } from './encounterService';
 import { billingService } from './billingService';
 import { ensureEncounterBill } from './encounterFinancialsService';
 import { createFinancialWorkQueueItem } from './financialWorkQueueService';
+import { getTableColumns } from '../db/schema';
 import { scrubClaim, applyAutoFixes } from './claimScrubber';
 import { notificationService } from './integrations/notificationService';
 import { smsWorkflowService } from './smsWorkflowService';
@@ -26,6 +27,143 @@ import {
 
 function isNoChargesFoundError(error: unknown): boolean {
   return String((error as any)?.message || error || '').includes('No charges found');
+}
+
+async function getPriorAuthorizationColumns(): Promise<Set<string>> {
+  return getTableColumns('prior_authorizations');
+}
+
+function firstText(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function normalizeDiagnosisCodes(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(value.map((code) => String(code || '').trim().toUpperCase()).filter(Boolean)));
+  }
+
+  const single = firstText(value);
+  return single ? [single.toUpperCase()] : [];
+}
+
+function buildPriorAuthReference(priorAuthId: string): string {
+  return `PA-${new Date().getUTCFullYear()}-${priorAuthId.slice(0, 8).toUpperCase()}`;
+}
+
+async function insertPriorAuthorizationForWorkflow(event: WorkflowEvent, priorAuthId: string): Promise<void> {
+  const columns = await getPriorAuthorizationColumns();
+  const data = event.data || {};
+  const diagnosisCodes = normalizeDiagnosisCodes(data.diagnosisCodes || data.diagnosisCode);
+  const itemName = firstText(data.medicationName, data.procedureName, data.itemName, data.serviceDescription) ||
+    'Prior authorization required';
+  const payerName = firstText(data.payerName, data.insuranceName, data.insuranceCompany) || 'Unknown payer';
+  const referenceNumber = buildPriorAuthReference(priorAuthId);
+
+  const insertColumns: string[] = [];
+  const placeholders: string[] = [];
+  const values: unknown[] = [];
+
+  const addValue = (column: string, value: unknown) => {
+    if (!columns.has(column) || value === undefined || value === null) return;
+    insertColumns.push(column);
+    values.push(value);
+    placeholders.push(`$${values.length}`);
+  };
+
+  const addExpression = (column: string, expression: string) => {
+    if (!columns.has(column)) return;
+    insertColumns.push(column);
+    placeholders.push(expression);
+  };
+
+  addValue('id', priorAuthId);
+  addValue('tenant_id', event.tenantId);
+  addValue('patient_id', data.patientId);
+  addValue('status', 'pending');
+  addValue('auth_type', data.medicationName ? 'medication' : data.procedureCode || data.cptCode ? 'procedure' : 'service');
+  addValue('medication_name', itemName);
+  addValue('procedure_code', firstText(data.procedureCode, data.cptCode));
+  addValue('service_description', itemName);
+  addValue('payer_id', firstText(data.payerId));
+  addValue('payer_name', payerName);
+  addValue('insurance_name', payerName);
+  addValue('member_id', firstText(data.memberId, data.insuranceMemberId));
+  addValue('group_number', firstText(data.groupNumber, data.insuranceGroupNumber));
+  addValue('auth_number', referenceNumber);
+  addValue('reference_number', referenceNumber);
+  addValue('diagnosis_code', diagnosisCodes[0] || 'Z02.89');
+  addValue('diagnosis_codes', diagnosisCodes);
+  addValue('provider_npi', firstText(data.providerNpi, data.orderingProviderNpi) || '0000000000');
+  addValue('ordering_provider_id', firstText(data.providerId, data.orderingProviderId));
+  addValue('ordering_provider_name', firstText(data.providerName, data.orderingProviderName));
+  addValue('ordering_provider_npi', firstText(data.providerNpi, data.orderingProviderNpi));
+  addValue('clinical_justification', firstText(data.clinicalJustification) || 'Prior authorization required by payer before service or medication.');
+  addValue('urgency', firstText(data.urgency) || 'routine');
+  addValue('entity_type', event.entityType);
+  addValue('entity_id', event.entityId);
+  addValue('created_by', firstText(event.userId));
+  addValue('updated_by', firstText(event.userId));
+  addExpression('submitted_at', 'NULL');
+  addExpression('created_at', 'NOW()');
+  addExpression('updated_at', 'NOW()');
+
+  await pool.query(
+    `INSERT INTO prior_authorizations (${insertColumns.join(', ')})
+     VALUES (${placeholders.join(', ')})
+     ON CONFLICT (id) DO NOTHING`,
+    values,
+  );
+}
+
+async function updatePriorAuthorizationForWorkflow(
+  tenantId: string,
+  priorAuthId: string,
+  status: 'approved' | 'denied',
+  data: Record<string, any>,
+): Promise<void> {
+  const columns = await getPriorAuthorizationColumns();
+  const values: unknown[] = [status];
+  const updates = ['status = $1'];
+
+  const addValue = (column: string, value: unknown) => {
+    if (!columns.has(column) || value === undefined || value === null) return;
+    values.push(value);
+    updates.push(`${column} = $${values.length}`);
+  };
+
+  const addExpression = (column: string, expression: string) => {
+    if (!columns.has(column)) return;
+    updates.push(`${column} = ${expression}`);
+  };
+
+  if (status === 'approved') {
+    const approvalNumber = firstText(data.approvalNumber, data.authNumber, data.referenceNumber);
+    addValue('approval_number', approvalNumber);
+    addValue('insurance_auth_number', approvalNumber);
+    addValue('auth_number', approvalNumber);
+    addExpression('approved_at', 'NOW()');
+  } else {
+    addValue('denial_reason', firstText(data.denialReason) || 'Prior authorization denied by payer.');
+    addExpression('denied_at', 'NOW()');
+  }
+
+  addExpression('decision_at', 'NOW()');
+  addExpression('decision_date', 'CURRENT_DATE');
+  addExpression('updated_at', 'NOW()');
+
+  values.push(priorAuthId, tenantId);
+  await pool.query(
+    `UPDATE prior_authorizations
+     SET ${updates.join(', ')}
+     WHERE id = $${values.length - 1}
+       AND tenant_id = $${values.length}`,
+    values,
+  );
 }
 
 // ============================================
@@ -1045,22 +1183,7 @@ export class WorkflowOrchestrator {
 
     // Auto-generate prior auth request
     const priorAuthId = crypto.randomUUID();
-    await pool.query(
-      `INSERT INTO prior_authorizations
-       (id, tenant_id, patient_id, entity_type, entity_id, payer_id, status,
-        medication_name, diagnosis_codes, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, NOW())`,
-      [
-        priorAuthId,
-        tenantId,
-        data.patientId,
-        event.entityType,
-        entityId,
-        data.payerId,
-        data.medicationName || data.procedureName,
-        data.diagnosisCodes || [],
-      ]
-    );
+    await insertPriorAuthorizationForWorkflow(event, priorAuthId);
 
     // Notify staff
     await notificationService.sendNotification({
@@ -1080,12 +1203,7 @@ export class WorkflowOrchestrator {
     const { tenantId, entityId: priorAuthId, data } = event;
 
     // Update the related entity (prescription, lab order, etc.)
-    await pool.query(
-      `UPDATE prior_authorizations
-       SET status = 'approved', approval_number = $1, approved_at = NOW()
-       WHERE id = $2`,
-      [data.approvalNumber, priorAuthId]
-    );
+    await updatePriorAuthorizationForWorkflow(tenantId, priorAuthId, 'approved', data);
 
     // Notify patient via SMS
     try {
@@ -1112,12 +1230,7 @@ export class WorkflowOrchestrator {
     const { tenantId, entityId: priorAuthId, data } = event;
 
     // Update status
-    await pool.query(
-      `UPDATE prior_authorizations
-       SET status = 'denied', denial_reason = $1, denied_at = NOW()
-       WHERE id = $2`,
-      [data.denialReason, priorAuthId]
-    );
+    await updatePriorAuthorizationForWorkflow(tenantId, priorAuthId, 'denied', data);
 
     // Notify provider to discuss alternatives
     await notificationService.sendNotification({

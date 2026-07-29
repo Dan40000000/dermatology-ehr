@@ -31,6 +31,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchTopDiagnoses: vi.fn(),
   fetchTopProcedures: vi.fn(),
   fetchProviderProductivity: vi.fn(),
+  fetchTeamProductivity: vi.fn(),
   fetchPatientDemographics: vi.fn(),
   fetchAppointmentTypesAnalytics: vi.fn(),
   fetchAnalyticsOverview: vi.fn(),
@@ -114,6 +115,86 @@ describe('AnalyticsPage', () => {
           patients_seen: 3,
           appointments: 4,
           revenue_cents: 60000,
+        },
+      ],
+    });
+    apiMocks.fetchTeamProductivity.mockResolvedValue({
+      summary: {
+        totalUsers: 1,
+        activeUsers: 1,
+        productiveActions: 18,
+        complianceEvents: 2,
+        uniquePatientsTouched: 7,
+        patientsSeen: 3,
+        notesSigned: 2,
+        tasksCompleted: 4,
+        messagesHandled: 5,
+        claimsReleased: 1,
+        flowActions: 6,
+        inventoryStoreActions: 2,
+        aiRequests: 1,
+        aiCostCents: 12,
+        phiAccessEvents: 2,
+        complianceFlags: 0,
+      },
+      users: [
+        {
+          userId: 'user-1',
+          fullName: 'Dr. Demo',
+          email: 'demo@example.test',
+          role: 'provider',
+          linkedProviders: [{ id: 'prov-1', name: 'Dr. Demo', specialty: 'Dermatology' }],
+          productiveActions: 18,
+          complianceEvents: 2,
+          uniquePatientsTouched: 7,
+          patientsSeen: 3,
+          completedAppointments: 3,
+          notesCreated: 1,
+          notesEdited: 1,
+          notesSigned: 2,
+          flowActions: 6,
+          tasksCompleted: 4,
+          messagesHandled: 5,
+          claimsReleased: 1,
+          chargesCreated: 1,
+          paymentsPosted: 1,
+          prescriptionsCreated: 1,
+          ordersCreated: 1,
+          inventoryStoreActions: 2,
+          aiRequests: 1,
+          aiCostCents: 12,
+          phiAccessEvents: 2,
+          complianceFlags: 0,
+          lastActivityAt: '2024-01-15T10:00:00Z',
+        },
+      ],
+      categories: [
+        {
+          category: 'clinical',
+          productiveActions: 8,
+          complianceEvents: 1,
+          activeUsers: 1,
+          lastActivityAt: '2024-01-15T10:00:00Z',
+        },
+      ],
+      trend: [
+        { date: '2024-01-15', productiveActions: 18, complianceEvents: 2, activeUsers: 1 },
+      ],
+      recentEvents: [
+        {
+          userId: 'user-1',
+          fullName: 'Dr. Demo',
+          role: 'provider',
+          category: 'clinical',
+          action: 'encounter.signed',
+          actionLabel: 'Signed encounter',
+          resourceType: 'encounter',
+          resourceId: 'enc-1',
+          patientId: 'pat-1',
+          appointmentId: 'appt-1',
+          occurredAt: '2024-01-15T10:00:00Z',
+          productivityWeight: 2,
+          complianceWeight: 1,
         },
       ],
     });
@@ -284,6 +365,9 @@ describe('AnalyticsPage', () => {
 
     await screen.findByText('Analytics & Reports');
     expect(screen.getByText('Total Patients')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Team Productivity' }));
+    expect(screen.getByRole('heading', { name: 'Team Productivity' })).toBeInTheDocument();
     expect(screen.getAllByText('Dr. Demo').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Clinical and Operational' }));

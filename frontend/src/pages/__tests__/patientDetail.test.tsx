@@ -244,7 +244,10 @@ describe('PatientDetailPage', () => {
       return originalCreateElement(tagName);
     });
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ pharmacies: [] }),
+    }));
   });
 
   afterEach(() => {
@@ -316,7 +319,7 @@ describe('PatientDetailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Insurance' }));
     fireEvent.click(screen.getByRole('button', { name: /Edit Insurance/i }));
     const insuranceModal = await screen.findByTestId('modal-edit-insurance');
-    fireEvent.click(within(insuranceModal).getByRole('button', { name: 'Close' }));
+    fireEvent.click(within(insuranceModal).getByRole('button', { name: 'Close Modal' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Medical History' }));
     fireEvent.click(screen.getByRole('button', { name: /Add Allergy/i }));

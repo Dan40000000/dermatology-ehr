@@ -16,6 +16,7 @@ import {
   createPatientProcedureCostEstimate,
   fetchExternalIntegrationStatus,
   getPatientBenefits,
+  sharePatientProcedureCostEstimate,
   type ExternalIntegrationStatus,
   type PatientProcedureCostEstimate,
 } from '../../api';
@@ -127,6 +128,8 @@ export function PatientCostEstimatePanel({
   const [isCosmetic, setIsCosmetic] = useState(false);
   const [procedureEstimate, setProcedureEstimate] = useState<PatientProcedureCostEstimate | null>(null);
   const [isEstimatingProcedure, setIsEstimatingProcedure] = useState(false);
+  const [isSharingProcedure, setIsSharingProcedure] = useState(false);
+  const [sharedProcedureId, setSharedProcedureId] = useState<string | null>(null);
   const [medicationName, setMedicationName] = useState('');
   const [ndc, setNdc] = useState('');
   const [rxEstimate, setRxEstimate] = useState<any | null>(null);
@@ -185,11 +188,31 @@ export function PatientCostEstimatePanel({
         isCosmetic,
       });
       setProcedureEstimate(result.estimate);
+      setSharedProcedureId(null);
       showSuccess('Procedure estimate created');
     } catch (error: any) {
       showError(error.message || 'Failed to create procedure estimate');
     } finally {
       setIsEstimatingProcedure(false);
+    }
+  };
+
+  const handleShareProcedureEstimate = async () => {
+    if (!session || !procedureEstimate) return;
+
+    setIsSharingProcedure(true);
+    try {
+      await sharePatientProcedureCostEstimate(
+        session.tenantId,
+        session.accessToken,
+        procedureEstimate.id
+      );
+      setSharedProcedureId(procedureEstimate.id);
+      showSuccess('Estimate shared with the patient portal');
+    } catch (error: any) {
+      showError(error.message || 'Failed to share estimate with the patient portal');
+    } finally {
+      setIsSharingProcedure(false);
     }
   };
 
@@ -442,7 +465,7 @@ export function PatientCostEstimatePanel({
                 borderRadius: 8,
                 padding: '0.8rem',
                 display: 'grid',
-                gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
                 gap: '0.75rem',
                 fontSize: '0.78rem',
                 color: '#334155',
@@ -451,6 +474,7 @@ export function PatientCostEstimatePanel({
                 <div><strong>Deductible:</strong> {formatCurrency(procedureEstimate.breakdown.deductible)}</div>
                 <div><strong>Coinsurance:</strong> {formatCurrency(procedureEstimate.breakdown.coinsurance)}</div>
                 <div><strong>Not covered:</strong> {formatCurrency(procedureEstimate.breakdown.notCovered)}</div>
+                <div><strong>Contract adjustment:</strong> {formatCurrency(procedureEstimate.breakdown.contractualAdjustment)}</div>
               </div>
               <div style={{
                 display: 'flex',
@@ -465,6 +489,40 @@ export function PatientCostEstimatePanel({
                   ? `Insurance benefits verified. Estimate valid until ${procedureEstimate.validUntil}.`
                   : 'Estimate was created without a current live eligibility verification.'}
               </div>
+              {!procedureEstimate.isCosmetic && procedureEstimate.insuranceAllowedAmount > 0 && (
+                <div style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 6,
+                  padding: '0.65rem 0.75rem',
+                  color: '#475569',
+                  fontSize: '0.78rem',
+                  lineHeight: 1.45,
+                }}>
+                  Allowed-amount basis: 80% of the office fee. A payer-specific contracted rate is not configured yet.
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleShareProcedureEstimate}
+                disabled={isSharingProcedure || sharedProcedureId === procedureEstimate.id}
+                style={{
+                  border: sharedProcedureId === procedureEstimate.id ? '1px solid #86efac' : 'none',
+                  background: sharedProcedureId === procedureEstimate.id ? '#f0fdf4' : '#0f766e',
+                  color: sharedProcedureId === procedureEstimate.id ? '#166534' : '#ffffff',
+                  borderRadius: 6,
+                  padding: '0.65rem 0.9rem',
+                  fontWeight: 800,
+                  cursor: isSharingProcedure || sharedProcedureId === procedureEstimate.id ? 'not-allowed' : 'pointer',
+                  justifySelf: 'start',
+                }}
+              >
+                {sharedProcedureId === procedureEstimate.id
+                  ? 'Shared with Patient Portal'
+                  : isSharingProcedure
+                    ? 'Sharing...'
+                    : 'Share with Patient Portal'}
+              </button>
             </div>
           )}
         </div>

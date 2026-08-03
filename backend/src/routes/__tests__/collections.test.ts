@@ -44,6 +44,7 @@ jest.mock("../../services/collectionsService", () => ({
 jest.mock("../../services/costEstimator", () => ({
   createCostEstimate: jest.fn(),
   getEstimateByAppointment: jest.fn(),
+  shareEstimateWithPatient: jest.fn(),
   quickEstimate: jest.fn(),
 }));
 
@@ -86,6 +87,7 @@ beforeEach(() => {
   collectionsMock.updateCollectionStats.mockReset();
   costEstimatorMock.createCostEstimate.mockReset();
   costEstimatorMock.getEstimateByAppointment.mockReset();
+  costEstimatorMock.shareEstimateWithPatient.mockReset();
   costEstimatorMock.quickEstimate.mockReset();
   loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
@@ -194,6 +196,39 @@ describe("Collections routes", () => {
     const res = await request(app).get("/collections/estimate/appt-1");
     expect(res.status).toBe(200);
     expect(res.body.estimate.id).toBe("est-2");
+  });
+
+  it("POST /collections/estimate/:estimateId/share publishes the estimate to the patient portal", async () => {
+    costEstimatorMock.shareEstimateWithPatient.mockResolvedValueOnce({
+      patientId: "p1",
+      sharedAt: "2026-08-03T18:00:00.000Z",
+    });
+
+    const res = await request(app).post("/collections/estimate/est-1/share").send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      estimateId: "est-1",
+      patientId: "p1",
+    });
+    expect(costEstimatorMock.shareEstimateWithPatient).toHaveBeenCalledWith("tenant-1", "est-1");
+    expect(auditLog).toHaveBeenCalledWith(
+      "tenant-1",
+      "user-1",
+      "cost_estimate_shared_with_patient",
+      "cost_estimate",
+      "est-1"
+    );
+  });
+
+  it("POST /collections/estimate/:estimateId/share does not expose another tenant's estimate", async () => {
+    costEstimatorMock.shareEstimateWithPatient.mockResolvedValueOnce(null);
+
+    const res = await request(app).post("/collections/estimate/missing/share").send({});
+
+    expect(res.status).toBe(404);
+    expect(auditLog).not.toHaveBeenCalled();
   });
 
   it("POST /collections/estimate/quick requires patient and procedure", async () => {

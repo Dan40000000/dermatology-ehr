@@ -68,7 +68,9 @@ export function phiAccessAuditMiddleware(req: Request, res: Response, next: Next
     const status = res.statusCode >= 200 && res.statusCode < 400 ? 'success' : 'failure';
     createAuditLog({
       tenantId,
-      userId: authedUser?.id || portalUser?.accountId || null,
+      // audit_log.user_id references staff users. Keep a portal account in
+      // metadata instead of putting its ID into that foreign-keyed column.
+      userId: authedUser?.id || null,
       action: actionForRequest(req.method),
       resourceType: resourceTypeForPath(req.path),
       resourceId: resourceIdForPath(req.path),
@@ -94,4 +96,3 @@ export function phiAccessAuditMiddleware(req: Request, res: Response, next: Next
 
   next();
 }
-

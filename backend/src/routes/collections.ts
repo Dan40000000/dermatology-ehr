@@ -291,6 +291,43 @@ collectionsRouter.get(
   }
 );
 
+// Share an estimate with the patient portal
+collectionsRouter.post(
+  "/estimate/:estimateId/share",
+  requireAuth,
+  requireRoles(["provider", "admin", "front_desk"]),
+  async (req: AuthedRequest, res) => {
+    const tenantId = req.user!.tenantId;
+    const estimateId = String(req.params.estimateId);
+
+    try {
+      const shared = await costEstimator.shareEstimateWithPatient(tenantId, estimateId);
+
+      if (!shared) {
+        return res.status(404).json({ error: "Estimate not found" });
+      }
+
+      await auditLog(
+        tenantId,
+        req.user!.id,
+        "cost_estimate_shared_with_patient",
+        "cost_estimate",
+        estimateId
+      );
+
+      return res.json({
+        success: true,
+        estimateId,
+        patientId: shared.patientId,
+        sharedAt: shared.sharedAt,
+      });
+    } catch (error) {
+      logCollectionsError("Error sharing cost estimate:", error);
+      return res.status(500).json({ error: "Failed to share cost estimate" });
+    }
+  }
+);
+
 // Quick estimate
 collectionsRouter.post(
   "/estimate/quick",

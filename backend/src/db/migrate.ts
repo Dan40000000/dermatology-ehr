@@ -15736,6 +15736,62 @@ Consider age-appropriate treatments and include family counseling points.',
        OR eligibility_endpoint IS NULL;
     `,
   },
+  {
+    name: "222_cost_estimates_runtime_compat",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS cost_estimates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      appointment_id TEXT,
+      service_type TEXT,
+      cpt_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      insurance_id TEXT,
+      insurance_name TEXT,
+      estimated_allowed_amount NUMERIC(10,2) DEFAULT 0,
+      deductible_remaining NUMERIC(10,2) DEFAULT 0,
+      coinsurance_percent NUMERIC(5,2) DEFAULT 0,
+      copay_amount NUMERIC(10,2) DEFAULT 0,
+      estimated_patient_responsibility NUMERIC(10,2) NOT NULL DEFAULT 0,
+      breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_cosmetic BOOLEAN DEFAULT FALSE,
+      insurance_verified BOOLEAN DEFAULT FALSE,
+      shown_to_patient BOOLEAN DEFAULT FALSE,
+      shown_at TIMESTAMPTZ,
+      patient_accepted BOOLEAN DEFAULT FALSE,
+      valid_until DATE,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    ALTER TABLE cost_estimates
+      ADD COLUMN IF NOT EXISTS appointment_id TEXT,
+      ADD COLUMN IF NOT EXISTS service_type TEXT,
+      ADD COLUMN IF NOT EXISTS cpt_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS estimated_allowed_amount NUMERIC(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS estimated_patient_responsibility NUMERIC(10,2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS is_cosmetic BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS insurance_verified BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS shown_to_patient BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS shown_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS patient_accepted BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS valid_until DATE,
+      ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+    CREATE INDEX IF NOT EXISTS idx_estimates_tenant ON cost_estimates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_estimates_patient ON cost_estimates(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_estimates_appointment ON cost_estimates(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_estimates_valid ON cost_estimates(valid_until);
+    CREATE INDEX IF NOT EXISTS idx_estimates_portal_shared
+      ON cost_estimates(tenant_id, patient_id, shown_to_patient, shown_at DESC);
+    `,
+  },
 
 ];
 

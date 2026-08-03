@@ -15,6 +15,7 @@ import { PortalResetPasswordPage } from '../patient-portal/PortalResetPasswordPa
 import { PublicBookAppointmentPage } from '../patient-portal/PublicBookAppointmentPage';
 import { PublicGuestBookAppointmentPage } from '../patient-portal/PublicGuestBookAppointmentPage';
 import { PatientPortalMessagesPage } from '../patient-portal/MessagesPage';
+import { PortalBillingPage } from '../patient-portal/PortalBillingPage';
 import { RequirePortalAuth } from '../../router/routes';
 
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -54,6 +55,14 @@ const portalApiMocks = vi.hoisted(() => ({
   updatePortalPreferences: vi.fn(),
   requestPortalPasswordReset: vi.fn(),
   resetPortalPassword: vi.fn(),
+  fetchPortalBalance: vi.fn(),
+  fetchPortalCharges: vi.fn(),
+  fetchPortalStatements: vi.fn(),
+  fetchPortalStatementDetails: vi.fn(),
+  fetchPortalPaymentHistory: vi.fn(),
+  fetchPortalPaymentMethods: vi.fn(),
+  fetchPortalInsuranceSummary: vi.fn(),
+  makePortalPayment: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -106,6 +115,14 @@ beforeEach(() => {
   portalApiMocks.updatePortalPreferences.mockReset();
   portalApiMocks.requestPortalPasswordReset.mockReset();
   portalApiMocks.resetPortalPassword.mockReset();
+  portalApiMocks.fetchPortalBalance.mockReset();
+  portalApiMocks.fetchPortalCharges.mockReset();
+  portalApiMocks.fetchPortalStatements.mockReset();
+  portalApiMocks.fetchPortalStatementDetails.mockReset();
+  portalApiMocks.fetchPortalPaymentHistory.mockReset();
+  portalApiMocks.fetchPortalPaymentMethods.mockReset();
+  portalApiMocks.fetchPortalInsuranceSummary.mockReset();
+  portalApiMocks.makePortalPayment.mockReset();
   toastMocks.showSuccess.mockReset();
   toastMocks.showError.mockReset();
 });
@@ -521,6 +538,73 @@ describe('Patient portal pages', () => {
 
     renderWithRouter(<PortalHealthRecordPage />);
     expect(await screen.findByRole('heading', { name: 'Health Record' })).toBeInTheDocument();
+  });
+
+  it('shows verified coverage and staff-shared cost estimates in portal billing', async () => {
+    portalApiMocks.fetchPortalBalance.mockResolvedValue({
+      totalCharges: 165,
+      totalPayments: 0,
+      totalAdjustments: 93.6,
+      currentBalance: 71.4,
+      lastPaymentDate: null,
+      lastPaymentAmount: null,
+    });
+    portalApiMocks.fetchPortalCharges.mockResolvedValue({ charges: [] });
+    portalApiMocks.fetchPortalStatements.mockResolvedValue({ statements: [] });
+    portalApiMocks.fetchPortalPaymentHistory.mockResolvedValue({ payments: [] });
+    portalApiMocks.fetchPortalPaymentMethods.mockResolvedValue({ paymentMethods: [] });
+    portalApiMocks.fetchPortalInsuranceSummary.mockResolvedValue({
+      coverage: {
+        planName: 'Blue Cross PPO',
+        planType: 'PPO',
+        status: 'active',
+        active: true,
+        verified: true,
+        verifiedAt: '2026-08-03T17:00:00.000Z',
+        expiresAt: null,
+        effectiveDate: '2026-01-01',
+        terminationDate: null,
+        copay: 40,
+        deductibleRemaining: 1200,
+        coinsurancePercent: 20,
+        outOfPocketRemaining: 3500,
+        priorAuthRequired: false,
+        referralRequired: false,
+        inNetwork: true,
+        networkName: 'PPO Network',
+        provider: 'stedi',
+        environment: 'sandbox',
+      },
+      estimates: [{
+        id: 'estimate-1',
+        appointmentId: null,
+        serviceType: 'office_visit',
+        procedures: [{ code: '99203', description: 'New patient visit' }],
+        totalCharges: 165,
+        insuranceAllowedAmount: 132,
+        insurancePays: 93.6,
+        patientResponsibility: 71.4,
+        breakdown: { copay: 40, deductible: 20, coinsurance: 6.4, notCovered: 5, contractualAdjustment: 28 },
+        isCosmetic: false,
+        insuranceVerified: true,
+        validUntil: '2026-09-02',
+        sharedAt: '2026-08-03T18:00:00.000Z',
+        createdAt: '2026-08-03T18:00:00.000Z',
+      }],
+      prescriptionPricingAvailable: false,
+    });
+
+    renderWithRouter(<PortalBillingPage />, ['/portal/billing']);
+
+    expect(await screen.findByRole('heading', { name: 'Insurance Coverage & Cost Estimates' })).toBeInTheDocument();
+    expect(screen.getByText('Blue Cross PPO')).toBeInTheDocument();
+    expect(screen.getByText('Test data · Stedi sandbox')).toBeInTheDocument();
+    expect(screen.getAllByText('$71.40')).toHaveLength(2);
+    expect(screen.getByText(/not a guarantee of coverage/i)).toBeInTheDocument();
+    expect(screen.getByText(/\$28\.00 estimated contract adjustment/i)).toBeInTheDocument();
+    expect(screen.getByText(/allowed amount uses 80% of the office fee/i)).toBeInTheDocument();
+    expect(screen.getByText(/Prescription drug pricing is not available/i)).toBeInTheDocument();
+    expect(portalApiMocks.fetchPortalInsuranceSummary).toHaveBeenCalledWith('tenant-demo', 'token');
   });
 
   it('loads portal profile', async () => {

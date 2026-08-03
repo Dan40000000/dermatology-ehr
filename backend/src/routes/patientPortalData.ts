@@ -45,6 +45,34 @@ function isMissingOptionalPortalData(error: unknown): boolean {
   return code === "42P01" || code === "42703" || message.includes("does not exist");
 }
 
+function toPortalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parsePortalJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== "string") {
+    return (value ?? fallback) as T;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function getEligibilityEnvironment(source: unknown): "production" | "sandbox" | "mock" | "unverified" {
+  const normalizedSource = String(source || "").toLowerCase();
+  if (!normalizedSource) return "unverified";
+  if (normalizedSource.includes("mock")) return "mock";
+  if (normalizedSource.includes("stedi") && String(process.env.STEDI_API_KEY || "").startsWith("test_")) {
+    return "sandbox";
+  }
+  return "production";
+}
+
 async function queryOptionalPortalRows<T = any>(
   label: string,
   sql: string,
@@ -1282,6 +1310,176 @@ patientPortalDataRouter.post("/refill-requests", async (req: PatientPortalReques
   } catch (error) {
     logPatientPortalDataError("Create portal refill request error", error);
     return res.status(500).json({ error: "Failed to submit refill request" });
+  }
+});
+
+/**
+ * GET /api/patient-portal-data/insurance-summary
+ * Return the signed-in patient's latest coverage verification and staff-shared estimates.
+ */
+patientPortalDataRouter.get("/insurance-summary", async (req: PatientPortalRequest, res) => {
+  try {
+    const patientId = req.patient!.patientId;
+    const tenantId = req.patient!.tenantId;
+
+    const patientResult = await pool.query(
+      `SELECT
+         COALESCE(
+           NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+           NULLIF(to_jsonb(p)->>'insurance_name', ''),
+           NULLIF(to_jsonb(p)->'insurance'->>'planName', ''),
+           NULLIF(to_jsonb(p)->>'insurance', '')
+         ) as "planName",
+         NULLIF(to_jsonb(p)->>'eligibility_status', '') as "eligibilityStatus",
+         NULLIF(to_jsonb(p)->>'eligibility_checked_at', '')::timestamptz as "eligibilityCheckedAt"
+       FROM patients p
+       WHERE p.id = $1 AND p.tenant_id = $2`,
+      [patientId, tenantId]
+    );
+
+    if (!patientResult.rowCount) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+
+    const verificationRows = await queryOptionalPortalRows(
+      "insurance_verification",
+      `SELECT
+         COALESCE(NULLIF(to_jsonb(iv)->>'plan_name', ''), NULLIF(to_jsonb(iv)->>'payer_name', '')) as "planName",
+         NULLIF(to_jsonb(iv)->>'plan_type', '') as "planType",
+         NULLIF(to_jsonb(iv)->>'verification_status', '') as "verificationStatus",
+         NULLIF(to_jsonb(iv)->>'effective_date', '')::date as "effectiveDate",
+         NULLIF(to_jsonb(iv)->>'termination_date', '')::date as "terminationDate",
+         NULLIF(to_jsonb(iv)->>'verified_at', '')::timestamptz as "verifiedAt",
+         NULLIF(to_jsonb(iv)->>'expires_at', '')::timestamptz as "expiresAt",
+         NULLIF(to_jsonb(iv)->>'verification_source', '') as "verificationSource",
+         COALESCE(
+           NULLIF(to_jsonb(iv)->>'copay_amount_cents', '')::numeric / 100.0,
+           NULLIF(to_jsonb(iv)->>'copay_specialist_cents', '')::numeric / 100.0,
+           NULLIF(to_jsonb(iv)->>'copay_amount', '')::numeric,
+           NULLIF(to_jsonb(iv)->>'specialist_copay', '')::numeric
+         ) as copay,
+         COALESCE(
+           NULLIF(to_jsonb(iv)->>'deductible_remaining_cents', '')::numeric / 100.0,
+           NULLIF(to_jsonb(iv)->>'deductible_remaining', '')::numeric
+         ) as "deductibleRemaining",
+         COALESCE(
+           NULLIF(to_jsonb(iv)->>'coinsurance_pct', '')::numeric,
+           NULLIF(to_jsonb(iv)->>'coinsurance_percent', '')::numeric
+         ) as "coinsurancePercent",
+         COALESCE(
+           NULLIF(to_jsonb(iv)->>'oop_remaining_cents', '')::numeric / 100.0,
+           NULLIF(to_jsonb(iv)->>'out_of_pocket_remaining_cents', '')::numeric / 100.0
+         ) as "outOfPocketRemaining",
+         COALESCE(NULLIF(to_jsonb(iv)->>'prior_auth_required', '')::boolean, false) as "priorAuthRequired",
+         COALESCE(NULLIF(to_jsonb(iv)->>'referral_required', '')::boolean, false) as "referralRequired",
+         NULLIF(to_jsonb(iv)->>'in_network', '')::boolean as "inNetwork",
+         NULLIF(to_jsonb(iv)->>'network_name', '') as "networkName"
+       FROM insurance_verifications iv
+       WHERE iv.patient_id = $1 AND iv.tenant_id = $2
+       ORDER BY iv.verified_at DESC
+       LIMIT 1`,
+      [patientId, tenantId]
+    );
+
+    const estimateRows = await queryOptionalPortalRows(
+      "cost_estimates",
+      `SELECT
+         ce.id,
+         ce.appointment_id as "appointmentId",
+         ce.service_type as "serviceType",
+         ce.cpt_codes as "cptCodes",
+         ce.estimated_allowed_amount as "insuranceAllowedAmount",
+         ce.estimated_patient_responsibility as "patientResponsibility",
+         ce.breakdown,
+         ce.is_cosmetic as "isCosmetic",
+         ce.insurance_verified as "insuranceVerified",
+         ce.valid_until as "validUntil",
+         ce.shown_at as "sharedAt",
+         ce.created_at as "createdAt"
+       FROM cost_estimates ce
+       WHERE ce.patient_id = $1
+         AND ce.tenant_id = $2
+         AND ce.shown_to_patient = true
+       ORDER BY ce.shown_at DESC NULLS LAST, ce.created_at DESC
+       LIMIT 10`,
+      [patientId, tenantId]
+    );
+
+    const patient = patientResult.rows[0];
+    const verification = verificationRows[0] || null;
+    const source = verification?.verificationSource || null;
+    const environment = getEligibilityEnvironment(source);
+    const verificationStatus = verification?.verificationStatus || patient.eligibilityStatus || "unverified";
+
+    const estimates = estimateRows.map((row: any) => {
+      const parsedCptCodes = parsePortalJson<unknown>(row.cptCodes, []);
+      const cptCodes = Array.isArray(parsedCptCodes)
+        ? parsedCptCodes.filter((item): item is { code?: string; fee?: number; description?: string } => (
+            Boolean(item) && typeof item === "object"
+          ))
+        : [];
+      const breakdown = parsePortalJson<Record<string, unknown>>(row.breakdown, {});
+      const totalCharges = cptCodes.reduce((total, item) => total + (toPortalNumber(item.fee) || 0), 0);
+      const insuranceAllowedAmount = toPortalNumber(row.insuranceAllowedAmount) || 0;
+      const copay = toPortalNumber(breakdown.copay) || 0;
+      const deductible = toPortalNumber(breakdown.deductible) || 0;
+      const coinsurance = toPortalNumber(breakdown.coinsurance) || 0;
+
+      return {
+        id: row.id,
+        appointmentId: row.appointmentId || null,
+        serviceType: row.serviceType || "Medical service",
+        procedures: cptCodes.map(item => ({
+          code: item.code || null,
+          description: item.description || null,
+        })),
+        totalCharges,
+        insuranceAllowedAmount,
+        insurancePays: Math.max(0, insuranceAllowedAmount - copay - deductible - coinsurance),
+        patientResponsibility: toPortalNumber(row.patientResponsibility) || 0,
+        breakdown: {
+          copay,
+          deductible,
+          coinsurance,
+          notCovered: toPortalNumber(breakdown.notCovered) || 0,
+          contractualAdjustment: toPortalNumber(breakdown.contractualAdjustment) || 0,
+        },
+        isCosmetic: Boolean(row.isCosmetic),
+        insuranceVerified: Boolean(row.insuranceVerified),
+        validUntil: row.validUntil || null,
+        sharedAt: row.sharedAt || row.createdAt || null,
+        createdAt: row.createdAt || null,
+      };
+    });
+
+    return res.json({
+      coverage: {
+        planName: verification?.planName || patient.planName || null,
+        planType: verification?.planType || null,
+        status: verificationStatus,
+        active: ["active", "verified", "eligible"].includes(String(verificationStatus).toLowerCase()),
+        verified: Boolean(verification?.verifiedAt),
+        verifiedAt: verification?.verifiedAt || patient.eligibilityCheckedAt || null,
+        expiresAt: verification?.expiresAt || null,
+        effectiveDate: verification?.effectiveDate || null,
+        terminationDate: verification?.terminationDate || null,
+        copay: toPortalNumber(verification?.copay),
+        deductibleRemaining: toPortalNumber(verification?.deductibleRemaining),
+        coinsurancePercent: toPortalNumber(verification?.coinsurancePercent),
+        outOfPocketRemaining: toPortalNumber(verification?.outOfPocketRemaining),
+        priorAuthRequired: Boolean(verification?.priorAuthRequired),
+        referralRequired: Boolean(verification?.referralRequired),
+        inNetwork: typeof verification?.inNetwork === "boolean" ? verification.inNetwork : null,
+        networkName: verification?.networkName || null,
+        provider: source ? String(source).replace(/_mock$/i, "") : null,
+        environment,
+      },
+      estimates,
+      prescriptionPricingAvailable: false,
+    });
+  } catch (error) {
+    logPatientPortalDataError("Get portal insurance summary error", error);
+    return res.status(500).json({ error: "Failed to get insurance coverage and estimates" });
   }
 });
 

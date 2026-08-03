@@ -34,6 +34,7 @@ export interface CostEstimate {
     deductible: number;
     coinsurance: number;
     notCovered: number;
+    contractualAdjustment: number;
   };
   isCosmetic: boolean;
   insuranceVerified: boolean;
@@ -206,6 +207,7 @@ export async function createCostEstimate(
         deductible: 0,
         coinsurance: 0,
         notCovered: totalCharges,
+        contractualAdjustment: 0,
       },
       isCosmetic: true,
       insuranceVerified: false,
@@ -235,6 +237,7 @@ export async function createCostEstimate(
         deductible: 0,
         coinsurance: 0,
         notCovered: totalCharges,
+        contractualAdjustment: 0,
       },
       isCosmetic: false,
       insuranceVerified: false,
@@ -255,6 +258,7 @@ export async function createCostEstimate(
     deductible: 0,
     coinsurance: 0,
     notCovered: 0,
+    contractualAdjustment: 0,
   };
 
   // 1. Copay
@@ -271,8 +275,12 @@ export async function createCostEstimate(
   breakdown.coinsurance = afterDeductible * (benefits.coinsurancePercent / 100);
   patientResponsibility += breakdown.coinsurance;
 
-  // 4. Not covered (difference between charges and allowed)
-  breakdown.notCovered = totalCharges - insuranceAllowedAmount;
+  // 4. The charge above the allowed amount is a contractual adjustment for
+  // in-network care. Only treat it as potential patient balance billing when
+  // the eligibility result says the provider is out of network.
+  const chargeAboveAllowed = Math.max(0, totalCharges - insuranceAllowedAmount);
+  breakdown.contractualAdjustment = benefits.isInNetwork ? chargeAboveAllowed : 0;
+  breakdown.notCovered = benefits.isInNetwork ? 0 : chargeAboveAllowed;
   patientResponsibility += breakdown.notCovered;
 
   const coveredPatientResponsibility = breakdown.copay + breakdown.deductible + breakdown.coinsurance;
@@ -464,6 +472,31 @@ export async function markEstimateShown(
 }
 
 /**
+ * Share an estimate with the patient portal without recording a patient decision.
+ */
+export async function shareEstimateWithPatient(
+  tenantId: string,
+  estimateId: string
+): Promise<{ patientId: string; sharedAt: string } | null> {
+  const result = await pool.query(
+    `update cost_estimates
+     set shown_to_patient = true,
+         shown_at = now(),
+         updated_at = now()
+     where id = $1 and tenant_id = $2
+     returning patient_id as "patientId", shown_at as "sharedAt"`,
+    [estimateId, tenantId]
+  );
+
+  if (!result.rowCount) return null;
+
+  return {
+    patientId: String(result.rows[0].patientId),
+    sharedAt: new Date(result.rows[0].sharedAt).toISOString(),
+  };
+}
+
+/**
  * Get valid until date (30 days from now)
  */
 function getValidUntilDate(): string {
@@ -503,6 +536,7 @@ function normalizeBreakdown(value: unknown): CostEstimate["breakdown"] {
     deductible: toNumber(parsed?.deductible),
     coinsurance: toNumber(parsed?.coinsurance),
     notCovered: toNumber(parsed?.notCovered),
+    contractualAdjustment: toNumber(parsed?.contractualAdjustment),
   };
 }
 

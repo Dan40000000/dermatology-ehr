@@ -8,6 +8,7 @@ import {
   fetchPortalStatementDetails,
   fetchPortalPaymentHistory,
   fetchPortalPaymentMethods,
+  fetchPortalInsuranceSummary,
   makePortalPayment,
   type PatientBalance,
   type Charge as PortalCharge,
@@ -15,6 +16,7 @@ import {
   type PortalStatementLineItem,
   type PaymentMethod as PortalPaymentMethod,
   type PaymentTransaction,
+  type PortalInsuranceSummary,
 } from '../../portalApi';
 
 // Payment confirmation result type
@@ -74,6 +76,8 @@ export function PortalBillingPage() {
   const [statements, setStatements] = useState<PortalStatement[]>([]);
   const [payments, setPayments] = useState<PaymentTransaction[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PortalPaymentMethod[]>([]);
+  const [insuranceSummary, setInsuranceSummary] = useState<PortalInsuranceSummary | null>(null);
+  const [insuranceError, setInsuranceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'statements' | 'charges' | 'payments' | 'methods'>('statements');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -103,12 +107,18 @@ export function PortalBillingPage() {
 
     setLoading(true);
     try {
-      const [balanceData, chargesData, statementsData, paymentsData, methodsData] = await Promise.all([
+      setInsuranceError(null);
+      const insuranceRequest = fetchPortalInsuranceSummary(tenantId, sessionToken).catch((error) => {
+        setInsuranceError(error instanceof Error ? error.message : 'Coverage information is temporarily unavailable');
+        return null;
+      });
+      const [balanceData, chargesData, statementsData, paymentsData, methodsData, insuranceData] = await Promise.all([
         fetchPortalBalance(tenantId, sessionToken),
         fetchPortalCharges(tenantId, sessionToken),
         fetchPortalStatements(tenantId, sessionToken),
         fetchPortalPaymentHistory(tenantId, sessionToken),
         fetchPortalPaymentMethods(tenantId, sessionToken),
+        insuranceRequest,
       ]);
 
       setBalance(balanceData);
@@ -116,6 +126,7 @@ export function PortalBillingPage() {
       setStatements(statementsData.statements || []);
       setPayments(paymentsData.payments || []);
       setPaymentMethods(methodsData.paymentMethods || []);
+      setInsuranceSummary(insuranceData);
 
       if (methodsData.paymentMethods?.length > 0) {
         const defaultMethod = methodsData.paymentMethods.find((m) => m.isDefault);
@@ -242,7 +253,10 @@ export function PortalBillingPage() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(dateString)
+      ? `${dateString}T12:00:00`
+      : dateString;
+    return new Date(normalized).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -290,6 +304,16 @@ export function PortalBillingPage() {
     }
   };
 
+  const coverage = insuranceSummary?.coverage || null;
+  const sharedEstimates = insuranceSummary?.estimates || [];
+  const environmentLabel = coverage?.environment === 'production'
+    ? 'Production payer data'
+    : coverage?.environment === 'sandbox'
+      ? 'Test data · Stedi sandbox'
+      : coverage?.environment === 'mock'
+        ? 'Mock data'
+        : 'Not verified';
+
   return (
     <PatientPortalLayout>
       <style>{`
@@ -320,6 +344,256 @@ export function PortalBillingPage() {
           grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
           gap: 1rem;
           margin-bottom: 2rem;
+        }
+
+        .insurance-summary-card {
+          background: white;
+          border: 1px solid #bfdbfe;
+          border-radius: 16px;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+          margin-bottom: 2rem;
+          overflow: hidden;
+        }
+
+        .insurance-summary-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
+          padding: 1.35rem 1.5rem;
+          background: linear-gradient(135deg, #eff6ff 0%, #ecfeff 100%);
+          border-bottom: 1px solid #dbeafe;
+        }
+
+        .insurance-summary-heading {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.75rem;
+        }
+
+        .insurance-summary-icon {
+          width: 42px;
+          height: 42px;
+          border-radius: 12px;
+          display: grid;
+          place-items: center;
+          background: #dbeafe;
+          color: #1d4ed8;
+          flex-shrink: 0;
+        }
+
+        .insurance-summary-icon svg {
+          width: 23px;
+          height: 23px;
+        }
+
+        .insurance-summary-title {
+          margin: 0;
+          color: #0f172a;
+          font-size: 1.15rem;
+          font-weight: 750;
+        }
+
+        .insurance-summary-copy {
+          margin: 0.25rem 0 0;
+          color: #475569;
+          font-size: 0.86rem;
+          line-height: 1.45;
+        }
+
+        .coverage-badges {
+          display: flex;
+          gap: 0.5rem;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .coverage-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          border-radius: 999px;
+          padding: 0.38rem 0.68rem;
+          font-size: 0.74rem;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+
+        .coverage-badge.active {
+          color: #047857;
+          background: #d1fae5;
+          border: 1px solid #a7f3d0;
+        }
+
+        .coverage-badge.inactive {
+          color: #b45309;
+          background: #fef3c7;
+          border: 1px solid #fde68a;
+        }
+
+        .coverage-badge.environment {
+          color: ${coverage?.environment === 'production' ? '#166534' : '#92400e'};
+          background: ${coverage?.environment === 'production' ? '#f0fdf4' : '#fffbeb'};
+          border: 1px solid ${coverage?.environment === 'production' ? '#bbf7d0' : '#fde68a'};
+        }
+
+        .insurance-summary-body {
+          padding: 1.5rem;
+          display: grid;
+          gap: 1.25rem;
+        }
+
+        .coverage-overview {
+          display: grid;
+          grid-template-columns: minmax(220px, 1.25fr) repeat(4, minmax(120px, 1fr));
+          gap: 0.75rem;
+        }
+
+        .coverage-plan,
+        .coverage-metric {
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 0.9rem;
+          min-width: 0;
+        }
+
+        .coverage-plan {
+          background: #f8fafc;
+        }
+
+        .coverage-metric {
+          background: white;
+        }
+
+        .coverage-label {
+          color: #64748b;
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .coverage-value {
+          color: #0f172a;
+          font-size: 1.08rem;
+          font-weight: 750;
+          margin-top: 0.35rem;
+          overflow-wrap: anywhere;
+        }
+
+        .coverage-plan-detail {
+          color: #64748b;
+          font-size: 0.78rem;
+          margin-top: 0.35rem;
+        }
+
+        .estimate-list {
+          display: grid;
+          gap: 0.85rem;
+        }
+
+        .estimate-section-heading {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          gap: 1rem;
+        }
+
+        .estimate-section-heading h3 {
+          margin: 0;
+          color: #0f172a;
+          font-size: 1rem;
+        }
+
+        .estimate-section-heading span {
+          color: #64748b;
+          font-size: 0.78rem;
+        }
+
+        .estimate-card {
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 1rem;
+          display: grid;
+          gap: 0.8rem;
+        }
+
+        .estimate-card-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 1rem;
+          align-items: flex-start;
+        }
+
+        .estimate-service {
+          color: #0f172a;
+          font-weight: 750;
+          text-transform: capitalize;
+        }
+
+        .estimate-procedures {
+          color: #64748b;
+          font-size: 0.78rem;
+          margin-top: 0.2rem;
+        }
+
+        .estimate-patient-total {
+          text-align: right;
+          color: #92400e;
+          flex-shrink: 0;
+        }
+
+        .estimate-patient-total strong {
+          display: block;
+          font-size: 1.35rem;
+          color: #78350f;
+        }
+
+        .estimate-metrics {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.65rem;
+        }
+
+        .estimate-metric {
+          background: #f8fafc;
+          border-radius: 8px;
+          padding: 0.72rem;
+          color: #475569;
+          font-size: 0.75rem;
+        }
+
+        .estimate-metric strong {
+          display: block;
+          color: #0f172a;
+          font-size: 0.96rem;
+          margin-top: 0.2rem;
+        }
+
+        .estimate-note,
+        .insurance-unavailable,
+        .insurance-empty {
+          border-radius: 10px;
+          padding: 0.85rem 1rem;
+          color: #475569;
+          font-size: 0.8rem;
+          line-height: 1.45;
+        }
+
+        .estimate-note {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+        }
+
+        .insurance-unavailable {
+          background: #fff7ed;
+          border: 1px solid #fed7aa;
+          color: #9a3412;
+        }
+
+        .insurance-empty {
+          background: #f8fafc;
+          border: 1px dashed #cbd5e1;
         }
 
         .balance-card {
@@ -1083,14 +1357,155 @@ export function PortalBillingPage() {
             gap: 1rem;
             align-items: center;
           }
+
+          .insurance-summary-header,
+          .estimate-card-header {
+            flex-direction: column;
+          }
+
+          .coverage-badges {
+            justify-content: flex-start;
+          }
+
+          .coverage-overview,
+          .estimate-metrics {
+            grid-template-columns: 1fr;
+          }
+
+          .estimate-patient-total {
+            text-align: left;
+          }
         }
       `}</style>
 
       <div className="billing-page">
         <div className="billing-header">
           <h1 className="billing-title">Billing & Payments</h1>
-          <p className="billing-subtitle">View your statements and manage payments</p>
+          <p className="billing-subtitle">Review insurance coverage, cost estimates, statements, and payments</p>
         </div>
+
+        <section className="insurance-summary-card" aria-labelledby="insurance-summary-title">
+          <div className="insurance-summary-header">
+            <div className="insurance-summary-heading">
+              <div className="insurance-summary-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <path d="M9 12l2 2 4-4" />
+                </svg>
+              </div>
+              <div>
+                <h2 id="insurance-summary-title" className="insurance-summary-title">Insurance Coverage & Cost Estimates</h2>
+                <p className="insurance-summary-copy">Your latest available medical benefits and estimates shared by your care team.</p>
+              </div>
+            </div>
+            {!loading && coverage && (
+              <div className="coverage-badges">
+                <span className={`coverage-badge ${coverage.active ? 'active' : 'inactive'}`}>
+                  {coverage.active ? '● Active coverage' : '● Coverage not active'}
+                </span>
+                <span className="coverage-badge environment">{environmentLabel}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="insurance-summary-body">
+            {loading ? (
+              <div className="coverage-overview" aria-label="Loading insurance coverage">
+                {[1, 2, 3, 4, 5].map(item => (
+                  <div key={item} className="loading-skeleton" style={{ height: '5.5rem' }} />
+                ))}
+              </div>
+            ) : insuranceError ? (
+              <div className="insurance-unavailable" role="status">
+                Coverage information is temporarily unavailable. Your statements and payments are still available below.
+              </div>
+            ) : coverage ? (
+              <>
+                <div className="coverage-overview">
+                  <div className="coverage-plan">
+                    <div className="coverage-label">Plan</div>
+                    <div className="coverage-value">{coverage.planName || 'Insurance plan on file'}</div>
+                    <div className="coverage-plan-detail">
+                      {[coverage.planType, coverage.inNetwork === true ? 'In network' : coverage.inNetwork === false ? 'Out of network' : null]
+                        .filter(Boolean)
+                        .join(' · ') || 'Network details unavailable'}
+                    </div>
+                    <div className="coverage-plan-detail">
+                      {coverage.verifiedAt ? `Verified ${formatDate(coverage.verifiedAt)}` : 'Not recently verified'}
+                    </div>
+                  </div>
+                  <div className="coverage-metric">
+                    <div className="coverage-label">Specialist copay</div>
+                    <div className="coverage-value">{coverage.copay == null ? '—' : formatCurrency(coverage.copay)}</div>
+                  </div>
+                  <div className="coverage-metric">
+                    <div className="coverage-label">Deductible left</div>
+                    <div className="coverage-value">{coverage.deductibleRemaining == null ? '—' : formatCurrency(coverage.deductibleRemaining)}</div>
+                  </div>
+                  <div className="coverage-metric">
+                    <div className="coverage-label">Coinsurance</div>
+                    <div className="coverage-value">{coverage.coinsurancePercent == null ? '—' : `${coverage.coinsurancePercent}%`}</div>
+                  </div>
+                  <div className="coverage-metric">
+                    <div className="coverage-label">Out-of-pocket left</div>
+                    <div className="coverage-value">{coverage.outOfPocketRemaining == null ? '—' : formatCurrency(coverage.outOfPocketRemaining)}</div>
+                  </div>
+                </div>
+
+                <div className="estimate-list">
+                  <div className="estimate-section-heading">
+                    <h3>Shared procedure estimates</h3>
+                    <span>{sharedEstimates.length} estimate{sharedEstimates.length === 1 ? '' : 's'}</span>
+                  </div>
+                  {sharedEstimates.length === 0 ? (
+                    <div className="insurance-empty">No cost estimate has been shared by your care team yet.</div>
+                  ) : sharedEstimates.map(estimate => (
+                    <article key={estimate.id} className="estimate-card">
+                      <div className="estimate-card-header">
+                        <div>
+                          <div className="estimate-service">{estimate.serviceType.replace(/_/g, ' ')}</div>
+                          <div className="estimate-procedures">
+                            {estimate.procedures.length > 0
+                              ? estimate.procedures.map(item => [item.code, item.description].filter(Boolean).join(' · ')).join(', ')
+                              : 'Procedure details available from your care team'}
+                          </div>
+                          <div className="estimate-procedures">
+                            Shared {estimate.sharedAt ? formatDate(estimate.sharedAt) : 'recently'}
+                            {estimate.validUntil ? ` · Valid through ${formatDate(estimate.validUntil)}` : ''}
+                          </div>
+                        </div>
+                        <div className="estimate-patient-total">
+                          Your estimate
+                          <strong>{formatCurrency(estimate.patientResponsibility)}</strong>
+                        </div>
+                      </div>
+                      <div className="estimate-metrics">
+                        <div className="estimate-metric">Total charges<strong>{formatCurrency(estimate.totalCharges)}</strong></div>
+                        <div className="estimate-metric">Plan allowed amount<strong>{formatCurrency(estimate.insuranceAllowedAmount)}</strong></div>
+                        <div className="estimate-metric">Estimated insurance payment<strong>{formatCurrency(estimate.insurancePays)}</strong></div>
+                      </div>
+                      <div className="estimate-note">
+                        Includes {formatCurrency(estimate.breakdown.copay)} copay, {formatCurrency(estimate.breakdown.deductible)} deductible,
+                        {' '}{formatCurrency(estimate.breakdown.coinsurance)} coinsurance, {formatCurrency(estimate.breakdown.notCovered)} not covered,
+                        and a {formatCurrency(estimate.breakdown.contractualAdjustment)} estimated contract adjustment that is not included in your responsibility.
+                        {' '}The allowed amount uses 80% of the office fee because a payer-specific contracted rate is not configured yet.
+                        {' '}This is an estimate, not a guarantee of coverage or your final bill.
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                {!insuranceSummary?.prescriptionPricingAvailable && (
+                  <div className="estimate-note">
+                    Prescription drug pricing is not available in the portal yet because a real-time pharmacy benefit vendor is not connected.
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="insurance-empty">No insurance coverage information is on file. Contact the office to update your plan.</div>
+            )}
+          </div>
+        </section>
 
         {/* Balance Overview Cards */}
         <div className="balance-cards">

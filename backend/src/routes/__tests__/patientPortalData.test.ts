@@ -301,6 +301,95 @@ describe("Patient portal data routes", () => {
     expect(res.body.medications).toHaveLength(1);
   });
 
+  it("GET /patient-portal-data/insurance-summary returns only the signed-in patient's shared estimates", async () => {
+    const previousStediKey = process.env.STEDI_API_KEY;
+    process.env.STEDI_API_KEY = "test_portal_coverage";
+
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          planName: "Blue Cross PPO",
+          eligibilityStatus: "active",
+          eligibilityCheckedAt: "2026-08-03T17:00:00.000Z",
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          planName: "Blue Cross PPO",
+          planType: "PPO",
+          verificationStatus: "active",
+          verifiedAt: "2026-08-03T17:00:00.000Z",
+          verificationSource: "stedi",
+          copay: "40",
+          deductibleRemaining: "1200",
+          coinsurancePercent: "20",
+          outOfPocketRemaining: "3500",
+          inNetwork: true,
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "estimate-1",
+          serviceType: "office_visit",
+          cptCodes: [{ code: "99203", fee: 165, description: "New patient visit" }],
+          insuranceAllowedAmount: "132",
+          patientResponsibility: "71.40",
+          breakdown: { copay: 40, deductible: 20, coinsurance: 6.4, notCovered: 0, contractualAdjustment: 33 },
+          insuranceVerified: true,
+          shownAt: "2026-08-03T18:00:00.000Z",
+          validUntil: "2026-09-02",
+        }],
+      });
+
+    const res = await request(app).get("/patient-portal-data/insurance-summary");
+
+    expect(res.status).toBe(200);
+    expect(res.body.coverage).toMatchObject({
+      planName: "Blue Cross PPO",
+      active: true,
+      environment: "sandbox",
+      copay: 40,
+    });
+    expect(res.body.estimates).toHaveLength(1);
+    expect(res.body.estimates[0]).toMatchObject({
+      id: "estimate-1",
+      totalCharges: 165,
+      patientResponsibility: 71.4,
+      breakdown: expect.objectContaining({ contractualAdjustment: 33 }),
+    });
+    expect(queryMock.mock.calls[2][0]).toContain("ce.shown_to_patient = true");
+    expect(queryMock.mock.calls[2][1]).toEqual(["patient-1", "tenant-1"]);
+
+    if (previousStediKey === undefined) {
+      delete process.env.STEDI_API_KEY;
+    } else {
+      process.env.STEDI_API_KEY = previousStediKey;
+    }
+  });
+
+  it("GET /patient-portal-data/insurance-summary does not fabricate verification or estimates", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ planName: "Plan on file", eligibilityStatus: null, eligibilityCheckedAt: null }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/patient-portal-data/insurance-summary");
+
+    expect(res.status).toBe(200);
+    expect(res.body.coverage).toMatchObject({
+      planName: "Plan on file",
+      active: false,
+      verified: false,
+      environment: "unverified",
+    });
+    expect(res.body.estimates).toEqual([]);
+    expect(res.body.prescriptionPricingAvailable).toBe(false);
+  });
+
   it("GET /patient-portal-data/dashboard aggregates counts", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ count: "2" }] })

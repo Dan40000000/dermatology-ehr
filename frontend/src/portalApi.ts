@@ -125,6 +125,57 @@ export interface PortalStatementLineItem {
   patientResponsibilityCents: number;
 }
 
+export interface PortalInsuranceCoverage {
+  planName: string | null;
+  planType: string | null;
+  status: string;
+  active: boolean;
+  verified: boolean;
+  verifiedAt: string | null;
+  expiresAt: string | null;
+  effectiveDate: string | null;
+  terminationDate: string | null;
+  copay: number | null;
+  deductibleRemaining: number | null;
+  coinsurancePercent: number | null;
+  outOfPocketRemaining: number | null;
+  priorAuthRequired: boolean;
+  referralRequired: boolean;
+  inNetwork: boolean | null;
+  networkName: string | null;
+  provider: string | null;
+  environment: 'production' | 'sandbox' | 'mock' | 'unverified';
+}
+
+export interface PortalCostEstimate {
+  id: string;
+  appointmentId: string | null;
+  serviceType: string;
+  procedures: Array<{ code: string | null; description: string | null }>;
+  totalCharges: number;
+  insuranceAllowedAmount: number;
+  insurancePays: number;
+  patientResponsibility: number;
+  breakdown: {
+    copay: number;
+    deductible: number;
+    coinsurance: number;
+    notCovered: number;
+    contractualAdjustment: number;
+  };
+  isCosmetic: boolean;
+  insuranceVerified: boolean;
+  validUntil: string | null;
+  sharedAt: string | null;
+  createdAt: string | null;
+}
+
+export interface PortalInsuranceSummary {
+  coverage: PortalInsuranceCoverage;
+  estimates: PortalCostEstimate[];
+  prescriptionPricingAvailable: boolean;
+}
+
 // ============================================================================
 // PORTAL PROFILE
 // ============================================================================
@@ -414,6 +465,21 @@ export async function fetchPortalStatements(
     credentials: 'include',
   });
   if (!res.ok) throw new Error('Failed to fetch statements');
+  return res.json();
+}
+
+export async function fetchPortalInsuranceSummary(
+  tenantId: string,
+  portalToken: string
+): Promise<PortalInsuranceSummary> {
+  const res = await fetch(`${API_BASE}/api/patient-portal-data/insurance-summary`, {
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch insurance coverage and estimates');
   return res.json();
 }
 

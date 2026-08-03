@@ -132,8 +132,43 @@ describe("costEstimator", () => {
     });
 
     expect(estimate.insuranceAllowedAmount).toBe(80);
-    expect(estimate.patientResponsibility).toBeCloseTo(48, 1);
+    expect(estimate.patientResponsibility).toBeCloseTo(28, 1);
     expect(estimate.insurancePays).toBeCloseTo(52, 1);
+    expect(estimate.breakdown.notCovered).toBe(0);
+    expect(estimate.breakdown.contractualAdjustment).toBe(20);
+  });
+
+  it("createCostEstimate treats the amount above allowed as potential balance billing out of network", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ fee_cents: 10000, cpt_description: "Test" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          planName: "Out-of-network Plan",
+          deductible: 0,
+          deductibleMet: 0,
+          deductibleRemaining: 0,
+          coinsurancePercent: 20,
+          copay: 0,
+          outOfPocketMax: 8000,
+          outOfPocketMet: 0,
+          isInNetwork: false,
+        }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const estimate = await costEstimator.createCostEstimate("tenant-1", "patient-1", {
+      serviceType: "medical",
+      cptCodes: ["11111"],
+      userId: "user-1",
+    });
+
+    expect(estimate.patientResponsibility).toBeCloseTo(36, 1);
+    expect(estimate.breakdown.notCovered).toBe(20);
+    expect(estimate.breakdown.contractualAdjustment).toBe(0);
   });
 
   it("getEstimate returns totals", async () => {
@@ -190,6 +225,30 @@ describe("costEstimator", () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
     await costEstimator.markEstimateShown("tenant-1", "est-1", true);
     expect(queryMock).toHaveBeenCalled();
+  });
+
+  it("shares an estimate with the patient portal", async () => {
+    queryMock.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ patientId: "patient-1", sharedAt: "2026-08-03T18:00:00.000Z" }],
+    });
+
+    const result = await costEstimator.shareEstimateWithPatient("tenant-1", "est-1");
+
+    expect(result).toEqual({
+      patientId: "patient-1",
+      sharedAt: "2026-08-03T18:00:00.000Z",
+    });
+    expect(queryMock.mock.calls[0][0]).toContain("shown_to_patient = true");
+    expect(queryMock.mock.calls[0][1]).toEqual(["est-1", "tenant-1"]);
+  });
+
+  it("does not share an estimate outside the tenant", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const result = await costEstimator.shareEstimateWithPatient("tenant-1", "missing");
+
+    expect(result).toBeNull();
   });
 
   it("quickEstimate uses typical when insurance is present", async () => {

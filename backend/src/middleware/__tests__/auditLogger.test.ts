@@ -12,6 +12,8 @@ import {
 } from "../auditLogger";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
+import { phiAccessAuditMiddleware } from "../phiAccessAudit";
+import { createAuditLog } from "../../services/audit";
 
 jest.mock("../../db/pool", () => ({
   pool: { query: jest.fn() },
@@ -25,6 +27,10 @@ jest.mock("../../lib/logger", () => ({
   },
 }));
 
+jest.mock("../../services/audit", () => ({
+  createAuditLog: jest.fn().mockResolvedValue(undefined),
+}));
+
 const queryMock = pool.query as jest.Mock;
 
 beforeEach(() => {
@@ -33,6 +39,7 @@ beforeEach(() => {
   (logger.info as jest.Mock).mockReset();
   (logger.warn as jest.Mock).mockReset();
   (logger.error as jest.Mock).mockReset();
+  (createAuditLog as jest.Mock).mockClear();
 });
 
 describe("auditLogger utilities", () => {
@@ -104,5 +111,38 @@ describe("auditLogger utilities", () => {
     const report = await generateAuditReport("t1", new Date("2024-01-01"), new Date("2024-01-02"));
     expect(report.summary.view).toBe(2);
     expect(report.events).toHaveLength(1);
+  });
+
+  it("logs patient portal access without using a portal account as a staff user foreign key", async () => {
+    let finish: (() => void) | undefined;
+    const req: any = {
+      method: "GET",
+      path: "/api/patient-portal-data/insurance-summary",
+      query: {},
+      ip: "1.1.1.1",
+      header: jest.fn(),
+      get: jest.fn().mockReturnValue("test-agent"),
+      patient: { accountId: "portal-account-1", patientId: "patient-1", tenantId: "tenant-1" },
+    };
+    const res: any = {
+      statusCode: 200,
+      on: jest.fn((event: string, callback: () => void) => {
+        if (event === "finish") finish = callback;
+      }),
+    };
+    const next = jest.fn();
+
+    phiAccessAuditMiddleware(req, res, next);
+    finish?.();
+
+    expect(next).toHaveBeenCalled();
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "tenant-1",
+      userId: null,
+      metadata: expect.objectContaining({
+        actorType: "patient_portal",
+        path: "/api/patient-portal-data/insurance-summary",
+      }),
+    }));
   });
 });

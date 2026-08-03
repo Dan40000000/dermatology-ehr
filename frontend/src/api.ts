@@ -8924,6 +8924,7 @@ export interface PatientProcedureCostEstimate {
     deductible: number;
     coinsurance: number;
     notCovered: number;
+    contractualAdjustment: number;
   };
   isCosmetic: boolean;
   insuranceVerified: boolean;
@@ -8942,6 +8943,19 @@ export async function createPatientProcedureCostEstimate(
   }
 ): Promise<{ estimate: PatientProcedureCostEstimate }> {
   return authedPost(tenantId, accessToken, '/api/collections/estimate', payload);
+}
+
+export async function sharePatientProcedureCostEstimate(
+  tenantId: string,
+  accessToken: string,
+  estimateId: string
+): Promise<{ success: boolean; estimateId: string; patientId: string; sharedAt: string }> {
+  return authedPost(
+    tenantId,
+    accessToken,
+    `/api/collections/estimate/${encodeURIComponent(estimateId)}/share`,
+    {}
+  );
 }
 
 export async function fetchPatientPhotos(

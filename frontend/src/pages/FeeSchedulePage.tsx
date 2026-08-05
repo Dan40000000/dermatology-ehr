@@ -13,6 +13,10 @@ import {
   deleteFeeScheduleItem,
   importFeeScheduleItems,
   exportFeeSchedule,
+  fetchPayerContractRates,
+  createPayerContractRate,
+  retirePayerContractRate,
+  type PayerContractRate,
 } from '../api';
 import type { FeeSchedule, FeeScheduleItem } from '../types';
 
@@ -55,6 +59,18 @@ const emptyEditFeeForm = (): EditFeeFormData => ({
   notes: '',
 });
 
+const emptyContractRateForm = () => ({
+  payerName: '',
+  payerId: '',
+  planName: '',
+  cptCode: '',
+  allowedAmount: '',
+  effectiveDate: new Date().toISOString().slice(0, 10),
+  terminationDate: '',
+  source: 'contract' as const,
+  notes: '',
+});
+
 export function FeeSchedulePage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -70,6 +86,11 @@ export function FeeSchedulePage() {
   const [showEditFeeModal, setShowEditFeeModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showContractRateModal, setShowContractRateModal] = useState(false);
+  const [contractRates, setContractRates] = useState<PayerContractRate[]>([]);
+  const [contractRatesLoading, setContractRatesLoading] = useState(false);
+  const [contractRateSearch, setContractRateSearch] = useState('');
+  const [contractRateForm, setContractRateForm] = useState(emptyContractRateForm());
 
   // Form states
   const [createForm, setCreateForm] = useState<CreateScheduleFormData>({
@@ -94,6 +115,7 @@ export function FeeSchedulePage() {
 
   // Check if user has permission
   const hasPermission = hasAnyRole(session?.user, ['admin', 'billing', 'front_desk']);
+  const canManageContractRates = hasAnyRole(session?.user, ['admin', 'billing']);
 
   useEffect(() => {
     if (!session) {
@@ -138,6 +160,71 @@ export function FeeSchedulePage() {
       cancelled = true;
     };
   }, [session?.tenantId, session?.accessToken]);
+
+  useEffect(() => {
+    if (!session) {
+      setContractRates([]);
+      return;
+    }
+    let cancelled = false;
+    setContractRatesLoading(true);
+    fetchPayerContractRates(session.tenantId, session.accessToken)
+      .then(data => { if (!cancelled) setContractRates(data); })
+      .catch((err: any) => { if (!cancelled) showErrorRef.current(err.message || 'Failed to load payer contract rates'); })
+      .finally(() => { if (!cancelled) setContractRatesLoading(false); });
+    return () => { cancelled = true; };
+  }, [session?.tenantId, session?.accessToken]);
+
+  const refreshContractRates = async () => {
+    if (!session) return;
+    setContractRatesLoading(true);
+    try {
+      setContractRates(await fetchPayerContractRates(session.tenantId, session.accessToken));
+    } catch (err: any) {
+      showError(err.message || 'Failed to load payer contract rates');
+    } finally {
+      setContractRatesLoading(false);
+    }
+  };
+
+  const handleCreateContractRate = async () => {
+    if (!session) return;
+    const allowedAmount = Number(contractRateForm.allowedAmount);
+    if (!contractRateForm.payerName.trim() || !contractRateForm.cptCode.trim() || !contractRateForm.effectiveDate || !Number.isFinite(allowedAmount) || allowedAmount < 0) {
+      showError('Payer, CPT code, effective date, and a valid allowed amount are required');
+      return;
+    }
+    try {
+      await createPayerContractRate(session.tenantId, session.accessToken, {
+        payerName: contractRateForm.payerName.trim(),
+        payerId: contractRateForm.payerId.trim() || null,
+        planName: contractRateForm.planName.trim() || null,
+        cptCode: contractRateForm.cptCode.trim().toUpperCase(),
+        allowedAmount,
+        effectiveDate: contractRateForm.effectiveDate,
+        terminationDate: contractRateForm.terminationDate || null,
+        source: contractRateForm.source,
+        notes: contractRateForm.notes.trim() || null,
+      });
+      showSuccess('Payer contract rate added');
+      setContractRateForm(emptyContractRateForm());
+      setShowContractRateModal(false);
+      await refreshContractRates();
+    } catch (err: any) {
+      showError(err.message || 'Failed to add payer contract rate');
+    }
+  };
+
+  const handleRetireContractRate = async (rate: PayerContractRate) => {
+    if (!session || !window.confirm(`Retire the ${rate.payerName} ${rate.cptCode} rate? Existing estimates will not change.`)) return;
+    try {
+      await retirePayerContractRate(session.tenantId, session.accessToken, rate.id);
+      showSuccess('Payer contract rate retired');
+      await refreshContractRates();
+    } catch (err: any) {
+      showError(err.message || 'Failed to retire payer contract rate');
+    }
+  };
 
   useEffect(() => {
     if (!session || !selectedSchedule?.id) {
@@ -509,6 +596,13 @@ export function FeeSchedulePage() {
     );
   });
 
+  const filteredContractRates = contractRates.filter(rate => {
+    const query = contractRateSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [rate.payerName, rate.planName, rate.payerId, rate.cptCode]
+      .some(value => String(value || '').toLowerCase().includes(query));
+  });
+
   if (!hasPermission) {
     return (
       <div className="fee-schedule-page">
@@ -762,6 +856,86 @@ export function FeeSchedulePage() {
           )}
         </div>
       </div>
+
+      <div style={{ marginTop: '20px' }}>
+        <Panel title="Payer Contract Rates">
+          <p className="muted tiny" style={{ marginBottom: '12px' }}>
+            These line-level allowed amounts drive patient estimates. The estimator matches payer ID first, then payer name and optional plan name, for the service date.
+          </p>
+          <div className="fee-schedule-toolbar">
+            <input
+              type="search"
+              className="search-input"
+              placeholder="Search payer, plan, ID, or CPT..."
+              value={contractRateSearch}
+              onChange={event => setContractRateSearch(event.target.value)}
+            />
+            {canManageContractRates && (
+              <button type="button" className="btn-primary" onClick={() => setShowContractRateModal(true)}>
+                + Add Contract Rate
+              </button>
+            )}
+          </div>
+          {contractRatesLoading ? (
+            <Skeleton variant="rectangular" height={180} />
+          ) : (
+            <div className="fee-schedule-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Payer / plan</th>
+                    <th>Payer ID</th>
+                    <th>CPT</th>
+                    <th>Allowed amount</th>
+                    <th>Effective</th>
+                    <th>Source</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredContractRates.length === 0 ? (
+                    <tr><td colSpan={7} style={{ textAlign: 'center', padding: '32px' }} className="muted">
+                      No active payer contract rates configured. Estimates will clearly identify planning fallbacks until rates are added.
+                    </td></tr>
+                  ) : filteredContractRates.map(rate => (
+                    <tr key={rate.id}>
+                      <td><span className="strong">{rate.payerName}</span>{rate.planName ? <div className="muted tiny">{rate.planName}</div> : null}</td>
+                      <td className="muted">{rate.payerId || '—'}</td>
+                      <td className="strong">{rate.cptCode}</td>
+                      <td>{formatCurrency(rate.allowedAmount * 100)}</td>
+                      <td className="muted tiny">{rate.effectiveDate}{rate.terminationDate ? ` – ${rate.terminationDate}` : ''}</td>
+                      <td><span className="pill info tiny">{rate.source.replace(/_/g, ' ')}</span></td>
+                      <td>{canManageContractRates ? <button type="button" className="btn-sm btn-danger" onClick={() => void handleRetireContractRate(rate)}>Retire</button> : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      <Modal
+        isOpen={showContractRateModal}
+        title="Add Payer Contract Rate"
+        onClose={() => { setShowContractRateModal(false); setContractRateForm(emptyContractRateForm()); }}
+      >
+        <div className="modal-form">
+          <div className="form-field"><label>Payer name *</label><input value={contractRateForm.payerName} onChange={event => setContractRateForm({ ...contractRateForm, payerName: event.target.value })} placeholder="e.g., Aetna" /></div>
+          <div className="form-field"><label>Payer ID</label><input value={contractRateForm.payerId} onChange={event => setContractRateForm({ ...contractRateForm, payerId: event.target.value })} placeholder="Clearinghouse payer ID (preferred match)" /></div>
+          <div className="form-field"><label>Plan name</label><input value={contractRateForm.planName} onChange={event => setContractRateForm({ ...contractRateForm, planName: event.target.value })} placeholder="Optional; blank applies to all payer plans" /></div>
+          <div className="form-field"><label>CPT / HCPCS code *</label><input value={contractRateForm.cptCode} onChange={event => setContractRateForm({ ...contractRateForm, cptCode: event.target.value })} placeholder="99213" /></div>
+          <div className="form-field"><label>Allowed amount (USD) *</label><input type="number" min="0" step="0.01" value={contractRateForm.allowedAmount} onChange={event => setContractRateForm({ ...contractRateForm, allowedAmount: event.target.value })} placeholder="0.00" /></div>
+          <div className="form-field"><label>Effective date *</label><input type="date" value={contractRateForm.effectiveDate} onChange={event => setContractRateForm({ ...contractRateForm, effectiveDate: event.target.value })} /></div>
+          <div className="form-field"><label>Termination date</label><input type="date" value={contractRateForm.terminationDate} onChange={event => setContractRateForm({ ...contractRateForm, terminationDate: event.target.value })} /></div>
+          <div className="form-field"><label>Rate source</label><select value={contractRateForm.source} onChange={event => setContractRateForm({ ...contractRateForm, source: event.target.value as typeof contractRateForm.source })}><option value="contract">Signed contract</option><option value="payer_portal">Payer portal</option><option value="clearinghouse">Clearinghouse</option><option value="manual">Manual documentation</option></select></div>
+          <div className="form-field"><label>Notes</label><textarea rows={3} value={contractRateForm.notes} onChange={event => setContractRateForm({ ...contractRateForm, notes: event.target.value })} /></div>
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn-secondary" onClick={() => setShowContractRateModal(false)}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={() => void handleCreateContractRate()}>Add Rate</button>
+        </div>
+      </Modal>
 
       {/* Create Fee Schedule Modal */}
       <Modal

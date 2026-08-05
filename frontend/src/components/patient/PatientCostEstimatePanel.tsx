@@ -17,6 +17,11 @@ import {
   fetchExternalIntegrationStatus,
   getPatientBenefits,
   sharePatientProcedureCostEstimate,
+  savePatientPrescriptionCostEstimate,
+  sharePatientPrescriptionCostEstimate,
+  revokePatientProcedureCostEstimate,
+  revisePatientProcedureCostEstimate,
+  reconcilePatientProcedureCostEstimate,
   type ExternalIntegrationStatus,
   type PatientProcedureCostEstimate,
 } from '../../api';
@@ -135,10 +140,16 @@ export function PatientCostEstimatePanel({
   const [rxEstimate, setRxEstimate] = useState<any | null>(null);
   const [rxBenefits, setRxBenefits] = useState<any | null>(null);
   const [isEstimatingRx, setIsEstimatingRx] = useState(false);
+  const [isSharingRx, setIsSharingRx] = useState(false);
+  const [sharedRxReference, setSharedRxReference] = useState<string | null>(null);
+  const [isManagingLifecycle, setIsManagingLifecycle] = useState(false);
+  const [showReconciliation, setShowReconciliation] = useState(false);
+  const [reconciliationForm, setReconciliationForm] = useState({ allowed: '', insurance: '', patient: '', notes: '' });
 
   const cptCodes = useMemo(() => normalizeCptCodes(cptInput), [cptInput]);
   const eligibilityReady = Boolean(eligibilityStatus?.isConfigured && eligibilityStatus?.isActive);
   const rxReady = Boolean(rxStatus?.isConfigured && rxStatus?.isActive);
+  const canReconcile = ['admin', 'billing'].includes(String(session?.user?.role || '').toLowerCase());
 
   const loadIntegrationStatus = async () => {
     if (!session) return;
@@ -240,11 +251,112 @@ export function PatientCostEstimatePanel({
       ]);
       setRxBenefits(benefits);
       setRxEstimate(formulary);
+      setSharedRxReference(null);
       showSuccess('Prescription benefit estimate created');
     } catch (error: any) {
       showError(error.message || 'Failed to estimate prescription cost');
     } finally {
       setIsEstimatingRx(false);
+    }
+  };
+
+  const handleShareRxEstimate = async () => {
+    if (!session || !rxEstimate) return;
+    if (!['production', 'sandbox', 'mock'].includes(rxEstimate.environment) || !rxEstimate.responseReference || !rxEstimate.pricingSource) {
+      showError('This result has no verifiable pricing source and cannot be shared.');
+      return;
+    }
+    const patientPrice = Number(rxEstimate.copayAmount);
+    if (!Number.isFinite(patientPrice) || patientPrice < 0) {
+      showError('This benefit response did not include a patient price.');
+      return;
+    }
+    setIsSharingRx(true);
+    try {
+      const saved = await savePatientPrescriptionCostEstimate(session.tenantId, session.accessToken, {
+        patientId,
+        medicationName: medicationName.trim(),
+        ndc: ndc.trim() || undefined,
+        patientPrice,
+        formularyStatus: rxEstimate.formularyStatus,
+        priorAuthRequired: Boolean(rxEstimate.requiresPriorAuth),
+        pricingSource: rxEstimate.pricingSource,
+        environment: rxEstimate.environment,
+        responseReference: rxEstimate.responseReference,
+      });
+      await sharePatientPrescriptionCostEstimate(session.tenantId, session.accessToken, saved.estimate.id);
+      setSharedRxReference(rxEstimate.responseReference);
+      showSuccess(rxEstimate.environment === 'production'
+        ? 'Live prescription estimate shared with the patient portal'
+        : `${rxEstimate.environment} prescription estimate shared with an explicit test-data label`);
+    } catch (error: any) {
+      showError(error.message || 'Failed to share prescription estimate');
+    } finally {
+      setIsSharingRx(false);
+    }
+  };
+
+  const handleReviseProcedureEstimate = async () => {
+    if (!session || !procedureEstimate || !cptCodes.length) return;
+    setIsManagingLifecycle(true);
+    try {
+      const result = await revisePatientProcedureCostEstimate(
+        session.tenantId,
+        session.accessToken,
+        procedureEstimate.id,
+        { serviceType, cptCodes, isCosmetic, appointmentId }
+      );
+      setProcedureEstimate(result.estimate);
+      setSharedProcedureId(null);
+      showSuccess(`Revised estimate version ${result.estimate.version} created. Review it before sharing.`);
+    } catch (error: any) {
+      showError(error.message || 'Failed to revise estimate');
+    } finally {
+      setIsManagingLifecycle(false);
+    }
+  };
+
+  const handleRevokeProcedureEstimate = async () => {
+    if (!session || !procedureEstimate) return;
+    const reason = window.prompt('Why is this estimate being revoked? This reason is retained in the audit trail.');
+    if (!reason?.trim()) return;
+    setIsManagingLifecycle(true);
+    try {
+      await revokePatientProcedureCostEstimate(session.tenantId, session.accessToken, procedureEstimate.id, reason.trim());
+      setProcedureEstimate(null);
+      setSharedProcedureId(null);
+      showSuccess('Estimate revoked and removed from the patient portal');
+    } catch (error: any) {
+      showError(error.message || 'Failed to revoke estimate');
+    } finally {
+      setIsManagingLifecycle(false);
+    }
+  };
+
+  const handleReconcileProcedureEstimate = async () => {
+    if (!session || !procedureEstimate) return;
+    const actualAllowedAmount = Number(reconciliationForm.allowed);
+    const actualInsurancePayment = Number(reconciliationForm.insurance);
+    const actualPatientResponsibility = Number(reconciliationForm.patient);
+    if (![actualAllowedAmount, actualInsurancePayment, actualPatientResponsibility].every(value => Number.isFinite(value) && value >= 0)) {
+      showError('Enter all three non-negative final amounts.');
+      return;
+    }
+    setIsManagingLifecycle(true);
+    try {
+      await reconcilePatientProcedureCostEstimate(session.tenantId, session.accessToken, procedureEstimate.id, {
+        actualAllowedAmount,
+        actualInsurancePayment,
+        actualPatientResponsibility,
+        notes: reconciliationForm.notes.trim() || undefined,
+      });
+      setProcedureEstimate({ ...procedureEstimate, status: 'reconciled' });
+      setShowReconciliation(false);
+      showSuccess('Estimate reconciled to final payer processing');
+    } catch (error: any) {
+      showError(error.message || 'Failed to reconcile estimate');
+    } finally {
+      setIsManagingLifecycle(false);
     }
   };
 
@@ -489,6 +601,18 @@ export function PatientCostEstimatePanel({
                   ? `Insurance benefits verified. Estimate valid until ${procedureEstimate.validUntil}.`
                   : 'Estimate was created without a current live eligibility verification.'}
               </div>
+              <div style={{
+                border: `1px solid ${procedureEstimate.confidenceLevel === 'high' ? '#86efac' : procedureEstimate.confidenceLevel === 'medium' ? '#bfdbfe' : '#fde68a'}`,
+                background: procedureEstimate.confidenceLevel === 'high' ? '#f0fdf4' : procedureEstimate.confidenceLevel === 'medium' ? '#eff6ff' : '#fffbeb',
+                borderRadius: 6,
+                padding: '0.65rem 0.75rem',
+                color: '#334155',
+                fontSize: '0.78rem',
+                lineHeight: 1.45,
+              }}>
+                <strong>{procedureEstimate.confidenceLevel === 'planning' ? 'Planning estimate' : `${procedureEstimate.confidenceLevel} confidence`} · {procedureEstimate.confidenceScore}/100.</strong>
+                {' '}{(procedureEstimate.confidenceFactors || []).join(' · ')}
+              </div>
               {!procedureEstimate.isCosmetic && procedureEstimate.insuranceAllowedAmount > 0 && (
                 <div style={{
                   background: '#f8fafc',
@@ -499,7 +623,13 @@ export function PatientCostEstimatePanel({
                   fontSize: '0.78rem',
                   lineHeight: 1.45,
                 }}>
-                  Allowed-amount basis: 80% of the office fee. A payer-specific contracted rate is not configured yet.
+                  {procedureEstimate.pricingBasis === 'contract_rate'
+                    ? 'Allowed-amount basis: configured payer contract rate for every procedure.'
+                    : procedureEstimate.pricingBasis === 'mixed'
+                      ? 'Allowed-amount basis: payer contract rates where configured, with a disclosed 80%-of-fee planning fallback for missing codes.'
+                      : procedureEstimate.pricingBasis === 'self_pay'
+                        ? 'Allowed-amount basis: office self-pay fee schedule.'
+                        : 'Allowed-amount basis: 80% of the office fee. A payer-specific contracted rate is not configured yet.'}
                 </div>
               )}
               <button
@@ -523,6 +653,33 @@ export function PatientCostEstimatePanel({
                     ? 'Sharing...'
                     : 'Share with Patient Portal'}
               </button>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button type="button" onClick={handleReviseProcedureEstimate} disabled={isManagingLifecycle} style={pillStyle(false)}>
+                  Create Revised Version
+                </button>
+                <button type="button" onClick={handleRevokeProcedureEstimate} disabled={isManagingLifecycle} style={{ ...pillStyle(false), color: '#b91c1c', borderColor: '#fecaca' }}>
+                  Revoke Estimate
+                </button>
+                {canReconcile && (
+                  <button type="button" onClick={() => setShowReconciliation(value => !value)} disabled={isManagingLifecycle} style={pillStyle(false)}>
+                    Reconcile to EOB / ERA
+                  </button>
+                )}
+              </div>
+              {showReconciliation && canReconcile && (
+                <div style={{ display: 'grid', gap: 8, border: '1px solid #bfdbfe', borderRadius: 8, background: '#eff6ff', padding: '0.85rem' }}>
+                  <strong style={{ fontSize: '0.82rem', color: '#1e3a8a' }}>Final payer processing</strong>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+                    <input type="number" min="0" step="0.01" aria-label="Actual allowed amount" placeholder="Actual allowed" value={reconciliationForm.allowed} onChange={event => setReconciliationForm({ ...reconciliationForm, allowed: event.target.value })} />
+                    <input type="number" min="0" step="0.01" aria-label="Actual insurance payment" placeholder="Insurance paid" value={reconciliationForm.insurance} onChange={event => setReconciliationForm({ ...reconciliationForm, insurance: event.target.value })} />
+                    <input type="number" min="0" step="0.01" aria-label="Actual patient responsibility" placeholder="Patient responsibility" value={reconciliationForm.patient} onChange={event => setReconciliationForm({ ...reconciliationForm, patient: event.target.value })} />
+                  </div>
+                  <input aria-label="Reconciliation notes" placeholder="Optional reconciliation notes" value={reconciliationForm.notes} onChange={event => setReconciliationForm({ ...reconciliationForm, notes: event.target.value })} />
+                  <button type="button" onClick={handleReconcileProcedureEstimate} disabled={isManagingLifecycle} style={{ ...pillStyle(true), justifySelf: 'start' }}>
+                    Save Reconciliation
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -619,6 +776,41 @@ export function PatientCostEstimatePanel({
                   {' '}· Rx BIN {rxBenefits.coverage.rxBin || '--'}
                 </div>
               )}
+              <div style={{
+                border: `1px solid ${rxEstimate.environment === 'production' ? '#86efac' : '#fde68a'}`,
+                background: rxEstimate.environment === 'production' ? '#f0fdf4' : '#fffbeb',
+                borderRadius: 6,
+                padding: '0.65rem 0.75rem',
+                color: rxEstimate.environment === 'production' ? '#166534' : '#92400e',
+                fontSize: '0.78rem',
+              }}>
+                {rxEstimate.environment === 'production'
+                  ? `Live price from ${rxEstimate.pricingSource}. Reference ${rxEstimate.responseReference}.`
+                  : `${rxEstimate.environment || 'Unlabeled'} workflow data only. This is not a live patient price.`}
+              </div>
+              <button
+                type="button"
+                onClick={handleShareRxEstimate}
+                disabled={isSharingRx || sharedRxReference === rxEstimate.responseReference}
+                style={{
+                  border: sharedRxReference === rxEstimate.responseReference ? '1px solid #86efac' : 'none',
+                  background: sharedRxReference === rxEstimate.responseReference ? '#f0fdf4' : '#0f766e',
+                  color: sharedRxReference === rxEstimate.responseReference ? '#166534' : '#ffffff',
+                  borderRadius: 6,
+                  padding: '0.65rem 0.9rem',
+                  fontWeight: 800,
+                  cursor: isSharingRx || sharedRxReference === rxEstimate.responseReference ? 'not-allowed' : 'pointer',
+                  justifySelf: 'start',
+                }}
+              >
+                {sharedRxReference === rxEstimate.responseReference
+                  ? 'Shared with Patient Portal'
+                  : isSharingRx
+                    ? 'Sharing...'
+                    : rxEstimate.environment === 'production'
+                      ? 'Share Live Price with Portal'
+                      : 'Share Clearly Labeled Test Estimate'}
+              </button>
             </div>
           )}
         </div>

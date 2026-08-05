@@ -2329,6 +2329,62 @@ export const fetchDefaultFeeSchedule = async (tenantId: string, accessToken: str
   return normalizeFeeSchedule(data);
 };
 
+export interface PayerContractRate {
+  id: string;
+  payerId?: string | null;
+  payerName: string;
+  planName?: string | null;
+  cptCode: string;
+  modifier?: string | null;
+  placeOfService?: string | null;
+  allowedAmount: number;
+  effectiveDate: string;
+  terminationDate?: string | null;
+  source: 'contract' | 'payer_portal' | 'clearinghouse' | 'manual';
+  notes?: string | null;
+  isActive: boolean;
+}
+
+const normalizePayerContractRate = (row: any): PayerContractRate => ({
+  id: String(row.id),
+  payerId: row.payerId ?? row.payer_id ?? null,
+  payerName: row.payerName ?? row.payer_name ?? '',
+  planName: row.planName ?? row.plan_name ?? null,
+  cptCode: row.cptCode ?? row.cpt_code ?? '',
+  modifier: row.modifier ?? null,
+  placeOfService: row.placeOfService ?? row.place_of_service ?? null,
+  allowedAmount: toFiniteNumber(row.allowedAmount ?? (row.allowed_amount_cents != null ? Number(row.allowed_amount_cents) / 100 : 0)),
+  effectiveDate: row.effectiveDate ?? row.effective_date ?? '',
+  terminationDate: row.terminationDate ?? row.termination_date ?? null,
+  source: row.source ?? 'contract',
+  notes: row.notes ?? null,
+  isActive: Boolean(row.isActive ?? row.is_active ?? true),
+});
+
+export const fetchPayerContractRates = async (tenantId: string, accessToken: string): Promise<PayerContractRate[]> => {
+  const data = await authedGet(tenantId, accessToken, '/api/fee-schedules/contract-rates');
+  return Array.isArray(data?.rates) ? data.rates.map(normalizePayerContractRate) : [];
+};
+
+export const createPayerContractRate = async (
+  tenantId: string,
+  accessToken: string,
+  data: Omit<PayerContractRate, 'id' | 'isActive'>
+): Promise<PayerContractRate> => normalizePayerContractRate(
+  await authedPost(tenantId, accessToken, '/api/fee-schedules/contract-rates', data)
+);
+
+export const retirePayerContractRate = async (tenantId: string, accessToken: string, id: string): Promise<void> => {
+  const res = await fetch(`${API_BASE}/api/fee-schedules/contract-rates/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to retire payer contract rate');
+  }
+};
+
 export const fetchFeeForCPT = async (tenantId: string, accessToken: string, cptCode: string) => {
   const data = await authedGet(tenantId, accessToken, `/api/fee-schedules/default/fee/${cptCode}`);
   const normalized = normalizeFeeScheduleItem(data);
@@ -8929,6 +8985,19 @@ export interface PatientProcedureCostEstimate {
   isCosmetic: boolean;
   insuranceVerified: boolean;
   validUntil: string;
+  status: string;
+  version: number;
+  confidenceLevel: 'high' | 'medium' | 'planning';
+  confidenceScore: number;
+  confidenceFactors: string[];
+  pricingBasis: 'contract_rate' | 'mixed' | 'percentage_fallback' | 'self_pay';
+  pricingDetails: Array<{
+    code: string;
+    charge: number;
+    allowedAmount: number;
+    basis: 'contract_rate' | 'percentage_fallback' | 'self_pay';
+    payerName?: string;
+  }>;
 }
 
 export async function createPatientProcedureCostEstimate(
@@ -8956,6 +9025,72 @@ export async function sharePatientProcedureCostEstimate(
     `/api/collections/estimate/${encodeURIComponent(estimateId)}/share`,
     {}
   );
+}
+
+export async function revokePatientProcedureCostEstimate(
+  tenantId: string,
+  accessToken: string,
+  estimateId: string,
+  reason: string
+): Promise<{ success: boolean; patientId: string }> {
+  return authedPost(tenantId, accessToken, `/api/collections/estimate/${encodeURIComponent(estimateId)}/revoke`, { reason });
+}
+
+export async function revisePatientProcedureCostEstimate(
+  tenantId: string,
+  accessToken: string,
+  estimateId: string,
+  payload: { serviceType?: string; cptCodes: string[]; isCosmetic?: boolean; appointmentId?: string }
+): Promise<{ estimate: PatientProcedureCostEstimate }> {
+  return authedPost(tenantId, accessToken, `/api/collections/estimate/${encodeURIComponent(estimateId)}/revise`, payload);
+}
+
+export async function reconcilePatientProcedureCostEstimate(
+  tenantId: string,
+  accessToken: string,
+  estimateId: string,
+  payload: {
+    claimId?: string;
+    eraPaymentId?: string;
+    actualAllowedAmount?: number;
+    actualInsurancePayment?: number;
+    actualPatientResponsibility?: number;
+    notes?: string;
+  }
+): Promise<{ reconciliation: Record<string, unknown> }> {
+  return authedPost(tenantId, accessToken, `/api/collections/estimate/${encodeURIComponent(estimateId)}/reconcile`, payload);
+}
+
+export async function savePatientPrescriptionCostEstimate(
+  tenantId: string,
+  accessToken: string,
+  payload: {
+    patientId: string;
+    medicationName: string;
+    ndc?: string;
+    quantity?: number;
+    daysSupply?: number;
+    pharmacyName?: string;
+    cashPrice?: number;
+    insurancePrice?: number;
+    patientPrice: number;
+    formularyStatus?: string;
+    priorAuthRequired?: boolean;
+    pricingSource: string;
+    environment: 'production' | 'sandbox' | 'mock';
+    responseReference: string;
+    validUntil?: string;
+  }
+): Promise<{ estimate: { id: string } }> {
+  return authedPost(tenantId, accessToken, '/api/collections/prescription-estimate', payload);
+}
+
+export async function sharePatientPrescriptionCostEstimate(
+  tenantId: string,
+  accessToken: string,
+  estimateId: string
+): Promise<{ success: boolean; patientId: string; sharedAt: string; environment: string }> {
+  return authedPost(tenantId, accessToken, `/api/collections/prescription-estimate/${encodeURIComponent(estimateId)}/share`, {});
 }
 
 export async function fetchPatientPhotos(

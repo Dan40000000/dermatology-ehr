@@ -62,6 +62,8 @@ const portalApiMocks = vi.hoisted(() => ({
   fetchPortalPaymentHistory: vi.fn(),
   fetchPortalPaymentMethods: vi.fn(),
   fetchPortalInsuranceSummary: vi.fn(),
+  respondToPortalEstimate: vi.fn(),
+  auditPortalEstimatePdf: vi.fn(),
   makePortalPayment: vi.fn(),
 }));
 
@@ -122,6 +124,8 @@ beforeEach(() => {
   portalApiMocks.fetchPortalPaymentHistory.mockReset();
   portalApiMocks.fetchPortalPaymentMethods.mockReset();
   portalApiMocks.fetchPortalInsuranceSummary.mockReset();
+  portalApiMocks.respondToPortalEstimate.mockReset();
+  portalApiMocks.auditPortalEstimatePdf.mockReset();
   portalApiMocks.makePortalPayment.mockReset();
   toastMocks.showSuccess.mockReset();
   toastMocks.showError.mockReset();
@@ -590,8 +594,22 @@ describe('Patient portal pages', () => {
         validUntil: '2026-09-02',
         sharedAt: '2026-08-03T18:00:00.000Z',
         createdAt: '2026-08-03T18:00:00.000Z',
+        status: 'shared',
+        version: 1,
+        confidenceLevel: 'medium',
+        confidenceScore: 78,
+        confidenceFactors: ['Current sandbox eligibility response', 'Planning fallback used'],
+        pricingBasis: 'percentage_fallback',
+        pricingDetails: [{ code: '99203', charge: 165, allowedAmount: 132, basis: 'percentage_fallback' }],
+        reconciliation: null,
       }],
+      prescriptionEstimates: [],
       prescriptionPricingAvailable: false,
+    });
+    portalApiMocks.respondToPortalEstimate.mockResolvedValue({
+      success: true,
+      status: 'acknowledged',
+      respondedAt: '2026-08-05T18:00:00.000Z',
     });
 
     renderWithRouter(<PortalBillingPage />, ['/portal/billing']);
@@ -604,6 +622,11 @@ describe('Patient portal pages', () => {
     expect(screen.getByText(/\$28\.00 estimated contract adjustment/i)).toBeInTheDocument();
     expect(screen.getByText(/allowed amount uses 80% of the office fee/i)).toBeInTheDocument();
     expect(screen.getByText(/Prescription drug pricing is not available/i)).toBeInTheDocument();
+    expect(screen.getByText(/medium confidence · 78\/100/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'I understand this estimate' }));
+    await waitFor(() => expect(portalApiMocks.respondToPortalEstimate).toHaveBeenCalledWith(
+      'tenant-demo', 'token', 'estimate-1', 'acknowledge', undefined
+    ));
     expect(portalApiMocks.fetchPortalInsuranceSummary).toHaveBeenCalledWith('tenant-demo', 'token');
   });
 

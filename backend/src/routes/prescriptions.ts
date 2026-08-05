@@ -32,9 +32,8 @@ function logPrescriptionsError(message: string, error: unknown): void {
   });
 }
 
-async function hasActiveRxBenefitIntegration(tenantId: string): Promise<boolean> {
-  const config = await getIntegrationConfig(tenantId, 'eprescribe');
-  return Boolean(config?.isActive);
+async function getRxBenefitIntegration(tenantId: string) {
+  return getIntegrationConfig(tenantId, 'eprescribe');
 }
 
 function sendRxBenefitNotConnected(res: Response) {
@@ -43,6 +42,22 @@ function sendRxBenefitNotConnected(res: Response) {
     error: 'Prescription benefit pricing is not connected.',
     message:
       'Connect an eRx/RTPB or pharmacy benefit vendor before showing medication cost estimates to patients.',
+  });
+}
+
+function getRxBenefitEnvironment(integration: Awaited<ReturnType<typeof getRxBenefitIntegration>>): 'production' | 'sandbox' | 'mock' {
+  const configured = String(integration?.config?.environment || '').toLowerCase();
+  const provider = String(integration?.provider || '').toLowerCase();
+  if (configured === 'mock' || provider.includes('mock') || provider.includes('demo')) return 'mock';
+  if (configured === 'sandbox' || configured === 'test' || provider.includes('sandbox') || provider.includes('test')) return 'sandbox';
+  return 'production';
+}
+
+function sendLiveRxBenefitAdapterUnavailable(res: Response) {
+  return res.status(503).json({
+    code: 'RX_BENEFIT_LIVE_ADAPTER_UNAVAILABLE',
+    error: 'Live prescription benefit pricing is not available.',
+    message: 'The configured production eRx integration does not expose a real-time prescription benefit adapter. No mock price was returned.',
   });
 }
 
@@ -1078,13 +1093,22 @@ prescriptionsRouter.post(
         return res.status(400).json({ error: 'medicationName is required' });
       }
 
-      if (!(await hasActiveRxBenefitIntegration(tenantId))) {
+      const integration = await getRxBenefitIntegration(tenantId);
+      if (!integration?.isActive) {
         return sendRxBenefitNotConnected(res);
       }
+      const environment = getRxBenefitEnvironment(integration);
+      if (environment === 'production') return sendLiveRxBenefitAdapterUnavailable(res);
 
       const formularyResult = await checkFormulary(medicationName, payerId, ndc);
 
-      return res.json(formularyResult);
+      return res.json({
+        ...formularyResult,
+        environment,
+        pricingSource: integration.provider,
+        responseReference: formularyResult.messageId,
+        disclaimer: `${environment} data for workflow testing; not a live patient price.`,
+      });
     } catch (error) {
       logPrescriptionsError('Error checking formulary:', error);
       return res.status(500).json({ error: 'Failed to check formulary' });
@@ -1111,9 +1135,12 @@ prescriptionsRouter.get(
         return res.status(404).json({ error: 'Patient not found' });
       }
 
-      if (!(await hasActiveRxBenefitIntegration(tenantId))) {
+      const integration = await getRxBenefitIntegration(tenantId);
+      if (!integration?.isActive) {
         return sendRxBenefitNotConnected(res);
       }
+      const environment = getRxBenefitEnvironment(integration);
+      if (environment === 'production') return sendLiveRxBenefitAdapterUnavailable(res);
 
       const benefits = await getPatientBenefits(patientId!, tenantId);
 
@@ -1121,7 +1148,13 @@ prescriptionsRouter.get(
         return res.status(404).json({ error: 'No pharmacy benefits found for patient' });
       }
 
-      return res.json(benefits);
+      return res.json({
+        ...benefits,
+        environment,
+        pricingSource: integration.provider,
+        responseReference: benefits.messageId,
+        disclaimer: `${environment} data for workflow testing; not live pharmacy benefits.`,
+      });
     } catch (error) {
       logPrescriptionsError('Error fetching patient benefits:', error);
       return res.status(500).json({ error: 'Failed to fetch patient benefits' });

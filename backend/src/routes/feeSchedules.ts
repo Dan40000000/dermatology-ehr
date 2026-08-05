@@ -36,6 +36,129 @@ function categoryMatchesSql(columnSql: string, paramSql: string): string {
   )`;
 }
 
+// Canonical line-level payer rates used by the patient cost estimator.
+// Keep these routes above `/:id` so Express does not treat "contract-rates"
+// as a fee schedule id.
+router.get('/contract-rates', requireAuth, async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const payerName = typeof req.query.payerName === 'string' ? req.query.payerName.trim() : '';
+  const cptCode = typeof req.query.cptCode === 'string' ? req.query.cptCode.trim() : '';
+  const activeOnly = req.query.active !== 'false';
+  const params: unknown[] = [tenantId];
+  let sql = `SELECT * FROM payer_contract_rates WHERE tenant_id = $1`;
+  if (payerName) {
+    params.push(`%${payerName}%`);
+    sql += ` AND payer_name ILIKE $${params.length}`;
+  }
+  if (cptCode) {
+    params.push(cptCode);
+    sql += ` AND cpt_code = $${params.length}`;
+  }
+  if (activeOnly) sql += ` AND is_active = true`;
+  sql += ` ORDER BY payer_name, plan_name NULLS FIRST, cpt_code, effective_date DESC LIMIT 1000`;
+
+  try {
+    const result = await pool.query(sql, params);
+    return res.json({ rates: result.rows });
+  } catch (error) {
+    logFeeSchedulesError('Error fetching payer contract rates', error);
+    return res.status(500).json({ error: 'Failed to fetch payer contract rates' });
+  }
+});
+
+router.post('/contract-rates', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const {
+    payerId, payerName, planName, cptCode, modifier, placeOfService,
+    allowedAmount, effectiveDate, terminationDate, source, notes,
+  } = req.body || {};
+  const amount = Number(allowedAmount);
+  if (!String(payerName || '').trim() || !String(cptCode || '').trim() || !effectiveDate || !Number.isFinite(amount) || amount < 0) {
+    return res.status(400).json({ error: 'Payer name, CPT code, effective date, and a non-negative allowed amount are required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO payer_contract_rates (
+         id, tenant_id, payer_id, payer_name, plan_name, cpt_code, modifier,
+         place_of_service, allowed_amount_cents, effective_date, termination_date,
+         source, notes, created_by
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING *`,
+      [
+        crypto.randomUUID(), tenantId, payerId || null, String(payerName).trim(),
+        planName || null, String(cptCode).trim().toUpperCase(), modifier || null,
+        placeOfService || null, Math.round(amount * 100), effectiveDate,
+        terminationDate || null, source || 'contract', notes || null, req.user!.id,
+      ]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    logFeeSchedulesError('Error creating payer contract rate', error);
+    return res.status(500).json({ error: 'Failed to create payer contract rate' });
+  }
+});
+
+router.put('/contract-rates/:id', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const id = String(req.params.id);
+  const allowed = new Map<string, { column: string; map?: (value: unknown) => unknown }>([
+    ['payerId', { column: 'payer_id' }],
+    ['payerName', { column: 'payer_name' }],
+    ['planName', { column: 'plan_name' }],
+    ['cptCode', { column: 'cpt_code', map: value => String(value || '').trim().toUpperCase() }],
+    ['modifier', { column: 'modifier' }],
+    ['placeOfService', { column: 'place_of_service' }],
+    ['allowedAmount', { column: 'allowed_amount_cents', map: value => Math.round(Number(value) * 100) }],
+    ['effectiveDate', { column: 'effective_date' }],
+    ['terminationDate', { column: 'termination_date' }],
+    ['source', { column: 'source' }],
+    ['notes', { column: 'notes' }],
+    ['isActive', { column: 'is_active' }],
+  ]);
+  const values: unknown[] = [];
+  const updates: string[] = [];
+  for (const [key, descriptor] of allowed) {
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) {
+      values.push(descriptor.map ? descriptor.map(req.body[key]) : req.body[key]);
+      updates.push(`${descriptor.column} = $${values.length}`);
+    }
+  }
+  if (!updates.length) return res.status(400).json({ error: 'No fields to update' });
+  if (req.body.allowedAmount !== undefined && (!Number.isFinite(Number(req.body.allowedAmount)) || Number(req.body.allowedAmount) < 0)) {
+    return res.status(400).json({ error: 'Allowed amount must be non-negative' });
+  }
+  values.push(id, tenantId);
+  try {
+    const result = await pool.query(
+      `UPDATE payer_contract_rates SET ${updates.join(', ')}, updated_at = now()
+       WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
+       RETURNING *`,
+      values
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Payer contract rate not found' });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    logFeeSchedulesError('Error updating payer contract rate', error);
+    return res.status(500).json({ error: 'Failed to update payer contract rate' });
+  }
+});
+
+router.delete('/contract-rates/:id', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res: Response) => {
+  try {
+    const result = await pool.query(
+      `UPDATE payer_contract_rates SET is_active = false, updated_at = now()
+       WHERE id = $1 AND tenant_id = $2 RETURNING id`,
+      [req.params.id, req.user!.tenantId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Payer contract rate not found' });
+    return res.status(204).send();
+  } catch (error) {
+    logFeeSchedulesError('Error retiring payer contract rate', error);
+    return res.status(500).json({ error: 'Failed to retire payer contract rate' });
+  }
+});
+
 // Get all fee schedules
 router.get('/', requireAuth, async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;

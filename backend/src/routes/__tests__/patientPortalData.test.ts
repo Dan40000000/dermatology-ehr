@@ -358,6 +358,7 @@ describe("Patient portal data routes", () => {
       patientResponsibility: 71.4,
       breakdown: expect.objectContaining({ contractualAdjustment: 33 }),
     });
+    expect(res.body.prescriptionEstimates).toEqual([]);
     expect(queryMock.mock.calls[2][0]).toContain("ce.shown_to_patient = true");
     expect(queryMock.mock.calls[2][1]).toEqual(["patient-1", "tenant-1"]);
 
@@ -388,6 +389,24 @@ describe("Patient portal data routes", () => {
     });
     expect(res.body.estimates).toEqual([]);
     expect(res.body.prescriptionPricingAvailable).toBe(false);
+  });
+
+  it("POST /patient-portal-data/insurance-estimates/:id/respond scopes and records a patient question", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ status: "billing_question", respondedAt: "2026-08-05T18:00:00.000Z" }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const res = await request(app)
+      .post("/patient-portal-data/insurance-estimates/estimate-1/respond")
+      .send({ action: "billing_question", message: "Will pathology be separate?" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, status: "billing_question" });
+    expect(queryMock.mock.calls[0][0]).toContain("patient_id = $3");
+    expect(queryMock.mock.calls[0][1]).toEqual(["estimate-1", "tenant-1", "patient-1", "billing_question"]);
   });
 
   it("GET /patient-portal-data/dashboard aggregates counts", async () => {

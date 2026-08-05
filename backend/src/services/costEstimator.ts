@@ -9,6 +9,8 @@ import crypto from "crypto";
 
 export interface InsuranceBenefits {
   planName: string;
+  payerName?: string;
+  payerId?: string;
   deductible: number;
   deductibleMet: number;
   deductibleRemaining: number;
@@ -18,6 +20,20 @@ export interface InsuranceBenefits {
   outOfPocketMet: number;
   isInNetwork: boolean;
   verified: boolean;
+  verificationSource?: string;
+  environment: "production" | "sandbox" | "mock" | "unverified";
+}
+
+export type EstimateConfidenceLevel = "high" | "medium" | "planning";
+export type EstimatePricingBasis = "contract_rate" | "mixed" | "percentage_fallback" | "self_pay";
+
+export interface EstimatePricingDetail {
+  code: string;
+  charge: number;
+  allowedAmount: number;
+  basis: "contract_rate" | "percentage_fallback" | "self_pay";
+  rateId?: string;
+  payerName?: string;
 }
 
 export interface CostEstimate {
@@ -39,6 +55,13 @@ export interface CostEstimate {
   isCosmetic: boolean;
   insuranceVerified: boolean;
   validUntil: string;
+  status: string;
+  version: number;
+  confidenceLevel: EstimateConfidenceLevel;
+  confidenceScore: number;
+  confidenceFactors: string[];
+  pricingBasis: EstimatePricingBasis;
+  pricingDetails: EstimatePricingDetail[];
 }
 
 /**
@@ -52,6 +75,8 @@ export async function getInsuranceBenefits(
     const verificationResult = await pool.query(
       `select
         coalesce(nullif(plan_name, ''), nullif(payer_name, '')) as "planName",
+        nullif(payer_name, '') as "payerName",
+        nullif(to_jsonb(insurance_verifications)->>'payer_id', '') as "payerId",
         (coalesce(deductible_total_cents, deductible_total, 0)::numeric / 100.0) as deductible,
         (coalesce(deductible_met_cents, deductible_met, 0)::numeric / 100.0) as "deductibleMet",
         (
@@ -69,7 +94,8 @@ export async function getInsuranceBenefits(
         (coalesce(copay_specialist_cents, copay_amount_cents, specialist_copay, copay_amount, 0)::numeric / 100.0) as copay,
         (coalesce(oop_max_cents, out_of_pocket_max_cents, oop_max, 800000)::numeric / 100.0) as "outOfPocketMax",
         (coalesce(oop_met_cents, out_of_pocket_met_cents, oop_met, 0)::numeric / 100.0) as "outOfPocketMet",
-        coalesce(in_network, true) as "isInNetwork"
+        coalesce(in_network, true) as "isInNetwork",
+        nullif(to_jsonb(insurance_verifications)->>'verification_source', '') as "verificationSource"
        from insurance_verifications
        where patient_id = $1
          and tenant_id = $2
@@ -85,6 +111,7 @@ export async function getInsuranceBenefits(
     if (verification?.planName) {
       return {
         planName: verification.planName,
+        payerName: verification.payerName || verification.planName,
         deductible: toNumber(verification.deductible),
         deductibleMet: toNumber(verification.deductibleMet),
         deductibleRemaining: toNumber(verification.deductibleRemaining),
@@ -94,6 +121,9 @@ export async function getInsuranceBenefits(
         outOfPocketMet: toNumber(verification.outOfPocketMet),
         isInNetwork: verification.isInNetwork !== false,
         verified: true,
+        payerId: verification.payerId || undefined,
+        verificationSource: verification.verificationSource || undefined,
+        environment: getVerificationEnvironment(verification.verificationSource),
       };
     }
   } catch (error: any) {
@@ -133,6 +163,7 @@ export async function getInsuranceBenefits(
 
   return {
     planName: patient.planName,
+    payerName: patient.planName,
     deductible,
     deductibleMet,
     deductibleRemaining,
@@ -142,6 +173,7 @@ export async function getInsuranceBenefits(
     outOfPocketMet: 0, // Would come from claims history
     isInNetwork: true, // Assume in-network for now
     verified: false,
+    environment: "unverified",
   };
 }
 
@@ -193,6 +225,12 @@ export async function createCostEstimate(
 
   // If cosmetic, patient pays 100%
   if (options.isCosmetic) {
+    const pricingDetails = cptDetails.map(item => ({
+      code: item.code,
+      charge: item.fee,
+      allowedAmount: item.fee,
+      basis: "self_pay" as const,
+    }));
     const estimate: CostEstimate = {
       id: estimateId,
       patientId,
@@ -212,6 +250,13 @@ export async function createCostEstimate(
       isCosmetic: true,
       insuranceVerified: false,
       validUntil: getValidUntilDate(),
+      status: "draft",
+      version: 1,
+      confidenceLevel: "high",
+      confidenceScore: 95,
+      confidenceFactors: ["Office fee schedule", "Patient-paid cosmetic service"],
+      pricingBasis: "self_pay",
+      pricingDetails,
     };
 
     await saveEstimate(tenantId, estimate, cptDetails, options.userId);
@@ -222,6 +267,12 @@ export async function createCostEstimate(
   const benefits = await getInsuranceBenefits(tenantId, patientId);
 
   if (!benefits) {
+    const pricingDetails = cptDetails.map(item => ({
+      code: item.code,
+      charge: item.fee,
+      allowedAmount: item.fee,
+      basis: "self_pay" as const,
+    }));
     // No insurance - patient pays all
     const estimate: CostEstimate = {
       id: estimateId,
@@ -242,15 +293,32 @@ export async function createCostEstimate(
       isCosmetic: false,
       insuranceVerified: false,
       validUntil: getValidUntilDate(),
+      status: "draft",
+      version: 1,
+      confidenceLevel: "medium",
+      confidenceScore: 70,
+      confidenceFactors: ["Office fee schedule", "No active insurance benefits found"],
+      pricingBasis: "self_pay",
+      pricingDetails,
     };
 
     await saveEstimate(tenantId, estimate, cptDetails, options.userId);
     return estimate;
   }
 
-  // Calculate with insurance
-  // Assume insurance allows 80% of charges (in production, use contracted rates)
-  const insuranceAllowedAmount = totalCharges * 0.8;
+  // Calculate the allowed amount per procedure. Configured payer contract rates
+  // always win; only missing codes use the disclosed planning fallback.
+  const pricingDetails = await resolveAllowedAmounts(tenantId, benefits, cptDetails);
+  const insuranceAllowedAmount = roundMoney(
+    pricingDetails.reduce((sum, item) => sum + item.allowedAmount, 0)
+  );
+  const contractLineCount = pricingDetails.filter(item => item.basis === "contract_rate").length;
+  const pricingBasis: EstimatePricingBasis = contractLineCount === pricingDetails.length
+    ? "contract_rate"
+    : contractLineCount > 0
+      ? "mixed"
+      : "percentage_fallback";
+  const confidence = calculateConfidence(benefits, pricingBasis);
 
   let patientResponsibility = 0;
   const breakdown = {
@@ -299,6 +367,13 @@ export async function createCostEstimate(
     isCosmetic: false,
     insuranceVerified: benefits.verified,
     validUntil: getValidUntilDate(),
+    status: "draft",
+    version: 1,
+    confidenceLevel: confidence.level,
+    confidenceScore: confidence.score,
+    confidenceFactors: confidence.factors,
+    pricingBasis,
+    pricingDetails,
   };
 
   await saveEstimate(tenantId, estimate, cptDetails, options.userId);
@@ -320,8 +395,11 @@ async function saveEstimate(
       service_type, cpt_codes,
       estimated_allowed_amount, estimated_patient_responsibility,
       breakdown, is_cosmetic, insurance_verified,
-      valid_until, created_by
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      valid_until, created_by, status, version,
+      confidence_level, confidence_score, confidence_factors,
+      pricing_basis, pricing_details
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+      $14, $15, $16, $17, $18, $19, $20)`,
     [
       estimate.id,
       tenantId,
@@ -336,8 +414,21 @@ async function saveEstimate(
       estimate.insuranceVerified,
       estimate.validUntil,
       userId,
+      estimate.status,
+      estimate.version,
+      estimate.confidenceLevel,
+      estimate.confidenceScore,
+      JSON.stringify(estimate.confidenceFactors),
+      estimate.pricingBasis,
+      JSON.stringify(estimate.pricingDetails),
     ]
   );
+
+  await recordEstimateEvent(tenantId, estimate.id, estimate.patientId, "staff", userId, "created", null, {
+    version: estimate.version,
+    confidenceLevel: estimate.confidenceLevel,
+    pricingBasis: estimate.pricingBasis,
+  });
 }
 
 /**
@@ -360,6 +451,13 @@ export async function getEstimate(
       is_cosmetic as "isCosmetic",
       insurance_verified as "insuranceVerified",
       valid_until as "validUntil"
+      ,status
+      ,version
+      ,confidence_level as "confidenceLevel"
+      ,confidence_score as "confidenceScore"
+      ,confidence_factors as "confidenceFactors"
+      ,pricing_basis as "pricingBasis"
+      ,pricing_details as "pricingDetails"
     from cost_estimates
     where id = $1 and tenant_id = $2`,
     [estimateId, tenantId]
@@ -393,6 +491,13 @@ export async function getEstimate(
     isCosmetic: row.isCosmetic,
     insuranceVerified: row.insuranceVerified,
     validUntil: row.validUntil,
+    status: row.status || "draft",
+    version: toNumber(row.version, 1),
+    confidenceLevel: normalizeConfidenceLevel(row.confidenceLevel),
+    confidenceScore: toNumber(row.confidenceScore, 40),
+    confidenceFactors: normalizeStringArray(row.confidenceFactors),
+    pricingBasis: normalizePricingBasis(row.pricingBasis),
+    pricingDetails: normalizePricingDetails(row.pricingDetails),
   };
 }
 
@@ -416,6 +521,13 @@ export async function getEstimateByAppointment(
       is_cosmetic as "isCosmetic",
       insurance_verified as "insuranceVerified",
       valid_until as "validUntil"
+      ,status
+      ,version
+      ,confidence_level as "confidenceLevel"
+      ,confidence_score as "confidenceScore"
+      ,confidence_factors as "confidenceFactors"
+      ,pricing_basis as "pricingBasis"
+      ,pricing_details as "pricingDetails"
     from cost_estimates
     where appointment_id = $1 and tenant_id = $2
     order by created_at desc
@@ -450,6 +562,13 @@ export async function getEstimateByAppointment(
     isCosmetic: row.isCosmetic,
     insuranceVerified: row.insuranceVerified,
     validUntil: row.validUntil,
+    status: row.status || "draft",
+    version: toNumber(row.version, 1),
+    confidenceLevel: normalizeConfidenceLevel(row.confidenceLevel),
+    confidenceScore: toNumber(row.confidenceScore, 40),
+    confidenceFactors: normalizeStringArray(row.confidenceFactors),
+    pricingBasis: normalizePricingBasis(row.pricingBasis),
+    pricingDetails: normalizePricingDetails(row.pricingDetails),
   };
 }
 
@@ -465,7 +584,10 @@ export async function markEstimateShown(
     `update cost_estimates
      set shown_to_patient = true,
          shown_at = now(),
-         patient_accepted = $1
+         patient_accepted = $1,
+         status = case when $1 then 'acknowledged' else 'shared' end,
+         acknowledged_at = case when $1 then now() else acknowledged_at end,
+         updated_at = now()
      where id = $2 and tenant_id = $3`,
     [accepted, estimateId, tenantId]
   );
@@ -476,24 +598,29 @@ export async function markEstimateShown(
  */
 export async function shareEstimateWithPatient(
   tenantId: string,
-  estimateId: string
+  estimateId: string,
+  actorId?: string
 ): Promise<{ patientId: string; sharedAt: string } | null> {
   const result = await pool.query(
     `update cost_estimates
      set shown_to_patient = true,
          shown_at = now(),
+         status = 'shared',
          updated_at = now()
      where id = $1 and tenant_id = $2
+       and status not in ('revoked', 'superseded', 'expired')
      returning patient_id as "patientId", shown_at as "sharedAt"`,
     [estimateId, tenantId]
   );
 
   if (!result.rowCount) return null;
 
-  return {
+  const shared = {
     patientId: String(result.rows[0].patientId),
     sharedAt: new Date(result.rows[0].sharedAt).toISOString(),
   };
+  await recordEstimateEvent(tenantId, estimateId, shared.patientId, "staff", actorId || null, "shared");
+  return shared;
 }
 
 /**
@@ -567,6 +694,279 @@ function calculateInsurancePays(
 
 function isMissingRelationError(error: any): boolean {
   return error?.code === "42P01" || String(error?.message || "").includes("does not exist");
+}
+
+function getVerificationEnvironment(source: unknown): InsuranceBenefits["environment"] {
+  const normalized = String(source || "").toLowerCase();
+  if (!normalized) return "unverified";
+  if (normalized.includes("mock")) return "mock";
+  if (
+    normalized.includes("sandbox") ||
+    normalized.includes("test") ||
+    (normalized.includes("stedi") && String(process.env.STEDI_API_KEY || "").startsWith("test_"))
+  ) return "sandbox";
+  return "production";
+}
+
+async function resolveAllowedAmounts(
+  tenantId: string,
+  benefits: InsuranceBenefits,
+  cptDetails: Array<{ code: string; fee: number; description: string }>
+): Promise<EstimatePricingDetail[]> {
+  const details: EstimatePricingDetail[] = [];
+
+  for (const item of cptDetails) {
+    try {
+      const rateResult = await pool.query(
+        `select id,
+                payer_name as "payerName",
+                allowed_amount_cents as "allowedAmountCents"
+         from payer_contract_rates
+         where tenant_id = $1
+           and cpt_code = $2
+           and is_active = true
+           and effective_date <= current_date
+           and (termination_date is null or termination_date >= current_date)
+           and (
+             ($3::text is not null and payer_id = $3)
+             or lower(payer_name) = lower($4)
+           )
+           and (plan_name is null or lower(plan_name) = lower($5))
+         order by
+           case when $3::text is not null and payer_id = $3 then 0 else 1 end,
+           case when plan_name is not null then 0 else 1 end,
+           effective_date desc
+         limit 1`,
+        [tenantId, item.code, benefits.payerId || null, benefits.payerName || benefits.planName, benefits.planName]
+      );
+
+      if (rateResult.rowCount) {
+        const rate = rateResult.rows[0];
+        details.push({
+          code: item.code,
+          charge: item.fee,
+          allowedAmount: roundMoney(toNumber(rate.allowedAmountCents) / 100),
+          basis: "contract_rate",
+          rateId: String(rate.id),
+          payerName: rate.payerName || benefits.payerName || benefits.planName,
+        });
+        continue;
+      }
+    } catch (error: any) {
+      if (!isMissingRelationError(error)) throw error;
+    }
+
+    details.push({
+      code: item.code,
+      charge: item.fee,
+      allowedAmount: roundMoney(item.fee * 0.8),
+      basis: "percentage_fallback",
+      payerName: benefits.payerName || benefits.planName,
+    });
+  }
+
+  return details;
+}
+
+function calculateConfidence(
+  benefits: InsuranceBenefits,
+  pricingBasis: EstimatePricingBasis
+): { level: EstimateConfidenceLevel; score: number; factors: string[] } {
+  const factors: string[] = [];
+  let score = 20;
+
+  if (pricingBasis === "contract_rate") {
+    score += 45;
+    factors.push("Current payer contract rate for every procedure");
+  } else if (pricingBasis === "mixed") {
+    score += 25;
+    factors.push("Contract rates found for some procedures");
+    factors.push("Planning fallback used for procedures without a configured rate");
+  } else {
+    score += 10;
+    factors.push("Planning fallback used because no payer contract rate is configured");
+  }
+
+  if (benefits.verified) {
+    score += benefits.environment === "production" ? 25 : 10;
+    factors.push(
+      benefits.environment === "production"
+        ? "Current production eligibility response"
+        : `Current ${benefits.environment} eligibility response`
+    );
+  } else {
+    factors.push("Benefits are from the patient record and are not currently verified");
+  }
+
+  score = Math.max(0, Math.min(100, score));
+  return {
+    level: score >= 85 ? "high" : score >= 60 ? "medium" : "planning",
+    score,
+    factors,
+  };
+}
+
+function normalizeConfidenceLevel(value: unknown): EstimateConfidenceLevel {
+  return value === "high" || value === "medium" ? value : "planning";
+}
+
+function normalizePricingBasis(value: unknown): EstimatePricingBasis {
+  if (value === "contract_rate" || value === "mixed" || value === "self_pay") return value;
+  return "percentage_fallback";
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  const parsed = parseJson<unknown>(value, []);
+  return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizePricingDetails(value: unknown): EstimatePricingDetail[] {
+  const parsed = parseJson<unknown>(value, []);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(isRecord).map(item => ({
+    code: String(item.code || ""),
+    charge: toNumber(item.charge),
+    allowedAmount: toNumber(item.allowedAmount),
+    basis: item.basis === "contract_rate" || item.basis === "self_pay"
+      ? item.basis
+      : "percentage_fallback",
+    rateId: typeof item.rateId === "string" ? item.rateId : undefined,
+    payerName: typeof item.payerName === "string" ? item.payerName : undefined,
+  }));
+}
+
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+export type EstimateEventType =
+  | "created" | "shared" | "viewed" | "acknowledged" | "call_requested"
+  | "billing_question" | "payment_plan_requested" | "revised" | "superseded"
+  | "revoked" | "expired" | "pdf_downloaded" | "reconciled";
+
+export async function recordEstimateEvent(
+  tenantId: string,
+  estimateId: string,
+  patientId: string,
+  actorType: "staff" | "patient" | "system",
+  actorId: string | null,
+  eventType: EstimateEventType,
+  message: string | null = null,
+  metadata: Record<string, unknown> = {}
+): Promise<void> {
+  try {
+    await pool.query(
+      `insert into cost_estimate_events (
+         id, tenant_id, estimate_id, patient_id, actor_type, actor_id,
+         event_type, message, metadata
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [crypto.randomUUID(), tenantId, estimateId, patientId, actorType, actorId, eventType, message, JSON.stringify(metadata)]
+    );
+  } catch (error: any) {
+    if (!isMissingRelationError(error)) throw error;
+  }
+}
+
+export async function revokeEstimate(
+  tenantId: string,
+  estimateId: string,
+  actorId: string,
+  reason: string
+): Promise<{ patientId: string } | null> {
+  const result = await pool.query(
+    `update cost_estimates
+     set status = 'revoked', shown_to_patient = false, revoked_at = now(),
+         revoked_by = $3, revocation_reason = $4, updated_at = now()
+     where id = $1 and tenant_id = $2 and status not in ('revoked', 'superseded')
+     returning patient_id as "patientId"`,
+    [estimateId, tenantId, actorId, reason]
+  );
+  if (!result.rowCount) return null;
+  const patientId = String(result.rows[0].patientId);
+  await recordEstimateEvent(tenantId, estimateId, patientId, "staff", actorId, "revoked", reason);
+  return { patientId };
+}
+
+export async function reviseEstimate(
+  tenantId: string,
+  estimateId: string,
+  options: { serviceType?: string; cptCodes: string[]; isCosmetic?: boolean; appointmentId?: string; userId: string }
+): Promise<CostEstimate | null> {
+  const original = await getEstimate(tenantId, estimateId);
+  if (!original || ["revoked", "superseded"].includes(original.status)) return null;
+
+  const revised = await createCostEstimate(tenantId, original.patientId, {
+    appointmentId: options.appointmentId ?? original.appointmentId,
+    serviceType: options.serviceType || original.serviceType,
+    cptCodes: options.cptCodes,
+    isCosmetic: options.isCosmetic ?? original.isCosmetic,
+    userId: options.userId,
+  });
+  revised.version = original.version + 1;
+
+  await pool.query(
+    `update cost_estimates
+     set version = $1, supersedes_estimate_id = $2, updated_at = now()
+     where id = $3 and tenant_id = $4`,
+    [revised.version, estimateId, revised.id, tenantId]
+  );
+  await pool.query(
+    `update cost_estimates
+     set status = 'superseded', shown_to_patient = false,
+         superseded_by_estimate_id = $1, updated_at = now()
+     where id = $2 and tenant_id = $3`,
+    [revised.id, estimateId, tenantId]
+  );
+  await recordEstimateEvent(tenantId, estimateId, original.patientId, "staff", options.userId, "superseded", null, {
+    supersededByEstimateId: revised.id,
+  });
+  await recordEstimateEvent(tenantId, revised.id, original.patientId, "staff", options.userId, "revised", null, {
+    supersedesEstimateId: estimateId,
+    version: revised.version,
+  });
+  return revised;
+}
+
+export async function respondToEstimate(
+  tenantId: string,
+  patientId: string,
+  estimateId: string,
+  eventType: "acknowledged" | "call_requested" | "billing_question" | "payment_plan_requested",
+  message?: string
+): Promise<{ status: string; respondedAt: string } | null> {
+  const status = eventType === "acknowledged" ? "acknowledged" : eventType;
+  const result = await pool.query(
+    `update cost_estimates
+     set status = $4,
+         patient_accepted = case when $4 = 'acknowledged' then true else patient_accepted end,
+         acknowledged_at = case when $4 = 'acknowledged' then now() else acknowledged_at end,
+         updated_at = now()
+     where id = $1 and tenant_id = $2 and patient_id = $3
+       and shown_to_patient = true
+       and status not in ('revoked', 'superseded', 'expired')
+       and (valid_until is null or valid_until >= current_date)
+     returning status, updated_at as "respondedAt"`,
+    [estimateId, tenantId, patientId, status]
+  );
+  if (!result.rowCount) return null;
+  await recordEstimateEvent(tenantId, estimateId, patientId, "patient", patientId, eventType, message || null);
+  return {
+    status: String(result.rows[0].status),
+    respondedAt: new Date(result.rows[0].respondedAt).toISOString(),
+  };
+}
+
+export function calculateEstimateReconciliation(input: {
+  estimatedAllowedAmount: number;
+  estimatedPatientResponsibility: number;
+  actualAllowedAmount: number;
+  actualPatientResponsibility: number;
+}): { allowedVariance: number; patientVariance: number; accuracyPercent: number } {
+  const allowedVariance = roundMoney(input.actualAllowedAmount - input.estimatedAllowedAmount);
+  const patientVariance = roundMoney(input.actualPatientResponsibility - input.estimatedPatientResponsibility);
+  const denominator = Math.max(input.actualPatientResponsibility, input.estimatedPatientResponsibility, 1);
+  const accuracyPercent = Math.max(0, Math.min(100, 100 - (Math.abs(patientVariance) / denominator) * 100));
+  return { allowedVariance, patientVariance, accuracyPercent: roundMoney(accuracyPercent) };
 }
 
 /**

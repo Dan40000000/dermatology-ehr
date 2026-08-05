@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import {
@@ -9,6 +11,8 @@ import {
   fetchPortalPaymentHistory,
   fetchPortalPaymentMethods,
   fetchPortalInsuranceSummary,
+  respondToPortalEstimate,
+  auditPortalEstimatePdf,
   makePortalPayment,
   type PatientBalance,
   type Charge as PortalCharge,
@@ -17,6 +21,7 @@ import {
   type PaymentMethod as PortalPaymentMethod,
   type PaymentTransaction,
   type PortalInsuranceSummary,
+  type PortalCostEstimate,
 } from '../../portalApi';
 
 // Payment confirmation result type
@@ -69,6 +74,57 @@ const initialCardForm: NewCardForm = {
   saveCard: false,
 };
 
+function downloadEstimatePdf(estimate: PortalCostEstimate): void {
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const money = (value: number) => `$${Number(value || 0).toFixed(2)}`;
+  const confidence = `${estimate.confidenceLevel.charAt(0).toUpperCase()}${estimate.confidenceLevel.slice(1)} (${estimate.confidenceScore}/100)`;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('Good Faith Patient Cost Estimate', 48, 52);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${estimate.serviceType.replace(/_/g, ' ')} · Version ${estimate.version}`, 48, 72);
+  doc.text(`Valid through: ${estimate.validUntil || 'See care team'} · Confidence: ${confidence}`, 48, 90);
+
+  autoTable(doc, {
+    startY: 112,
+    head: [['Procedure', 'Office charge', 'Plan allowed', 'Pricing source']],
+    body: estimate.pricingDetails.length > 0
+      ? estimate.pricingDetails.map(item => [item.code, money(item.charge), money(item.allowedAmount), item.basis.replace(/_/g, ' ')])
+      : estimate.procedures.map(item => [[item.code, item.description].filter(Boolean).join(' · '), '—', '—', estimate.pricingBasis.replace(/_/g, ' ')]),
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [30, 64, 175] },
+    margin: { left: 48, right: 48 },
+  });
+
+  const tableEnd = (doc as any).lastAutoTable?.finalY || 180;
+  autoTable(doc, {
+    startY: tableEnd + 18,
+    body: [
+      ['Total charges', money(estimate.totalCharges)],
+      ['Plan allowed amount', money(estimate.insuranceAllowedAmount)],
+      ['Estimated insurance payment', money(estimate.insurancePays)],
+      ['Copay', money(estimate.breakdown.copay)],
+      ['Deductible', money(estimate.breakdown.deductible)],
+      ['Coinsurance', money(estimate.breakdown.coinsurance)],
+      ['Not covered', money(estimate.breakdown.notCovered)],
+      ['Estimated contract adjustment', money(estimate.breakdown.contractualAdjustment)],
+      ['YOUR ESTIMATED RESPONSIBILITY', money(estimate.patientResponsibility)],
+    ],
+    theme: 'grid',
+    columnStyles: { 0: { fontStyle: 'bold' }, 1: { halign: 'right' } },
+    margin: { left: 48, right: 48 },
+  });
+
+  const summaryEnd = (doc as any).lastAutoTable?.finalY || 430;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  const disclaimer = 'This estimate is based on the services, rates, and benefit information available on the date generated. It is not a guarantee of coverage or the final bill. Actual charges may change if the services performed, insurer processing, deductible, or benefit accumulators change.';
+  doc.text(doc.splitTextToSize(disclaimer, 516), 48, summaryEnd + 26);
+  doc.save(`patient-cost-estimate-${estimate.id}.pdf`);
+}
+
 export function PortalBillingPage() {
   const { sessionToken, tenantId } = usePatientPortalAuth();
   const [balance, setBalance] = useState<PatientBalance | null>(null);
@@ -87,6 +143,10 @@ export function PortalBillingPage() {
   const [selectedStatement, setSelectedStatement] = useState<PortalStatement | null>(null);
   const [statementLineItems, setStatementLineItems] = useState<PortalStatementLineItem[]>([]);
   const [statementLoading, setStatementLoading] = useState(false);
+  const [estimateAction, setEstimateAction] = useState<{ id: string; action: 'request_call' | 'billing_question' | 'request_payment_plan' } | null>(null);
+  const [estimateMessage, setEstimateMessage] = useState('');
+  const [estimateActionBusy, setEstimateActionBusy] = useState<string | null>(null);
+  const [estimateActionError, setEstimateActionError] = useState<string | null>(null);
 
   // New payment modal states
   const [useNewCard, setUseNewCard] = useState(false);
@@ -304,8 +364,47 @@ export function PortalBillingPage() {
     }
   };
 
+  const submitEstimateResponse = async (
+    estimateId: string,
+    action: 'acknowledge' | 'request_call' | 'billing_question' | 'request_payment_plan',
+    message?: string
+  ) => {
+    if (!sessionToken || !tenantId) return;
+    setEstimateActionBusy(estimateId);
+    setEstimateActionError(null);
+    try {
+      await respondToPortalEstimate(tenantId, sessionToken, estimateId, action, message);
+      setEstimateAction(null);
+      setEstimateMessage('');
+      const updated = await fetchPortalInsuranceSummary(tenantId, sessionToken);
+      setInsuranceSummary(updated);
+    } catch (error) {
+      setEstimateActionError(error instanceof Error ? error.message : 'Unable to record your response');
+    } finally {
+      setEstimateActionBusy(null);
+    }
+  };
+
+  const handleEstimatePdf = (estimate: PortalCostEstimate) => {
+    downloadEstimatePdf(estimate);
+    if (sessionToken && tenantId) {
+      void auditPortalEstimatePdf(tenantId, sessionToken, estimate.id).catch(() => undefined);
+    }
+  };
+
   const coverage = insuranceSummary?.coverage || null;
-  const sharedEstimates = insuranceSummary?.estimates || [];
+  const sharedEstimates = (insuranceSummary?.estimates || []).map(estimate => ({
+    ...estimate,
+    status: estimate.status || 'shared',
+    version: estimate.version || 1,
+    confidenceLevel: estimate.confidenceLevel || 'planning',
+    confidenceScore: estimate.confidenceScore ?? (estimate.insuranceVerified ? 65 : 40),
+    confidenceFactors: estimate.confidenceFactors || [],
+    pricingBasis: estimate.pricingBasis || 'percentage_fallback',
+    pricingDetails: estimate.pricingDetails || [],
+    reconciliation: estimate.reconciliation || null,
+  }));
+  const prescriptionEstimates = insuranceSummary?.prescriptionEstimates || [];
   const environmentLabel = coverage?.environment === 'production'
     ? 'Production payer data'
     : coverage?.environment === 'sandbox'
@@ -583,6 +682,83 @@ export function PortalBillingPage() {
         .estimate-note {
           background: #f8fafc;
           border: 1px solid #e2e8f0;
+        }
+
+        .estimate-confidence-row,
+        .estimate-actions {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+
+        .estimate-confidence {
+          border-radius: 999px;
+          padding: 0.3rem 0.6rem;
+          font-size: 0.72rem;
+          font-weight: 750;
+          background: #fef3c7;
+          color: #92400e;
+        }
+
+        .estimate-confidence.high { background: #dcfce7; color: #166534; }
+        .estimate-confidence.medium { background: #dbeafe; color: #1e40af; }
+
+        .estimate-status {
+          color: #475569;
+          font-size: 0.75rem;
+          text-transform: capitalize;
+        }
+
+        .estimate-action-btn {
+          border: 1px solid #cbd5e1;
+          background: white;
+          color: #1e3a8a;
+          border-radius: 8px;
+          padding: 0.5rem 0.7rem;
+          font-size: 0.76rem;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .estimate-action-btn.primary { background: #1d4ed8; color: white; border-color: #1d4ed8; }
+        .estimate-action-btn:disabled { cursor: wait; opacity: 0.6; }
+
+        .estimate-response-form {
+          display: grid;
+          gap: 0.55rem;
+          padding: 0.8rem;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-radius: 10px;
+        }
+
+        .estimate-response-form textarea {
+          width: 100%;
+          min-height: 72px;
+          border: 1px solid #94a3b8;
+          border-radius: 8px;
+          padding: 0.6rem;
+          resize: vertical;
+        }
+
+        .estimate-reconciliation {
+          background: #f0fdf4;
+          border: 1px solid #bbf7d0;
+          color: #166534;
+          border-radius: 10px;
+          padding: 0.8rem;
+          font-size: 0.8rem;
+        }
+
+        .rx-estimate-grid { display: grid; gap: 0.65rem; }
+        .rx-estimate-card {
+          display: flex;
+          justify-content: space-between;
+          gap: 1rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 0.8rem;
         }
 
         .insurance-unavailable {
@@ -1479,6 +1655,13 @@ export function PortalBillingPage() {
                           <strong>{formatCurrency(estimate.patientResponsibility)}</strong>
                         </div>
                       </div>
+                      <div className="estimate-confidence-row">
+                        <span className={`estimate-confidence ${estimate.confidenceLevel}`}>
+                          {estimate.confidenceLevel === 'planning' ? 'Planning estimate' : `${estimate.confidenceLevel} confidence`} · {estimate.confidenceScore}/100
+                        </span>
+                        <span className="estimate-status">Status: {estimate.status.replace(/_/g, ' ')}</span>
+                        <span className="estimate-status">Version {estimate.version}</span>
+                      </div>
                       <div className="estimate-metrics">
                         <div className="estimate-metric">Total charges<strong>{formatCurrency(estimate.totalCharges)}</strong></div>
                         <div className="estimate-metric">Plan allowed amount<strong>{formatCurrency(estimate.insuranceAllowedAmount)}</strong></div>
@@ -1488,16 +1671,115 @@ export function PortalBillingPage() {
                         Includes {formatCurrency(estimate.breakdown.copay)} copay, {formatCurrency(estimate.breakdown.deductible)} deductible,
                         {' '}{formatCurrency(estimate.breakdown.coinsurance)} coinsurance, {formatCurrency(estimate.breakdown.notCovered)} not covered,
                         and a {formatCurrency(estimate.breakdown.contractualAdjustment)} estimated contract adjustment that is not included in your responsibility.
-                        {' '}The allowed amount uses 80% of the office fee because a payer-specific contracted rate is not configured yet.
+                        {estimate.pricingBasis === 'contract_rate'
+                          ? ' The allowed amount uses the currently configured payer contract rate for every procedure.'
+                          : estimate.pricingBasis === 'mixed'
+                            ? ' Some procedures use configured payer contract rates; procedures without a rate use 80% of the office fee as a planning fallback.'
+                            : estimate.pricingBasis === 'percentage_fallback'
+                              ? ' The allowed amount uses 80% of the office fee because a payer-specific contracted rate is not configured yet.'
+                              : ' This estimate uses the office self-pay fee schedule.'}
                         {' '}This is an estimate, not a guarantee of coverage or your final bill.
                       </div>
+                      {estimate.confidenceFactors.length > 0 && (
+                        <div className="estimate-note">
+                          <strong>What this confidence means:</strong> {estimate.confidenceFactors.join(' · ')}
+                        </div>
+                      )}
+                      {estimate.reconciliation && (
+                        <div className="estimate-reconciliation">
+                          <strong>Final plan processing is available.</strong>{' '}
+                          Actual patient responsibility was {formatCurrency(estimate.reconciliation.actualPatientResponsibility)}
+                          {' '}({estimate.reconciliation.patientVariance >= 0 ? '+' : ''}{formatCurrency(estimate.reconciliation.patientVariance)} versus this estimate).
+                          {estimate.reconciliation.accuracyPercent != null ? ` Estimate accuracy: ${estimate.reconciliation.accuracyPercent.toFixed(1)}%.` : ''}
+                        </div>
+                      )}
+                      <div className="estimate-actions" aria-label={`Actions for ${estimate.serviceType} estimate`}>
+                        {estimate.status !== 'acknowledged' && estimate.status !== 'reconciled' && (
+                          <button
+                            type="button"
+                            className="estimate-action-btn primary"
+                            disabled={estimateActionBusy === estimate.id}
+                            onClick={() => void submitEstimateResponse(estimate.id, 'acknowledge')}
+                          >
+                            I understand this estimate
+                          </button>
+                        )}
+                        <button type="button" className="estimate-action-btn" onClick={() => { setEstimateAction({ id: estimate.id, action: 'billing_question' }); setEstimateMessage(''); }}>
+                          Ask a billing question
+                        </button>
+                        <button type="button" className="estimate-action-btn" onClick={() => { setEstimateAction({ id: estimate.id, action: 'request_call' }); setEstimateMessage(''); }}>
+                          Request a call
+                        </button>
+                        <button type="button" className="estimate-action-btn" onClick={() => { setEstimateAction({ id: estimate.id, action: 'request_payment_plan' }); setEstimateMessage(''); }}>
+                          Ask about payment options
+                        </button>
+                        <button type="button" className="estimate-action-btn" onClick={() => handleEstimatePdf(estimate)}>
+                          Download PDF
+                        </button>
+                      </div>
+                      {estimateAction?.id === estimate.id && (
+                        <div className="estimate-response-form">
+                          <label htmlFor={`estimate-message-${estimate.id}`}>
+                            {estimateAction.action === 'billing_question' ? 'What would you like the billing team to answer?' : estimateAction.action === 'request_call' ? 'Add a preferred time or phone note (optional)' : 'Tell us anything useful about the payment option you need (optional)'}
+                          </label>
+                          <textarea
+                            id={`estimate-message-${estimate.id}`}
+                            value={estimateMessage}
+                            onChange={event => setEstimateMessage(event.target.value)}
+                            maxLength={2000}
+                          />
+                          <div className="estimate-actions">
+                            <button
+                              type="button"
+                              className="estimate-action-btn primary"
+                              disabled={estimateActionBusy === estimate.id}
+                              onClick={() => void submitEstimateResponse(estimate.id, estimateAction.action, estimateMessage)}
+                            >
+                              Send request
+                            </button>
+                            <button type="button" className="estimate-action-btn" onClick={() => setEstimateAction(null)}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
                     </article>
                   ))}
                 </div>
 
-                {!insuranceSummary?.prescriptionPricingAvailable && (
+                {estimateActionError && <div className="insurance-unavailable" role="alert">{estimateActionError}</div>}
+
+                {prescriptionEstimates.length > 0 && (
+                  <div className="estimate-list">
+                    <div className="estimate-section-heading">
+                      <h3>Prescription price estimates</h3>
+                      <span>{prescriptionEstimates.length} medication{prescriptionEstimates.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="rx-estimate-grid">
+                      {prescriptionEstimates.map(rx => (
+                        <div key={rx.id} className="rx-estimate-card">
+                          <div>
+                            <strong>{rx.medicationName}</strong>
+                            <div className="estimate-procedures">
+                              {[rx.quantity ? `Qty ${rx.quantity}` : null, rx.daysSupply ? `${rx.daysSupply}-day supply` : null, rx.pharmacyName].filter(Boolean).join(' · ')}
+                            </div>
+                            <div className="estimate-procedures">
+                              {rx.formularyStatus ? `Formulary: ${rx.formularyStatus.replace(/_/g, ' ')}` : 'Formulary status unavailable'}
+                              {rx.priorAuthRequired ? ' · Prior authorization may be required' : ''}
+                            </div>
+                          </div>
+                          <div className="estimate-patient-total">
+                            Estimated price
+                            <strong>{rx.patientPrice == null ? '—' : formatCurrency(rx.patientPrice)}</strong>
+                            <div className="estimate-procedures">{rx.environment === 'production' ? 'Live benefit response' : `${rx.environment} data`}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!insuranceSummary?.prescriptionPricingAvailable && prescriptionEstimates.length === 0 && (
                   <div className="estimate-note">
-                    Prescription drug pricing is not available in the portal yet because a real-time pharmacy benefit vendor is not connected.
+                    Prescription drug pricing is not available because a production real-time pharmacy benefit vendor is not connected. The portal will never substitute mock prices for live pharmacy benefit data.
                   </div>
                 )}
               </>

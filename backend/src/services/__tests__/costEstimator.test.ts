@@ -138,6 +138,54 @@ describe("costEstimator", () => {
     expect(estimate.breakdown.contractualAdjustment).toBe(20);
   });
 
+  it("uses an effective payer contract rate and reports high confidence", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ fee_cents: 10000, cpt_description: "Office visit" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          planName: "Blue Cross PPO",
+          payerId: "BCBS-001",
+          deductible: 0,
+          deductibleMet: 0,
+          deductibleRemaining: 0,
+          coinsurancePercent: 20,
+          copay: 10,
+          outOfPocketMax: 8000,
+          outOfPocketMet: 0,
+          isInNetwork: true,
+          verificationSource: "availity",
+        }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: "rate-1", payerName: "Blue Cross PPO", allowedAmountCents: 6500 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const estimate = await costEstimator.createCostEstimate("tenant-1", "patient-1", {
+      serviceType: "medical",
+      cptCodes: ["99213"],
+      userId: "user-1",
+    });
+
+    expect(estimate.insuranceAllowedAmount).toBe(65);
+    expect(estimate.patientResponsibility).toBeCloseTo(21, 2);
+    expect(estimate.pricingBasis).toBe("contract_rate");
+    expect(estimate.pricingDetails[0]).toMatchObject({
+      code: "99213",
+      allowedAmount: 65,
+      basis: "contract_rate",
+      rateId: "rate-1",
+    });
+    expect(estimate.confidenceLevel).toBe("high");
+    expect(estimate.confidenceScore).toBe(90);
+  });
+
   it("createCostEstimate treats the amount above allowed as potential balance billing out of network", async () => {
     queryMock
       .mockResolvedValueOnce({
@@ -249,6 +297,48 @@ describe("costEstimator", () => {
     const result = await costEstimator.shareEstimateWithPatient("tenant-1", "missing");
 
     expect(result).toBeNull();
+  });
+
+  it("records a patient payment-plan request only for an active shared estimate", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ status: "payment_plan_requested", respondedAt: "2026-08-05T18:00:00.000Z" }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const result = await costEstimator.respondToEstimate(
+      "tenant-1",
+      "patient-1",
+      "est-1",
+      "payment_plan_requested",
+      "Please call after 3pm"
+    );
+
+    expect(result).toEqual({
+      status: "payment_plan_requested",
+      respondedAt: "2026-08-05T18:00:00.000Z",
+    });
+    expect(queryMock.mock.calls[0][0]).toContain("patient_id = $3");
+    expect(queryMock.mock.calls[0][1]).toEqual([
+      "est-1", "tenant-1", "patient-1", "payment_plan_requested",
+    ]);
+    expect(queryMock.mock.calls[1][1]).toEqual(expect.arrayContaining([
+      "tenant-1", "est-1", "patient-1", "patient", "payment_plan_requested", "Please call after 3pm",
+    ]));
+  });
+
+  it("calculates estimate-to-EOB variance and accuracy", () => {
+    expect(costEstimator.calculateEstimateReconciliation({
+      estimatedAllowedAmount: 137.5,
+      estimatedPatientResponsibility: 27.5,
+      actualAllowedAmount: 140,
+      actualPatientResponsibility: 30,
+    })).toEqual({
+      allowedVariance: 2.5,
+      patientVariance: 2.5,
+      accuracyPercent: 91.67,
+    });
   });
 
   it("quickEstimate uses typical when insurance is present", async () => {

@@ -168,11 +168,52 @@ export interface PortalCostEstimate {
   validUntil: string | null;
   sharedAt: string | null;
   createdAt: string | null;
+  status: 'shared' | 'acknowledged' | 'call_requested' | 'billing_question' | 'payment_plan_requested' | 'reconciled' | string;
+  version: number;
+  confidenceLevel: 'high' | 'medium' | 'planning';
+  confidenceScore: number;
+  confidenceFactors: string[];
+  pricingBasis: 'contract_rate' | 'mixed' | 'percentage_fallback' | 'self_pay' | string;
+  pricingDetails: Array<{
+    code: string;
+    charge: number;
+    allowedAmount: number;
+    basis: string;
+    payerName?: string;
+  }>;
+  reconciliation: null | {
+    actualAllowedAmount: number;
+    actualInsurancePayment: number;
+    actualPatientResponsibility: number;
+    allowedVariance: number;
+    patientVariance: number;
+    accuracyPercent: number | null;
+    reconciledAt: string;
+  };
+}
+
+export interface PortalPrescriptionEstimate {
+  id: string;
+  medicationName: string;
+  ndc: string | null;
+  quantity: number | null;
+  daysSupply: number | null;
+  pharmacyName: string | null;
+  cashPrice: number | null;
+  insurancePrice: number | null;
+  patientPrice: number | null;
+  formularyStatus: string | null;
+  priorAuthRequired: boolean;
+  pricingSource: string;
+  environment: 'production' | 'sandbox' | 'mock';
+  validUntil: string | null;
+  sharedAt: string | null;
 }
 
 export interface PortalInsuranceSummary {
   coverage: PortalInsuranceCoverage;
   estimates: PortalCostEstimate[];
+  prescriptionEstimates: PortalPrescriptionEstimate[];
   prescriptionPricingAvailable: boolean;
 }
 
@@ -481,6 +522,46 @@ export async function fetchPortalInsuranceSummary(
   });
   if (!res.ok) throw new Error('Failed to fetch insurance coverage and estimates');
   return res.json();
+}
+
+export async function respondToPortalEstimate(
+  tenantId: string,
+  portalToken: string,
+  estimateId: string,
+  action: 'acknowledge' | 'request_call' | 'billing_question' | 'request_payment_plan',
+  message?: string
+): Promise<{ success: boolean; status: string; respondedAt: string }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal-data/insurance-estimates/${estimateId}/respond`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ action, message: message?.trim() || undefined }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to record estimate response');
+  }
+  return res.json();
+}
+
+export async function auditPortalEstimatePdf(
+  tenantId: string,
+  portalToken: string,
+  estimateId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/patient-portal-data/insurance-estimates/${estimateId}/pdf-audit`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to record estimate PDF download');
 }
 
 // Get statement details

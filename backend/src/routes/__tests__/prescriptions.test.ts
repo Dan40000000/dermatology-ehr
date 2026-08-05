@@ -92,7 +92,7 @@ beforeEach(() => {
   sendNewRxMock.mockResolvedValue({ success: true, messageId: "msg-1" });
   checkFormularyMock.mockResolvedValue({ covered: true });
   getBenefitsMock.mockResolvedValue({ plan: "basic" });
-  getIntegrationConfigMock.mockResolvedValue({ isActive: true });
+  getIntegrationConfigMock.mockResolvedValue({ isActive: true, provider: "surescripts-sandbox", config: { environment: "sandbox" } });
 });
 
 describe("Prescription routes", () => {
@@ -494,6 +494,18 @@ describe("Prescription routes", () => {
 
     expect(res.status).toBe(503);
     expect(res.body.code).toBe("RX_BENEFIT_NOT_CONNECTED");
+    expect(checkFormularyMock).not.toHaveBeenCalled();
+  });
+
+  it("POST /prescriptions/check-formulary never substitutes mock data for a production integration", async () => {
+    getIntegrationConfigMock.mockResolvedValueOnce({
+      isActive: true,
+      provider: "surescripts",
+      config: { environment: "production" },
+    });
+    const res = await request(app).post("/prescriptions/check-formulary").send({ medicationName: "Test Med" });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("RX_BENEFIT_LIVE_ADAPTER_UNAVAILABLE");
     expect(checkFormularyMock).not.toHaveBeenCalled();
   });
 

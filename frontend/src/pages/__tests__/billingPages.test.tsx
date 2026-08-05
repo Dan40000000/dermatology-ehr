@@ -26,6 +26,9 @@ const apiMocks = vi.hoisted(() => ({
   deleteFeeScheduleItem: vi.fn(),
   importFeeScheduleItems: vi.fn(),
   exportFeeSchedule: vi.fn(),
+  fetchPayerContractRates: vi.fn(),
+  createPayerContractRate: vi.fn(),
+  retirePayerContractRate: vi.fn(),
   fetchPriorAuths: vi.fn(),
   createPriorAuth: vi.fn(),
   updatePriorAuth: vi.fn(),
@@ -133,6 +136,11 @@ describe('FeeSchedulePage', () => {
     apiMocks.deleteFeeScheduleItem.mockResolvedValue({ ok: true });
     apiMocks.importFeeScheduleItems.mockResolvedValue({ imported: 1, total: 1 });
     apiMocks.exportFeeSchedule.mockResolvedValue(new Blob(['fee,csv']));
+    apiMocks.fetchPayerContractRates.mockResolvedValue([
+      { id: 'rate-1', payerName: 'Aetna', payerId: '60054', planName: null, cptCode: '99213', allowedAmount: 84.5, effectiveDate: '2026-01-01', terminationDate: null, source: 'contract', isActive: true },
+    ]);
+    apiMocks.createPayerContractRate.mockResolvedValue({ id: 'rate-2' });
+    apiMocks.retirePayerContractRate.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -153,7 +161,7 @@ describe('FeeSchedulePage', () => {
     render(<FeeSchedulePage />);
 
     await screen.findByText('Default Schedule');
-    await screen.findByText('99213');
+    await screen.findAllByText('99213');
 
     fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
     await waitFor(() =>
@@ -188,12 +196,34 @@ describe('FeeSchedulePage', () => {
       ),
     );
 
-    const itemRow = screen.getByText('99213').closest('tr');
+    const itemRow = screen.getAllByText('99213')
+      .map(element => element.closest('tr'))
+      .find(row => row && within(row).queryByRole('button', { name: 'Delete' }));
     expect(itemRow).toBeTruthy();
     fireEvent.click(within(itemRow as HTMLElement).getByRole('button', { name: 'Delete' }));
     await waitFor(() =>
       expect(apiMocks.deleteFeeScheduleItem).toHaveBeenCalledWith('tenant-1', 'token-1', 'sched-1', '99213'),
     );
+  });
+
+  it('loads and creates payer contract rates used by estimates', async () => {
+    render(<FeeSchedulePage />);
+    expect(await screen.findByText('Aetna')).toBeInTheDocument();
+    expect(screen.getByText('$84.50')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Contract Rate' }));
+    const modal = await screen.findByTestId('modal-add-payer-contract-rate');
+    const scope = within(modal);
+    fireEvent.change(scope.getByPlaceholderText('e.g., Aetna'), { target: { value: 'Blue Cross' } });
+    fireEvent.change(scope.getByPlaceholderText('99213'), { target: { value: '11102' } });
+    fireEvent.change(scope.getByPlaceholderText('0.00'), { target: { value: '125.25' } });
+    fireEvent.click(scope.getByRole('button', { name: 'Add Rate' }));
+
+    await waitFor(() => expect(apiMocks.createPayerContractRate).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({ payerName: 'Blue Cross', cptCode: '11102', allowedAmount: 125.25 })
+    ));
   });
 
   it('creates schedules and imports CSV fees', async () => {

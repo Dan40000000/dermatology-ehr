@@ -378,6 +378,36 @@ describe("Fee schedules routes", () => {
     expect(res.body.cpt_code).toBe("LASER-HAIR-S");
   });
 
+  describe("Payer contract rates", () => {
+    it("GET /fee-schedules/contract-rates returns canonical rates", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "rate-1", cpt_code: "99213" }] });
+      const res = await request(app).get("/fee-schedules/contract-rates");
+      expect(res.status).toBe(200);
+      expect(res.body.rates).toHaveLength(1);
+      expect(queryMock.mock.calls[0][0]).toContain("payer_contract_rates");
+    });
+
+    it("POST /fee-schedules/contract-rates validates and creates a line rate", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "rate-1", allowed_amount_cents: 6543 }] });
+      const res = await request(app).post("/fee-schedules/contract-rates").send({
+        payerName: "Blue Cross PPO",
+        payerId: "BCBS-001",
+        cptCode: "99213",
+        allowedAmount: 65.43,
+        effectiveDate: "2026-01-01",
+      });
+      expect(res.status).toBe(201);
+      expect(queryMock.mock.calls[0][1]).toEqual(expect.arrayContaining(["Blue Cross PPO", "BCBS-001", "99213", 6543]));
+    });
+
+    it("DELETE /fee-schedules/contract-rates/:id retires instead of deleting", async () => {
+      queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "rate-1" }] });
+      const res = await request(app).delete("/fee-schedules/contract-rates/rate-1");
+      expect(res.status).toBe(204);
+      expect(queryMock.mock.calls[0][0]).toContain("SET is_active = false");
+    });
+  });
+
   describe("Payer contracts", () => {
     it("GET /fee-schedules/contracts/list returns list", async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ id: "pc-1" }] });

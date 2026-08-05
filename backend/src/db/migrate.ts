@@ -15792,6 +15792,144 @@ Consider age-appropriate treatments and include family counseling points.',
       ON cost_estimates(tenant_id, patient_id, shown_to_patient, shown_at DESC);
     `,
   },
+  {
+    name: "223_insurance_estimate_program",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    -- Canonical, line-level contracted allowed amounts. This intentionally
+    -- lives beside the legacy payer_contracts variants so every deployed
+    -- schema has one stable lookup surface for the estimator.
+    CREATE TABLE IF NOT EXISTS payer_contract_rates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      payer_id TEXT,
+      payer_name TEXT NOT NULL,
+      plan_name TEXT,
+      cpt_code TEXT NOT NULL,
+      modifier TEXT,
+      place_of_service TEXT,
+      allowed_amount_cents INTEGER NOT NULL CHECK (allowed_amount_cents >= 0),
+      effective_date DATE NOT NULL,
+      termination_date DATE,
+      source TEXT NOT NULL DEFAULT 'contract' CHECK (source IN ('contract', 'payer_portal', 'clearinghouse', 'manual')),
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (termination_date IS NULL OR termination_date >= effective_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_payer_contract_rates_lookup
+      ON payer_contract_rates(tenant_id, lower(payer_name), cpt_code, effective_date DESC)
+      WHERE is_active = TRUE;
+    CREATE INDEX IF NOT EXISTS idx_payer_contract_rates_payer_id
+      ON payer_contract_rates(tenant_id, payer_id, cpt_code, effective_date DESC)
+      WHERE is_active = TRUE AND payer_id IS NOT NULL;
+
+    ALTER TABLE cost_estimates
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS supersedes_estimate_id TEXT,
+      ADD COLUMN IF NOT EXISTS superseded_by_estimate_id TEXT,
+      ADD COLUMN IF NOT EXISTS confidence_level TEXT NOT NULL DEFAULT 'planning',
+      ADD COLUMN IF NOT EXISTS confidence_score INTEGER NOT NULL DEFAULT 40,
+      ADD COLUMN IF NOT EXISTS confidence_factors JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS pricing_basis TEXT NOT NULL DEFAULT 'percentage_fallback',
+      ADD COLUMN IF NOT EXISTS pricing_details JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS revoked_by TEXT,
+      ADD COLUMN IF NOT EXISTS revocation_reason TEXT,
+      ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ;
+
+    UPDATE cost_estimates
+    SET status = CASE
+          WHEN shown_to_patient = TRUE AND patient_accepted = TRUE THEN 'acknowledged'
+          WHEN shown_to_patient = TRUE THEN 'shared'
+          ELSE 'draft'
+        END,
+        confidence_level = CASE WHEN insurance_verified = TRUE THEN 'medium' ELSE 'planning' END,
+        confidence_score = CASE WHEN insurance_verified = TRUE THEN 65 ELSE 40 END
+    WHERE status = 'draft' OR status IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_estimates_lifecycle
+      ON cost_estimates(tenant_id, patient_id, status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS cost_estimate_events (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      estimate_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL,
+      actor_type TEXT NOT NULL CHECK (actor_type IN ('staff', 'patient', 'system')),
+      actor_id TEXT,
+      event_type TEXT NOT NULL CHECK (event_type IN (
+        'created', 'shared', 'viewed', 'acknowledged', 'call_requested',
+        'billing_question', 'payment_plan_requested', 'revised', 'superseded',
+        'revoked', 'expired', 'pdf_downloaded', 'reconciled'
+      )),
+      message TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cost_estimate_events_estimate
+      ON cost_estimate_events(tenant_id, estimate_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cost_estimate_events_patient
+      ON cost_estimate_events(tenant_id, patient_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS cost_estimate_reconciliations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      estimate_id TEXT NOT NULL,
+      claim_id TEXT,
+      era_payment_id TEXT,
+      actual_allowed_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      actual_insurance_payment NUMERIC(10,2) NOT NULL DEFAULT 0,
+      actual_patient_responsibility NUMERIC(10,2) NOT NULL DEFAULT 0,
+      allowed_variance NUMERIC(10,2) NOT NULL DEFAULT 0,
+      patient_variance NUMERIC(10,2) NOT NULL DEFAULT 0,
+      accuracy_percent NUMERIC(5,2),
+      status TEXT NOT NULL DEFAULT 'reconciled',
+      reconciled_by TEXT,
+      reconciled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      notes TEXT,
+      UNIQUE(tenant_id, estimate_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_estimate_reconciliations_claim
+      ON cost_estimate_reconciliations(tenant_id, claim_id);
+
+    CREATE TABLE IF NOT EXISTS prescription_cost_estimates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL,
+      medication_name TEXT NOT NULL,
+      ndc TEXT,
+      quantity NUMERIC(10,2),
+      days_supply INTEGER,
+      pharmacy_name TEXT,
+      cash_price NUMERIC(10,2),
+      insurance_price NUMERIC(10,2),
+      patient_price NUMERIC(10,2),
+      formulary_status TEXT,
+      prior_auth_required BOOLEAN NOT NULL DEFAULT FALSE,
+      pricing_source TEXT NOT NULL,
+      environment TEXT NOT NULL DEFAULT 'production',
+      response_reference TEXT,
+      valid_until TIMESTAMPTZ,
+      shown_to_patient BOOLEAN NOT NULL DEFAULT FALSE,
+      shown_at TIMESTAMPTZ,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (environment IN ('production', 'sandbox', 'mock'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rx_estimates_portal
+      ON prescription_cost_estimates(tenant_id, patient_id, shown_to_patient, created_at DESC);
+    `,
+  },
 
 ];
 

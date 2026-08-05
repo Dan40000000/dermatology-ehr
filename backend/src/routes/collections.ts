@@ -301,7 +301,7 @@ collectionsRouter.post(
     const estimateId = String(req.params.estimateId);
 
     try {
-      const shared = await costEstimator.shareEstimateWithPatient(tenantId, estimateId);
+      const shared = await costEstimator.shareEstimateWithPatient(tenantId, estimateId, req.user!.id);
 
       if (!shared) {
         return res.status(404).json({ error: "Estimate not found" });
@@ -324,6 +324,268 @@ collectionsRouter.post(
     } catch (error) {
       logCollectionsError("Error sharing cost estimate:", error);
       return res.status(500).json({ error: "Failed to share cost estimate" });
+    }
+  }
+);
+
+const revokeEstimateSchema = z.object({ reason: z.string().trim().min(3).max(1000) });
+
+collectionsRouter.post(
+  "/estimate/:estimateId/revoke",
+  requireAuth,
+  requireRoles(["provider", "admin", "billing", "front_desk"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = revokeEstimateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+    try {
+      const result = await costEstimator.revokeEstimate(
+        req.user!.tenantId,
+        String(req.params.estimateId),
+        req.user!.id,
+        parsed.data.reason
+      );
+      if (!result) return res.status(404).json({ error: "Active estimate not found" });
+      await auditLog(req.user!.tenantId, req.user!.id, "cost_estimate_revoked", "cost_estimate", String(req.params.estimateId));
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logCollectionsError("Error revoking cost estimate:", error);
+      return res.status(500).json({ error: "Failed to revoke cost estimate" });
+    }
+  }
+);
+
+const reviseEstimateSchema = z.object({
+  serviceType: z.string().trim().min(1).optional(),
+  cptCodes: z.array(z.string().trim().min(1)).min(1),
+  isCosmetic: z.boolean().optional(),
+  appointmentId: z.string().optional(),
+});
+
+collectionsRouter.post(
+  "/estimate/:estimateId/revise",
+  requireAuth,
+  requireRoles(["provider", "admin", "billing", "front_desk"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = reviseEstimateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+    try {
+      const estimate = await costEstimator.reviseEstimate(
+        req.user!.tenantId,
+        String(req.params.estimateId),
+        { ...parsed.data, userId: req.user!.id }
+      );
+      if (!estimate) return res.status(404).json({ error: "Estimate not found or cannot be revised" });
+      await auditLog(req.user!.tenantId, req.user!.id, "cost_estimate_revised", "cost_estimate", estimate.id);
+      return res.status(201).json({ estimate });
+    } catch (error) {
+      logCollectionsError("Error revising cost estimate:", error);
+      return res.status(500).json({ error: "Failed to revise cost estimate" });
+    }
+  }
+);
+
+collectionsRouter.get("/patient/:id/estimates", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ce.*,
+              cer.actual_allowed_amount,
+              cer.actual_insurance_payment,
+              cer.actual_patient_responsibility,
+              cer.allowed_variance,
+              cer.patient_variance,
+              cer.accuracy_percent,
+              cer.reconciled_at
+       FROM cost_estimates ce
+       LEFT JOIN cost_estimate_reconciliations cer
+         ON cer.tenant_id = ce.tenant_id AND cer.estimate_id = ce.id
+       WHERE ce.tenant_id = $1 AND ce.patient_id = $2
+       ORDER BY ce.created_at DESC`,
+      [req.user!.tenantId, req.params.id]
+    );
+    return res.json({ estimates: result.rows });
+  } catch (error) {
+    logCollectionsError("Error listing patient cost estimates:", error);
+    return res.status(500).json({ error: "Failed to list cost estimates" });
+  }
+});
+
+collectionsRouter.get("/estimate/:estimateId/events", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT e.* FROM cost_estimate_events e
+       JOIN cost_estimates ce ON ce.id = e.estimate_id AND ce.tenant_id = e.tenant_id
+       WHERE e.tenant_id = $1 AND e.estimate_id = $2
+       ORDER BY e.created_at DESC`,
+      [req.user!.tenantId, req.params.estimateId]
+    );
+    return res.json({ events: result.rows });
+  } catch (error) {
+    logCollectionsError("Error fetching cost estimate events:", error);
+    return res.status(500).json({ error: "Failed to fetch estimate events" });
+  }
+});
+
+const reconciliationSchema = z.object({
+  claimId: z.string().optional(),
+  eraPaymentId: z.string().optional(),
+  actualAllowedAmount: z.number().nonnegative().optional(),
+  actualInsurancePayment: z.number().nonnegative().optional(),
+  actualPatientResponsibility: z.number().nonnegative().optional(),
+  notes: z.string().trim().max(2000).optional(),
+}).refine(value => Boolean(value.eraPaymentId) || (
+  value.actualAllowedAmount !== undefined &&
+  value.actualInsurancePayment !== undefined &&
+  value.actualPatientResponsibility !== undefined
+), { message: "Provide an ERA payment id or all actual amounts" });
+
+collectionsRouter.post(
+  "/estimate/:estimateId/reconcile",
+  requireAuth,
+  requireRoles(["admin", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = reconciliationSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+    const tenantId = req.user!.tenantId;
+    const estimateId = String(req.params.estimateId);
+    try {
+      const estimateResult = await pool.query(
+        `SELECT patient_id as "patientId", estimated_allowed_amount as "estimatedAllowed",
+                estimated_patient_responsibility as "estimatedPatient"
+         FROM cost_estimates WHERE id = $1 AND tenant_id = $2`,
+        [estimateId, tenantId]
+      );
+      if (!estimateResult.rowCount) return res.status(404).json({ error: "Estimate not found" });
+
+      let actualAllowed = parsed.data.actualAllowedAmount;
+      let actualInsurance = parsed.data.actualInsurancePayment;
+      let actualPatient = parsed.data.actualPatientResponsibility;
+      let claimId = parsed.data.claimId || null;
+      if (parsed.data.eraPaymentId) {
+        const era = await pool.query(
+          `SELECT claim_id as "claimId", allowed_amount_cents / 100.0 as "allowed",
+                  paid_amount_cents / 100.0 as "insurance",
+                  patient_responsibility_cents / 100.0 as "patient"
+           FROM era_payments WHERE id = $1 AND tenant_id = $2`,
+          [parsed.data.eraPaymentId, tenantId]
+        );
+        if (!era.rowCount) return res.status(404).json({ error: "ERA payment not found" });
+        claimId = claimId || era.rows[0].claimId || null;
+        actualAllowed = Number(era.rows[0].allowed || 0);
+        actualInsurance = Number(era.rows[0].insurance || 0);
+        actualPatient = Number(era.rows[0].patient || 0);
+      }
+
+      const estimate = estimateResult.rows[0];
+      const { allowedVariance, patientVariance, accuracyPercent } = costEstimator.calculateEstimateReconciliation({
+        estimatedAllowedAmount: Number(estimate.estimatedAllowed || 0),
+        estimatedPatientResponsibility: Number(estimate.estimatedPatient || 0),
+        actualAllowedAmount: Number(actualAllowed),
+        actualPatientResponsibility: Number(actualPatient),
+      });
+      const reconciliationId = crypto.randomUUID();
+      const result = await pool.query(
+        `INSERT INTO cost_estimate_reconciliations (
+           id, tenant_id, estimate_id, claim_id, era_payment_id,
+           actual_allowed_amount, actual_insurance_payment, actual_patient_responsibility,
+           allowed_variance, patient_variance, accuracy_percent, reconciled_by, notes
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         ON CONFLICT (tenant_id, estimate_id) DO UPDATE SET
+           claim_id = EXCLUDED.claim_id, era_payment_id = EXCLUDED.era_payment_id,
+           actual_allowed_amount = EXCLUDED.actual_allowed_amount,
+           actual_insurance_payment = EXCLUDED.actual_insurance_payment,
+           actual_patient_responsibility = EXCLUDED.actual_patient_responsibility,
+           allowed_variance = EXCLUDED.allowed_variance,
+           patient_variance = EXCLUDED.patient_variance,
+           accuracy_percent = EXCLUDED.accuracy_percent,
+           reconciled_by = EXCLUDED.reconciled_by, reconciled_at = now(), notes = EXCLUDED.notes
+         RETURNING *`,
+        [reconciliationId, tenantId, estimateId, claimId, parsed.data.eraPaymentId || null,
+          actualAllowed, actualInsurance, actualPatient, allowedVariance, patientVariance,
+          accuracyPercent, req.user!.id, parsed.data.notes || null]
+      );
+      await pool.query(`UPDATE cost_estimates SET status = 'reconciled', reconciled_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2`, [estimateId, tenantId]);
+      await costEstimator.recordEstimateEvent(tenantId, estimateId, String(estimate.patientId), "staff", req.user!.id, "reconciled", parsed.data.notes || null, { claimId, eraPaymentId: parsed.data.eraPaymentId || null });
+      await auditLog(tenantId, req.user!.id, "cost_estimate_reconciled", "cost_estimate", estimateId);
+      return res.json({ reconciliation: result.rows[0] });
+    } catch (error) {
+      logCollectionsError("Error reconciling cost estimate:", error);
+      return res.status(500).json({ error: "Failed to reconcile cost estimate" });
+    }
+  }
+);
+
+const prescriptionEstimateSchema = z.object({
+  patientId: z.string().min(1),
+  medicationName: z.string().trim().min(1),
+  ndc: z.string().trim().optional(),
+  quantity: z.number().positive().optional(),
+  daysSupply: z.number().int().positive().optional(),
+  pharmacyName: z.string().trim().optional(),
+  cashPrice: z.number().nonnegative().optional(),
+  insurancePrice: z.number().nonnegative().optional(),
+  patientPrice: z.number().nonnegative(),
+  formularyStatus: z.string().optional(),
+  priorAuthRequired: z.boolean().optional(),
+  pricingSource: z.string().trim().min(1),
+  environment: z.enum(["production", "sandbox", "mock"]),
+  responseReference: z.string().trim().min(1),
+  validUntil: z.string().datetime().optional(),
+});
+
+collectionsRouter.post(
+  "/prescription-estimate",
+  requireAuth,
+  requireRoles(["provider", "admin", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = prescriptionEstimateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+    const id = crypto.randomUUID();
+    const data = parsed.data;
+    try {
+      const result = await pool.query(
+        `INSERT INTO prescription_cost_estimates (
+           id, tenant_id, patient_id, medication_name, ndc, quantity, days_supply,
+           pharmacy_name, cash_price, insurance_price, patient_price, formulary_status,
+           prior_auth_required, pricing_source, environment, response_reference,
+           valid_until, created_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         RETURNING *`,
+        [id, req.user!.tenantId, data.patientId, data.medicationName, data.ndc || null,
+          data.quantity || null, data.daysSupply || null, data.pharmacyName || null,
+          data.cashPrice ?? null, data.insurancePrice ?? null, data.patientPrice,
+          data.formularyStatus || null, data.priorAuthRequired || false, data.pricingSource,
+          data.environment, data.responseReference,
+          data.validUntil || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), req.user!.id]
+      );
+      await auditLog(req.user!.tenantId, req.user!.id, "prescription_cost_estimate_create", "prescription_cost_estimate", id);
+      return res.status(201).json({ estimate: result.rows[0] });
+    } catch (error) {
+      logCollectionsError("Error saving prescription estimate:", error);
+      return res.status(500).json({ error: "Failed to save prescription estimate" });
+    }
+  }
+);
+
+collectionsRouter.post(
+  "/prescription-estimate/:estimateId/share",
+  requireAuth,
+  requireRoles(["provider", "admin", "billing"]),
+  async (req: AuthedRequest, res) => {
+    try {
+      const result = await pool.query(
+        `UPDATE prescription_cost_estimates
+         SET shown_to_patient = true, shown_at = now()
+         WHERE id = $1 AND tenant_id = $2
+           AND (valid_until IS NULL OR valid_until >= now())
+         RETURNING id, patient_id as "patientId", shown_at as "sharedAt", environment`,
+        [req.params.estimateId, req.user!.tenantId]
+      );
+      if (!result.rowCount) return res.status(404).json({ error: "Active prescription estimate not found" });
+      await auditLog(req.user!.tenantId, req.user!.id, "prescription_cost_estimate_shared", "prescription_cost_estimate", String(req.params.estimateId));
+      return res.json({ success: true, ...result.rows[0] });
+    } catch (error) {
+      logCollectionsError("Error sharing prescription estimate:", error);
+      return res.status(500).json({ error: "Failed to share prescription estimate" });
     }
   }
 );

@@ -45,6 +45,10 @@ jest.mock("../../services/costEstimator", () => ({
   createCostEstimate: jest.fn(),
   getEstimateByAppointment: jest.fn(),
   shareEstimateWithPatient: jest.fn(),
+  revokeEstimate: jest.fn(),
+  reviseEstimate: jest.fn(),
+  recordEstimateEvent: jest.fn(),
+  calculateEstimateReconciliation: jest.fn(),
   quickEstimate: jest.fn(),
 }));
 
@@ -88,6 +92,10 @@ beforeEach(() => {
   costEstimatorMock.createCostEstimate.mockReset();
   costEstimatorMock.getEstimateByAppointment.mockReset();
   costEstimatorMock.shareEstimateWithPatient.mockReset();
+  costEstimatorMock.revokeEstimate.mockReset();
+  costEstimatorMock.reviseEstimate.mockReset();
+  costEstimatorMock.recordEstimateEvent.mockReset();
+  costEstimatorMock.calculateEstimateReconciliation.mockReset();
   costEstimatorMock.quickEstimate.mockReset();
   loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
@@ -212,7 +220,7 @@ describe("Collections routes", () => {
       estimateId: "est-1",
       patientId: "p1",
     });
-    expect(costEstimatorMock.shareEstimateWithPatient).toHaveBeenCalledWith("tenant-1", "est-1");
+    expect(costEstimatorMock.shareEstimateWithPatient).toHaveBeenCalledWith("tenant-1", "est-1", "user-1");
     expect(auditLog).toHaveBeenCalledWith(
       "tenant-1",
       "user-1",
@@ -229,6 +237,20 @@ describe("Collections routes", () => {
 
     expect(res.status).toBe(404);
     expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  it("POST /collections/estimate/:estimateId/revoke requires a reason and revokes", async () => {
+    costEstimatorMock.revokeEstimate.mockResolvedValueOnce({ patientId: "p1" });
+    const res = await request(app).post("/collections/estimate/est-1/revoke").send({ reason: "Procedure changed" });
+    expect(res.status).toBe(200);
+    expect(costEstimatorMock.revokeEstimate).toHaveBeenCalledWith("tenant-1", "est-1", "user-1", "Procedure changed");
+  });
+
+  it("POST /collections/estimate/:estimateId/revise creates a versioned replacement", async () => {
+    costEstimatorMock.reviseEstimate.mockResolvedValueOnce({ id: "est-2", version: 2 } as any);
+    const res = await request(app).post("/collections/estimate/est-1/revise").send({ cptCodes: ["99213"] });
+    expect(res.status).toBe(201);
+    expect(res.body.estimate).toMatchObject({ id: "est-2", version: 2 });
   });
 
   it("POST /collections/estimate/quick requires patient and procedure", async () => {

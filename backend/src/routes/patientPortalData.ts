@@ -12,6 +12,7 @@ import { getPatientAllergySummaries, getPatientMedicationSummaries } from "../se
 import * as productSalesService from "../services/productSalesService";
 import { getIntegrationService } from "../services/integrationService";
 import config from "../config";
+import { respondToEstimate, recordEstimateEvent } from "../services/costEstimator";
 
 export const patientPortalDataRouter = Router();
 
@@ -1395,11 +1396,29 @@ patientPortalDataRouter.get("/insurance-summary", async (req: PatientPortalReque
          ce.insurance_verified as "insuranceVerified",
          ce.valid_until as "validUntil",
          ce.shown_at as "sharedAt",
-         ce.created_at as "createdAt"
+         ce.created_at as "createdAt",
+         ce.status,
+         ce.version,
+         ce.confidence_level as "confidenceLevel",
+         ce.confidence_score as "confidenceScore",
+         ce.confidence_factors as "confidenceFactors",
+         ce.pricing_basis as "pricingBasis",
+         ce.pricing_details as "pricingDetails",
+         cer.actual_allowed_amount as "actualAllowedAmount",
+         cer.actual_insurance_payment as "actualInsurancePayment",
+         cer.actual_patient_responsibility as "actualPatientResponsibility",
+         cer.allowed_variance as "allowedVariance",
+         cer.patient_variance as "patientVariance",
+         cer.accuracy_percent as "accuracyPercent",
+         cer.reconciled_at as "reconciledAt"
        FROM cost_estimates ce
+       LEFT JOIN cost_estimate_reconciliations cer
+         ON cer.tenant_id = ce.tenant_id AND cer.estimate_id = ce.id
        WHERE ce.patient_id = $1
          AND ce.tenant_id = $2
          AND ce.shown_to_patient = true
+         AND ce.status NOT IN ('revoked', 'superseded', 'expired')
+         AND (ce.valid_until IS NULL OR ce.valid_until >= CURRENT_DATE OR ce.status = 'reconciled')
        ORDER BY ce.shown_at DESC NULLS LAST, ce.created_at DESC
        LIMIT 10`,
       [patientId, tenantId]
@@ -1424,6 +1443,9 @@ patientPortalDataRouter.get("/insurance-summary", async (req: PatientPortalReque
       const copay = toPortalNumber(breakdown.copay) || 0;
       const deductible = toPortalNumber(breakdown.deductible) || 0;
       const coinsurance = toPortalNumber(breakdown.coinsurance) || 0;
+      const pricingDetails = parsePortalJson<unknown>(row.pricingDetails, []);
+      const confidenceFactors = parsePortalJson<unknown>(row.confidenceFactors, []);
+      const hasReconciliation = row.reconciledAt != null;
 
       return {
         id: row.id,
@@ -1449,8 +1471,53 @@ patientPortalDataRouter.get("/insurance-summary", async (req: PatientPortalReque
         validUntil: row.validUntil || null,
         sharedAt: row.sharedAt || row.createdAt || null,
         createdAt: row.createdAt || null,
+        status: row.status || "shared",
+        version: toPortalNumber(row.version) || 1,
+        confidenceLevel: ["high", "medium", "planning"].includes(String(row.confidenceLevel))
+          ? row.confidenceLevel
+          : "planning",
+        confidenceScore: toPortalNumber(row.confidenceScore) || 40,
+        confidenceFactors: Array.isArray(confidenceFactors)
+          ? confidenceFactors.filter((item): item is string => typeof item === "string")
+          : [],
+        pricingBasis: row.pricingBasis || "percentage_fallback",
+        pricingDetails: Array.isArray(pricingDetails) ? pricingDetails : [],
+        reconciliation: hasReconciliation ? {
+          actualAllowedAmount: toPortalNumber(row.actualAllowedAmount) || 0,
+          actualInsurancePayment: toPortalNumber(row.actualInsurancePayment) || 0,
+          actualPatientResponsibility: toPortalNumber(row.actualPatientResponsibility) || 0,
+          allowedVariance: toPortalNumber(row.allowedVariance) || 0,
+          patientVariance: toPortalNumber(row.patientVariance) || 0,
+          accuracyPercent: toPortalNumber(row.accuracyPercent),
+          reconciledAt: row.reconciledAt,
+        } : null,
       };
     });
+
+    const prescriptionRows = await queryOptionalPortalRows(
+      "prescription_cost_estimates",
+      `SELECT id,
+              medication_name as "medicationName",
+              ndc,
+              quantity,
+              days_supply as "daysSupply",
+              pharmacy_name as "pharmacyName",
+              cash_price as "cashPrice",
+              insurance_price as "insurancePrice",
+              patient_price as "patientPrice",
+              formulary_status as "formularyStatus",
+              prior_auth_required as "priorAuthRequired",
+              pricing_source as "pricingSource",
+              environment,
+              valid_until as "validUntil",
+              shown_at as "sharedAt"
+       FROM prescription_cost_estimates
+       WHERE tenant_id = $1 AND patient_id = $2 AND shown_to_patient = true
+         AND (valid_until IS NULL OR valid_until >= NOW())
+       ORDER BY shown_at DESC NULLS LAST, created_at DESC
+       LIMIT 10`,
+      [tenantId, patientId]
+    );
 
     return res.json({
       coverage: {
@@ -1475,11 +1542,74 @@ patientPortalDataRouter.get("/insurance-summary", async (req: PatientPortalReque
         environment,
       },
       estimates,
-      prescriptionPricingAvailable: false,
+      prescriptionEstimates: prescriptionRows.map((row: any) => ({
+        ...row,
+        quantity: toPortalNumber(row.quantity),
+        cashPrice: toPortalNumber(row.cashPrice),
+        insurancePrice: toPortalNumber(row.insurancePrice),
+        patientPrice: toPortalNumber(row.patientPrice),
+        priorAuthRequired: Boolean(row.priorAuthRequired),
+      })),
+      prescriptionPricingAvailable: prescriptionRows.some((row: any) => row.environment === "production"),
     });
   } catch (error) {
     logPatientPortalDataError("Get portal insurance summary error", error);
     return res.status(500).json({ error: "Failed to get insurance coverage and estimates" });
+  }
+});
+
+const estimateResponseSchema = z.object({
+  action: z.enum(["acknowledge", "request_call", "billing_question", "request_payment_plan"]),
+  message: z.string().trim().max(2000).optional(),
+});
+
+/** Record an authenticated patient's decision or follow-up request. */
+patientPortalDataRouter.post("/insurance-estimates/:estimateId/respond", async (req: PatientPortalRequest, res) => {
+  const parsed = estimateResponseSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  const patientId = req.patient!.patientId;
+  const tenantId = req.patient!.tenantId;
+  const eventMap = {
+    acknowledge: "acknowledged",
+    request_call: "call_requested",
+    billing_question: "billing_question",
+    request_payment_plan: "payment_plan_requested",
+  } as const;
+
+  try {
+    const result = await respondToEstimate(
+      tenantId,
+      patientId,
+      String(req.params.estimateId),
+      eventMap[parsed.data.action],
+      parsed.data.message
+    );
+    if (!result) return res.status(404).json({ error: "Active shared estimate not found" });
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    logPatientPortalDataError("Respond to portal estimate error", error);
+    return res.status(500).json({ error: "Failed to record estimate response" });
+  }
+});
+
+/** Audit a patient-generated estimate PDF without exposing a staff endpoint. */
+patientPortalDataRouter.post("/insurance-estimates/:estimateId/pdf-audit", async (req: PatientPortalRequest, res) => {
+  try {
+    const patientId = req.patient!.patientId;
+    const tenantId = req.patient!.tenantId;
+    const estimate = await pool.query(
+      `SELECT id FROM cost_estimates
+       WHERE id = $1 AND tenant_id = $2 AND patient_id = $3
+         AND shown_to_patient = true AND status NOT IN ('revoked', 'superseded', 'expired')`,
+      [req.params.estimateId, tenantId, patientId]
+    );
+    if (!estimate.rowCount) return res.status(404).json({ error: "Estimate not found" });
+    await recordEstimateEvent(tenantId, String(req.params.estimateId), patientId, "patient", patientId, "pdf_downloaded");
+    return res.json({ success: true });
+  } catch (error) {
+    logPatientPortalDataError("Audit portal estimate PDF error", error);
+    return res.status(500).json({ error: "Failed to record estimate PDF" });
   }
 });
 

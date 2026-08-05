@@ -1179,8 +1179,11 @@ async function isPatientOptedOut(tenantId: string, patientId: string, client: an
 let smsAutoResponsesTableExists: boolean | null = null;
 
 async function hasSMSAutoResponsesTable(client: QueryableClient): Promise<boolean> {
-  if (smsAutoResponsesTableExists !== null) {
-    return smsAutoResponsesTableExists;
+  // Cache only a confirmed table. A negative lookup can be transient while a
+  // deployment is applying migrations, so retaining `false` for the life of
+  // the process would disable keyword handling until the next restart.
+  if (smsAutoResponsesTableExists === true) {
+    return true;
   }
 
   const result = await client.query(

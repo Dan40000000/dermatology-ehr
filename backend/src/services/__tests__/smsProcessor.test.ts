@@ -66,6 +66,10 @@ const buildClient = (config: ClientConfig) => {
       return { rows: config.consentRows || [] };
     }
 
+    if (sql.includes("to_regclass('sms_auto_responses')")) {
+      return { rows: [{ exists: config.autoResponseRows !== undefined }] };
+    }
+
     if (sql.includes("FROM sms_auto_responses")) {
       return { rows: config.autoResponseRows || [] };
     }

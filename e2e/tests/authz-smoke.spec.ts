@@ -7,8 +7,7 @@ interface MockSessionOptions {
   secondaryRoles?: MockRole[];
 }
 
-const MOCK_ACCESS_TOKEN =
-  'eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjQxMDI0NDQ4MDAsInN1YiI6ImF1dGh6LXNtb2tlLXVzZXIifQ.signature';
+const MOCK_ACCESS_TOKEN = '__http_only_cookie__';
 
 async function installMockSession(page: Page, options: MockSessionOptions) {
   const { role, secondaryRoles = [] } = options;
@@ -31,7 +30,7 @@ async function installMockSession(page: Page, options: MockSessionOptions) {
         body: JSON.stringify({
           tokens: {
             accessToken: MOCK_ACCESS_TOKEN,
-            refreshToken: 'playwright-refresh',
+            refreshToken: '__http_only_cookie__',
             expiresIn: 3600,
           },
           user: {
@@ -85,7 +84,7 @@ async function installMockSession(page: Page, options: MockSessionOptions) {
         JSON.stringify({
           tenantId: 'tenant-demo',
           accessToken: token,
-          refreshToken: 'playwright-refresh',
+          refreshToken: '__http_only_cookie__',
           user: {
             id: 'user-authz-smoke',
             email: `${userRole}@demo.practice`,

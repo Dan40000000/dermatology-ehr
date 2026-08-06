@@ -3703,7 +3703,10 @@ async function installMockDataRoutes(page: Page) {
 export const test = base.extend<AuthFixtures>({
   authenticatedPage: async ({ page }, use) => {
     if (process.env.PLAYWRIGHT_MOCK_AUTH) {
-      const mockAccessToken = 'eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjQxMDI0NDQ4MDAsInN1YiI6InBsYXl3cmlnaHQtdXNlciJ9.signature';
+      // Production staff sessions are restored from the HttpOnly auth cookie.
+      // Keep the browser fixture aligned with that shape so AuthContext does not
+      // correctly reject this session as an unsafe persisted bearer token.
+      const mockAccessToken = '__http_only_cookie__';
 
       await page.route('**/api/auth/refresh', async (route) => {
         await route.fulfill({
@@ -3712,7 +3715,7 @@ export const test = base.extend<AuthFixtures>({
           body: JSON.stringify({
             tokens: {
               accessToken: mockAccessToken,
-              refreshToken: 'playwright-refresh',
+              refreshToken: '__http_only_cookie__',
               expiresIn: 3600,
             },
             user: {
@@ -3732,7 +3735,7 @@ export const test = base.extend<AuthFixtures>({
           JSON.stringify({
             tenantId: 'tenant-demo',
             accessToken: token,
-            refreshToken: 'playwright-refresh',
+            refreshToken: '__http_only_cookie__',
             user: {
               id: 'user-1',
               email: 'admin@demo.practice',

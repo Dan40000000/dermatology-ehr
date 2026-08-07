@@ -23,7 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 FAKE_BIN="$TEST_ROOT/bin"
-mkdir -p "$FAKE_BIN" "$TEST_ROOT/failure" "$TEST_ROOT/success"
+mkdir -p "$FAKE_BIN" "$TEST_ROOT/failure" "$TEST_ROOT/success" "$TEST_ROOT/success-encrypted"
 
 printf '%s\n' \
   '#!/bin/bash' \
@@ -65,6 +65,26 @@ if [ -z "$SUCCESS_BACKUP" ] || [ ! -s "$SUCCESS_BACKUP" ]; then
   exit 1
 fi
 gzip -t "$SUCCESS_BACKUP"
+
+env \
+  PATH="$FAKE_BIN:$PATH" \
+  PG_DUMP_MODE=success \
+  DATABASE_URL=postgresql://backup-test.invalid/db \
+  BACKUP_DIR="$TEST_ROOT/success-encrypted" \
+  BACKUP_ENCRYPTION_KEY=backup-test-key \
+  BACKUP_KEEP_LOCAL=true \
+  bash "$REPO_ROOT/scripts/backup.sh" >"$TEST_ROOT/success-encrypted.log" 2>&1
+
+ENCRYPTED_BACKUP="$(find "$TEST_ROOT/success-encrypted" -type f -name 'derm_db_backup_*.sql.gz.enc' -print | head -n 1)"
+if [ -z "$ENCRYPTED_BACKUP" ] || [ ! -s "$ENCRYPTED_BACKUP" ]; then
+  echo "backup.sh did not create an encrypted dump" >&2
+  exit 1
+fi
+openssl enc -d -aes-256-cbc -pbkdf2 \
+  -in "$ENCRYPTED_BACKUP" \
+  -out "$TEST_ROOT/decrypted.sql.gz" \
+  -k backup-test-key
+gzip -t "$TEST_ROOT/decrypted.sql.gz"
 
 printf '%s\n' \
   '#!/bin/bash' \

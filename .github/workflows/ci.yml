@@ -80,12 +80,59 @@ jobs:
         working-directory: ${{ matrix.workspace }}
         run: |
           if [ "${{ matrix.workspace }}" = "frontend" ]; then
-            npx vitest run src/pages/__tests__/prescriptionsReminders.test.tsx src/pages/__tests__/recalls.test.tsx src/pages/__tests__/patientDetail.test.tsx
+            npx vitest run --maxWorkers=1 --maxConcurrency=2
           else
             npm test
           fi
         env:
           NODE_ENV: test
+
+  # Run the migration suite against a disposable real PostgreSQL database.
+  # This is intentionally a focused job; the regular backend matrix job above
+  # remains the full unit/route test gate and is not duplicated here.
+  postgres_migrations:
+    name: PostgreSQL Migrations
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run real PostgreSQL migration suite
+        working-directory: backend
+        run: npm run test -- src/db/__tests__/migrate.postgres.integration.test.ts --runInBand
+        env:
+          NODE_ENV: test
+          RUN_POSTGRES_INTEGRATION: '1'
+          POSTGRES_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          DB_SSL_ENABLED: 'false'
+          JWT_SECRET: ci-postgres-migration-test-secret
 
   # Run deterministic Playwright smoke checks for critical process flow
   e2e_smoke:
@@ -260,7 +307,7 @@ jobs:
   release_gate:
     name: Release Gate
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, postgres_migrations]
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

@@ -2158,6 +2158,17 @@ Consider age-appropriate treatments and include family counseling points.',
     END;
     $$ LANGUAGE plpgsql;
 
+    -- The migration is also responsible for provisioning the demo tenant used
+    -- by the seed below.  A fresh database has no tenant rows yet, so create
+    -- it idempotently before invoking the tenant-scoped seed function.
+    INSERT INTO tenants (id, name)
+    VALUES ('tenant-demo', 'Demo Tenant')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
+    VALUES ('u-admin', 'tenant-demo', 'admin@demo.invalid', 'Demo Administrator', 'admin', 'migration-placeholder')
+    ON CONFLICT (id) DO NOTHING;
+
     -- Seed configurations for existing demo tenant
     SELECT seed_ai_agent_configs_for_tenant('tenant-demo', 'u-admin');
     `,
@@ -8278,10 +8289,15 @@ Consider age-appropriate treatments and include family counseling points.',
     ALTER TABLE IF EXISTS sms_settings
       ADD COLUMN IF NOT EXISTS appointment_reminder_channel TEXT DEFAULT 'sms';
 
-    UPDATE sms_settings
-    SET appointment_reminder_channel = 'sms'
-    WHERE appointment_reminder_channel IS NULL
-       OR appointment_reminder_channel NOT IN ('sms', 'voice');
+    DO $$
+    BEGIN
+      IF to_regclass('public.sms_settings') IS NOT NULL THEN
+        UPDATE sms_settings
+        SET appointment_reminder_channel = 'sms'
+        WHERE appointment_reminder_channel IS NULL
+           OR appointment_reminder_channel NOT IN ('sms', 'voice');
+      END IF;
+    END $$;
     `,
   },
   {
@@ -9378,6 +9394,9 @@ Consider age-appropriate treatments and include family counseling points.',
 
     ALTER TABLE sms_messages
       ADD COLUMN IF NOT EXISTS body TEXT,
+      ADD COLUMN IF NOT EXISTS message_body TEXT,
+      ADD COLUMN IF NOT EXISTS content TEXT,
+      ADD COLUMN IF NOT EXISTS patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
       ADD COLUMN IF NOT EXISTS error_code TEXT,
       ADD COLUMN IF NOT EXISTS related_appointment_id TEXT,
       ADD COLUMN IF NOT EXISTS related_thread_id TEXT,
@@ -9396,6 +9415,8 @@ Consider age-appropriate treatments and include family counseling points.',
 
     ALTER TABLE sms_conversations
       ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active',
+      ADD COLUMN IF NOT EXISTS consent_status TEXT,
+      ADD COLUMN IF NOT EXISTS opt_out_date TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS last_message_direction TEXT,
       ADD COLUMN IF NOT EXISTS last_message_preview TEXT,
       ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ,
@@ -9620,6 +9641,7 @@ Consider age-appropriate treatments and include family counseling points.',
     ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS refills_remaining INTEGER;
     ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS days_supply INTEGER;
     ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS prescribed_date TIMESTAMPTZ;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS written_date TIMESTAMPTZ;
     ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
     ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_id TEXT;
     ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_name TEXT;
@@ -9786,6 +9808,39 @@ Consider age-appropriate treatments and include family counseling points.',
     CREATE INDEX IF NOT EXISTS idx_portal_balances_patient ON portal_patient_balances(patient_id);
     CREATE INDEX IF NOT EXISTS idx_portal_autopay_patient ON portal_autopay_enrollments(patient_id);
     CREATE INDEX IF NOT EXISTS idx_doc_shares_patient_runtime ON patient_document_shares(patient_id);
+
+    -- The portal examples below use a small, stable demo clinic fixture.  A
+    -- clean database has no providers, locations, or appointment types yet,
+    -- so provision those referenced rows before inserting the examples.
+    INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
+    VALUES
+      ('u-provider', 'tenant-demo', 'provider@demo.invalid', 'Demo Provider', 'provider', 'migration-placeholder'),
+      ('u-billing', 'tenant-demo', 'billing@demo.invalid', 'Demo Billing User', 'billing', 'migration-placeholder')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO providers (id, tenant_id, user_id, full_name, specialty)
+    VALUES
+      ('prov-demo', 'tenant-demo', 'u-provider', 'Dr. David Skin', 'Dermatology'),
+      ('prov-demo-2', 'tenant-demo', NULL, 'Dr. Marcus Derm', 'Dermatology'),
+      ('prov-demo-3', 'tenant-demo', NULL, 'Dr. Jane Derm', 'Dermatology'),
+      ('prov-cosmetic-pa', 'tenant-demo', NULL, 'Sofia Cosmetic PA-C', 'Cosmetic Dermatology')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO locations (id, tenant_id, name, address)
+    VALUES
+      ('loc-demo', 'tenant-demo', 'Demo Main Clinic', '100 Demo Avenue'),
+      ('loc-east', 'tenant-demo', 'Demo East Clinic', '200 Demo Avenue'),
+      ('loc-south', 'tenant-demo', 'Demo South Clinic', '300 Demo Avenue')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO appointment_types (id, tenant_id, name, duration_minutes, color, category, description, is_active)
+    VALUES
+      ('appttype-psoriasis-fu', 'tenant-demo', 'Psoriasis Follow-up', 20, '#4f46e5', 'medical', 'Demo follow-up', true),
+      ('appttype-ak-treatment', 'tenant-demo', 'Actinic Keratosis Treatment', 45, '#4f46e5', 'medical', 'Demo treatment', true),
+      ('appttype-lesion-biopsy', 'tenant-demo', 'Lesion Biopsy', 30, '#4f46e5', 'procedure', 'Demo biopsy', true),
+      ('appttype-acne-fu', 'tenant-demo', 'Acne Follow-up', 20, '#4f46e5', 'medical', 'Demo follow-up', true),
+      ('appttype-microneedling', 'tenant-demo', 'Microneedling', 60, '#4f46e5', 'cosmetic', 'Demo cosmetic procedure', true)
+    ON CONFLICT (id) DO NOTHING;
 
     INSERT INTO appointment_types(id, tenant_id, name, duration_minutes, color, category, description, is_active)
     VALUES (
@@ -11239,6 +11294,45 @@ Consider age-appropriate treatments and include family counseling points.',
   {
     name: "161_sms_workflow_runtime_compat",
     sql: `
+    CREATE TABLE IF NOT EXISTS sms_settings (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      twilio_account_sid TEXT,
+      twilio_auth_token TEXT,
+      twilio_phone_number TEXT,
+      phone TEXT,
+      appointment_reminders_enabled BOOLEAN NOT NULL DEFAULT true,
+      appointment_reminder_channel TEXT NOT NULL DEFAULT 'sms',
+      reminder_hours_before INTEGER NOT NULL DEFAULT 24,
+      allow_patient_replies BOOLEAN NOT NULL DEFAULT true,
+      reminder_template TEXT,
+      confirmation_template TEXT,
+      cancellation_template TEXT,
+      reschedule_template TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT false,
+      is_test_mode BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tenant_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS patient_sms_preferences (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      opted_in BOOLEAN NOT NULL DEFAULT false,
+      appointment_reminders BOOLEAN NOT NULL DEFAULT true,
+      transactional_messages BOOLEAN NOT NULL DEFAULT true,
+      marketing_messages BOOLEAN NOT NULL DEFAULT false,
+      opted_out_at TIMESTAMPTZ,
+      opted_out_via TEXT,
+      consent_date TIMESTAMPTZ,
+      consent_method TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tenant_id, patient_id)
+    );
+
     ALTER TABLE sms_settings
       ADD COLUMN IF NOT EXISTS clinic_name TEXT,
       ADD COLUMN IF NOT EXISTS clinic_phone TEXT,
@@ -13488,6 +13582,27 @@ Consider age-appropriate treatments and include family counseling points.',
   {
     name: "192_inventory_usage_billing_links",
     sql: `
+    CREATE TABLE IF NOT EXISTS inventory_usage (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      item_id TEXT NOT NULL,
+      encounter_id TEXT,
+      appointment_id TEXT,
+      patient_id TEXT,
+      provider_id TEXT,
+      quantity_used NUMERIC(10,2) NOT NULL DEFAULT 0,
+      unit_cost_cents INTEGER NOT NULL DEFAULT 0,
+      sell_price_cents INTEGER,
+      given_as_sample BOOLEAN NOT NULL DEFAULT FALSE,
+      used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      notes TEXT,
+      created_by TEXT,
+      charge_id TEXT,
+      bill_id TEXT,
+      bill_line_item_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     ALTER TABLE IF EXISTS inventory_usage
       ADD COLUMN IF NOT EXISTS charge_id TEXT,
       ADD COLUMN IF NOT EXISTS bill_id TEXT,

@@ -64,6 +64,71 @@ export interface CostEstimate {
   pricingDetails: EstimatePricingDetail[];
 }
 
+export type InsuranceResponsibility = Pick<
+  CostEstimate,
+  "insurancePays" | "patientResponsibility" | "breakdown"
+>;
+
+/**
+ * Calculate the financial split using only normalized monetary inputs.
+ *
+ * Invariants maintained by this function:
+ * - every returned amount is non-negative and rounded to cents;
+ * - covered patient responsibility never exceeds the allowed amount;
+ * - covered patient responsibility respects the remaining out-of-pocket max;
+ * - charge = insurer + patient + contractual adjustment for in-network care;
+ * - charge = insurer + patient for out-of-network care (potential balance bill included).
+ */
+export function calculateInsuranceResponsibility(
+  totalChargesInput: number,
+  insuranceAllowedAmountInput: number,
+  benefits: InsuranceBenefits
+): InsuranceResponsibility {
+  const totalCharges = nonNegativeMoney(totalChargesInput);
+  const insuranceAllowedAmount = Math.min(
+    totalCharges,
+    nonNegativeMoney(insuranceAllowedAmountInput)
+  );
+  const outOfPocketRemaining = Math.max(
+    0,
+    nonNegativeMoney(benefits.outOfPocketMax) - nonNegativeMoney(benefits.outOfPocketMet)
+  );
+
+  const copay = Math.min(
+    nonNegativeMoney(benefits.copay),
+    insuranceAllowedAmount,
+    outOfPocketRemaining
+  );
+  const afterCopay = Math.max(0, insuranceAllowedAmount - copay);
+  const deductible = Math.min(
+    afterCopay,
+    nonNegativeMoney(benefits.deductibleRemaining),
+    Math.max(0, outOfPocketRemaining - copay)
+  );
+  const afterDeductible = Math.max(0, afterCopay - deductible);
+  const coinsuranceRate = Math.max(0, Math.min(100, toNumber(benefits.coinsurancePercent))) / 100;
+  const coinsurance = Math.min(
+    afterDeductible * coinsuranceRate,
+    Math.max(0, outOfPocketRemaining - copay - deductible)
+  );
+
+  const coveredPatientResponsibility = roundMoney(copay + deductible + coinsurance);
+  const chargeAboveAllowed = roundMoney(Math.max(0, totalCharges - insuranceAllowedAmount));
+  const breakdown: CostEstimate["breakdown"] = {
+    copay: roundMoney(copay),
+    deductible: roundMoney(deductible),
+    coinsurance: roundMoney(coinsurance),
+    notCovered: benefits.isInNetwork ? 0 : chargeAboveAllowed,
+    contractualAdjustment: benefits.isInNetwork ? chargeAboveAllowed : 0,
+  };
+
+  return {
+    insurancePays: roundMoney(Math.max(0, insuranceAllowedAmount - coveredPatientResponsibility)),
+    patientResponsibility: roundMoney(coveredPatientResponsibility + breakdown.notCovered),
+    breakdown,
+  };
+}
+
 /**
  * Get patient's insurance benefits
  */
@@ -320,39 +385,7 @@ export async function createCostEstimate(
       : "percentage_fallback";
   const confidence = calculateConfidence(benefits, pricingBasis);
 
-  let patientResponsibility = 0;
-  const breakdown = {
-    copay: 0,
-    deductible: 0,
-    coinsurance: 0,
-    notCovered: 0,
-    contractualAdjustment: 0,
-  };
-
-  // 1. Copay
-  breakdown.copay = benefits.copay;
-  patientResponsibility += breakdown.copay;
-
-  // 2. Deductible (on amount after copay)
-  const afterCopay = Math.max(0, insuranceAllowedAmount - breakdown.copay);
-  breakdown.deductible = Math.min(afterCopay, benefits.deductibleRemaining);
-  patientResponsibility += breakdown.deductible;
-
-  // 3. Coinsurance (on amount after copay and deductible)
-  const afterDeductible = Math.max(0, afterCopay - breakdown.deductible);
-  breakdown.coinsurance = afterDeductible * (benefits.coinsurancePercent / 100);
-  patientResponsibility += breakdown.coinsurance;
-
-  // 4. The charge above the allowed amount is a contractual adjustment for
-  // in-network care. Only treat it as potential patient balance billing when
-  // the eligibility result says the provider is out of network.
-  const chargeAboveAllowed = Math.max(0, totalCharges - insuranceAllowedAmount);
-  breakdown.contractualAdjustment = benefits.isInNetwork ? chargeAboveAllowed : 0;
-  breakdown.notCovered = benefits.isInNetwork ? 0 : chargeAboveAllowed;
-  patientResponsibility += breakdown.notCovered;
-
-  const coveredPatientResponsibility = breakdown.copay + breakdown.deductible + breakdown.coinsurance;
-  const insurancePays = Math.max(0, insuranceAllowedAmount - coveredPatientResponsibility);
+  const responsibility = calculateInsuranceResponsibility(totalCharges, insuranceAllowedAmount, benefits);
 
   const estimate: CostEstimate = {
     id: estimateId,
@@ -361,9 +394,9 @@ export async function createCostEstimate(
     serviceType: options.serviceType,
     totalCharges,
     insuranceAllowedAmount,
-    insurancePays,
-    patientResponsibility,
-    breakdown,
+    insurancePays: responsibility.insurancePays,
+    patientResponsibility: responsibility.patientResponsibility,
+    breakdown: responsibility.breakdown,
     isCosmetic: false,
     insuranceVerified: benefits.verified,
     validUntil: getValidUntilDate(),
@@ -745,7 +778,12 @@ async function resolveAllowedAmounts(
         details.push({
           code: item.code,
           charge: item.fee,
-          allowedAmount: roundMoney(toNumber(rate.allowedAmountCents) / 100),
+          // A payer fee schedule may contain an amount above the submitted
+          // charge, but adjudication cannot allow more than was charged.
+          allowedAmount: roundMoney(Math.min(
+            item.fee,
+            Math.max(0, toNumber(rate.allowedAmountCents) / 100)
+          )),
           basis: "contract_rate",
           rateId: String(rate.id),
           payerName: rate.payerName || benefits.payerName || benefits.planName,
@@ -837,6 +875,10 @@ function normalizePricingDetails(value: unknown): EstimatePricingDetail[] {
 
 function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function nonNegativeMoney(value: unknown): number {
+  return roundMoney(Math.max(0, toNumber(value)));
 }
 
 export type EstimateEventType =

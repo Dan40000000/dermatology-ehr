@@ -186,6 +186,54 @@ describe("costEstimator", () => {
     expect(estimate.confidenceScore).toBe(90);
   });
 
+  it("caps contract allowed amounts and cost sharing at charge and remaining out-of-pocket", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ fee_cents: 10000, cpt_description: "Office visit" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          planName: "Boundary PPO",
+          payerId: "BOUNDARY-1",
+          deductible: 1000,
+          deductibleMet: 0,
+          deductibleRemaining: 1000,
+          coinsurancePercent: 50,
+          copay: 75,
+          outOfPocketMax: 1000,
+          outOfPocketMet: 990,
+          isInNetwork: true,
+          verificationSource: "stedi-production",
+        }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: "rate-high", payerName: "Boundary PPO", allowedAmountCents: 15000 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const estimate = await costEstimator.createCostEstimate("tenant-1", "patient-1", {
+      serviceType: "medical",
+      cptCodes: ["99213"],
+      userId: "user-1",
+    });
+
+    expect(estimate.insuranceAllowedAmount).toBe(100);
+    expect(estimate.patientResponsibility).toBe(10);
+    expect(estimate.insurancePays).toBe(90);
+    expect(estimate.breakdown).toEqual({
+      copay: 10,
+      deductible: 0,
+      coinsurance: 0,
+      notCovered: 0,
+      contractualAdjustment: 0,
+    });
+    expect(estimate.pricingDetails[0]?.allowedAmount).toBe(100);
+  });
+
   it("createCostEstimate treats the amount above allowed as potential balance billing out of network", async () => {
     queryMock
       .mockResolvedValueOnce({

@@ -11,6 +11,20 @@ jobs:
     name: Backup Production Database
     runs-on: ubuntu-latest
     environment: production
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: restore_verifier
+          POSTGRES_PASSWORD: restore_verifier_password
+          POSTGRES_DB: derm_restore_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U restore_verifier -d derm_restore_verify"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -36,7 +50,7 @@ jobs:
           BACKUP_BUCKET: ${{ secrets.BACKUP_BUCKET }}
           BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
           BACKUP_RETENTION_DAYS: 90
-          BACKUP_KEEP_LOCAL: false
+          BACKUP_KEEP_LOCAL: true
 
       - name: Verify backup
         run: |
@@ -50,6 +64,19 @@ jobs:
             echo "Error: Backup file is too small, may be corrupt"
             exit 1
           fi
+
+      - name: Restore backup into disposable PostgreSQL
+        run: |
+          LATEST_LOCAL_BACKUP="$(find ./backups -type f -name 'derm_db_backup_*.sql.gz*' -print | sort | tail -n 1)"
+          if [ -z "$LATEST_LOCAL_BACKUP" ]; then
+            echo "No local backup was retained for restore verification"
+            exit 1
+          fi
+          chmod +x ./scripts/verify-backup-restore.sh
+          ./scripts/verify-backup-restore.sh "$LATEST_LOCAL_BACKUP"
+        env:
+          VERIFY_DATABASE_URL: postgresql://restore_verifier:restore_verifier_password@localhost:5432/derm_restore_verify
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
 
       - name: Notify on failure
         if: failure()

@@ -3,6 +3,8 @@ import express from "express";
 import feeSchedulesRouter from "../feeSchedules";
 import { pool } from "../../db/pool";
 
+const mockAuthUser = { id: "user-1", tenantId: "tenant-1", role: "admin" };
+
 jest.mock("uuid", () => ({
   __esModule: true,
   v4: () => "uuid-1",
@@ -10,14 +12,14 @@ jest.mock("uuid", () => ({
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "user-1", tenantId: "tenant-1", role: "admin" };
+    req.user = mockAuthUser;
     return next();
   },
 }));
 
-jest.mock("../../middleware/rbac", () => ({
-  requireRoles: () => (_req: any, _res: any, next: any) => next(),
-}));
+// Use the production RBAC middleware so role-denial tests exercise the same
+// authorization boundary as the mounted application.
+jest.mock("../../middleware/rbac", () => jest.requireActual("../../middleware/rbac"));
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -39,6 +41,7 @@ const makeClient = () => ({
 });
 
 beforeEach(() => {
+  mockAuthUser.role = "admin";
   queryMock.mockReset();
   connectMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
@@ -385,6 +388,7 @@ describe("Fee schedules routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.rates).toHaveLength(1);
       expect(queryMock.mock.calls[0][0]).toContain("payer_contract_rates");
+      expect(queryMock.mock.calls[0][1]).toEqual(["tenant-1"]);
     });
 
     it("POST /fee-schedules/contract-rates validates and creates a line rate", async () => {
@@ -405,6 +409,37 @@ describe("Fee schedules routes", () => {
       const res = await request(app).delete("/fee-schedules/contract-rates/rate-1");
       expect(res.status).toBe(204);
       expect(queryMock.mock.calls[0][0]).toContain("SET is_active = false");
+      expect(queryMock.mock.calls[0][1]).toEqual(["rate-1", "tenant-1"]);
+    });
+
+    it.each([
+      ["POST", "/fee-schedules/contract-rates", { payerName: "Aetna", cptCode: "99213", allowedAmount: 65.43, effectiveDate: "2026-01-01" }],
+      ["PUT", "/fee-schedules/contract-rates/rate-1", { allowedAmount: 70 }],
+      ["DELETE", "/fee-schedules/contract-rates/rate-1", undefined],
+    ])("rejects unauthorized %s payer contract-rate mutation for a nurse", async (method, path, body) => {
+      mockAuthUser.role = "nurse";
+
+      const req = method === "POST"
+        ? request(app).post(path)
+        : method === "PUT"
+          ? request(app).put(path)
+          : request(app).delete(path);
+      const res = body === undefined ? await req : await req.send(body);
+
+      expect(res.status).toBe(403);
+      expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it("does not update a contract rate from another tenant", async () => {
+      queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+      const res = await request(app)
+        .put("/fee-schedules/contract-rates/rate-from-other-tenant")
+        .send({ allowedAmount: 70 });
+
+      expect(res.status).toBe(404);
+      expect(queryMock.mock.calls[0][0]).toMatch(/WHERE id = \$2 AND tenant_id = \$3/i);
+      expect(queryMock.mock.calls[0][1]).toEqual([7000, "rate-from-other-tenant", "tenant-1"]);
     });
   });
 
@@ -448,6 +483,34 @@ describe("Fee schedules routes", () => {
         .send({ payerName: "Aetna", effectiveDate: "2024-01-01" });
       expect(res.status).toBe(201);
       expect(res.body.id).toBe("pc-1");
+    });
+
+    it.each([
+      ["POST", "/fee-schedules/contracts", { payerName: "Aetna", effectiveDate: "2026-01-01" }],
+      ["PUT", "/fee-schedules/contracts/pc-1", { payerName: "Updated" }],
+      ["DELETE", "/fee-schedules/contracts/pc-1", undefined],
+    ])("rejects unauthorized %s payer contract mutation for a nurse", async (method, path, body) => {
+      mockAuthUser.role = "nurse";
+
+      const req = method === "POST"
+        ? request(app).post(path)
+        : method === "PUT"
+          ? request(app).put(path)
+          : request(app).delete(path);
+      const res = body === undefined ? await req : await req.send(body);
+
+      expect(res.status).toBe(403);
+      expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it("does not return a payer contract from another tenant", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get("/fee-schedules/contracts/contract-from-other-tenant");
+
+      expect(res.status).toBe(404);
+      expect(queryMock.mock.calls[0][0]).toMatch(/WHERE pc\.id = \$1 AND pc\.tenant_id = \$2/i);
+      expect(queryMock.mock.calls[0][1]).toEqual(["contract-from-other-tenant", "tenant-1"]);
     });
 
     it("PUT /fee-schedules/contracts/:id rejects empty update", async () => {

@@ -1586,7 +1586,12 @@ export function PortalBillingPage() {
 
           <div className="insurance-summary-body">
             {loading ? (
-              <div className="coverage-overview" aria-label="Loading insurance coverage">
+              <div
+                className="coverage-overview"
+                role="status"
+                aria-live="polite"
+                aria-label="Loading insurance coverage"
+              >
                 {[1, 2, 3, 4, 5].map(item => (
                   <div key={item} className="loading-skeleton" style={{ height: '5.5rem' }} />
                 ))}

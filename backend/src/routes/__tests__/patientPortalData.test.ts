@@ -321,6 +321,11 @@ describe("Patient portal data routes", () => {
           verificationStatus: "active",
           verifiedAt: "2026-08-03T17:00:00.000Z",
           verificationSource: "stedi",
+          // These values represent the raw payer response fields that must
+          // never cross the patient-portal response boundary.
+          memberId: "MEMBER-RAW-DO-NOT-RETURN",
+          payerId: "PAYER-RAW-DO-NOT-RETURN",
+          rawEligibilityResponse: "RAW-ELIGIBILITY-DO-NOT-RETURN",
           copay: "40",
           deductibleRemaining: "1200",
           coinsurancePercent: "20",
@@ -361,6 +366,10 @@ describe("Patient portal data routes", () => {
     expect(res.body.prescriptionEstimates).toEqual([]);
     expect(queryMock.mock.calls[2][0]).toContain("ce.shown_to_patient = true");
     expect(queryMock.mock.calls[2][1]).toEqual(["patient-1", "tenant-1"]);
+    expect(JSON.stringify(res.body)).not.toContain("MEMBER-RAW-DO-NOT-RETURN");
+    expect(JSON.stringify(res.body)).not.toContain("PAYER-RAW-DO-NOT-RETURN");
+    expect(JSON.stringify(res.body)).not.toContain("RAW-ELIGIBILITY-DO-NOT-RETURN");
+    expect(queryMock.mock.calls[1][0]).not.toMatch(/member[_ ]?id|payer[_ ]?id|raw[_ ]?eligibility/i);
 
     if (previousStediKey === undefined) {
       delete process.env.STEDI_API_KEY;
@@ -369,7 +378,7 @@ describe("Patient portal data routes", () => {
     }
   });
 
-  it("GET /patient-portal-data/insurance-summary does not fabricate verification or estimates", async () => {
+  it("GET /patient-portal-data/insurance-summary does not fabricate or leak another patient's verification or estimates", async () => {
     queryMock
       .mockResolvedValueOnce({
         rowCount: 1,
@@ -389,6 +398,12 @@ describe("Patient portal data routes", () => {
     });
     expect(res.body.estimates).toEqual([]);
     expect(res.body.prescriptionPricingAvailable).toBe(false);
+    expect(queryMock.mock.calls[1][0]).toMatch(/iv\.patient_id = \$1 AND iv\.tenant_id = \$2/i);
+    expect(queryMock.mock.calls[1][1]).toEqual(["patient-1", "tenant-1"]);
+    expect(queryMock.mock.calls[2][0]).toMatch(/ce\.patient_id = \$1\s+AND ce\.tenant_id = \$2/i);
+    expect(queryMock.mock.calls[2][1]).toEqual(["patient-1", "tenant-1"]);
+    expect(queryMock.mock.calls[3][0]).toMatch(/tenant_id = \$1 AND patient_id = \$2/i);
+    expect(queryMock.mock.calls[3][1]).toEqual(["tenant-1", "patient-1"]);
   });
 
   it("POST /patient-portal-data/insurance-estimates/:id/respond scopes and records a patient question", async () => {
@@ -407,6 +422,43 @@ describe("Patient portal data routes", () => {
     expect(res.body).toMatchObject({ success: true, status: "billing_question" });
     expect(queryMock.mock.calls[0][0]).toContain("patient_id = $3");
     expect(queryMock.mock.calls[0][1]).toEqual(["estimate-1", "tenant-1", "patient-1", "billing_question"]);
+  });
+
+  it("POST /patient-portal-data/insurance-estimates/:id/respond rejects another patient's estimate", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = await request(app)
+      .post("/patient-portal-data/insurance-estimates/estimate-owned-by-patient-b/respond")
+      .send({ action: "acknowledge" });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Active shared estimate not found");
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0][0]).toMatch(/WHERE id = \$1 AND tenant_id = \$2 AND patient_id = \$3/i);
+    expect(queryMock.mock.calls[0][1]).toEqual([
+      "estimate-owned-by-patient-b",
+      "tenant-1",
+      "patient-1",
+      "acknowledged",
+    ]);
+  });
+
+  it("POST /patient-portal-data/insurance-estimates/:id/pdf-audit rejects another patient's estimate", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = await request(app)
+      .post("/patient-portal-data/insurance-estimates/estimate-owned-by-patient-b/pdf-audit")
+      .send({});
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Estimate not found");
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0][0]).toMatch(/tenant_id = \$2 AND patient_id = \$3/i);
+    expect(queryMock.mock.calls[0][1]).toEqual([
+      "estimate-owned-by-patient-b",
+      "tenant-1",
+      "patient-1",
+    ]);
   });
 
   it("GET /patient-portal-data/dashboard aggregates counts", async () => {

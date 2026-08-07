@@ -7,16 +7,18 @@ import * as collectionsService from "../../services/collectionsService";
 import * as costEstimator from "../../services/costEstimator";
 import { logger } from "../../lib/logger";
 
+const mockAuthUser = { id: "user-1", tenantId: "tenant-1", role: "admin" };
+
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "user-1", tenantId: "tenant-1", role: "admin" };
+    req.user = mockAuthUser;
     return next();
   },
 }));
 
-jest.mock("../../middleware/rbac", () => ({
-  requireRoles: () => (_req: any, _res: any, next: any) => next(),
-}));
+// Exercise the route's real role middleware so denied staff roles cannot be
+// hidden by a permissive test-only mock.
+jest.mock("../../middleware/rbac", () => jest.requireActual("../../middleware/rbac"));
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -77,6 +79,7 @@ const makeClient = () => ({
 });
 
 beforeEach(() => {
+  mockAuthUser.role = "admin";
   queryMock.mockReset();
   connectMock.mockReset();
   (auditLog as jest.Mock).mockReset();
@@ -251,6 +254,45 @@ describe("Collections routes", () => {
     const res = await request(app).post("/collections/estimate/est-1/revise").send({ cptCodes: ["99213"] });
     expect(res.status).toBe(201);
     expect(res.body.estimate).toMatchObject({ id: "est-2", version: 2 });
+  });
+
+  it.each([
+    ["/collections/estimate", { patientId: "p1", serviceType: "office", cptCodes: ["11111"] }],
+    ["/collections/estimate/est-1/share", {}],
+    ["/collections/estimate/est-1/revoke", { reason: "Procedure changed" }],
+    ["/collections/estimate/est-1/revise", { cptCodes: ["99213"] }],
+  ])("rejects unauthorized estimate mutation at %s for a nurse", async (path, body) => {
+    mockAuthUser.role = "nurse";
+
+    const res = await request(app).post(path).send(body);
+
+    expect(res.status).toBe(403);
+    expect(costEstimatorMock.createCostEstimate).not.toHaveBeenCalled();
+    expect(costEstimatorMock.shareEstimateWithPatient).not.toHaveBeenCalled();
+    expect(costEstimatorMock.revokeEstimate).not.toHaveBeenCalled();
+    expect(costEstimatorMock.reviseEstimate).not.toHaveBeenCalled();
+  });
+
+  it("GET /collections/patient/:id/estimates scopes both tenant and patient", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/collections/patient/patient-b/estimates");
+
+    expect(res.status).toBe(200);
+    expect(res.body.estimates).toEqual([]);
+    expect(queryMock.mock.calls[0][0]).toMatch(/WHERE ce\.tenant_id = \$1 AND ce\.patient_id = \$2/i);
+    expect(queryMock.mock.calls[0][1]).toEqual(["tenant-1", "patient-b"]);
+  });
+
+  it("GET /collections/estimate/:id/events scopes estimate history to the signed-in tenant", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/collections/estimate/estimate-from-other-tenant/events");
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toEqual([]);
+    expect(queryMock.mock.calls[0][0]).toMatch(/e\.tenant_id = \$1 AND e\.estimate_id = \$2/i);
+    expect(queryMock.mock.calls[0][1]).toEqual(["tenant-1", "estimate-from-other-tenant"]);
   });
 
   it("POST /collections/estimate/quick requires patient and procedure", async () => {

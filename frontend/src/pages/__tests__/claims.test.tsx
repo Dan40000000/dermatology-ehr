@@ -177,7 +177,7 @@ describe('ClaimsPage', () => {
   it('renders claim service dates as calendar dates without UTC timezone shift', async () => {
     renderClaimsPage();
 
-    await screen.findByText('Claims Management');
+    await screen.findAllByText('CLM-001');
 
     const claimRow = getClaimsTableRow('CLM-001');
     expect(within(claimRow).getByText('5/28/2026')).toBeInTheDocument();
@@ -186,10 +186,9 @@ describe('ClaimsPage', () => {
   it('renders claims, filters, shows detail, and posts payments', async () => {
     renderClaimsPage();
 
-    await screen.findByText('Claims Management');
+    await screen.findByText('Total Claims');
 
     expect(apiMocks.fetchClaims).toHaveBeenCalledWith('tenant-1', 'token-1', {});
-    expect(screen.getByText('Total Claims')).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'accepted' } });
     await waitFor(() =>
@@ -235,7 +234,7 @@ describe('ClaimsPage', () => {
   it('validates payment amounts', async () => {
     renderClaimsPage();
 
-    await screen.findByText('Claims Management');
+    await screen.findAllByText('CLM-001');
 
     const claimRow = getClaimsTableRow('CLM-001');
     fireEvent.click(within(claimRow).getByRole('button', { name: 'View' }));
@@ -265,7 +264,7 @@ describe('ClaimsPage', () => {
 
     renderClaimsPage();
 
-    await screen.findByText('Claims Management');
+    await screen.findAllByText('CLM-001');
 
     const claimRow = getClaimsTableRow('CLM-001');
     expect(within(claimRow).queryByRole('button', { name: 'Post Payer Payment' })).not.toBeInTheDocument();

@@ -359,7 +359,7 @@ describe('HomePage', () => {
 
     await waitFor(() => expect(apiMocks.fetchCommandCenterSummary).toHaveBeenCalled());
 
-    const appointmentsCard = screen.getByText("Today's schedule").closest('.command-metric-card') as HTMLElement;
+    const appointmentsCard = (await screen.findByText("Today's schedule")).closest('.command-metric-card') as HTMLElement;
     expect(within(appointmentsCard).getByText('12')).toBeInTheDocument();
 
     const revenueCard = screen
@@ -508,7 +508,7 @@ describe('HomePage', () => {
 
     render(<HomePage />);
 
-    await waitFor(() => expect(screen.getByText(/Risk Queue/i)).toBeInTheDocument());
+    await screen.findByText('Waiting 30+ min');
 
     expect(screen.getByText('Revenue Pulse')).toBeInTheDocument();
     expect(screen.getByText('Front Desk Command')).toBeInTheDocument();
@@ -680,7 +680,7 @@ describe('HomePage', () => {
     expect(screen.queryByText('Revenue today')).not.toBeInTheDocument();
     expect(screen.queryByText('Clinical work')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Financials$/i })).not.toBeInTheDocument();
-    expect(screen.getByText('Patient access')).toBeInTheDocument();
+    expect(await screen.findByText('Patient access')).toBeInTheDocument();
     expect(screen.getByText('Front Desk Command')).toBeInTheDocument();
 
     expect(screen.queryByRole('button', { name: /Revenue cycle/i })).not.toBeInTheDocument();

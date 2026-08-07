@@ -2166,7 +2166,7 @@ Consider age-appropriate treatments and include family counseling points.',
     ON CONFLICT (id) DO NOTHING;
 
     INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
-    VALUES ('u-admin', 'tenant-demo', 'admin@demo.invalid', 'Demo Administrator', 'admin', 'migration-placeholder')
+    VALUES ('u-admin', 'tenant-demo', 'admin@demo.invalid', 'Demo Administrator', 'admin', '$2b$12$OysLRW03b3Y1djPKD8UUCOkCSwBdb/309bM.GGsdzV58Fei3a/Vl.')
     ON CONFLICT (id) DO NOTHING;
 
     -- Seed configurations for existing demo tenant
@@ -9814,8 +9814,8 @@ Consider age-appropriate treatments and include family counseling points.',
     -- so provision those referenced rows before inserting the examples.
     INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
     VALUES
-      ('u-provider', 'tenant-demo', 'provider@demo.invalid', 'Demo Provider', 'provider', 'migration-placeholder'),
-      ('u-billing', 'tenant-demo', 'billing@demo.invalid', 'Demo Billing User', 'billing', 'migration-placeholder')
+      ('u-provider', 'tenant-demo', 'provider@demo.invalid', 'Demo Provider', 'provider', '$2b$12$OysLRW03b3Y1djPKD8UUCOkCSwBdb/309bM.GGsdzV58Fei3a/Vl.'),
+      ('u-billing', 'tenant-demo', 'billing@demo.invalid', 'Demo Billing User', 'billing', '$2b$12$OysLRW03b3Y1djPKD8UUCOkCSwBdb/309bM.GGsdzV58Fei3a/Vl.')
     ON CONFLICT (id) DO NOTHING;
 
     INSERT INTO providers (id, tenant_id, user_id, full_name, specialty)

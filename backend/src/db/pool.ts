@@ -31,6 +31,9 @@ export const pool = new Pool({
   // Connection settings
   keepAlive: true, // Enable TCP keep-alive
   keepAliveInitialDelayMillis: 10000, // Wait 10s before first keep-alive probe
+  // Test suites may import the real pool in isolated Jest module contexts.
+  // Idle sockets must not keep the completed test process alive.
+  allowExitOnIdle: process.env.NODE_ENV === 'test',
 
   // Application name for pg_stat_activity tracking
   application_name: 'dermatology-ehr',

@@ -230,7 +230,7 @@ test.describe('Insurance Coverage & Cost Estimates portal accessibility', () => 
     await expectInsuranceBoxAccessible(page);
   });
 
-  test('estimate response lifecycle is keyboard accessible', async ({ page }) => {
+  test('estimate response lifecycle is keyboard accessible', async ({ page, browserName }) => {
     await openBilling(page, 'populated');
 
     const askQuestion = page.getByRole('button', { name: 'Ask a billing question' });
@@ -242,7 +242,9 @@ test.describe('Insurance Coverage & Cost Estimates portal accessibility', () => 
     await expect(message).toBeVisible();
     await message.focus();
     await expect(message).toBeFocused();
-    await page.keyboard.press('Tab');
+    // WebKit follows Safari's default focus model: Option+Tab advances to
+    // controls that plain Tab skips unless full keyboard access is enabled.
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
     await expect(page.getByRole('button', { name: 'Send request' })).toBeFocused();
     await expectInsuranceBoxAccessible(page);
   });

@@ -79,7 +79,7 @@ function makeEstimate(id: string, version = 1): EstimateState {
   const totalCharges = cptCodes.reduce((sum, item) => sum + item.fee, 0);
   const insuranceAllowedAmount = pricingDetails.reduce((sum, item) => sum + item.allowedAmount, 0);
   const copay = 25;
-  const deductible = isRevision ? 50 : 50;
+  const deductible = 50;
   const coinsurance = isRevision ? 15 : 35;
   const patientResponsibility = copay + deductible + coinsurance;
 

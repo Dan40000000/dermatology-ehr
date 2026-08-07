@@ -93,5 +93,5 @@ if [ "$CORE_TABLE_COUNT" -ne 4 ]; then
   exit 1
 fi
 
-psql "$VERIFY_DATABASE_URL" -Atqc 'select count(*) from schema_migrations' >/dev/null
+psql "$VERIFY_DATABASE_URL" -Atqc 'select count(*) from migrations' >/dev/null
 echo "Backup restore verified in disposable database $VERIFY_DATABASE_NAME"

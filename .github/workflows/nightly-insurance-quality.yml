@@ -1,0 +1,62 @@
+name: Nightly Insurance Quality
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  cross_browser_insurance:
+    name: Insurance (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci --legacy-peer-deps
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run insurance lifecycle and accessibility suites
+        run: >-
+          npx playwright test
+          --config=e2e/playwright.config.ts
+          insurance-estimate-write-smoke.spec.ts
+          insurance-portal-accessibility.spec.ts
+          --project=${{ matrix.browser }}
+        env:
+          CI: '1'
+          PLAYWRIGHT_MOCK_AUTH: '1'
+          PLAYWRIGHT_MOCK_DATA: '1'
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: insurance-quality-${{ matrix.browser }}
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore

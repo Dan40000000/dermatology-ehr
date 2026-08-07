@@ -82,11 +82,9 @@ if [ -n "${BACKUP_BUCKET:-}" ] && command -v aws &> /dev/null; then
 
   S3_PATH="s3://${BACKUP_BUCKET}/backups/${DATE}/${FINAL_BACKUP}"
 
-  aws s3 cp "$BACKUP_DIR/$FINAL_BACKUP" "$S3_PATH" \
+  if aws s3 cp "$BACKUP_DIR/$FINAL_BACKUP" "$S3_PATH" \
     --storage-class STANDARD_IA \
-    --server-side-encryption AES256
-
-  if [ $? -eq 0 ]; then
+    --server-side-encryption AES256; then
     echo "✓ Backup uploaded to S3: $S3_PATH"
 
     # Optionally remove local backup after successful upload

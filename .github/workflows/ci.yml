@@ -50,12 +50,28 @@ jobs:
 
   # Run tests
   test:
-    name: Test
+    name: Test (${{ matrix.label }})
     runs-on: ubuntu-latest
     needs: lint
     strategy:
+      fail-fast: false
       matrix:
-        workspace: [backend, frontend]
+        include:
+          - workspace: backend
+            label: backend
+            shard: ''
+          - workspace: frontend
+            label: frontend 1/4
+            shard: 1/4
+          - workspace: frontend
+            label: frontend 2/4
+            shard: 2/4
+          - workspace: frontend
+            label: frontend 3/4
+            shard: 3/4
+          - workspace: frontend
+            label: frontend 4/4
+            shard: 4/4
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -80,7 +96,7 @@ jobs:
         working-directory: ${{ matrix.workspace }}
         run: |
           if [ "${{ matrix.workspace }}" = "frontend" ]; then
-            npx vitest run --maxWorkers=1 --maxConcurrency=2
+            npx vitest run --shard=${{ matrix.shard }} --maxWorkers=1 --maxConcurrency=2
           else
             npm test
           fi
@@ -133,6 +149,9 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
           DB_SSL_ENABLED: 'false'
           JWT_SECRET: ci-postgres-migration-test-secret
+
+      - name: Run backup and restore-script regressions
+        run: bash scripts/__tests__/backup-scripts.test.sh
 
   # Run deterministic Playwright smoke checks for critical process flow
   e2e_smoke:
@@ -303,41 +322,28 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Unified release gate (type-check + backend full tests + frontend release tests + build + e2e smoke)
+  # Aggregate every required verification job without running the same suites twice.
   release_gate:
     name: Release Gate
     runs-on: ubuntu-latest
-    needs: [lint, postgres_migrations]
+    if: always()
+    needs: [lint, test, postgres_migrations, e2e_smoke, backend_contracts, security]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            backend/package-lock.json
-            frontend/package-lock.json
-
-      - name: Install root dependencies
-        run: npm ci
-
-      - name: Install backend dependencies
-        run: npm ci --prefix backend
-
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci --legacy-peer-deps
-
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
-
-      - name: Run release gate
-        run: npm run test:release-gate
+      - name: Verify every required job passed
+        run: |
+          for result in "$LINT_RESULT" "$TEST_RESULT" "$POSTGRES_RESULT" "$E2E_RESULT" "$CONTRACT_RESULT" "$SECURITY_RESULT"; do
+            if [ "$result" != "success" ]; then
+              echo "A required verification job did not pass: $result" >&2
+              exit 1
+            fi
+          done
         env:
-          CI: '1'
+          LINT_RESULT: ${{ needs.lint.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          POSTGRES_RESULT: ${{ needs.postgres_migrations.result }}
+          E2E_RESULT: ${{ needs.e2e_smoke.result }}
+          CONTRACT_RESULT: ${{ needs.backend_contracts.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
 
   # HIPAA staging readiness gate (static env + evidence checks)
   hipaa_readiness:
@@ -390,7 +396,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test, e2e_smoke, backend_contracts, release_gate, hipaa_readiness]
+    needs: [release_gate, hipaa_readiness]
     strategy:
       matrix:
         workspace: [backend, frontend]
@@ -446,8 +452,7 @@ jobs:
 
       - name: Run npm audit
         working-directory: ${{ matrix.workspace }}
-        run: npm audit --audit-level=moderate
-        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=critical
 
   # Build and push Docker images
   docker:

@@ -11,10 +11,14 @@ Run these before manual testing:
 ```bash
 npm run build
 npm --prefix backend test -- --runInBand
-npm --prefix frontend test -- --run --maxWorkers=2 --testTimeout=15000
+npm run test:frontend:release
 npm run test:e2e:smoke
+npm run test:e2e:insurance
+npm run test:backup
 npm run integrations:smoke
 ```
+
+CI additionally runs the frontend suite in four isolated Vitest shards, executes every migration against a disposable PostgreSQL 16 database, enforces dependency audits at the critical severity threshold, and aggregates all jobs into a required release gate. The scheduled insurance-quality workflow repeats the estimate and portal accessibility tests in Chromium, Firefox, and WebKit.
 
 Pass criteria:
 
@@ -22,7 +26,10 @@ Pass criteria:
 - Frontend build passes.
 - Backend unit/integration tests pass.
 - Frontend unit/component tests pass.
+- All migrations apply cleanly to an empty real PostgreSQL database.
 - E2E smoke passes.
+- Insurance lifecycle, patient isolation, keyboard, mobile, and automated accessibility checks pass.
+- Backup creation fails safely, encrypted artifacts decrypt cleanly, and restore tooling refuses a non-verification database.
 - Integration smoke has no unexpected failures.
 - Expected integration failures are limited to missing live vendor credentials or subscriptions.
 

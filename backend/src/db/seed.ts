@@ -66,16 +66,33 @@ async function seed() {
 
     const passwordHash = bcrypt.hashSync("Password123!", 12); // Dev/test only
     for (const u of users) {
-      await pool.query(
-        `insert into users(id, tenant_id, email, full_name, role, password_hash)
-         values ($1,$2,$3,$4,$5,$6)
-         on conflict (id) do update set
-           email = EXCLUDED.email,
-           full_name = EXCLUDED.full_name,
-           role = EXCLUDED.role,
-           password_hash = EXCLUDED.password_hash`,
+      const updated = await pool.query(
+        `update users as target
+         set email = case
+               when lower(target.email) = lower($3) then target.email
+               when not exists (
+                 select 1 from users as existing
+                 where existing.tenant_id = $2
+                   and lower(existing.email) = lower($3)
+                   and existing.id <> target.id
+               ) then $3
+               else target.email
+             end,
+             full_name = $4,
+             role = $5,
+             password_hash = $6
+         where target.tenant_id = $2
+           and (target.id = $1 or lower(target.email) = lower($3))`,
         [u.id, tenantId, u.email, u.fullName, u.role, passwordHash],
       );
+      if (!updated.rowCount) {
+        await pool.query(
+          `insert into users(id, tenant_id, email, full_name, role, password_hash)
+           values ($1,$2,$3,$4,$5,$6)
+           on conflict do nothing`,
+          [u.id, tenantId, u.email, u.fullName, u.role, passwordHash],
+        );
+      }
     }
 
     const rosterTarget = 800;

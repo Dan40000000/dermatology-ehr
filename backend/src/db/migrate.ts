@@ -16094,7 +16094,17 @@ Consider age-appropriate treatments and include family counseling points.',
       );
 
     UPDATE users AS target
-    SET email = credentials.email,
+    SET email = CASE
+          WHEN lower(target.email) = credentials.email THEN target.email
+          WHEN NOT EXISTS (
+            SELECT 1
+            FROM users AS existing
+            WHERE existing.tenant_id = 'tenant-demo'
+              AND lower(existing.email) = credentials.email
+              AND existing.id <> target.id
+          ) THEN credentials.email
+          ELSE target.email
+        END,
         full_name = credentials.full_name,
         role = credentials.role,
         password_hash = '$2b$12$gU3jZZKNPnWeUkufWCHCG.w6/jHq98Anh1tKB/THI4tPha1QmqwtK',
@@ -16113,8 +16123,11 @@ Consider age-appropriate treatments and include family counseling points.',
       ('u-staff', 'staff@demo.practice', 'General Staff', 'staff'),
       ('u-hr', 'hr@demo.practice', 'HR User', 'hr')
     ) AS credentials(id, email, full_name, role)
-    WHERE target.id = credentials.id
-      AND target.tenant_id = 'tenant-demo';
+    WHERE target.tenant_id = 'tenant-demo'
+      AND (
+        target.id = credentials.id
+        OR lower(target.email) = credentials.email
+      );
 
     INSERT INTO users (id, tenant_id, email, full_name, role, password_hash, is_test_data)
     SELECT credentials.id,
@@ -16136,6 +16149,15 @@ Consider age-appropriate treatments and include family counseling points.',
       ('u-hr', 'hr@demo.practice', 'HR User', 'hr')
     ) AS credentials(id, email, full_name, role)
     WHERE EXISTS (SELECT 1 FROM tenants WHERE id = 'tenant-demo')
+      AND NOT EXISTS (
+        SELECT 1
+        FROM users AS existing
+        WHERE existing.tenant_id = 'tenant-demo'
+          AND (
+            existing.id = credentials.id
+            OR lower(existing.email) = credentials.email
+          )
+      )
     ON CONFLICT (id) DO NOTHING;
 
     UPDATE patient_portal_accounts

@@ -196,6 +196,25 @@ describe("Collections routes", () => {
     expect(res.body.estimate.id).toBe("est-1");
   });
 
+  it("POST /collections/estimate identifies CPT codes without configured fees", async () => {
+    const error = new Error("No fee is configured for CPT code: 99999") as Error & { codes: string[] };
+    error.name = "UnpricedCptCodesError";
+    error.codes = ["99999"];
+    costEstimatorMock.createCostEstimate.mockRejectedValueOnce(error);
+
+    const res = await request(app).post("/collections/estimate").send({
+      patientId: "p1",
+      serviceType: "office",
+      cptCodes: ["99213", "99999"],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: "No fee is configured for CPT code: 99999",
+      codes: ["99999"],
+    });
+  });
+
   it("GET /collections/estimate/:appointmentId returns 404 when missing", async () => {
     costEstimatorMock.getEstimateByAppointment.mockResolvedValueOnce(null);
     const res = await request(app).get("/collections/estimate/appt-1");

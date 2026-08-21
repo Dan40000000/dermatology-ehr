@@ -27,13 +27,29 @@ export interface InsuranceBenefits {
 export type EstimateConfidenceLevel = "high" | "medium" | "planning";
 export type EstimatePricingBasis = "contract_rate" | "mixed" | "percentage_fallback" | "self_pay";
 
-export interface EstimatePricingDetail {
+interface ResolvedPricingDetail {
   code: string;
+  description?: string;
   charge: number;
   allowedAmount: number;
   basis: "contract_rate" | "percentage_fallback" | "self_pay";
   rateId?: string;
   payerName?: string;
+}
+
+export interface EstimatePricingDetail extends ResolvedPricingDetail {
+  insurancePays: number;
+  patientResponsibility: number;
+}
+
+export class UnpricedCptCodesError extends Error {
+  readonly codes: string[];
+
+  constructor(codes: string[]) {
+    super(`No fee is configured for CPT code${codes.length === 1 ? "" : "s"}: ${codes.join(", ")}`);
+    this.name = "UnpricedCptCodesError";
+    this.codes = codes;
+  }
 }
 
 export interface CostEstimate {
@@ -257,12 +273,16 @@ export async function createCostEstimate(
   }
 ): Promise<CostEstimate> {
   const estimateId = crypto.randomUUID();
+  const requestedCptCodes = options.cptCodes
+    .map(code => code.trim().toUpperCase())
+    .filter(Boolean);
 
   // Get CPT code fees
   let totalCharges = 0;
   const cptDetails: Array<{ code: string; fee: number; description: string }> = [];
+  const unpricedCptCodes: string[] = [];
 
-  for (const cptCode of options.cptCodes) {
+  for (const cptCode of requestedCptCodes) {
     const feeResult = await pool.query(
       `select
         fsi.cpt_code,
@@ -285,17 +305,31 @@ export async function createCostEstimate(
         fee,
         description: feeResult.rows[0].cpt_description || "",
       });
+    } else {
+      unpricedCptCodes.push(cptCode);
     }
+  }
+
+  if (unpricedCptCodes.length) {
+    throw new UnpricedCptCodesError(Array.from(new Set(unpricedCptCodes)));
   }
 
   // If cosmetic, patient pays 100%
   if (options.isCosmetic) {
-    const pricingDetails = cptDetails.map(item => ({
+    const resolvedPricingDetails: ResolvedPricingDetail[] = cptDetails.map(item => ({
       code: item.code,
+      description: item.description,
       charge: item.fee,
-      allowedAmount: item.fee,
+      allowedAmount: 0,
       basis: "self_pay" as const,
     }));
+    const pricingDetails = addLineResponsibilityEstimates(resolvedPricingDetails, {
+      copay: 0,
+      deductible: 0,
+      coinsurance: 0,
+      notCovered: totalCharges,
+      contractualAdjustment: 0,
+    });
     const estimate: CostEstimate = {
       id: estimateId,
       patientId,
@@ -332,12 +366,20 @@ export async function createCostEstimate(
   const benefits = await getInsuranceBenefits(tenantId, patientId);
 
   if (!benefits) {
-    const pricingDetails = cptDetails.map(item => ({
+    const resolvedPricingDetails: ResolvedPricingDetail[] = cptDetails.map(item => ({
       code: item.code,
+      description: item.description,
       charge: item.fee,
-      allowedAmount: item.fee,
+      allowedAmount: 0,
       basis: "self_pay" as const,
     }));
+    const pricingDetails = addLineResponsibilityEstimates(resolvedPricingDetails, {
+      copay: 0,
+      deductible: 0,
+      coinsurance: 0,
+      notCovered: totalCharges,
+      contractualAdjustment: 0,
+    });
     // No insurance - patient pays all
     const estimate: CostEstimate = {
       id: estimateId,
@@ -373,12 +415,12 @@ export async function createCostEstimate(
 
   // Calculate the allowed amount per procedure. Configured payer contract rates
   // always win; only missing codes use the disclosed planning fallback.
-  const pricingDetails = await resolveAllowedAmounts(tenantId, benefits, cptDetails);
+  const resolvedPricingDetails = await resolveAllowedAmounts(tenantId, benefits, cptDetails);
   const insuranceAllowedAmount = roundMoney(
-    pricingDetails.reduce((sum, item) => sum + item.allowedAmount, 0)
+    resolvedPricingDetails.reduce((sum, item) => sum + item.allowedAmount, 0)
   );
-  const contractLineCount = pricingDetails.filter(item => item.basis === "contract_rate").length;
-  const pricingBasis: EstimatePricingBasis = contractLineCount === pricingDetails.length
+  const contractLineCount = resolvedPricingDetails.filter(item => item.basis === "contract_rate").length;
+  const pricingBasis: EstimatePricingBasis = contractLineCount === resolvedPricingDetails.length
     ? "contract_rate"
     : contractLineCount > 0
       ? "mixed"
@@ -386,6 +428,7 @@ export async function createCostEstimate(
   const confidence = calculateConfidence(benefits, pricingBasis);
 
   const responsibility = calculateInsuranceResponsibility(totalCharges, insuranceAllowedAmount, benefits);
+  const pricingDetails = addLineResponsibilityEstimates(resolvedPricingDetails, responsibility.breakdown);
 
   const estimate: CostEstimate = {
     id: estimateId,
@@ -530,7 +573,10 @@ export async function getEstimate(
     confidenceScore: toNumber(row.confidenceScore, 40),
     confidenceFactors: normalizeStringArray(row.confidenceFactors),
     pricingBasis: normalizePricingBasis(row.pricingBasis),
-    pricingDetails: normalizePricingDetails(row.pricingDetails),
+    pricingDetails: addLineResponsibilityEstimates(
+      mergePricingDescriptions(normalizePricingDetails(row.pricingDetails), cptCodes),
+      breakdown
+    ),
   };
 }
 
@@ -601,7 +647,10 @@ export async function getEstimateByAppointment(
     confidenceScore: toNumber(row.confidenceScore, 40),
     confidenceFactors: normalizeStringArray(row.confidenceFactors),
     pricingBasis: normalizePricingBasis(row.pricingBasis),
-    pricingDetails: normalizePricingDetails(row.pricingDetails),
+    pricingDetails: addLineResponsibilityEstimates(
+      mergePricingDescriptions(normalizePricingDetails(row.pricingDetails), cptCodes),
+      breakdown
+    ),
   };
 }
 
@@ -745,8 +794,8 @@ async function resolveAllowedAmounts(
   tenantId: string,
   benefits: InsuranceBenefits,
   cptDetails: Array<{ code: string; fee: number; description: string }>
-): Promise<EstimatePricingDetail[]> {
-  const details: EstimatePricingDetail[] = [];
+): Promise<ResolvedPricingDetail[]> {
+  const details: ResolvedPricingDetail[] = [];
 
   for (const item of cptDetails) {
     try {
@@ -777,6 +826,7 @@ async function resolveAllowedAmounts(
         const rate = rateResult.rows[0];
         details.push({
           code: item.code,
+          description: item.description,
           charge: item.fee,
           // A payer fee schedule may contain an amount above the submitted
           // charge, but adjudication cannot allow more than was charged.
@@ -796,6 +846,7 @@ async function resolveAllowedAmounts(
 
     details.push({
       code: item.code,
+      description: item.description,
       charge: item.fee,
       allowedAmount: roundMoney(item.fee * 0.8),
       basis: "percentage_fallback",
@@ -858,11 +909,12 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
 }
 
-function normalizePricingDetails(value: unknown): EstimatePricingDetail[] {
+function normalizePricingDetails(value: unknown): ResolvedPricingDetail[] {
   const parsed = parseJson<unknown>(value, []);
   if (!Array.isArray(parsed)) return [];
   return parsed.filter(isRecord).map(item => ({
     code: String(item.code || ""),
+    description: typeof item.description === "string" ? item.description : undefined,
     charge: toNumber(item.charge),
     allowedAmount: toNumber(item.allowedAmount),
     basis: item.basis === "contract_rate" || item.basis === "self_pay"
@@ -871,6 +923,69 @@ function normalizePricingDetails(value: unknown): EstimatePricingDetail[] {
     rateId: typeof item.rateId === "string" ? item.rateId : undefined,
     payerName: typeof item.payerName === "string" ? item.payerName : undefined,
   }));
+}
+
+function mergePricingDescriptions(
+  pricingDetails: ResolvedPricingDetail[],
+  cptDetails: Array<{ code?: string; fee: number; description?: string }>
+): ResolvedPricingDetail[] {
+  return pricingDetails.map((item, index) => ({
+    ...item,
+    description: item.description
+      || cptDetails[index]?.description
+      || cptDetails.find(cpt => cpt.code === item.code)?.description,
+  }));
+}
+
+/**
+ * Allocate aggregate patient cost sharing back to individual CPT lines.
+ * Payers adjudicate the claim as a whole, so copay/deductible/coinsurance are
+ * distributed proportionally by allowed amount. Cent allocation is stable and
+ * preserves the exact estimate totals.
+ */
+export function addLineResponsibilityEstimates(
+  pricingDetails: ResolvedPricingDetail[],
+  breakdown: CostEstimate["breakdown"]
+): EstimatePricingDetail[] {
+  if (!pricingDetails.length) return [];
+
+  const coveredPatientTotal = roundMoney(
+    breakdown.copay + breakdown.deductible + breakdown.coinsurance
+  );
+  const coveredByLine = allocateMoney(coveredPatientTotal, pricingDetails.map(item => item.allowedAmount));
+  const chargeGaps = pricingDetails.map(item => Math.max(0, item.charge - item.allowedAmount));
+  const notCoveredByLine = allocateMoney(breakdown.notCovered, chargeGaps);
+
+  return pricingDetails.map((item, index) => {
+    const coveredPatient = coveredByLine[index] || 0;
+    const notCovered = notCoveredByLine[index] || 0;
+    return {
+      ...item,
+      insurancePays: roundMoney(Math.max(0, item.allowedAmount - coveredPatient)),
+      patientResponsibility: roundMoney(coveredPatient + notCovered),
+    };
+  });
+}
+
+function allocateMoney(totalInput: number, weightsInput: number[]): number[] {
+  const totalCents = Math.max(0, Math.round(toNumber(totalInput) * 100));
+  const weights = weightsInput.map(weight => Math.max(0, toNumber(weight)));
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!totalCents || !weightTotal) return weights.map(() => 0);
+
+  const rawShares = weights.map(weight => (totalCents * weight) / weightTotal);
+  const shares = rawShares.map(Math.floor);
+  const remainder = totalCents - shares.reduce((sum, share) => sum + share, 0);
+  const remainderOrder = rawShares
+    .map((share, index) => ({ index, fraction: share - Math.floor(share) }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
+
+  for (let index = 0; index < remainder; index += 1) {
+    const target = remainderOrder[index % remainderOrder.length];
+    if (target) shares[target.index] = (shares[target.index] || 0) + 1;
+  }
+
+  return shares.map(cents => cents / 100);
 }
 
 function roundMoney(value: number): number {

@@ -176,8 +176,11 @@ export interface PortalCostEstimate {
   pricingBasis: 'contract_rate' | 'mixed' | 'percentage_fallback' | 'self_pay' | string;
   pricingDetails: Array<{
     code: string;
+    description?: string;
     charge: number;
     allowedAmount: number;
+    insurancePays: number;
+    patientResponsibility: number;
     basis: string;
     payerName?: string;
   }>;

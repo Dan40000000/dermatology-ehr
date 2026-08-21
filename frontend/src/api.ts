@@ -8993,8 +8993,11 @@ export interface PatientProcedureCostEstimate {
   pricingBasis: 'contract_rate' | 'mixed' | 'percentage_fallback' | 'self_pay';
   pricingDetails: Array<{
     code: string;
+    description?: string;
     charge: number;
     allowedAmount: number;
+    insurancePays: number;
+    patientResponsibility: number;
     basis: 'contract_rate' | 'percentage_fallback' | 'self_pay';
     payerName?: string;
   }>;

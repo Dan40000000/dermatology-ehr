@@ -89,11 +89,18 @@ function downloadEstimatePdf(estimate: PortalCostEstimate): void {
 
   autoTable(doc, {
     startY: 112,
-    head: [['Procedure', 'Office charge', 'Plan allowed', 'Pricing source']],
+    head: [['Procedure', 'Charge', 'Allowed', 'Plan pays', 'You pay', 'Pricing source']],
     body: estimate.pricingDetails.length > 0
-      ? estimate.pricingDetails.map(item => [item.code, money(item.charge), money(item.allowedAmount), item.basis.replace(/_/g, ' ')])
-      : estimate.procedures.map(item => [[item.code, item.description].filter(Boolean).join(' · '), '—', '—', estimate.pricingBasis.replace(/_/g, ' ')]),
-    styles: { fontSize: 9 },
+      ? estimate.pricingDetails.map(item => [
+          [item.code, item.description].filter(Boolean).join(' · '),
+          money(item.charge),
+          money(item.allowedAmount),
+          money(item.insurancePays),
+          money(item.patientResponsibility),
+          item.basis.replace(/_/g, ' '),
+        ])
+      : estimate.procedures.map(item => [[item.code, item.description].filter(Boolean).join(' · '), '—', '—', '—', '—', estimate.pricingBasis.replace(/_/g, ' ')]),
+    styles: { fontSize: 8 },
     headStyles: { fillColor: [30, 64, 175] },
     margin: { left: 48, right: 48 },
   });

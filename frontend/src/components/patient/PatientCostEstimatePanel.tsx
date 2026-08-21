@@ -14,6 +14,7 @@ import { useToast } from '../../contexts/ToastContext';
 import {
   checkFormulary,
   createPatientProcedureCostEstimate,
+  fetchDefaultFeeSchedule,
   fetchExternalIntegrationStatus,
   getPatientBenefits,
   sharePatientProcedureCostEstimate,
@@ -34,12 +35,12 @@ interface PatientCostEstimatePanelProps {
 
 type EstimateMode = 'procedure' | 'prescription';
 
-const COMMON_CPT_CODES = [
+const PREFERRED_CPT_EXAMPLES = [
   { code: '99203', label: 'New visit' },
   { code: '99213', label: 'Follow-up' },
   { code: '11102', label: 'Tangential biopsy' },
   { code: '17000', label: 'AK destruction' },
-  { code: '11311', label: 'Shave lesion' },
+  { code: '17110', label: 'Benign lesion destruction' },
 ];
 
 function formatCurrency(value: number | null | undefined): string {
@@ -128,6 +129,8 @@ export function PatientCostEstimatePanel({
   const [eligibilityStatus, setEligibilityStatus] = useState<ExternalIntegrationStatus | null>(null);
   const [rxStatus, setRxStatus] = useState<ExternalIntegrationStatus | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
+  const [cptExamples, setCptExamples] = useState(PREFERRED_CPT_EXAMPLES);
+  const [availableCptCount, setAvailableCptCount] = useState<number | null>(null);
   const [cptInput, setCptInput] = useState('99203');
   const [serviceType, setServiceType] = useState('medical');
   const [isCosmetic, setIsCosmetic] = useState(false);
@@ -171,6 +174,39 @@ export function PatientCostEstimatePanel({
   useEffect(() => {
     void loadIntegrationStatus();
   }, [session?.tenantId, session?.accessToken, patientId]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    let cancelled = false;
+    void fetchDefaultFeeSchedule(session.tenantId, session.accessToken)
+      .then((schedule) => {
+        if (cancelled) return;
+        const items = Array.isArray(schedule?.items)
+          ? schedule.items.filter((item: any) => String(item?.cptCode || '').trim() && Number(item?.feeCents) > 0)
+          : [];
+        const byCode = new Map(items.map((item: any) => [String(item.cptCode).toUpperCase(), item]));
+        const preferred = PREFERRED_CPT_EXAMPLES.filter(item => byCode.has(item.code));
+        const preferredCodes = new Set(preferred.map(item => item.code));
+        const supplements = items
+          .filter((item: any) => !preferredCodes.has(String(item.cptCode).toUpperCase()))
+          .slice(0, Math.max(0, 5 - preferred.length))
+          .map((item: any) => ({
+            code: String(item.cptCode).toUpperCase(),
+            label: String(item.cptDescription || 'Configured procedure'),
+          }));
+
+        setCptExamples([...preferred, ...supplements].slice(0, 5));
+        setAvailableCptCount(items.length);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableCptCount(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.tenantId, session?.accessToken]);
 
   const addCommonCode = (code: string) => {
     const current = new Set(cptCodes);
@@ -516,18 +552,25 @@ export function PatientCostEstimatePanel({
             </label>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {COMMON_CPT_CODES.map((item) => (
-              <button
-                key={item.code}
-                type="button"
-                onClick={() => addCommonCode(item.code)}
-                style={pillStyle(cptCodes.includes(item.code))}
-              >
-                {item.code}
-                <span style={{ fontWeight: 600, color: '#64748b' }}>{item.label}</span>
-              </button>
-            ))}
+          <div style={{ display: 'grid', gap: '0.45rem' }}>
+            <div style={{ color: '#475569', fontSize: '0.76rem', lineHeight: 1.4 }}>
+              <strong>Common examples — quick-fill shortcuts only.</strong>{' '}
+              Enter any CPT configured in the default fee schedule
+              {availableCptCount == null ? '.' : ` (${availableCptCount} available).`}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {cptExamples.map((item) => (
+                <button
+                  key={item.code}
+                  type="button"
+                  onClick={() => addCommonCode(item.code)}
+                  style={pillStyle(cptCodes.includes(item.code))}
+                >
+                  {item.code}
+                  <span style={{ fontWeight: 600, color: '#64748b' }}>{item.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           <label style={{
@@ -572,6 +615,55 @@ export function PatientCostEstimatePanel({
                 <Metric label="Insurance pays" value={formatCurrency(procedureEstimate.insurancePays)} tone="green" />
                 <Metric label="Patient estimate" value={formatCurrency(procedureEstimate.patientResponsibility)} tone="amber" />
               </div>
+              {procedureEstimate.pricingDetails.length > 0 && (
+                <div style={{ border: '1px solid #cbd5e1', borderRadius: 8, overflow: 'hidden' }}>
+                  <div style={{ padding: '0.75rem 0.85rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    <div style={{ fontWeight: 800, color: '#0f172a', fontSize: '0.84rem' }}>Estimate by CPT code</div>
+                    <div style={{ color: '#64748b', fontSize: '0.72rem', marginTop: 2, lineHeight: 1.4 }}>
+                      Cost sharing is allocated across codes for planning; the payer may adjudicate individual lines differently.
+                    </div>
+                  </div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table aria-label="Estimate by CPT code" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760, fontSize: '0.78rem' }}>
+                      <thead>
+                        <tr style={{ background: '#f8fafc', color: '#475569', textAlign: 'left' }}>
+                          <th style={{ padding: '0.65rem 0.75rem' }}>CPT / procedure</th>
+                          <th style={{ padding: '0.65rem 0.75rem', textAlign: 'right' }}>Charge</th>
+                          <th style={{ padding: '0.65rem 0.75rem', textAlign: 'right' }}>Allowed</th>
+                          <th style={{ padding: '0.65rem 0.75rem', textAlign: 'right' }}>Insurance pays</th>
+                          <th style={{ padding: '0.65rem 0.75rem', textAlign: 'right' }}>Patient estimate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {procedureEstimate.pricingDetails.map((item, index) => (
+                          <tr key={`${item.code}-${index}`} style={{ borderTop: '1px solid #e2e8f0' }}>
+                            <td style={{ padding: '0.7rem 0.75rem', color: '#0f172a' }}>
+                              <strong>{item.code}</strong>
+                              {item.description && <div style={{ color: '#64748b', fontSize: '0.72rem', marginTop: 2 }}>{item.description}</div>}
+                              <div style={{ color: '#64748b', fontSize: '0.68rem', marginTop: 2 }}>
+                                {item.basis === 'contract_rate' ? 'Contract rate' : item.basis === 'self_pay' ? 'Self-pay' : 'Planning fallback'}
+                              </div>
+                            </td>
+                            <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right' }}>{formatCurrency(item.charge)}</td>
+                            <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right', color: '#1d4ed8', fontWeight: 700 }}>{formatCurrency(item.allowedAmount)}</td>
+                            <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right', color: '#047857', fontWeight: 700 }}>{formatCurrency(item.insurancePays)}</td>
+                            <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right', color: '#92400e', fontWeight: 800 }}>{formatCurrency(item.patientResponsibility)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: '2px solid #cbd5e1', background: '#f8fafc', fontWeight: 800 }}>
+                          <td style={{ padding: '0.7rem 0.75rem' }}>Total</td>
+                          <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right' }}>{formatCurrency(procedureEstimate.totalCharges)}</td>
+                          <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right' }}>{formatCurrency(procedureEstimate.insuranceAllowedAmount)}</td>
+                          <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right' }}>{formatCurrency(procedureEstimate.insurancePays)}</td>
+                          <td style={{ padding: '0.7rem 0.75rem', textAlign: 'right' }}>{formatCurrency(procedureEstimate.patientResponsibility)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
               <div style={{
                 border: '1px solid #e2e8f0',
                 borderRadius: 8,

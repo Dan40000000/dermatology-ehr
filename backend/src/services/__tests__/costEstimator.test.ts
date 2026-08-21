@@ -136,6 +136,93 @@ describe("costEstimator", () => {
     expect(estimate.insurancePays).toBeCloseTo(52, 1);
     expect(estimate.breakdown.notCovered).toBe(0);
     expect(estimate.breakdown.contractualAdjustment).toBe(20);
+    expect(estimate.pricingDetails[0]).toMatchObject({
+      code: "11111",
+      description: "Test",
+      charge: 100,
+      allowedAmount: 80,
+      insurancePays: 52,
+      patientResponsibility: 28,
+    });
+  });
+
+  it("returns an exact per-CPT allocation that adds back to the estimate totals", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ fee_cents: 10000, cpt_description: "Office visit" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{ fee_cents: 5000, cpt_description: "Biopsy" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          planName: "Test PPO",
+          deductible: 0,
+          deductibleMet: 0,
+          deductibleRemaining: 0,
+          coinsurancePercent: 20,
+          copay: 15,
+          outOfPocketMax: 8000,
+          outOfPocketMet: 0,
+          isInNetwork: true,
+          verified: true,
+        }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const estimate = await costEstimator.createCostEstimate("tenant-1", "patient-1", {
+      serviceType: "medical",
+      cptCodes: ["99213", "11102"],
+      userId: "user-1",
+    });
+
+    expect(estimate.pricingDetails).toEqual([
+      expect.objectContaining({
+        code: "99213",
+        description: "Office visit",
+        charge: 100,
+        allowedAmount: 80,
+        insurancePays: 56,
+        patientResponsibility: 24,
+      }),
+      expect.objectContaining({
+        code: "11102",
+        description: "Biopsy",
+        charge: 50,
+        allowedAmount: 40,
+        insurancePays: 28,
+        patientResponsibility: 12,
+      }),
+    ]);
+    expect(estimate.pricingDetails.reduce((sum, line) => sum + line.charge, 0)).toBe(estimate.totalCharges);
+    expect(estimate.pricingDetails.reduce((sum, line) => sum + line.allowedAmount, 0)).toBe(estimate.insuranceAllowedAmount);
+    expect(estimate.pricingDetails.reduce((sum, line) => sum + line.insurancePays, 0)).toBe(estimate.insurancePays);
+    expect(estimate.pricingDetails.reduce((sum, line) => sum + line.patientResponsibility, 0)).toBe(estimate.patientResponsibility);
+  });
+
+  it("rejects CPT codes without a configured fee instead of returning a partial estimate", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ fee_cents: 10000, cpt_description: "Office visit" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    await expect(costEstimator.createCostEstimate("tenant-1", "patient-1", {
+      serviceType: "medical",
+      cptCodes: ["99213", "99999"],
+      userId: "user-1",
+    })).rejects.toMatchObject({
+      name: "UnpricedCptCodesError",
+      message: "No fee is configured for CPT code: 99999",
+      codes: ["99999"],
+    });
   });
 
   it("uses an effective payer contract rate and reports high confidence", async () => {

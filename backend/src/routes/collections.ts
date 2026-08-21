@@ -260,6 +260,12 @@ collectionsRouter.post(
       res.json({ estimate });
     } catch (error) {
       logCollectionsError("Error creating cost estimate:", error);
+      if (error instanceof Error && error.name === "UnpricedCptCodesError") {
+        const codes = Array.isArray((error as costEstimator.UnpricedCptCodesError).codes)
+          ? (error as costEstimator.UnpricedCptCodesError).codes
+          : [];
+        return res.status(400).json({ error: error.message, codes });
+      }
       res.status(500).json({ error: "Failed to create cost estimate" });
     }
   }

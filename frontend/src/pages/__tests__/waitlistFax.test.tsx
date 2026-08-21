@@ -338,6 +338,7 @@ describe('FaxPage', () => {
     );
 
     await screen.findByText('Referral');
+    expect(screen.queryByRole('button', { name: 'Simulate Incoming' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Send Fax' }));
 
     const sendModal = await screen.findByTestId('modal-send-fax');

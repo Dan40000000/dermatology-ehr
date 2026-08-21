@@ -59,6 +59,7 @@ describe('InventoryPage', () => {
     expect(screen.queryByText('Meridian Clinic')).not.toBeInTheDocument();
     expect(screen.queryByText('Meridian Lab Fridge')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'All Facilities' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Seed Demo Reorders' })).not.toBeInTheDocument();
   });
 
   it('keeps add-item draft values when the backdrop is clicked', async () => {

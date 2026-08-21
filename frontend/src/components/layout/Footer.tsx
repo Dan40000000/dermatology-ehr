@@ -1,3 +1,5 @@
+import { PILOT_FOOTER_TEXT } from '../../config/pilot';
+
 export function Footer() {
   return (
     <footer className="footer" role="contentinfo">
@@ -6,7 +8,7 @@ export function Footer() {
           DermEHR
         </div>
         <div className="footer-version" aria-label="Application version information">
-          Version: 1.0.0 • Build: 2024.12.06
+          {PILOT_FOOTER_TEXT}
         </div>
         <div className="footer-legal">
           <small>

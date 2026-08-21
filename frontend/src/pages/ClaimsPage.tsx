@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
+import { SHOW_DEMO_TOOLS } from '../config/pilot';
 import {
   fetchClaims,
   fetchClaimDetail,
@@ -1663,15 +1664,15 @@ export function ClaimsPage() {
           </div>
         </div>
         <div className="claims-header-actions">
-          {!forceDemoData ? (
-            <button type="button" className="btn-secondary" onClick={() => setForceDemoData(true)}>
-              Load Demo Dataset
-            </button>
-          ) : (
-            <button type="button" className="btn-secondary" onClick={() => setForceDemoData(false)}>
-              Back To Live Data
-            </button>
-          )}
+          {SHOW_DEMO_TOOLS && (!forceDemoData ? (
+              <button type="button" className="btn-secondary" onClick={() => setForceDemoData(true)}>
+                Load Demo Dataset
+              </button>
+            ) : (
+              <button type="button" className="btn-secondary" onClick={() => setForceDemoData(false)}>
+                Back To Live Data
+              </button>
+            ))}
           <button type="button" className="btn-secondary" onClick={() => void loadData()}>
             Refresh
           </button>

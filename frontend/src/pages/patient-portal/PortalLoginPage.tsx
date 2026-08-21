@@ -7,6 +7,7 @@ import {
   DEFAULT_PATIENT_PORTAL_TENANT_ID,
   sanitizePortalRedirect,
 } from '../../utils/patientPortalLinks';
+import { PILOT_FOOTER_TEXT, SHOW_DEMO_TOOLS } from '../../config/pilot';
 
 export function PortalLoginPage() {
   const { isAuthenticated, login, isLoading } = usePatientPortalAuth();
@@ -122,7 +123,7 @@ export function PortalLoginPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="plp-form">
+            <form onSubmit={handleSubmit} className="plp-form" name="patient-portal-login">
               <div className={`plp-field ${focusedField === 'email' ? 'plp-field--focused' : ''} ${email ? 'plp-field--filled' : ''}`}>
                 <label htmlFor="plp-email">Email Address</label>
                 <div className="plp-input-wrap">
@@ -138,7 +139,8 @@ export function PortalLoginPage() {
                     onFocus={() => setFocusedField('email')}
                     onBlur={() => setFocusedField(null)}
                     required
-                    autoComplete="username"
+                    name="patient-portal-email"
+                    autoComplete="section-patient-portal username"
                     placeholder="Enter your email"
                   />
                 </div>
@@ -159,7 +161,8 @@ export function PortalLoginPage() {
                     onFocus={() => setFocusedField('password')}
                     onBlur={() => setFocusedField(null)}
                     required
-                    autoComplete="current-password"
+                    name="patient-portal-password"
+                    autoComplete="section-patient-portal current-password"
                     placeholder="Enter your password"
                   />
                   <button
@@ -251,8 +254,7 @@ export function PortalLoginPage() {
               <span>256-bit SSL encrypted connection</span>
             </div>
 
-            {/* Beta credentials */}
-            <div className="plp-creds">
+            {SHOW_DEMO_TOOLS && <div className="plp-creds">
               <div className="plp-creds-header">Beta test credentials — click to fill</div>
               {[
                 { label: 'Alex Johnson',    email: 'patient@demo.portal', password: 'Portal123!' },
@@ -271,11 +273,11 @@ export function PortalLoginPage() {
                   <code className="plp-cred-pw">Portal123!</code>
                 </button>
               ))}
-            </div>
+            </div>}
           </div>
         </div>
 
-        <p className="plp-footer">Beta v0.1 &nbsp;·&nbsp; Authorized testers only &nbsp;·&nbsp; Not for clinical use</p>
+        <p className="plp-footer">{PILOT_FOOTER_TEXT}</p>
       </main>
 
       <style>{`

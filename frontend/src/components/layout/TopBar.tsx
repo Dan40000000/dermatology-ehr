@@ -398,7 +398,7 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
               label="Search for a patient"
               labelClassName="sr-only"
               placeholder="Patient Search..."
-              selectClassName="ema-search-select"
+              inputClassName="ema-search-select"
               compact
               hideSelect
               maxResults={6}
@@ -440,7 +440,7 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
               </button>
             </div>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div className="ema-header-user-row">
             <LanguageSwitcher />
             {user && (
               <div className="ema-user-info" role="group" aria-label="User information">
@@ -481,20 +481,20 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
             >
               {capturingFeedbackPage ? 'Capturing...' : 'Issue / Suggestion'}
             </button>
-            <span className="ema-separator" aria-hidden="true">•</span>
+            <span className="ema-separator ema-header-link--optional" aria-hidden="true">•</span>
             <a
               href="/portal/login"
-              className="ema-link"
+              className="ema-link ema-header-link--optional"
               aria-label="Customer Portal"
             >
               Customer Portal
             </a>
             {showAiAssistantLink && (
               <>
-                <span className="ema-separator" aria-hidden="true">•</span>
+                <span className="ema-separator ema-header-link--optional" aria-hidden="true">•</span>
                 <a
                   href={AI_ASSISTANT_URL}
-                  className="ema-link"
+                  className="ema-link ema-header-link--optional"
                   aria-label="Open AI assistant in a new window"
                   target="_blank"
                   rel="noreferrer"
@@ -504,10 +504,10 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
                 </a>
               </>
             )}
-            <span className="ema-separator" aria-hidden="true">•</span>
+            <span className="ema-separator ema-header-link--optional" aria-hidden="true">•</span>
             <button
               type="button"
-              className="ema-link-btn"
+              className="ema-link-btn ema-header-link--optional"
               onClick={() => setShowPreferencesModal(true)}
               aria-label="Open preferences dialog"
             >

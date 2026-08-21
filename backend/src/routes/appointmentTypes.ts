@@ -49,6 +49,8 @@ appointmentTypesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => 
        created_at as "createdAt"
      from appointment_types
      where tenant_id = $1
+       and coalesce(is_active, true) = true
+       and coalesce(is_test_data, false) = false
      order by name`,
     [tenantId],
   );

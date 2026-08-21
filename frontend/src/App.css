@@ -6295,7 +6295,7 @@ pre {
   border-radius: 10px;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1400px) {
   .photos-kpi-row,
   .photos-workflow-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -10273,21 +10273,22 @@ pre {
   display: flex;
   justify-content: center;
   padding: 0 2rem;
+  min-width: 280px;
 }
 
 .ema-patient-search {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-width: 140px;
-  max-width: 210px;
+  min-width: 280px;
+  max-width: 420px;
   width: 100%;
   transition: min-width 0.2s ease, max-width 0.2s ease;
 }
 
 .ema-patient-search:focus-within {
   min-width: 280px;
-  max-width: 360px;
+  max-width: 420px;
 }
 
 .ema-search-select {
@@ -10329,6 +10330,12 @@ pre {
 }
 
 .ema-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.ema-header-user-row {
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -10504,6 +10511,15 @@ pre {
   margin-left: 0.125rem;
 }
 
+.ema-nav-more {
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  border-right: 0;
+  border-top: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .ema-nav-link:hover {
   background: rgba(255, 255, 255, 0.15);
   color: #ffffff;
@@ -10605,6 +10621,27 @@ pre {
   z-index: 9999; /* Below modals (10000+) but above content */
   padding: 0.5rem 0;
   animation: dropdownFadeIn 0.15s ease;
+}
+
+.ema-nav-dropdown-portal--more {
+  width: min(520px, calc(100vw - 16px));
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ema-nav-dropdown-portal--more .ema-nav-dropdown-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ema-nav-dropdown-primary-duplicate {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .ema-nav-dropdown-portal--more {
+    grid-template-columns: 1fr;
+  }
 }
 
 .ema-nav-dropdown-item {
@@ -11958,6 +11995,14 @@ pre {
     justify-content: flex-start;
   }
 
+  .ema-patient-search {
+    width: min(100%, 420px);
+  }
+
+  .ema-header-link--optional {
+    display: none;
+  }
+
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -11988,11 +12033,36 @@ pre {
 
 @media (max-width: 768px) {
   .ema-header-links {
-    display: none;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .ema-header-right {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .ema-header-user-row {
+    flex-wrap: wrap;
+  }
+
+  .ema-patient-search {
+    min-width: 0;
+    width: 100%;
   }
 
   .ema-nav {
     overflow-x: auto;
+  }
+
+  .ema-nav > .ema-nav-item:nth-child(n + 3):not(:last-child) {
+    display: none;
+  }
+
+  .ema-nav-dropdown-primary-duplicate {
+    display: block;
   }
 
   .stats-grid {

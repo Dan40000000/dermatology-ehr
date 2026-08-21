@@ -122,7 +122,6 @@ describe('NotesPage', () => {
     const selects = screen.getAllByRole('combobox');
     const statusSelect = selects[0];
     const providerSelect = selects[1];
-    const patientSelect = selects[2];
 
     fireEvent.change(statusSelect, { target: { value: 'signed' } });
     expect(screen.getByText('Showing 1 of 3 encounters')).toBeInTheDocument();
@@ -133,7 +132,10 @@ describe('NotesPage', () => {
     expect(within(rows[1]).getByText('Skin, Ben')).toBeInTheDocument();
 
     fireEvent.change(providerSelect, { target: { value: 'provider-2' } });
-    fireEvent.change(patientSelect, { target: { value: 'patient-2' } });
+    const patientLookup = screen.getByRole('textbox', { name: 'Search patient filter' });
+    fireEvent.focus(patientLookup);
+    fireEvent.change(patientLookup, { target: { value: 'Ben' } });
+    fireEvent.click(screen.getByRole('button', { name: /Skin, Ben/ }));
 
     const searchInput = screen.getByPlaceholderText('Search by patient name, chief complaint, or provider...');
     fireEvent.change(searchInput, { target: { value: 'Follow up' } });

@@ -69,7 +69,11 @@ async function seed() {
       await pool.query(
         `insert into users(id, tenant_id, email, full_name, role, password_hash)
          values ($1,$2,$3,$4,$5,$6)
-         on conflict (id) do nothing`,
+         on conflict (id) do update set
+           email = EXCLUDED.email,
+           full_name = EXCLUDED.full_name,
+           role = EXCLUDED.role,
+           password_hash = EXCLUDED.password_hash`,
         [u.id, tenantId, u.email, u.fullName, u.role, passwordHash],
       );
     }
@@ -3964,7 +3968,12 @@ async function seed() {
       await pool.query(
         `INSERT INTO patient_portal_accounts (id, tenant_id, patient_id, email, password_hash, is_active, email_verified)
          VALUES ($1, $2, $3, $4, $5, true, true)
-         ON CONFLICT (tenant_id, email) DO NOTHING`,
+         ON CONFLICT (tenant_id, email) DO UPDATE SET
+           patient_id = EXCLUDED.patient_id,
+           password_hash = EXCLUDED.password_hash,
+           is_active = true,
+           email_verified = true,
+           updated_at = CURRENT_TIMESTAMP`,
         [randomUUID(), tenantId, account.patientId, account.email, portalPasswordHash]
       );
     }

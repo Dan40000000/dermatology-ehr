@@ -179,6 +179,7 @@ describe('ClaimsPage', () => {
 
     await screen.findAllByText('CLM-001');
 
+    expect(screen.queryByRole('button', { name: 'Load Demo Dataset' })).not.toBeInTheDocument();
     const claimRow = getClaimsTableRow('CLM-001');
     expect(within(claimRow).getByText('5/28/2026')).toBeInTheDocument();
   });

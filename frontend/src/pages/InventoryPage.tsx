@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Panel, Modal } from '../components/ui';
+import { SHOW_DEMO_TOOLS } from '../config/pilot';
 import {
   adjustInventory,
   createInventoryItem,
@@ -738,9 +739,11 @@ export function InventoryPage() {
           <button type="button" className="btn-secondary" onClick={openUsageReport}>
             Usage Report
           </button>
-          <button type="button" className="btn-secondary" onClick={handleSeedDemoReorderData}>
-            Seed Demo Reorders
-          </button>
+          {SHOW_DEMO_TOOLS && (
+            <button type="button" className="btn-secondary" onClick={handleSeedDemoReorderData}>
+              Seed Demo Reorders
+            </button>
+          )}
           <button type="button" className="btn-primary" onClick={() => setShowAddModal(true)}>
             + Add Item
           </button>

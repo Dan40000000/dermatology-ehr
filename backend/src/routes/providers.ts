@@ -52,7 +52,11 @@ providersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   // If not in cache, query database
   const result = await pool.query(
     `select id, full_name as "fullName", specialty, created_at as "createdAt"
-     from providers where tenant_id = $1 order by full_name`,
+     from providers
+     where tenant_id = $1
+       and coalesce(is_active, true) = true
+       and coalesce(is_test_data, false) = false
+     order by full_name`,
     [tenantId],
   );
 

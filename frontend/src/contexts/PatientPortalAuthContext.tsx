@@ -15,7 +15,7 @@ const DEMO_PORTAL_PASSWORD = 'Portal123!';
 const PORTAL_COOKIE_TOKEN_PLACEHOLDER = '__http_only_cookie__';
 
 function isLocalDemoEnabled(): boolean {
-  return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
+  return import.meta.env.DEV && import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
 }
 
 interface Patient {

@@ -113,6 +113,8 @@ async function getBookableProviders(tenantId: string) {
      INNER JOIN provider_availability_templates pat
        ON p.id = pat.provider_id
      WHERE p.tenant_id = $1
+       AND coalesce(p.is_active, true) = true
+       AND coalesce(p.is_test_data, false) = false
        AND pat.is_active = true
        AND pat.allow_online_booking = true
      ORDER BY p.full_name`,
@@ -129,6 +131,7 @@ async function getBookableAppointmentTypes(tenantId: string) {
      FROM appointment_types
      WHERE tenant_id = $1
        AND is_active = true
+       AND coalesce(is_test_data, false) = false
      ORDER BY name`,
     [tenantId]
   );

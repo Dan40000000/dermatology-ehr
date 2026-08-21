@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { Link } from 'react-router-dom';
+import { PILOT_FOOTER_TEXT, SHOW_DEMO_TOOLS } from '../config/pilot';
 
 export function LoginPage() {
   const { t } = useTranslation(['auth', 'common']);
@@ -18,8 +19,8 @@ export function LoginPage() {
   const forceFreshLogin = new URLSearchParams(location.search).get('fresh') === '1';
 
   const [tenantId, setTenantId] = useState('tenant-demo');
-  const [email, setEmail] = useState('admin@demo.practice');
-  const [password, setPassword] = useState('Password123!');
+  const [email, setEmail] = useState(SHOW_DEMO_TOOLS ? 'admin@demo.practice' : '');
+  const [password, setPassword] = useState(SHOW_DEMO_TOOLS ? 'Password123!' : '');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -211,11 +212,12 @@ export function LoginPage() {
                   </svg>
                   <input
                     id="pvp-email"
+                    name="provider-login-email"
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    autoComplete="username"
+                    autoComplete="section-provider-login username"
                     placeholder="admin@demo.practice"
                     onFocus={() => setFocusedField('email')}
                     onBlur={() => setFocusedField(null)}
@@ -232,11 +234,12 @@ export function LoginPage() {
                   </svg>
                   <input
                     id="pvp-password"
+                    name="provider-login-password"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    autoComplete="current-password"
+                    autoComplete="section-provider-login current-password"
                     placeholder="••••••••••"
                     onFocus={() => setFocusedField('password')}
                     onBlur={() => setFocusedField(null)}
@@ -271,8 +274,7 @@ export function LoginPage() {
               </button>
             </form>
 
-            {/* Beta credentials */}
-            <div className="pvp-creds">
+            {SHOW_DEMO_TOOLS && <div className="pvp-creds">
               <div className="pvp-creds-header">Beta test credentials — click to fill</div>
               {[
                 { label: 'Owner / Admin',  email: 'admin@demo.practice',     password: 'Password123!' },
@@ -294,11 +296,11 @@ export function LoginPage() {
                   <code className="pvp-cred-pw">Password123!</code>
                 </button>
               ))}
-            </div>
+            </div>}
           </div>
         </div>
 
-        <p className="pvp-footer">© 2025 DermEHR &nbsp;·&nbsp; Version 1.0.0</p>
+        <p className="pvp-footer">© 2026 DermEHR &nbsp;·&nbsp; {PILOT_FOOTER_TEXT}</p>
       </main>
 
       <style>{`

@@ -1,6 +1,7 @@
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import "./App.css";
+import { PILOT_FOOTER_TEXT, SHOW_DEMO_TOOLS } from "./config/pilot";
 import { Toast } from "./components/Toast";
 import { ConflictBanner } from "./components/ConflictBanner";
 import { Legend } from "./components/Legend";
@@ -70,8 +71,8 @@ type Session = {
 
 function App() {
   const [tenantId, setTenantId] = useState("tenant-demo");
-  const [email, setEmail] = useState("admin@demo.practice");
-  const [password, setPassword] = useState("Password123!");
+  const [email, setEmail] = useState(SHOW_DEMO_TOOLS ? "admin@demo.practice" : "");
+  const [password, setPassword] = useState(SHOW_DEMO_TOOLS ? "Password123!" : "");
   const [showPassword, setShowPassword] = useState(false);
   const [session, setSession] = useState<Session>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -520,14 +521,14 @@ function App() {
               Sign In
             </button>
           </form>
-          <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb', textAlign: 'center' }}>
+          {SHOW_DEMO_TOOLS && <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb', textAlign: 'center' }}>
             <p style={{ color: '#9ca3af', fontSize: '0.75rem', margin: '0 0 0.5rem 0' }}>
               Demo Credentials
             </p>
             <p style={{ color: '#6b7280', fontSize: '0.8125rem', margin: 0 }}>
               <strong>admin@demo.practice</strong> / <strong>Password123!</strong>
             </p>
-          </div>
+          </div>}
           {error && (
             <div style={{
               marginTop: '1rem',
@@ -543,7 +544,7 @@ function App() {
           )}
         </div>
         <p style={{ marginTop: '2rem', color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem' }}>
-          © 2025 DermEHR • Version 1.0.0
+          © 2026 DermEHR • {PILOT_FOOTER_TEXT}
         </p>
       </div>
     );
@@ -2265,7 +2266,7 @@ function App() {
         <footer className="footer">
           <div className="footer-content">
             <div className="footer-logo">DermEHR</div>
-            <div className="footer-version">Version: 1.0.0 • Build: 2024.12.05</div>
+            <div className="footer-version">{PILOT_FOOTER_TEXT}</div>
             <div className="footer-legal">
               CPT©2025 American Medical Association. All rights reserved.
               Fee schedules, relative value units, conversion factors and/or related components are

@@ -353,6 +353,7 @@ router.get("/facilities", async (req: AuthedRequest, res) => {
     `SELECT ${FACILITY_SELECT_COLUMNS}
      FROM locations
      WHERE tenant_id = $1
+       AND coalesce(is_test_data, false) = false
      ORDER BY name`,
     [tenantId]
   );
@@ -627,6 +628,7 @@ router.get("/providers", async (req: AuthedRequest, res) => {
      FROM providers p
      LEFT JOIN users u ON u.id = p.user_id AND u.tenant_id = p.tenant_id
      WHERE p.tenant_id = $1
+       AND coalesce(p.is_test_data, false) = false
      ORDER BY p.full_name`,
     [tenantId]
   );
@@ -797,6 +799,7 @@ router.get("/users", async (req: AuthedRequest, res) => {
             created_at as "createdAt"
      FROM users
      WHERE tenant_id = $1
+       AND coalesce(is_test_data, false) = false
      ORDER BY full_name`,
     [tenantId]
   );

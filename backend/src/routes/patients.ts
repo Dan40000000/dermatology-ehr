@@ -427,7 +427,8 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
 
   // Get total count
   const countResult = await pool.query(
-    `select count(*) from patients where tenant_id = $1`,
+    `select count(*) from patients
+     where tenant_id = $1 and coalesce(is_test_data, false) = false`,
     [tenantId]
   );
   const total = parseInt(countResult.rows[0].count);
@@ -439,7 +440,9 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
         where appointments.patient_id = patients.id
           and appointments.tenant_id = patients.tenant_id
           and appointments.status = 'completed') as "lastVisit"
-     from patients where tenant_id = $1 order by created_at desc limit $2 offset $3`,
+     from patients
+     where tenant_id = $1 and coalesce(is_test_data, false) = false
+     order by created_at desc limit $2 offset $3`,
     [tenantId, limit, offset],
   );
 

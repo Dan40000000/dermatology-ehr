@@ -1362,14 +1362,16 @@ export default function TextMessagesPage() {
                       >
                         {sending ? 'Sending...' : 'Send'}
                       </button>
-                      <button
-                        className="btn-secondary btn-sm"
-                        onClick={simulateInboundMessage}
-                        disabled={simulatingInbound || !messageText.trim()}
-                        title="Test mode helper: simulate patient replying with this message"
-                      >
-                        {simulatingInbound ? 'Simulating...' : 'Simulate Reply'}
-                      </button>
+                      {smsSettings?.isTestMode && (
+                        <button
+                          className="btn-secondary btn-sm"
+                          onClick={simulateInboundMessage}
+                          disabled={simulatingInbound || !messageText.trim()}
+                          title="Test mode helper: simulate patient replying with this message"
+                        >
+                          {simulatingInbound ? 'Simulating...' : 'Simulate Reply'}
+                        </button>
+                      )}
                     </div>
 
                     {/* Template Selector Dropdown */}

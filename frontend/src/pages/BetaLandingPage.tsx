@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { PILOT_FOOTER_TEXT } from '../config/pilot';
 
 export function BetaLandingPage() {
   // Clear portal session every time the landing page is visited
@@ -110,7 +111,7 @@ export function BetaLandingPage() {
 
         </div>
 
-        <p className="lp-footer">Beta v0.1 &nbsp;·&nbsp; Authorized testers only &nbsp;·&nbsp; Not for clinical use</p>
+        <p className="lp-footer">{PILOT_FOOTER_TEXT}</p>
       </main>
 
       <style>{`

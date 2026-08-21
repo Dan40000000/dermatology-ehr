@@ -162,14 +162,10 @@ Comprehensive documentation is available:
 - **Data Backup**: Automated encrypted backups
 - **Virus Scanning**: All file uploads scanned
 
-### Default Credentials (Change Immediately!)
+### Demo access
 
-- **Admin**: admin@demo.practice / Password123!
-- **Provider**: provider@demo.practice / Password123!
-- **MA**: ma@demo.practice / Password123!
-- **Front Desk**: frontdesk@demo.practice / Password123!
-
-Tenant ID: `tenant-demo`
+Demo credentials are test fixtures and are not published in production UI or documentation.
+For local-only credential shortcuts, explicitly set `VITE_ENABLE_DEMO_TOOLS=true` and use an isolated demo database.
 
 ## Development
 

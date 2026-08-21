@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Modal, Button, Skeleton } from '../components/ui';
 import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
+import { SHOW_DEMO_TOOLS } from '../config/pilot';
 import {
   fetchFaxInbox,
   fetchFaxOutbox,
@@ -445,7 +446,7 @@ export function FaxPage() {
             </div>
 
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              {activeTab === 'inbox' && (
+              {SHOW_DEMO_TOOLS && activeTab === 'inbox' && (
                 <Button variant="outline" onClick={handleSimulateIncoming}>
                   Simulate Incoming
                 </Button>
@@ -504,10 +505,11 @@ export function FaxPage() {
                 patients={patients}
                 value={patientFilter}
                 onChange={setPatientFilter}
-                label="Patient"
+                label="Patient filter"
                 includeAllOption
                 allValue="all"
                 compact
+                hideSelect
               />
             </div>
 

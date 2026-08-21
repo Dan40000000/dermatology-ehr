@@ -242,10 +242,11 @@ export function NotesPage() {
               patients={Array.isArray(patients) ? patients.filter(Boolean) : []}
               value={patientFilter}
               onChange={setPatientFilter}
-              label="Patient"
+              label="Patient filter"
               includeAllOption
               allValue="all"
               compact
+              hideSelect
             />
           </div>
 
@@ -287,8 +288,8 @@ export function NotesPage() {
             style={{
               padding: '0.5rem 1rem',
               background: 'white',
-              color: '#6B46C1',
-              border: '1px solid #6B46C1',
+              color: '#0369a1',
+              border: '1px solid #0369a1',
               borderRadius: '6px',
               cursor: 'pointer',
               fontSize: '0.875rem',
@@ -301,7 +302,7 @@ export function NotesPage() {
             onClick={loadData}
             style={{
               padding: '0.5rem 1rem',
-              background: '#6B46C1',
+              background: '#0369a1',
               color: 'white',
               border: 'none',
               borderRadius: '6px',

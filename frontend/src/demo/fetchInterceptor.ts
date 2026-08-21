@@ -77,7 +77,7 @@ const DEMO_STORE_ORDERS_KEY = 'demoStoreOrders.v1';
 const DEMO_AI_USAGE_SETTINGS_KEY = 'demoAiUsageSettings.v1';
 
 function isLocalDemoEnabled(): boolean {
-  return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
+  return import.meta.env.DEV && import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
 }
 
 const DEMO_SCHEDULING_SETTINGS = {

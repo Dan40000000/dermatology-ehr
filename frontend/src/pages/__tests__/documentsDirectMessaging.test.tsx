@@ -265,7 +265,10 @@ describe('DocumentsPage', () => {
     );
 
     await screen.findByText('Document Management');
-    fireEvent.change(screen.getByDisplayValue('All Patients'), { target: { value: 'patient-1' } });
+    const patientLookup = screen.getByRole('textbox', { name: 'Search patient filter' });
+    fireEvent.focus(patientLookup);
+    fireEvent.change(patientLookup, { target: { value: 'Ana' } });
+    fireEvent.click(screen.getByRole('button', { name: /Derm, Ana/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Lab Result Templates' }));
 
     await waitFor(() =>

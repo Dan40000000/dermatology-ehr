@@ -199,7 +199,7 @@ export function PatientLookupSelect({
 
   const selectedLabel =
     includeAllOption && value === allValue
-      ? allLabel
+      ? ''
       : selectedPatient
         ? selectedPatient.name
         : '';

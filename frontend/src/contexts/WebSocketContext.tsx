@@ -31,8 +31,17 @@ function isLocalSocketUrl(configuredUrl: string): boolean {
 
 function resolveSocketUrl(): string {
   const configuredWsUrl = import.meta.env.VITE_WS_URL;
-  if (configuredWsUrl && !(API_BASE_URL && !import.meta.env.DEV && isLocalSocketUrl(configuredWsUrl))) {
-    return configuredWsUrl;
+  if (configuredWsUrl) {
+    // In local development, keep Socket.IO on the page origin so Vite's
+    // /socket.io proxy handles the handshake. Connecting straight to :4000
+    // bypasses that proxy and fails whenever the backend uses a staging CORS
+    // allowlist (a common local QA setup).
+    if (import.meta.env.DEV && isLocalSocketUrl(configuredWsUrl) && typeof window !== 'undefined') {
+      return window.location.origin;
+    }
+    if (!(API_BASE_URL && !import.meta.env.DEV && isLocalSocketUrl(configuredWsUrl))) {
+      return configuredWsUrl;
+    }
   }
   if (API_BASE_URL) {
     return API_BASE_URL;

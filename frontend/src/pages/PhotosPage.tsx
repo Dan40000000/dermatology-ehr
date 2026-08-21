@@ -823,10 +823,11 @@ export function PhotosPage() {
               patients={patients}
               value={selectedPatient}
               onChange={setSelectedPatientFilter}
-              label="Patient"
+              label="Patient filter"
               includeAllOption
               allValue="all"
               compact
+              hideSelect
             />
           </div>
 

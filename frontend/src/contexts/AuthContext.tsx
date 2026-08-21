@@ -17,7 +17,7 @@ const DEMO_OFFICE_CREDS: Record<string, { role: string; fullName: string }> = {
 const DEMO_OFFLINE_PASSWORD = 'Password123!';
 
 function isLocalDemoEnabled(): boolean {
-  return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
+  return import.meta.env.DEV && import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
 }
 
 function makeDemoToken(payload: object): string {

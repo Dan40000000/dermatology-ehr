@@ -359,14 +359,14 @@ export const CacheKeys = {
 
   // Provider cache keys
   provider: (id: string) => `provider:${id}`,
-  providers: (tenantId: string) => `providers:${tenantId}`,
+  providers: (tenantId: string) => `providers:v2:${tenantId}`,
 
   // Location cache keys
   location: (id: string) => `location:${id}`,
-  locations: (tenantId: string) => `locations:${tenantId}`,
+  locations: (tenantId: string) => `locations:v2:${tenantId}`,
 
   // Appointment types
-  appointmentTypes: (tenantId: string) => `appointment-types:${tenantId}`,
+  appointmentTypes: (tenantId: string) => `appointment-types:v2:${tenantId}`,
 
   // Dashboard/statistics
   dashboardStats: (tenantId: string) => `dashboard:${tenantId}`,

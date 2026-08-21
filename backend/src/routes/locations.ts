@@ -94,7 +94,11 @@ locationsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
             downtime_primary_device_last_seen_at as "downtimePrimaryDeviceLastSeenAt",
             downtime_primary_device_last_packet_saved_at as "downtimePrimaryDeviceLastPacketSavedAt",
             downtime_primary_device_last_packet_date as "downtimePrimaryDeviceLastPacketDate"
-     from locations where tenant_id = $1 order by name`,
+     from locations
+     where tenant_id = $1
+       and coalesce(is_active, true) = true
+       and coalesce(is_test_data, false) = false
+     order by name`,
     [tenantId],
   );
   const locations = result.rows.map(mapLocationRow);

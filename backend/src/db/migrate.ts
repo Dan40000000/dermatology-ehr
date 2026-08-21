@@ -16045,6 +16045,180 @@ Consider age-appropriate treatments and include family counseling points.',
       ON prescription_cost_estimates(tenant_id, patient_id, shown_to_patient, created_at DESC);
     `,
   },
+  {
+    name: "224_quarantine_demo_audit_fixtures",
+    sql: `
+    ALTER TABLE providers ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE appointment_types ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
+
+    UPDATE providers
+    SET is_test_data = TRUE,
+        is_active = FALSE
+    WHERE tenant_id = 'tenant-demo'
+      AND (
+        lower(full_name) LIKE '%audit%'
+        OR lower(full_name) ~ '^dr[.]? qa provider([[:space:]-]|$)'
+        OR lower(id) LIKE 'audit-%'
+      );
+
+    UPDATE locations
+    SET is_test_data = TRUE,
+        is_active = FALSE
+    WHERE tenant_id = 'tenant-demo'
+      AND (lower(name) LIKE '%audit%' OR lower(id) LIKE 'audit-%');
+
+    UPDATE appointment_types
+    SET is_test_data = TRUE,
+        is_active = FALSE
+    WHERE tenant_id = 'tenant-demo'
+      AND (lower(name) LIKE '%audit%' OR lower(id) LIKE 'audit-%');
+
+    UPDATE patients
+    SET is_test_data = TRUE
+    WHERE tenant_id = 'tenant-demo'
+      AND (
+        lower(concat_ws(' ', first_name, last_name)) LIKE '%audit%'
+        OR lower(id) LIKE 'audit-%'
+      );
+
+    UPDATE users
+    SET is_test_data = TRUE
+    WHERE tenant_id = 'tenant-demo'
+      AND (
+        lower(full_name) LIKE '%audit%'
+        OR lower(email) LIKE 'audit-%'
+        OR lower(id) LIKE 'audit-%'
+      );
+
+    UPDATE users AS target
+    SET email = credentials.email,
+        full_name = credentials.full_name,
+        role = credentials.role,
+        password_hash = '$2b$12$gU3jZZKNPnWeUkufWCHCG.w6/jHq98Anh1tKB/THI4tPha1QmqwtK',
+        is_test_data = FALSE
+    FROM (VALUES
+      ('u-admin', 'admin@demo.practice', 'Admin User', 'admin'),
+      ('u-owner', 'owner@demo.practice', 'Practice Owner', 'admin'),
+      ('u-provider', 'provider@demo.practice', 'Derm Provider', 'provider'),
+      ('u-ma', 'ma@demo.practice', 'Medical Assistant', 'ma'),
+      ('u-front', 'frontdesk@demo.practice', 'Front Desk', 'front_desk'),
+      ('u-billing', 'billing@demo.practice', 'Billing User', 'billing'),
+      ('u-nurse', 'nurse@demo.practice', 'Clinic Nurse', 'nurse'),
+      ('u-manager', 'manager@demo.practice', 'Practice Manager', 'manager'),
+      ('u-scheduler', 'scheduler@demo.practice', 'Scheduler', 'scheduler'),
+      ('u-compliance', 'compliance@demo.practice', 'Compliance Officer', 'compliance_officer'),
+      ('u-staff', 'staff@demo.practice', 'General Staff', 'staff'),
+      ('u-hr', 'hr@demo.practice', 'HR User', 'hr')
+    ) AS credentials(id, email, full_name, role)
+    WHERE target.id = credentials.id
+      AND target.tenant_id = 'tenant-demo';
+
+    INSERT INTO users (id, tenant_id, email, full_name, role, password_hash, is_test_data)
+    SELECT credentials.id,
+           'tenant-demo',
+           credentials.email,
+           credentials.full_name,
+           credentials.role,
+           '$2b$12$gU3jZZKNPnWeUkufWCHCG.w6/jHq98Anh1tKB/THI4tPha1QmqwtK',
+           FALSE
+    FROM (VALUES
+      ('u-owner', 'owner@demo.practice', 'Practice Owner', 'admin'),
+      ('u-ma', 'ma@demo.practice', 'Medical Assistant', 'ma'),
+      ('u-front', 'frontdesk@demo.practice', 'Front Desk', 'front_desk'),
+      ('u-nurse', 'nurse@demo.practice', 'Clinic Nurse', 'nurse'),
+      ('u-manager', 'manager@demo.practice', 'Practice Manager', 'manager'),
+      ('u-scheduler', 'scheduler@demo.practice', 'Scheduler', 'scheduler'),
+      ('u-compliance', 'compliance@demo.practice', 'Compliance Officer', 'compliance_officer'),
+      ('u-staff', 'staff@demo.practice', 'General Staff', 'staff'),
+      ('u-hr', 'hr@demo.practice', 'HR User', 'hr')
+    ) AS credentials(id, email, full_name, role)
+    WHERE EXISTS (SELECT 1 FROM tenants WHERE id = 'tenant-demo')
+    ON CONFLICT (id) DO NOTHING;
+
+    UPDATE patient_portal_accounts
+    SET password_hash = '$2b$10$X1524MJqRU7BvDMRqhOHp.wJ79AeCsWCkwC1D8Cgk24a4cQ0WrEkC',
+        is_active = TRUE,
+        email_verified = TRUE,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = 'tenant-demo'
+      AND lower(email) IN (
+        'patient@demo.portal',
+        'jane@demo.portal',
+        'marcus@demo.portal',
+        'sofia@demo.portal'
+      );
+
+    UPDATE sms_messages
+    SET message_body = CASE
+          WHEN lower(trim(coalesce(message_body, ''))) = 'you are a sexy man'
+            THEN '[Removed inappropriate demo content]'
+          ELSE message_body
+        END,
+        content = CASE
+          WHEN lower(trim(coalesce(content, ''))) = 'you are a sexy man'
+            THEN '[Removed inappropriate demo content]'
+          ELSE content
+        END,
+        body = CASE
+          WHEN lower(trim(coalesce(body, ''))) = 'you are a sexy man'
+            THEN '[Removed inappropriate demo content]'
+          ELSE body
+        END
+    WHERE tenant_id = 'tenant-demo'
+      AND (
+        lower(trim(coalesce(message_body, ''))) = 'you are a sexy man'
+        OR lower(trim(coalesce(content, ''))) = 'you are a sexy man'
+        OR lower(trim(coalesce(body, ''))) = 'you are a sexy man'
+      );
+
+    UPDATE sms_conversations
+    SET last_message_preview = '[Removed inappropriate demo content]'
+    WHERE tenant_id = 'tenant-demo'
+      AND lower(trim(coalesce(last_message_preview, ''))) = 'you are a sexy man';
+
+    CREATE INDEX IF NOT EXISTS idx_providers_non_test ON providers(tenant_id, full_name) WHERE is_test_data = FALSE;
+    CREATE INDEX IF NOT EXISTS idx_locations_non_test ON locations(tenant_id, name) WHERE is_test_data = FALSE;
+    CREATE INDEX IF NOT EXISTS idx_appointment_types_non_test ON appointment_types(tenant_id, name) WHERE is_test_data = FALSE;
+    CREATE INDEX IF NOT EXISTS idx_patients_non_test ON patients(tenant_id, created_at DESC) WHERE is_test_data = FALSE;
+    `,
+  },
+  {
+    name: "225_dedupe_demo_appointment_types",
+    sql: `
+    WITH ranked_types AS (
+      SELECT id,
+             row_number() OVER (
+               PARTITION BY tenant_id, lower(trim(name))
+               ORDER BY created_at ASC NULLS LAST, id ASC
+             ) AS duplicate_rank
+      FROM appointment_types
+      WHERE tenant_id = 'tenant-demo'
+        AND coalesce(is_active, true) = true
+        AND coalesce(is_test_data, false) = false
+    )
+    UPDATE appointment_types AS appointment_type
+    SET is_active = FALSE
+    FROM ranked_types
+    WHERE appointment_type.id = ranked_types.id
+      AND ranked_types.duplicate_rank > 1;
+    `,
+  },
+  {
+    name: "226_sanitize_demo_booking_copy",
+    sql: `
+    UPDATE appointment_types
+    SET description = NULL
+    WHERE tenant_id = 'tenant-demo'
+      AND (
+        lower(coalesce(description, '')) LIKE '%simulated monday clinic%'
+        OR lower(coalesce(description, '')) LIKE '%smoke test%'
+        OR lower(coalesce(description, '')) LIKE '%audit fixture%'
+      );
+    `,
+  },
 
 ];
 

@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
+import { env } from "../config/env";
 
 export const faxRouter = Router();
 faxRouter.use(requireAuth, requireModuleAccess("fax"));
@@ -417,6 +418,10 @@ faxRouter.delete("/:id", requireAuth, requireRoles(["admin", "provider"]), async
 
 // POST /api/fax/simulate-incoming - Simulate receiving a fax (for demo)
 faxRouter.post("/simulate-incoming", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
+  if (env.nodeEnv !== "test" && (env.runtimeEnvironment === "production" || env.runtimeEnvironment === "staging")) {
+    return res.status(404).json({ error: "Not found" });
+  }
+
   const tenantId = req.user!.tenantId;
 
   const incomingFax = await mockFaxService.generateIncomingFax(tenantId);

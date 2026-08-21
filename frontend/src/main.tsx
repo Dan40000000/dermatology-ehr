@@ -18,7 +18,7 @@ import './styles/animations.css';
 import './utils/authFetch';
 import { installDemoFetchInterceptor } from './demo/fetchInterceptor';
 
-if (import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true') {
+if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true') {
   installDemoFetchInterceptor();
 }
 

@@ -128,12 +128,16 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
             end_time as "endTime",
             slot_duration_minutes as "slotDuration",
             allow_online_booking as "allowOnlineBooking"
-     FROM provider_availability_templates
-     WHERE tenant_id = $1
-       AND provider_id = $2
-       AND day_of_week = $3
-       AND is_active = true
-       AND allow_online_booking = true`,
+     FROM provider_availability_templates pat
+     INNER JOIN providers p
+       ON p.id = pat.provider_id AND p.tenant_id = pat.tenant_id
+     WHERE pat.tenant_id = $1
+       AND pat.provider_id = $2
+       AND pat.day_of_week = $3
+       AND pat.is_active = true
+       AND pat.allow_online_booking = true
+       AND coalesce(p.is_active, true) = true
+       AND coalesce(p.is_test_data, false) = false`,
     [tenantId, providerId, dayOfWeek]
   );
 
@@ -204,7 +208,9 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
   const appointmentTypeResult = await pool.query(
     `SELECT duration_minutes as "durationMinutes"
      FROM appointment_types
-     WHERE id = $1 AND tenant_id = $2`,
+     WHERE id = $1 AND tenant_id = $2
+       AND coalesce(is_active, true) = true
+       AND coalesce(is_test_data, false) = false`,
     [appointmentTypeId, tenantId]
   );
 
@@ -331,7 +337,9 @@ export async function getProviderInfo(tenantId: string, providerId: string) {
             NULL::text as bio,
             NULL::text as "profileImageUrl"
      FROM providers
-     WHERE id = $1 AND tenant_id = $2`,
+     WHERE id = $1 AND tenant_id = $2
+       AND coalesce(is_active, true) = true
+       AND coalesce(is_test_data, false) = false`,
     [providerId, tenantId]
   );
 
@@ -417,12 +425,16 @@ export async function getAvailableDatesInMonth(
     const dayOfWeek = getWeekdayForDateKey(date);
     const hasTemplate = await pool.query(
       `SELECT 1
-       FROM provider_availability_templates
-       WHERE tenant_id = $1
-         AND provider_id = $2
-         AND day_of_week = $3
-         AND is_active = true
-         AND allow_online_booking = true
+       FROM provider_availability_templates pat
+       INNER JOIN providers p
+         ON p.id = pat.provider_id AND p.tenant_id = pat.tenant_id
+       WHERE pat.tenant_id = $1
+         AND pat.provider_id = $2
+         AND pat.day_of_week = $3
+         AND pat.is_active = true
+         AND pat.allow_online_booking = true
+         AND coalesce(p.is_active, true) = true
+         AND coalesce(p.is_test_data, false) = false
        LIMIT 1`,
       [tenantId, providerId, dayOfWeek]
     );

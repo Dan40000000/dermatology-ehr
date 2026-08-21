@@ -31,6 +31,11 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 describe('LoginPage', () => {
+  const fillCredentials = (email = 'admin@demo.practice', password = 'Password123!') => {
+    fireEvent.change(screen.getByPlaceholderText('admin@demo.practice'), { target: { value: email } });
+    fireEvent.change(screen.getByPlaceholderText(/•/), { target: { value: password } });
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     authMocks.isAuthenticated = false;
@@ -54,16 +59,15 @@ describe('LoginPage', () => {
     expect(screen.getByRole('button', { name: /auth:login.signInButton/i })).toBeInTheDocument();
   });
 
-  it('should display demo credentials', () => {
+  it('should not publish demo credentials by default', () => {
     render(
       <BrowserRouter>
         <LoginPage />
       </BrowserRouter>
     );
 
-    expect(screen.getByText(/Beta test credentials/i)).toBeInTheDocument();
-    expect(screen.getByText(/admin@demo.practice/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Password123!/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Beta test credentials/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Password123!/)).not.toBeInTheDocument();
   });
 
   it('should have pre-filled default values', () => {
@@ -78,8 +82,8 @@ describe('LoginPage', () => {
     const passwordInput = screen.getByPlaceholderText(/•/) as HTMLInputElement;
 
     expect(tenantInput.value).toBe('tenant-demo');
-    expect(emailInput.value).toBe('admin@demo.practice');
-    expect(passwordInput.value).toBe('Password123!');
+    expect(emailInput.value).toBe('');
+    expect(passwordInput.value).toBe('');
   });
 
   it('should update input values on change', () => {
@@ -109,6 +113,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
+    fillCredentials();
     const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);
 
@@ -118,14 +123,14 @@ describe('LoginPage', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/home', { replace: true });
   });
 
-  it('should fill and submit the physician demo credentials', async () => {
+  it('should submit explicitly entered physician credentials', async () => {
     render(
       <BrowserRouter>
         <LoginPage />
       </BrowserRouter>
     );
 
-    fireEvent.click(screen.getByText('provider@demo.practice').closest('button')!);
+    fillCredentials('provider@demo.practice');
     fireEvent.click(screen.getByRole('button', { name: /auth:login.signInButton/i }));
 
     await waitFor(() => {
@@ -142,6 +147,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
+    fillCredentials();
     const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);
 
@@ -159,6 +165,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
+    fillCredentials();
     const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);
 
@@ -176,6 +183,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
+    fillCredentials();
     const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
 
     fireEvent.click(submitButton);
@@ -335,8 +343,10 @@ describe('LoginPage', () => {
     const emailInput = screen.getByPlaceholderText('admin@demo.practice');
     const passwordInput = screen.getByPlaceholderText(/•/);
 
-    expect(emailInput).toHaveAttribute('autocomplete', 'username');
-    expect(passwordInput).toHaveAttribute('autocomplete', 'current-password');
+    expect(emailInput).toHaveAttribute('autocomplete', 'section-provider-login username');
+    expect(passwordInput).toHaveAttribute('autocomplete', 'section-provider-login current-password');
+    expect(emailInput).toHaveAttribute('name', 'provider-login-email');
+    expect(passwordInput).toHaveAttribute('name', 'provider-login-password');
   });
 
   it('should require all fields', () => {
@@ -362,8 +372,8 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText(/© 2025 DermEHR/i)).toBeInTheDocument();
-    expect(screen.getByText(/Version 1.0.0/i)).toBeInTheDocument();
+    expect(screen.getByText(/© 2026 DermEHR/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pilot v0.1.0/i)).toBeInTheDocument();
   });
 
   it('should have proper form labels', () => {
@@ -387,6 +397,7 @@ describe('LoginPage', () => {
 
     const form = screen.getByRole('button', { name: /auth:login.signInButton/i }).closest('form');
 
+    fillCredentials();
     fireEvent.submit(form!);
 
     await waitFor(() => {
@@ -406,6 +417,7 @@ describe('LoginPage', () => {
     const emailInput = screen.getByPlaceholderText('admin@demo.practice') as HTMLInputElement;
 
     fireEvent.change(emailInput, { target: { value: 'custom@example.com' } });
+    fireEvent.change(screen.getByPlaceholderText(/•/), { target: { value: 'Password123!' } });
 
     const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);

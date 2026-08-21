@@ -591,11 +591,10 @@ export function DocumentsPage() {
 
   return (
     <div className="documents-page" style={{
-      background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+      background: '#f8fafc',
       minHeight: 'calc(100vh - 200px)',
       padding: '1.5rem',
-      borderRadius: '12px',
-      boxShadow: '0 20px 60px rgba(20, 184, 166, 0.3)',
+      borderRadius: '8px',
     }}>
       <div className="page-header" style={{
         display: 'flex',
@@ -603,42 +602,37 @@ export function DocumentsPage() {
         alignItems: 'center',
         marginBottom: '1.5rem',
         padding: '1.5rem',
-        background: 'rgba(255, 255, 255, 0.95)',
-        borderRadius: '12px',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-        backdropFilter: 'blur(10px)',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: '8px',
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
       }}>
         <h1 style={{
           margin: 0,
           fontSize: '2rem',
           fontWeight: 700,
-          background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
+          color: '#0f172a',
         }}>Document Management</h1>
         <button
           type="button"
           onClick={openUploadModal}
           style={{
             padding: '0.75rem 1.5rem',
-            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            background: '#0369a1',
             color: '#ffffff',
             border: 'none',
             borderRadius: '8px',
             fontSize: '0.875rem',
             fontWeight: 700,
             cursor: 'pointer',
-            boxShadow: '0 4px 12px rgba(20, 184, 166, 0.4)',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.12)',
             transition: 'all 0.3s ease',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.transform = 'translateY(-2px)';
-            e.currentTarget.style.boxShadow = '0 6px 20px rgba(20, 184, 166, 0.6)';
+            e.currentTarget.style.background = '#075985';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.transform = 'translateY(0)';
-            e.currentTarget.style.boxShadow = '0 4px 12px rgba(20, 184, 166, 0.4)';
+            e.currentTarget.style.background = '#0369a1';
           }}
         >
           + Upload Document
@@ -1307,12 +1301,12 @@ export function DocumentsPage() {
 
       {/* Filters */}
       <div className="documents-filters" style={{
-        background: 'rgba(255, 255, 255, 0.95)',
-        borderRadius: '12px',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: '8px',
         padding: '1rem',
         marginBottom: '1rem',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-        backdropFilter: 'blur(10px)',
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
       }}>
         <div className="search-box">
           <input
@@ -1322,7 +1316,7 @@ export function DocumentsPage() {
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{
               padding: '0.75rem',
-              border: '2px solid #14b8a6',
+              border: '1px solid #cbd5e1',
               borderRadius: '8px',
               width: '100%',
               fontSize: '0.875rem',
@@ -1335,10 +1329,11 @@ export function DocumentsPage() {
             patients={patients}
             value={selectedPatient}
             onChange={setSelectedPatient}
-            label="Patient"
+            label="Patient filter"
             includeAllOption
             allValue="all"
             compact
+            hideSelect
           />
         </div>
 

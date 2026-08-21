@@ -15,8 +15,8 @@ describe('Footer Component', () => {
 
   it('renders version information', () => {
     render(<Footer />);
-    expect(screen.getByText(/Version: 1\.0\.0/i)).toBeInTheDocument();
-    expect(screen.getByText(/Build: 2024\.12\.06/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pilot v0\.1\.0/i)).toBeInTheDocument();
+    expect(screen.getByText(/Not for clinical use/i)).toBeInTheDocument();
   });
 
   it('renders legal disclaimer', () => {

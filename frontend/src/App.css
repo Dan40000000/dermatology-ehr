@@ -10511,15 +10511,6 @@ pre {
   margin-left: 0.125rem;
 }
 
-.ema-nav-more {
-  border-left: 1px solid rgba(255, 255, 255, 0.22);
-  border-right: 0;
-  border-top: 0;
-  background: transparent;
-  font-family: inherit;
-  cursor: pointer;
-}
-
 .ema-nav-link:hover {
   background: rgba(255, 255, 255, 0.15);
   color: #ffffff;
@@ -10621,27 +10612,6 @@ pre {
   z-index: 9999; /* Below modals (10000+) but above content */
   padding: 0.5rem 0;
   animation: dropdownFadeIn 0.15s ease;
-}
-
-.ema-nav-dropdown-portal--more {
-  width: min(520px, calc(100vw - 16px));
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.ema-nav-dropdown-portal--more .ema-nav-dropdown-item {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ema-nav-dropdown-primary-duplicate {
-  display: none;
-}
-
-@media (max-width: 560px) {
-  .ema-nav-dropdown-portal--more {
-    grid-template-columns: 1fr;
-  }
 }
 
 .ema-nav-dropdown-item {
@@ -12055,14 +12025,6 @@ pre {
 
   .ema-nav {
     overflow-x: auto;
-  }
-
-  .ema-nav > .ema-nav-item:nth-child(n + 3):not(:last-child) {
-    display: none;
-  }
-
-  .ema-nav-dropdown-primary-duplicate {
-    display: block;
   }
 
   .stats-grid {

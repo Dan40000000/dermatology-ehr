@@ -14,7 +14,6 @@ interface DropdownItem {
   section?: string;
   module?: ModuleKey;
   requiresFeedbackAccess?: boolean;
-  primaryDuplicate?: boolean;
 }
 
 interface NavItem {
@@ -26,17 +25,7 @@ interface NavItem {
 }
 
 const NAV_DROPDOWN_WIDTH = 260;
-const MORE_DROPDOWN_WIDTH = 520;
 const NAV_DROPDOWN_VIEWPORT_MARGIN = 8;
-const MORE_MENU_PATH = '__more__';
-const PRIMARY_NAV_PATHS = new Set([
-  '/home',
-  '/schedule',
-  '/office-flow',
-  '/tasks',
-  '/clinical-inbox',
-  '/patients',
-]);
 
 const navItems: NavItem[] = [
   {
@@ -436,11 +425,9 @@ export function MainNav() {
 
   // Filter nav items based on user role
   const filteredNavItems = navItems.filter(item => canAccessAnyModule(item.module));
-  const primaryNavItems = filteredNavItems.filter((item) => PRIMARY_NAV_PATHS.has(item.path));
-  const moreNavItems = filteredNavItems.filter((item) => !PRIMARY_NAV_PATHS.has(item.path));
 
-  const getDropdownLeft = (rect: DOMRect, width = NAV_DROPDOWN_WIDTH) => {
-    const maxLeft = window.innerWidth - width - NAV_DROPDOWN_VIEWPORT_MARGIN;
+  const getDropdownLeft = (rect: DOMRect) => {
+    const maxLeft = window.innerWidth - NAV_DROPDOWN_WIDTH - NAV_DROPDOWN_VIEWPORT_MARGIN;
     return Math.max(NAV_DROPDOWN_VIEWPORT_MARGIN, Math.min(rect.left, maxLeft));
   };
 
@@ -453,8 +440,7 @@ export function MainNav() {
     }
     setHoveredItem(itemPath);
     const rect = element.getBoundingClientRect();
-    const dropdownWidth = itemPath === MORE_MENU_PATH ? MORE_DROPDOWN_WIDTH : NAV_DROPDOWN_WIDTH;
-    setDropdownPos({ top: rect.bottom, left: getDropdownLeft(rect, dropdownWidth) });
+    setDropdownPos({ top: rect.bottom, left: getDropdownLeft(rect) });
   };
 
   const handleMouseLeave = () => {
@@ -520,14 +506,12 @@ export function MainNav() {
     return paths.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`));
   };
 
-  const isMoreActive = moreNavItems.some(isActive);
-
   return (
     <>
       {/* Main Navigation Bar - wrapper handles scroll, nav handles background */}
       <div className="ema-nav-wrapper">
         <nav className="ema-nav" role="navigation" aria-label="Main navigation">
-          {primaryNavItems.map((item) => (
+          {filteredNavItems.map((item) => (
             <div
               key={item.path}
               className="ema-nav-item"
@@ -541,7 +525,6 @@ export function MainNav() {
                 aria-current={isActive(item) ? 'page' : undefined}
                 aria-haspopup={item.dropdown ? 'true' : undefined}
                 aria-expanded={item.dropdown && hoveredItem === item.path ? 'true' : 'false'}
-                onFocus={(event) => item.dropdown && handleMouseEnter(item.path, event.currentTarget.parentElement as HTMLDivElement)}
               >
                 {item.label}
                 {item.dropdown && (
@@ -570,43 +553,14 @@ export function MainNav() {
               </NavLink>
             </div>
           ))}
-          {moreNavItems.length > 0 && (
-            <div
-              className="ema-nav-item"
-              ref={(element) => { if (element) navItemRefs.current.set(MORE_MENU_PATH, element); }}
-              onMouseEnter={(event) => handleMouseEnter(MORE_MENU_PATH, event.currentTarget)}
-              onMouseLeave={handleMouseLeave}
-            >
-              <button
-                type="button"
-                className={`ema-nav-link ema-nav-more ${isMoreActive ? 'active' : ''}`}
-                aria-haspopup="menu"
-                aria-expanded={hoveredItem === MORE_MENU_PATH}
-                onClick={(event) => {
-                  handleMouseEnter(MORE_MENU_PATH, event.currentTarget.parentElement as HTMLDivElement);
-                }}
-              >
-                More
-                <span className="dropdown-arrow" aria-hidden="true">▼</span>
-              </button>
-            </div>
-          )}
         </nav>
       </div>
 
       {/* Dropdown rendered via portal to escape scroll container */}
       {hoveredItem && dropdownPos && (() => {
         const item = filteredNavItems.find(i => i.path === hoveredItem);
-        const dropdownItems: DropdownItem[] = hoveredItem === MORE_MENU_PATH
-          ? [
-              ...primaryNavItems
-                .filter((navItem) => navItem.path !== '/home' && navItem.path !== '/schedule')
-                .map((navItem) => ({ label: navItem.label, path: navItem.path, primaryDuplicate: true })),
-              ...moreNavItems.map((navItem) => ({ label: navItem.label, path: navItem.path })),
-            ]
-          : item?.dropdown || [];
-        if (dropdownItems.length === 0) return null;
-        const visibleDropdown = dropdownItems.filter((dropdownItem) => {
+        if (!item?.dropdown) return null;
+        const visibleDropdown = item.dropdown.filter((dropdownItem) => {
           if (dropdownItem.requiresFeedbackAccess && !canViewProfessionalFeedback(user)) return false;
           return !dropdownItem.module || accessControl.canAccessModule(dropdownItem.module, userRole);
         });
@@ -614,7 +568,7 @@ export function MainNav() {
 
         return createPortal(
           <div
-            className={`ema-nav-dropdown-portal ${hoveredItem === MORE_MENU_PATH ? 'ema-nav-dropdown-portal--more' : ''}`}
+            className="ema-nav-dropdown-portal"
             style={{ top: dropdownPos.top, left: dropdownPos.left }}
             onMouseEnter={handleDropdownEnter}
             onMouseLeave={handleDropdownLeave}
@@ -632,9 +586,9 @@ export function MainNav() {
                         <NavLink
                           key={dropdownItem.path}
                           to={dropdownItem.path}
-                          className={`ema-nav-dropdown-item ${dropdownItem.primaryDuplicate ? 'ema-nav-dropdown-primary-duplicate' : ''}`}
+                          className="ema-nav-dropdown-item"
                           role="menuitem"
-                          onClick={() => { setHoveredItem(null); setDropdownPos(null); }}
+                          onClick={() => setHoveredItem(null)}
                         >
                           {dropdownItem.label}
                         </NavLink>
@@ -646,9 +600,9 @@ export function MainNav() {
                   <NavLink
                     key={dropdownItem.path}
                     to={dropdownItem.path}
-                    className={`ema-nav-dropdown-item ${dropdownItem.primaryDuplicate ? 'ema-nav-dropdown-primary-duplicate' : ''}`}
+                    className="ema-nav-dropdown-item"
                     role="menuitem"
-                    onClick={() => { setHoveredItem(null); setDropdownPos(null); }}
+                    onClick={() => setHoveredItem(null)}
                   >
                     {dropdownItem.label}
                   </NavLink>

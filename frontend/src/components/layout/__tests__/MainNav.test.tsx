@@ -38,16 +38,9 @@ describe('MainNav role-based visibility', () => {
       </MemoryRouter>
     );
 
-  const openMoreMenu = async () => {
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /More/ }));
-    });
-  };
-
-  it('shows Admin and hides removed Quality nav for admin', async () => {
+  it('shows Admin and hides removed Quality nav for admin', () => {
     mockRole = 'admin';
     renderNav();
-    await openMoreMenu();
     expect(screen.getByText('Admin')).toBeInTheDocument();
     expect(screen.getByText('AI Assistant')).toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
@@ -55,10 +48,9 @@ describe('MainNav role-based visibility', () => {
     expect(screen.queryByText('Registry')).not.toBeInTheDocument();
   });
 
-  it('hides Admin and removed Quality nav for provider', async () => {
+  it('hides Admin and removed Quality nav for provider', () => {
     mockRole = 'provider';
     renderNav();
-    await openMoreMenu();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
     expect(screen.getByText('AI Assistant')).toBeInTheDocument();
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
@@ -67,10 +59,9 @@ describe('MainNav role-based visibility', () => {
     expect(screen.queryByText('Registry')).not.toBeInTheDocument();
   });
 
-  it('hides Admin and removed Quality nav for front desk', async () => {
+  it('hides Admin and removed Quality nav for front desk', () => {
     mockRole = 'front_desk';
     renderNav();
-    await openMoreMenu();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
     expect(screen.queryByText('AI Assistant')).not.toBeInTheDocument();
     expect(screen.queryByText('Financials / Analytics')).not.toBeInTheDocument();
@@ -80,37 +71,47 @@ describe('MainNav role-based visibility', () => {
     expect(screen.queryByText('Registry')).not.toBeInTheDocument();
   });
 
-  it('shows billing revenue-cycle nav but hides analytics', async () => {
+  it('shows billing revenue-cycle nav but hides analytics', () => {
     mockRole = 'billing';
     renderNav();
-    await openMoreMenu();
     expect(screen.getByText('Financials / Analytics')).toBeInTheDocument();
     expect(screen.getByText('Claims / Clearinghouse')).toBeInTheDocument();
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
   });
 
-  it('keeps revenue-cycle destinations reachable from the More menu', async () => {
+  it('links clearinghouse submenu directly to ERA, EFT, and reconciliation tabs', async () => {
     mockRole = 'billing';
     renderNav();
-    await openMoreMenu();
 
-    expect(screen.getByRole('menuitem', { name: 'Claims / Clearinghouse' })).toHaveAttribute('href', '/claims');
-    expect(screen.getByRole('menuitem', { name: 'Financials / Analytics' })).toHaveAttribute('href', '/financials');
+    const claimsMenuLink = screen.getByRole('link', { name: /Claims \/ Clearinghouse/ });
+    const claimsMenuItem = claimsMenuLink.closest('.ema-nav-item');
+    expect(claimsMenuItem).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.mouseEnter(claimsMenuItem!);
+    });
+
+    expect(screen.getByRole('menuitem', { name: 'ERA' })).toHaveAttribute('href', '/clearinghouse?tab=era');
+    expect(screen.getByRole('menuitem', { name: 'EFT' })).toHaveAttribute('href', '/clearinghouse?tab=eft');
+    expect(screen.getByRole('menuitem', { name: 'Reconciliation' })).toHaveAttribute(
+      'href',
+      '/clearinghouse?tab=reconciliation',
+    );
   });
 
-  it('keeps the More dropdown inside the viewport when it opens near the right edge', async () => {
+  it('keeps the Admin dropdown inside the viewport when it opens near the right edge', async () => {
     mockRole = 'admin';
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
 
     renderNav();
 
-    const moreButton = screen.getByRole('button', { name: /More/ });
-    const moreMenuItem = moreButton.closest('.ema-nav-item');
-    expect(moreMenuItem).not.toBeNull();
+    const adminMenuLink = screen.getByRole('link', { name: /Admin/ });
+    const adminMenuItem = adminMenuLink.closest('.ema-nav-item');
+    expect(adminMenuItem).not.toBeNull();
 
-    const rectSpy = vi.spyOn(moreMenuItem!, 'getBoundingClientRect').mockReturnValue({
+    const rectSpy = vi.spyOn(adminMenuItem!, 'getBoundingClientRect').mockReturnValue({
       bottom: 44,
       height: 44,
       left: 930,
@@ -123,10 +124,10 @@ describe('MainNav role-based visibility', () => {
     } as DOMRect);
 
     await act(async () => {
-      fireEvent.mouseEnter(moreMenuItem!);
+      fireEvent.mouseEnter(adminMenuItem!);
     });
 
-    expect(screen.getByRole('menu')).toHaveStyle({ left: '472px', top: '44px' });
+    expect(screen.getByRole('menu')).toHaveStyle({ left: '732px', top: '44px' });
 
     rectSpy.mockRestore();
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });

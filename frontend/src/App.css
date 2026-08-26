@@ -14294,8 +14294,9 @@ kbd {
   }
 
   .clinical-inbox-items {
-    max-height: none;
-    min-height: auto;
+    max-height: min(58vh, 40rem);
+    min-height: 18rem;
+    overscroll-behavior: contain;
   }
 }
 

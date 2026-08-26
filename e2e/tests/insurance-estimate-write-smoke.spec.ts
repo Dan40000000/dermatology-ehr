@@ -467,10 +467,15 @@ test.describe('Insurance Estimate Write Smoke', () => {
     await page.getByLabel('CPT codes').fill('99213, 11102');
     await page.getByRole('button', { name: /estimate procedure cost/i }).click();
 
-    await expect(page.getByText('$375.00', { exact: true })).toBeVisible();
-    await expect(page.getByText('$250.00', { exact: true })).toBeVisible();
-    await expect(page.getByText('$140.00', { exact: true })).toBeVisible();
-    await expect(page.getByText('$110.00', { exact: true })).toBeVisible();
+    const estimateByCptTable = page.getByRole('table', { name: /estimate by cpt code/i });
+    await expect(estimateByCptTable).toBeVisible();
+    await expect(estimateByCptTable.getByRole('cell', { name: /99213/ })).toBeVisible();
+    await expect(estimateByCptTable.getByRole('cell', { name: /11102/ })).toBeVisible();
+    const estimateTotalRow = estimateByCptTable.getByRole('row', { name: /^Total / });
+    await expect(estimateTotalRow.getByText('$375.00', { exact: true })).toBeVisible();
+    await expect(estimateTotalRow.getByText('$250.00', { exact: true })).toBeVisible();
+    await expect(estimateTotalRow.getByText('$140.00', { exact: true })).toBeVisible();
+    await expect(estimateTotalRow.getByText('$110.00', { exact: true })).toBeVisible();
     await expect(page.getByText(/high confidence · 90\/100/i)).toBeVisible();
     await expect(page.getByText(/configured payer contract rate for every procedure/i)).toBeVisible();
     await expect(page.getByText(/allowed-amount basis: configured payer contract rate for every procedure/i)).toBeVisible();

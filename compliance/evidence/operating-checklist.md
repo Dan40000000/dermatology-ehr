@@ -1,6 +1,7 @@
 # HIPAA Operating Checklist
 
-Last reviewed: 2026-05-24
+Last technical release review: 2026-08-26
+Last practice-owner attestation recorded: 2026-05-24
 Owner: Practice administrator and compliance officer
 Scope: Dermatology EHR staging and production operations
 
@@ -59,3 +60,11 @@ This checklist is the operating control list for a practice using the system wit
 - Added post-visit coding review as a role-controlled queue for providers, medical assistants, nurses, billing, managers, admins, and compliance officers.
 - Confirmed 5-minute idle timeout exists in the frontend session manager unless overridden by `VITE_SESSION_IDLE_TIMEOUT_MINUTES`.
 - Added this checklist to the automated staging readiness evidence set.
+
+## 2026-08-26 Release Review Notes
+
+- Ran the full release verification for PR #8: frontend and backend suites, authorization/browser smoke coverage, migration checks, route contracts, lint, security scans, TypeScript, and production builds.
+- Verified the Railway pilot API health endpoints and visually inspected the authenticated Clinical Inbox on desktop and 390-pixel mobile layouts without console errors or horizontal overflow.
+- Rehearsed the technical access-control and incident-response evidence described in the 2026-08-26 entries of the access review and tabletop records.
+- No live PHI was entered or changed during this release review; the browser data used for workflow mutation testing was synthetic and restored after the check.
+- This technical review does not attest that a human operator completed the daily vendor-dashboard checks, backup-job review, named-user recertification, legal contact validation, or live vendor/BAA sign-off. Those remain the responsibility of the practice administrator and compliance officer before live-PHI go-live.

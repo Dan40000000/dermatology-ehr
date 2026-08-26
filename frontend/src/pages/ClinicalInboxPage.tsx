@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Clock3,
   FileText,
@@ -16,6 +17,7 @@ import {
   Send,
   ShieldAlert,
   Stethoscope,
+  UserRoundCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -65,6 +67,12 @@ type InboxSource =
 
 type InboxQueue = 'all' | 'messages' | 'clinical' | 'rx' | 'results' | 'admin';
 type InboxPriority = 'critical' | 'urgent' | 'high' | 'normal' | 'low';
+type PriorityFilter = 'all' | 'critical-urgent' | InboxPriority;
+type WorkflowState = 'needs-action' | 'in-progress' | 'waiting-provider' | 'waiting-patient' | 'waiting-external' | 'done';
+type WorkflowFilter = 'open' | Exclude<WorkflowState, 'done'>;
+type OwnerFilter = 'all' | 'mine' | 'unassigned';
+type SortOption = 'priority' | 'oldest' | 'newest' | 'due';
+type QuickFilter = 'all' | 'needs-action' | 'critical-urgent' | 'overdue' | 'unassigned';
 
 interface ClinicalInboxItem {
   id: string;
@@ -78,6 +86,8 @@ interface ClinicalInboxItem {
   patientMrn?: string;
   priority: InboxPriority;
   status: string;
+  workflowState: WorkflowState;
+  ownerId?: string;
   ownerName?: string;
   dueAt?: string;
   updatedAt?: string;
@@ -132,6 +142,19 @@ const PRIORITY_WEIGHT: Record<InboxPriority, number> = {
   normal: 2,
   low: 1,
 };
+
+const WORKFLOW_GROUPS: Array<{ state: WorkflowState; label: string; help: string }> = [
+  { state: 'needs-action', label: 'Needs action', help: 'New, open, unread, or requiring a decision' },
+  { state: 'in-progress', label: 'In progress', help: 'Actively being worked' },
+  { state: 'waiting-provider', label: 'Waiting on provider', help: 'Provider review or response required' },
+  { state: 'waiting-patient', label: 'Waiting on patient', help: 'The patient has the next action' },
+  { state: 'waiting-external', label: 'Waiting externally', help: 'Pending payer, laboratory, pharmacy, or outside response' },
+];
+
+const WORKFLOW_LABELS: Record<WorkflowState, string> = {
+  ...Object.fromEntries(WORKFLOW_GROUPS.map((group) => [group.state, group.label])),
+  done: 'Resolved',
+} as Record<WorkflowState, string>;
 
 const ACTIONABLE_RESULT_FLAGS = new Set(['cancerous', 'panic_value', 'precancerous', 'abnormal', 'high', 'out_of_range']);
 const RESULT_ORDER_TYPES = new Set(['lab', 'pathology', 'biopsy', 'radiology', 'dermpath']);
@@ -189,14 +212,59 @@ const getSortTime = (item: ClinicalInboxItem) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const getDueTime = (item: ClinicalInboxItem) => {
+  if (!item.dueAt) return Number.POSITIVE_INFINITY;
+  const parsed = Date.parse(item.dueAt);
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+};
+
 const isOverdue = (item: ClinicalInboxItem) => {
   if (!item.dueAt || !isOpenStatus(item.status)) return false;
   const due = new Date(item.dueAt);
   if (Number.isNaN(due.getTime())) return false;
-  const endToday = new Date();
-  endToday.setHours(23, 59, 59, 999);
-  return due.getTime() < endToday.getTime();
+  const startToday = new Date();
+  startToday.setHours(0, 0, 0, 0);
+  return due.getTime() < startToday.getTime();
 };
+
+const normalizeWorkflowState = (
+  source: InboxSource,
+  status?: string | null,
+  raw?: Record<string, unknown> | null,
+): WorkflowState => {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (['closed', 'completed', 'cancelled', 'canceled', 'done', 'resolved', 'approved', 'denied', 'archived'].includes(normalized)) {
+    return 'done';
+  }
+  if (normalized === 'waiting-patient') return 'waiting-patient';
+  if (normalized === 'waiting-provider') return 'waiting-provider';
+  if (['in-progress', 'in_progress', 'processing', 'working'].includes(normalized)) return 'in-progress';
+  if (
+    (source === 'epa' && ['submitted', 'payer-review', 'payer_review'].includes(normalized)) ||
+    (source === 'order' && ['ordered', 'sent'].includes(normalized)) ||
+    (source === 'pathology' && /pending results?/i.test(normalized)) ||
+    Boolean(raw?.waitingOnExternal)
+  ) {
+    return 'waiting-external';
+  }
+  return 'needs-action';
+};
+
+const isUnassigned = (item: ClinicalInboxItem) => !item.ownerId && (!item.ownerName || item.ownerName === 'Unassigned');
+
+const sortInboxItems = (items: ClinicalInboxItem[], sort: SortOption) => [...items].sort((left, right) => {
+  if (sort === 'oldest') return getSortTime(left) - getSortTime(right);
+  if (sort === 'newest') return getSortTime(right) - getSortTime(left);
+  if (sort === 'due') {
+    const dueDiff = getDueTime(left) - getDueTime(right);
+    if (dueDiff !== 0) return dueDiff;
+  }
+  const priorityDiff = PRIORITY_WEIGHT[right.priority] - PRIORITY_WEIGHT[left.priority];
+  if (priorityDiff !== 0) return priorityDiff;
+  const dueDiff = getDueTime(left) - getDueTime(right);
+  if (dueDiff !== 0) return dueDiff;
+  return getSortTime(left) - getSortTime(right);
+});
 
 const itemMatchesSearch = (item: ClinicalInboxItem, search: string) => {
   const q = search.trim().toLowerCase();
@@ -283,6 +351,8 @@ const toPortalItem = (thread: any): ClinicalInboxItem => ({
   patientMrn: thread.patientMrn,
   priority: normalizePriority(thread.priority),
   status: thread.status || 'open',
+  workflowState: normalizeWorkflowState('portal', thread.status || 'open', thread),
+  ownerId: thread.assignedTo,
   ownerName: thread.assignedToName || (thread.assignedTo ? 'Assigned' : 'Unassigned'),
   updatedAt: thread.lastMessageAt || thread.updatedAt || thread.createdAt,
   unread: thread.isReadByStaff === false,
@@ -303,6 +373,9 @@ const toSmsItem = (conversation: any): ClinicalInboxItem => ({
   patientMrn: conversation.patientMrn,
   priority: normalizePriority(conversation.category === 'medical' ? 'high' : conversation.category === 'prescription' ? 'high' : 'normal'),
   status: conversation.threadStatus || conversation.status || 'open',
+  workflowState: normalizeWorkflowState('sms', conversation.threadStatus || conversation.status || 'open', conversation),
+  ownerId: conversation.assignedTo,
+  ownerName: conversation.assignedToName,
   updatedAt: conversation.lastMessageAt || conversation.lastMessageTime,
   unread: Number(conversation.unreadCount || 0) > 0,
   route: `/text-messages?patientId=${encodeURIComponent(conversation.patientId || '')}`,
@@ -321,6 +394,8 @@ const toMailItem = (thread: any): ClinicalInboxItem => ({
   patientName: threadPatientName(thread),
   priority: normalizePriority(thread.priority),
   status: thread.isArchived ? 'archived' : 'open',
+  workflowState: normalizeWorkflowState('mail', thread.isArchived ? 'archived' : 'open', thread),
+  ownerId: thread.createdBy,
   ownerName: thread.createdByName,
   updatedAt: thread.updatedAt || thread.createdAt,
   unread: Number(thread.unreadCount || 0) > 0,
@@ -340,6 +415,8 @@ const toTaskItem = (task: Task): ClinicalInboxItem => ({
   patientName: taskPatientName(task),
   priority: normalizePriority(task.priority),
   status: task.status || 'todo',
+  workflowState: normalizeWorkflowState('task', task.status || 'todo', task),
+  ownerId: task.assignedTo ? String(task.assignedTo) : undefined,
   ownerName: (task as any).assignedToName || (task.assignedTo ? 'Assigned' : 'Unassigned'),
   dueAt: task.dueDate || (task as any).dueAt,
   updatedAt: task.createdAt,
@@ -363,6 +440,8 @@ const toRefillItem = (refill: any): ClinicalInboxItem => ({
   patientName: refill.patientName || normalizeName(refill.patientFirstName, refill.patientLastName),
   priority: normalizePriority(refill.priority || 'high'),
   status: refill.status || 'pending',
+  workflowState: normalizeWorkflowState('refill', refill.status || 'pending', refill),
+  ownerId: refill.providerId || refill.provider_id,
   ownerName: refill.providerName,
   updatedAt: refill.requestedDate || refill.requested_date || refill.createdAt || refill.created_at,
   route: '/rx?tab=refills',
@@ -383,6 +462,9 @@ const toPAItem = (request: any): ClinicalInboxItem => ({
   patientName: request.patientName || normalizeName(request.patientFirstName, request.patientLastName),
   priority: normalizePriority(request.urgency || request.priority || (request.status === 'error' ? 'high' : 'normal')),
   status: request.status || 'pending',
+  workflowState: normalizeWorkflowState('epa', request.status || 'pending', request),
+  ownerId: request.assignedTo || request.assigned_to,
+  ownerName: request.assignedToName || request.assigned_to_name,
   updatedAt: request.updatedAt || request.updated_at || request.createdAt || request.created_at,
   route: '/prior-auth',
   actionLabel: 'Open ePA',
@@ -401,6 +483,8 @@ const toOrderItem = (order: Order): ClinicalInboxItem => ({
   patientMrn: order.patientMrn,
   priority: orderPriority(order),
   status: order.status || 'pending',
+  workflowState: normalizeWorkflowState('order', order.status || 'pending', order),
+  ownerId: (order as unknown as { providerId?: string }).providerId,
   ownerName: order.providerName,
   updatedAt: order.resultUpdatedAt || order.resultsProcessed || order.createdAt,
   route: order.results
@@ -427,6 +511,8 @@ const toPathologyItem = (biopsy: BiopsySafetyItem): ClinicalInboxItem => ({
   patientMrn: biopsy.mrn,
   priority: normalizePriority(biopsy.highest_severity || biopsy.safety_flags?.[0]?.severity),
   status: biopsy.loop_status || biopsy.status || 'open',
+  workflowState: normalizeWorkflowState('pathology', biopsy.loop_status || biopsy.status || 'open', biopsy),
+  ownerId: (biopsy as unknown as { ordering_provider_id?: string }).ordering_provider_id,
   ownerName: biopsy.ordering_provider_name,
   dueAt: biopsy.highest_severity === 'critical' ? todayIsoDate() : undefined,
   updatedAt: biopsy.resulted_at || biopsy.sent_at || biopsy.ordered_at,
@@ -448,6 +534,8 @@ const toFaxItem = (fax: any): ClinicalInboxItem => ({
   patientName: fax.patientName,
   priority: normalizePriority(fax.status === 'failed' ? 'high' : fax.patientId ? 'normal' : 'high'),
   status: fax.status || 'received',
+  workflowState: normalizeWorkflowState('fax', fax.status || 'received', fax),
+  ownerId: fax.assignedTo || fax.assignedToId,
   ownerName: fax.assignedToEmail,
   updatedAt: fax.receivedAt || fax.createdAt,
   unread: fax.read === false,
@@ -467,7 +555,12 @@ export function ClinicalInboxPage() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(searchParams.get('item'));
   const [activeQueue, setActiveQueue] = useState<InboxQueue>((searchParams.get('queue') as InboxQueue) || 'all');
   const [search, setSearch] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState<'all' | InboxPriority>('all');
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
+  const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilter>('open');
+  const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all');
+  const [sortOption, setSortOption] = useState<SortOption>('priority');
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<WorkflowState>>(new Set());
   const [portalThread, setPortalThread] = useState<StaffPatientMessageThreadDetail | null>(null);
   const [portalMessages, setPortalMessages] = useState<StaffPatientMessage[]>([]);
   const [mailMessages, setMailMessages] = useState<any[]>([]);
@@ -475,6 +568,7 @@ export function ClinicalInboxPage() {
   const [internalNote, setInternalNote] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const effectiveRoles = useMemo(() => getEffectiveRoles(user || session?.user), [user, session]);
+  const currentUserId = String(user?.id || session?.user?.id || '');
 
   const loadInbox = useCallback(async (): Promise<LoadedInboxData> => {
     if (!session) return { items: [], warnings: [] };
@@ -555,7 +649,7 @@ export function ClinicalInboxPage() {
       .filter((fax: any) => fax.read === false || !fax.patientId)
       .map(toFaxItem);
 
-    const merged = [
+    const merged = sortInboxItems([
       ...portalItems,
       ...smsItems,
       ...mailItems,
@@ -565,11 +659,7 @@ export function ClinicalInboxPage() {
       ...orderItems,
       ...pathologyItems,
       ...faxItems,
-    ].sort((left, right) => {
-      const priorityDiff = PRIORITY_WEIGHT[right.priority] - PRIORITY_WEIGHT[left.priority];
-      if (priorityDiff !== 0) return priorityDiff;
-      return getSortTime(right) - getSortTime(left);
-    });
+    ], 'priority');
 
     return { items: merged, warnings: nextWarnings };
   }, [effectiveRoles, session]);
@@ -595,36 +685,70 @@ export function ClinicalInboxPage() {
   }, [refreshInbox]);
 
   const filteredItems = useMemo(() => (
-    items.filter((item) => {
+    sortInboxItems(items.filter((item) => {
       if (activeQueue !== 'all' && item.queue !== activeQueue) return false;
-      if (priorityFilter !== 'all' && item.priority !== priorityFilter) return false;
+      if (priorityFilter === 'critical-urgent' && !['critical', 'urgent'].includes(item.priority)) return false;
+      if (priorityFilter !== 'all' && priorityFilter !== 'critical-urgent' && item.priority !== priorityFilter) return false;
+      if (workflowFilter === 'open' && item.workflowState === 'done') return false;
+      if (workflowFilter !== 'open' && item.workflowState !== workflowFilter) return false;
+      if (ownerFilter === 'mine' && String(item.ownerId || '') !== currentUserId) return false;
+      if (ownerFilter === 'unassigned' && !isUnassigned(item)) return false;
+      if (quickFilter === 'needs-action' && item.workflowState !== 'needs-action') return false;
+      if (quickFilter === 'critical-urgent' && !['critical', 'urgent'].includes(item.priority)) return false;
+      if (quickFilter === 'overdue' && !isOverdue(item)) return false;
+      if (quickFilter === 'unassigned' && !isUnassigned(item)) return false;
       return itemMatchesSearch(item, search);
-    })
-  ), [activeQueue, items, priorityFilter, search]);
+    }), sortOption)
+  ), [activeQueue, currentUserId, items, ownerFilter, priorityFilter, quickFilter, search, sortOption, workflowFilter]);
+
+  const groupedItems = useMemo(() => WORKFLOW_GROUPS
+    .map((group) => ({ ...group, items: filteredItems.filter((item) => item.workflowState === group.state) }))
+    .filter((group) => group.items.length > 0), [filteredItems]);
 
   const selectedItem = useMemo(
     () => filteredItems.find((item) => item.id === selectedItemId) || filteredItems[0] || null,
     [filteredItems, selectedItemId]
   );
 
-  const summary = useMemo(() => ({
-    total: items.length,
-    critical: items.filter((item) => item.priority === 'critical' || item.priority === 'urgent').length,
-    unread: items.filter((item) => item.unread).length,
-    overdue: items.filter(isOverdue).length,
-    messages: items.filter((item) => item.queue === 'messages').length,
-    results: items.filter((item) => item.queue === 'results').length,
-    rx: items.filter((item) => item.queue === 'rx').length,
-  }), [items]);
+  const summary = useMemo(() => {
+    const openItems = items.filter((item) => item.workflowState !== 'done');
+    return {
+      total: openItems.length,
+      needsAction: openItems.filter((item) => item.workflowState === 'needs-action').length,
+      critical: openItems.filter((item) => item.priority === 'critical' || item.priority === 'urgent').length,
+      unread: openItems.filter((item) => item.unread).length,
+      overdue: openItems.filter(isOverdue).length,
+      unassigned: openItems.filter(isUnassigned).length,
+      messages: openItems.filter((item) => item.queue === 'messages').length,
+      results: openItems.filter((item) => item.queue === 'results').length,
+      rx: openItems.filter((item) => item.queue === 'rx').length,
+    };
+  }, [items]);
 
-  const queueCounts = useMemo(() => ({
-    all: items.length,
-    messages: items.filter((item) => item.queue === 'messages').length,
-    clinical: items.filter((item) => item.queue === 'clinical').length,
-    rx: items.filter((item) => item.queue === 'rx').length,
-    results: items.filter((item) => item.queue === 'results').length,
-    admin: items.filter((item) => item.queue === 'admin').length,
-  }), [items]);
+  const toggleQuickFilter = (filter: QuickFilter) => {
+    setQuickFilter((current) => current === filter ? 'all' : filter);
+  };
+
+  const toggleGroup = (state: WorkflowState) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(state)) next.delete(state);
+      else next.add(state);
+      return next;
+    });
+  };
+
+  const queueCounts = useMemo(() => {
+    const openItems = items.filter((item) => item.workflowState !== 'done');
+    return {
+      all: openItems.length,
+      messages: openItems.filter((item) => item.queue === 'messages').length,
+      clinical: openItems.filter((item) => item.queue === 'clinical').length,
+      rx: openItems.filter((item) => item.queue === 'rx').length,
+      results: openItems.filter((item) => item.queue === 'results').length,
+      admin: openItems.filter((item) => item.queue === 'admin').length,
+    };
+  }, [items]);
 
   const selectItem = (item: ClinicalInboxItem) => {
     setSelectedItemId(item.id);
@@ -705,7 +829,9 @@ export function ClinicalInboxPage() {
 
   const handlePrimaryAction = async () => {
     if (!session || !selectedItem) return;
+    const previousSelected = selectedItem;
     setActionBusy(true);
+    let shouldReload = true;
     try {
       if (selectedItem.source === 'task') {
         await updateTaskStatus(session.tenantId, session.accessToken, selectedItem.sourceId, 'completed');
@@ -727,23 +853,54 @@ export function ClinicalInboxPage() {
         await markSMSConversationRead(session.tenantId, session.accessToken, selectedItem.sourceId);
         showSuccess('Text conversation marked read');
       } else if (selectedItem.source === 'portal') {
+        patchPortalItem(selectedItem.id, { status: 'in-progress' });
         await updateStaffPatientMessageThread(session.tenantId, session.accessToken, selectedItem.sourceId, { status: 'in-progress' });
-        showSuccess('Portal thread moved to in progress');
+        showSuccess('Moved to In progress');
+        shouldReload = false;
       } else if (selectedItem.source === 'pathology') {
         await createFollowUpTaskForItem(selectedItem);
         showSuccess('Follow-up task created');
       } else {
         navigate(selectedItem.route);
       }
-      await reloadAfterAction();
+      if (shouldReload) await reloadAfterAction();
     } catch (err: any) {
+      if (previousSelected.source === 'portal') {
+        setItems((current) => current.map((item) => item.id === previousSelected.id ? previousSelected : item));
+        setPortalThread((current) => current ? { ...current, status: previousSelected.status } : current);
+      }
       showError(err.message || 'Failed to update inbox item');
     } finally {
       setActionBusy(false);
     }
   };
 
-  const handleSendReply = async () => {
+  const patchPortalItem = (
+    itemId: string,
+    updates: { status?: string; priority?: string; assignedTo?: string; assignedToName?: string },
+  ) => {
+    setItems((current) => current.map((item) => {
+      if (item.id !== itemId) return item;
+      const status = updates.status || item.status;
+      return {
+        ...item,
+        status,
+        workflowState: normalizeWorkflowState('portal', status, item.raw),
+        priority: updates.priority ? normalizePriority(updates.priority) : item.priority,
+        ownerId: updates.assignedTo ?? item.ownerId,
+        ownerName: updates.assignedToName ?? item.ownerName,
+        raw: { ...item.raw, ...updates },
+      };
+    }));
+    setPortalThread((current) => current ? {
+      ...current,
+      ...(updates.status ? { status: updates.status } : {}),
+      ...(updates.priority ? { priority: updates.priority } : {}),
+      ...(updates.assignedTo ? { assignedTo: updates.assignedTo, assignedToName: updates.assignedToName } : {}),
+    } : current);
+  };
+
+  const handleSendReply = async (nextStatus?: 'waiting-patient' | 'closed') => {
     if (!session || !selectedItem || !replyText.trim()) return;
     setActionBusy(true);
     try {
@@ -755,13 +912,23 @@ export function ClinicalInboxPage() {
           replyText.trim(),
           internalNote
         );
+        if (nextStatus && !internalNote) {
+          await updateStaffPatientMessageThread(session.tenantId, session.accessToken, selectedItem.sourceId, { status: nextStatus });
+          patchPortalItem(selectedItem.id, { status: nextStatus });
+        }
       } else if (selectedItem.source === 'mail') {
         await sendThreadMessage(session.tenantId, session.accessToken, selectedItem.sourceId, replyText.trim());
       }
       setReplyText('');
       setInternalNote(false);
-      showSuccess(internalNote ? 'Internal note added' : 'Reply sent');
-      await reloadAfterAction();
+      showSuccess(
+        internalNote
+          ? 'Internal note added'
+          : nextStatus
+            ? `Reply sent · ${WORKFLOW_LABELS[normalizeWorkflowState('portal', nextStatus)]}`
+            : 'Reply sent',
+      );
+      if (!nextStatus) await reloadAfterAction();
     } catch (err: any) {
       showError(err.message || 'Failed to send reply');
     } finally {
@@ -771,13 +938,43 @@ export function ClinicalInboxPage() {
 
   const handlePortalThreadUpdate = async (updates: { status?: string; priority?: string }) => {
     if (!session || !selectedItem || selectedItem.source !== 'portal') return;
+    const itemId = selectedItem.id;
+    const previous = selectedItem;
+    patchPortalItem(itemId, updates);
     setActionBusy(true);
     try {
       await updateStaffPatientMessageThread(session.tenantId, session.accessToken, selectedItem.sourceId, updates);
-      showSuccess('Thread updated');
-      await reloadAfterAction();
+      const movedTo = updates.status ? WORKFLOW_LABELS[normalizeWorkflowState('portal', updates.status)] : null;
+      showSuccess(movedTo ? `Moved to ${movedTo}` : 'Priority updated');
     } catch (err: any) {
+      setItems((current) => current.map((item) => item.id === itemId ? previous : item));
+      setPortalThread((current) => current ? {
+        ...current,
+        status: previous.status,
+        priority: previous.priority,
+        assignedTo: previous.ownerId,
+        assignedToName: previous.ownerName,
+      } : current);
       showError(err.message || 'Failed to update thread');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleTakeOwnership = async () => {
+    if (!session || !selectedItem || selectedItem.source !== 'portal' || !currentUserId) return;
+    const itemId = selectedItem.id;
+    const previous = selectedItem;
+    const ownerName = user?.fullName || session.user?.fullName || 'Assigned to me';
+    patchPortalItem(itemId, { assignedTo: currentUserId, assignedToName: ownerName });
+    setActionBusy(true);
+    try {
+      await updateStaffPatientMessageThread(session.tenantId, session.accessToken, selectedItem.sourceId, { assignedTo: currentUserId });
+      showSuccess('Assigned to you');
+    } catch (err: unknown) {
+      setItems((current) => current.map((item) => item.id === itemId ? previous : item));
+      setPortalThread((current) => current ? { ...current, assignedTo: previous.ownerId, assignedToName: previous.ownerName } : current);
+      showError(err instanceof Error ? err.message : 'Failed to assign thread');
     } finally {
       setActionBusy(false);
     }
@@ -803,43 +1000,56 @@ export function ClinicalInboxPage() {
           <h1>Clinical Inbox</h1>
           <p>Portal messages, texts, mail, refills, orders, tasks, faxes, and pathology safety items in one accountable queue.</p>
         </div>
-        <button type="button" className="clinical-inbox-refresh" onClick={refreshInbox} disabled={loading}>
-          <RefreshCw size={18} />
-          Refresh
-        </button>
+        <div className="clinical-inbox-hero-actions">
+          <strong>{summary.total} open</strong>
+          <button type="button" className="clinical-inbox-refresh" onClick={refreshInbox} disabled={loading}>
+            <RefreshCw size={18} />
+            Refresh
+          </button>
+        </div>
       </section>
 
       <section className="clinical-inbox-stats" aria-label="Clinical inbox summary">
-        <div className="clinical-inbox-stat">
+        <button
+          type="button"
+          className={`clinical-inbox-stat ${quickFilter === 'needs-action' ? 'active' : ''}`}
+          onClick={() => toggleQuickFilter('needs-action')}
+          aria-pressed={quickFilter === 'needs-action'}
+        >
           <Inbox size={20} />
-          <span>Total open</span>
-          <strong>{summary.total}</strong>
-        </div>
-        <div className="clinical-inbox-stat priority">
+          <span>Needs action</span>
+          <strong>{summary.needsAction}</strong>
+        </button>
+        <button
+          type="button"
+          className={`clinical-inbox-stat priority ${quickFilter === 'critical-urgent' ? 'active' : ''}`}
+          onClick={() => toggleQuickFilter('critical-urgent')}
+          aria-pressed={quickFilter === 'critical-urgent'}
+        >
           <AlertTriangle size={20} />
           <span>Critical / urgent</span>
           <strong>{summary.critical}</strong>
-        </div>
-        <div className="clinical-inbox-stat">
-          <MessageSquare size={20} />
-          <span>Unread</span>
-          <strong>{summary.unread}</strong>
-        </div>
-        <div className="clinical-inbox-stat">
+        </button>
+        <button
+          type="button"
+          className={`clinical-inbox-stat ${quickFilter === 'overdue' ? 'active' : ''}`}
+          onClick={() => toggleQuickFilter('overdue')}
+          aria-pressed={quickFilter === 'overdue'}
+        >
           <Clock3 size={20} />
-          <span>Due now</span>
+          <span>Overdue</span>
           <strong>{summary.overdue}</strong>
-        </div>
-        <div className="clinical-inbox-stat">
-          <Pill size={20} />
-          <span>Rx / ePA</span>
-          <strong>{summary.rx}</strong>
-        </div>
-        <div className="clinical-inbox-stat">
-          <Stethoscope size={20} />
-          <span>Results</span>
-          <strong>{summary.results}</strong>
-        </div>
+        </button>
+        <button
+          type="button"
+          className={`clinical-inbox-stat ${quickFilter === 'unassigned' ? 'active' : ''}`}
+          onClick={() => toggleQuickFilter('unassigned')}
+          aria-pressed={quickFilter === 'unassigned'}
+        >
+          <UserRoundCheck size={20} />
+          <span>Unassigned</span>
+          <strong>{summary.unassigned}</strong>
+        </button>
       </section>
 
       {warnings.length > 0 && (
@@ -861,18 +1071,52 @@ export function ClinicalInboxPage() {
                 aria-label="Search clinical inbox"
               />
             </div>
-            <select
-              value={priorityFilter}
-              onChange={(event) => setPriorityFilter(event.target.value as 'all' | InboxPriority)}
-              aria-label="Filter by priority"
-            >
-              <option value="all">All priorities</option>
-              <option value="critical">Critical</option>
-              <option value="urgent">Urgent</option>
-              <option value="high">High</option>
-              <option value="normal">Normal</option>
-              <option value="low">Low</option>
-            </select>
+            <div className="clinical-inbox-filter-grid">
+              <select
+                value={workflowFilter}
+                onChange={(event) => setWorkflowFilter(event.target.value as WorkflowFilter)}
+                aria-label="Filter by workflow status"
+              >
+                <option value="open">All open statuses</option>
+                <option value="needs-action">Needs action</option>
+                <option value="in-progress">In progress</option>
+                <option value="waiting-provider">Waiting on provider</option>
+                <option value="waiting-patient">Waiting on patient</option>
+                <option value="waiting-external">Waiting externally</option>
+              </select>
+              <select
+                value={ownerFilter}
+                onChange={(event) => setOwnerFilter(event.target.value as OwnerFilter)}
+                aria-label="Filter by owner"
+              >
+                <option value="all">Everyone</option>
+                <option value="mine">My work</option>
+                <option value="unassigned">Unassigned</option>
+              </select>
+              <select
+                value={priorityFilter}
+                onChange={(event) => setPriorityFilter(event.target.value as PriorityFilter)}
+                aria-label="Filter by priority"
+              >
+                <option value="all">All priorities</option>
+                <option value="critical-urgent">Critical / urgent</option>
+                <option value="critical">Critical</option>
+                <option value="urgent">Urgent</option>
+                <option value="high">High</option>
+                <option value="normal">Normal</option>
+                <option value="low">Low</option>
+              </select>
+              <select
+                value={sortOption}
+                onChange={(event) => setSortOption(event.target.value as SortOption)}
+                aria-label="Sort clinical inbox"
+              >
+                <option value="priority">Priority, due, oldest</option>
+                <option value="due">Earliest due</option>
+                <option value="oldest">Oldest activity</option>
+                <option value="newest">Newest activity</option>
+              </select>
+            </div>
           </div>
 
           <div className="clinical-inbox-tabs" role="tablist" aria-label="Clinical inbox queues">
@@ -902,34 +1146,55 @@ export function ClinicalInboxPage() {
             </div>
           ) : (
             <div className="clinical-inbox-items">
-              {filteredItems.map((item) => {
-                const Icon = SOURCE_ICONS[item.source];
-                const active = selectedItem?.id === item.id;
-                return (
+              {groupedItems.map((group) => (
+                <section key={group.state} className={`clinical-inbox-group ${collapsedGroups.has(group.state) ? 'collapsed' : ''}`}>
                   <button
-                    key={item.id}
                     type="button"
-                    className={`clinical-inbox-item ${active ? 'active' : ''} ${item.unread ? 'unread' : ''}`}
-                    onClick={() => selectItem(item)}
+                    className="clinical-inbox-group-header"
+                    onClick={() => toggleGroup(group.state)}
+                    aria-expanded={!collapsedGroups.has(group.state)}
                   >
-                    <span className={`clinical-inbox-source ${item.source}`}>
-                      <Icon size={16} />
-                      {SOURCE_LABELS[item.source]}
+                    <span>
+                      <strong>{group.label}</strong>
+                      <small>{group.help}</small>
                     </span>
-                    <span className={`clinical-inbox-priority ${item.priority}`}>{item.priority}</span>
-                    <strong>{item.title}</strong>
-                    <span className="clinical-inbox-item-meta">
-                      {item.patientName || 'No patient linked'}
-                      {item.patientMrn ? ` | MRN ${item.patientMrn}` : ''}
-                    </span>
-                    <span className="clinical-inbox-item-summary">{item.summary}</span>
-                    <span className="clinical-inbox-item-footer">
-                      <span>{item.status}</span>
-                      <span>{item.dueAt ? `Due ${formatDateTime(item.dueAt)}` : formatAge(item.updatedAt)}</span>
-                    </span>
+                    <span className="clinical-inbox-group-count">{group.items.length}</span>
+                    <ChevronDown size={18} />
                   </button>
-                );
-              })}
+                  {!collapsedGroups.has(group.state) && (
+                    <div className="clinical-inbox-group-items">
+                      {group.items.map((item) => {
+                        const Icon = SOURCE_ICONS[item.source];
+                        const active = selectedItem?.id === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={`clinical-inbox-item ${active ? 'active' : ''} ${item.unread ? 'unread' : ''}`}
+                            onClick={() => selectItem(item)}
+                          >
+                            <span className={`clinical-inbox-source ${item.source}`}>
+                              <Icon size={15} />
+                              {SOURCE_LABELS[item.source]}
+                            </span>
+                            <span className={`clinical-inbox-priority ${item.priority}`}>{item.priority}</span>
+                            <strong>{item.title}</strong>
+                            <span className="clinical-inbox-item-meta">
+                              {item.patientName || 'No patient linked'}
+                              {item.patientMrn ? ` · MRN ${item.patientMrn}` : ''}
+                            </span>
+                            <span className="clinical-inbox-item-summary">{item.summary}</span>
+                            <span className="clinical-inbox-item-footer">
+                              <span>{item.ownerName || 'Unassigned'}</span>
+                              <span>{item.dueAt ? `Due ${formatDateTime(item.dueAt)}` : formatAge(item.updatedAt)}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              ))}
             </div>
           )}
         </aside>
@@ -957,7 +1222,8 @@ export function ClinicalInboxPage() {
               <div className="clinical-inbox-detail-grid">
                 <div>
                   <span>Status</span>
-                  <strong>{selectedItem.status}</strong>
+                  <strong>{WORKFLOW_LABELS[selectedItem.workflowState]}</strong>
+                  <small>{selectedItem.status}</small>
                 </div>
                 <div>
                   <span>Owner</span>
@@ -1020,6 +1286,7 @@ export function ClinicalInboxPage() {
                     allowInternalNote
                     internalNote={internalNote}
                     onInternalNoteChange={setInternalNote}
+                    allowWorkflowActions={!internalNote}
                   />
                 </div>
               )}
@@ -1042,10 +1309,27 @@ export function ClinicalInboxPage() {
               )}
 
               <div className="clinical-inbox-actions">
-                <button type="button" className="primary" onClick={handlePrimaryAction} disabled={actionBusy}>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={handlePrimaryAction}
+                  disabled={actionBusy || (selectedItem.source === 'portal' && selectedItem.workflowState === 'in-progress')}
+                >
                   {selectedItem.source === 'portal' || selectedItem.source === 'mail' ? <MessageSquare size={16} /> : <CheckCircle2 size={16} />}
-                  {selectedItem.actionLabel}
+                  {selectedItem.source === 'portal'
+                    ? selectedItem.workflowState === 'in-progress'
+                      ? 'Work started'
+                      : selectedItem.workflowState === 'needs-action'
+                        ? 'Start work'
+                        : 'Resume work'
+                    : selectedItem.actionLabel}
                 </button>
+                {selectedItem.source === 'portal' && String(selectedItem.ownerId || '') !== currentUserId && (
+                  <button type="button" onClick={handleTakeOwnership} disabled={actionBusy}>
+                    <UserRoundCheck size={16} />
+                    Assign to me
+                  </button>
+                )}
                 <button type="button" onClick={handleCreateTask} disabled={actionBusy}>
                   <ClipboardCheck size={16} />
                   Create task
@@ -1106,14 +1390,16 @@ function ReplyBox({
   allowInternalNote,
   internalNote,
   onInternalNoteChange,
+  allowWorkflowActions,
 }: {
   value: string;
   onChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (nextStatus?: 'waiting-patient' | 'closed') => void;
   disabled?: boolean;
   allowInternalNote?: boolean;
   internalNote?: boolean;
   onInternalNoteChange?: (value: boolean) => void;
+  allowWorkflowActions?: boolean;
 }) {
   return (
     <div className="clinical-inbox-reply-box">
@@ -1134,10 +1420,22 @@ function ReplyBox({
             Internal note
           </label>
         )}
-        <button type="button" className="primary" onClick={onSend} disabled={disabled || !value.trim()}>
-          <Send size={16} />
-          Send
-        </button>
+        <div className="clinical-inbox-send-actions">
+          <button type="button" className="primary" onClick={() => onSend()} disabled={disabled || !value.trim()}>
+            <Send size={16} />
+            Send
+          </button>
+          {allowWorkflowActions && (
+            <>
+              <button type="button" onClick={() => onSend('waiting-patient')} disabled={disabled || !value.trim()}>
+                Send &amp; wait on patient
+              </button>
+              <button type="button" onClick={() => onSend('closed')} disabled={disabled || !value.trim()}>
+                Send &amp; close
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

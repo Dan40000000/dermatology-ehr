@@ -386,9 +386,27 @@ describe('TextMessagesPage', () => {
   });
 
   it('simulates inbound replies for test-mode conversation QA', async () => {
+    apiMocks.fetchSMSSettings.mockResolvedValueOnce({
+      id: 'settings-1',
+      tenantId: 'tenant-1',
+      twilioPhoneNumber: '+15551112222',
+      appointmentRemindersEnabled: true,
+      appointmentReminderChannel: 'sms',
+      reminderHoursBefore: 24,
+      allowPatientReplies: true,
+      reminderTemplate: 'Reminder body',
+      confirmationTemplate: 'Confirmation body',
+      cancellationTemplate: 'Cancellation body',
+      rescheduleTemplate: 'Reschedule body',
+      isActive: true,
+      isTestMode: true,
+    });
     render(<TextMessagesPage />);
 
     await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(apiMocks.fetchSMSSettings).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: /^Conversations/ }));
     fireEvent.click(screen.getByText('Ana Derm'));
     await waitFor(() => expect(apiMocks.fetchSMSConversation).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'));
 
@@ -466,9 +484,9 @@ describe('TextMessagesPage', () => {
     const fixtures = buildFixtures();
     render(<TextMessagesPage />);
 
-    await screen.findByRole('heading', { name: 'Text Messages' });
+    const templatesButton = await screen.findByRole('button', { name: 'Templates' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Templates' }));
+    fireEvent.click(templatesButton);
     fireEvent.click(screen.getByRole('button', { name: '+ New Template' }));
 
     const templateModal = await screen.findByTestId('modal-new-template');
@@ -675,7 +693,7 @@ describe('TextMessagesPage', () => {
     expect(screen.queryByText('Ben Skin')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Ana Derm'));
-    await screen.findByText('No messages yet');
+    await waitFor(() => expect(apiMocks.fetchSMSConversation).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'));
 
     fireEvent.change(screen.getByLabelText('Route conversation'), { target: { value: 'medical' } });
 

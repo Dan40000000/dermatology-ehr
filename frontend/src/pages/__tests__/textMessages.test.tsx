@@ -484,9 +484,9 @@ describe('TextMessagesPage', () => {
     const fixtures = buildFixtures();
     render(<TextMessagesPage />);
 
-    await screen.findByRole('heading', { name: 'Text Messages' });
+    const templatesButton = await screen.findByRole('button', { name: 'Templates' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Templates' }));
+    fireEvent.click(templatesButton);
     fireEvent.click(screen.getByRole('button', { name: '+ New Template' }));
 
     const templateModal = await screen.findByTestId('modal-new-template');

@@ -31,6 +31,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchEligibilityHistory: vi.fn(),
   verifyPatientEligibility: vi.fn(),
   fetchPatientClinicalSummary: vi.fn(),
+  fetchDefaultFeeSchedule: vi.fn(),
   fetchRecallCampaigns: vi.fn(),
   createPatientRecall: vi.fn(),
   recordPrintedDocument: vi.fn(),
@@ -210,6 +211,7 @@ describe('PatientDetailPage', () => {
     apiMocks.fetchEligibilityHistory.mockResolvedValue({ history: [] });
     apiMocks.verifyPatientEligibility.mockResolvedValue({ success: true });
     apiMocks.fetchPatientClinicalSummary.mockResolvedValue({ diagnoses: [], recalls: [] });
+    apiMocks.fetchDefaultFeeSchedule.mockResolvedValue({ items: [] });
     apiMocks.fetchRecallCampaigns.mockResolvedValue({
       campaigns: [
         {

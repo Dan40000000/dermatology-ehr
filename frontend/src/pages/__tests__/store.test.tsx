@@ -44,6 +44,12 @@ const portalAuthMocks = vi.hoisted(() => ({
 
 const patientPortalFetchMock = vi.hoisted(() => vi.fn());
 
+const daysAgoIso = (days: number) => {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString();
+};
+
 vi.mock('../../api', () => apiMocks);
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -104,7 +110,7 @@ const demoOrder: StoreOrder = {
   patientFirstName: 'Jamie',
   patientLastName: 'Lee',
   soldBy: 'portal:account-1',
-  saleDate: '2026-05-17T16:00:00Z',
+  saleDate: daysAgoIso(30),
   subtotal: 7200,
   tax: 594,
   discount: 0,
@@ -138,7 +144,7 @@ const demoOrder: StoreOrder = {
 const staleOrder: StoreOrder = {
   ...demoOrder,
   id: '44444444-4444-4444-8444-444444444444',
-  saleDate: '2026-01-15T16:00:00Z',
+  saleDate: daysAgoIso(120),
   subtotal: 5200,
   tax: 429,
   discount: 0,
@@ -249,7 +255,13 @@ describe('Store flows', () => {
     );
 
     expect(await screen.findByText('Stripe Payment Queue')).toBeInTheDocument();
-    expect(screen.getByText(/May 17.*\$83\.89.*pi_demo/)).toBeInTheDocument();
+    const recentOrderDate = new Date(demoOrder.saleDate).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+    });
+    expect(screen.getByText((text) => (
+      text.includes(recentOrderDate) && text.includes('$83.89') && text.includes('pi_demo')
+    ))).toBeInTheDocument();
     expect(screen.queryByText('No sales in 60+ days')).not.toBeInTheDocument();
 
     const drilldown = screen.getByRole('button', { name: /1 item not sold in 90\+ days/i });

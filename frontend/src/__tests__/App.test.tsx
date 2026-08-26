@@ -264,6 +264,15 @@ const setupLoadMocks = () => {
   apiMocks.createOrder.mockResolvedValue({ ok: true });
 };
 
+const fillLoginForm = () => {
+  fireEvent.change(screen.getByLabelText('Email Address'), {
+    target: { value: 'admin@demo.practice' },
+  });
+  fireEvent.change(screen.getByLabelText('Password'), {
+    target: { value: 'Password123!' },
+  });
+};
+
 describe('App', () => {
   let originalFetch: typeof globalThis.fetch | undefined;
   let originalOpen: typeof window.open | undefined;
@@ -313,6 +322,7 @@ describe('App', () => {
     apiMocks.login.mockRejectedValueOnce(new Error('Invalid credentials'));
     render(<App />);
 
+    fillLoginForm();
     fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
 
     expect(apiMocks.login).toHaveBeenCalledWith('tenant-demo', 'admin@demo.practice', 'Password123!');
@@ -322,6 +332,7 @@ describe('App', () => {
   it('loads data and supports common actions', async () => {
     render(<App />);
 
+    fillLoginForm();
     fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
     await screen.findByText("Today's Overview");
 

@@ -325,6 +325,21 @@ describe('ClinicalInboxPage', () => {
     expect(within(detailPanel).getByText('No item selected')).toBeInTheDocument();
   });
 
+  it('uses the overdue summary as a real queue filter', async () => {
+    render(
+      <MemoryRouter initialEntries={['/clinical-inbox']}>
+        <ClinicalInboxPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Portal rash question');
+    fireEvent.click(screen.getByRole('button', { name: /Overdue/ }));
+
+    const workList = screen.getByLabelText('Clinical inbox work list');
+    expect(within(workList).getByRole('button', { name: /Call patient/ })).toBeInTheDocument();
+    expect(within(workList).queryByRole('button', { name: /Portal rash question/ })).not.toBeInTheDocument();
+  });
+
   it('keeps received abnormal lab and pathology results in the results queue', async () => {
     apiMocks.fetchOrders.mockResolvedValueOnce({
       orders: [
@@ -376,7 +391,7 @@ describe('ClinicalInboxPage', () => {
 
     fireEvent.click(within(workList).getByRole('button', { name: /Portal rash question/ }));
     await waitFor(() => expect(apiMocks.fetchStaffPatientMessageThread).toHaveBeenCalledWith('tenant-1', 'token-1', 'portal-1'));
-    fireEvent.click(within(detailPanel).getByRole('button', { name: 'Move in progress' }));
+    fireEvent.click(within(detailPanel).getByRole('button', { name: 'Start work' }));
     await waitFor(() =>
       expect(apiMocks.updateStaffPatientMessageThread).toHaveBeenCalledWith(
         'tenant-1',
@@ -490,5 +505,95 @@ describe('ClinicalInboxPage', () => {
         { priority: 'high' },
       ),
     );
+  });
+
+  it('moves a thread into its workflow group immediately after a status change', async () => {
+    render(
+      <MemoryRouter initialEntries={['/clinical-inbox']}>
+        <ClinicalInboxPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Portal rash question');
+    fireEvent.click(within(screen.getByLabelText('Clinical inbox work list')).getByRole('button', { name: /Portal rash question/ }));
+    await waitFor(() => expect(apiMocks.fetchStaffPatientMessageThread).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'waiting-provider' } });
+
+    await waitFor(() =>
+      expect(apiMocks.updateStaffPatientMessageThread).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'portal-1',
+        { status: 'waiting-provider' },
+      ),
+    );
+
+    const waitingGroup = screen.getByRole('button', { name: /Waiting on provider/ }).closest('section');
+    expect(waitingGroup).not.toBeNull();
+    expect(within(waitingGroup as HTMLElement).getByRole('button', { name: /Portal rash question/ })).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Clinical inbox selected item')).getByText('Waiting on provider')).toBeInTheDocument();
+  });
+
+  it('supports take-ownership and the My work filter', async () => {
+    render(
+      <MemoryRouter initialEntries={['/clinical-inbox']}>
+        <ClinicalInboxPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Portal rash question');
+    fireEvent.click(within(screen.getByLabelText('Clinical inbox work list')).getByRole('button', { name: /Portal rash question/ }));
+    fireEvent.click(within(screen.getByLabelText('Clinical inbox selected item')).getByRole('button', { name: 'Assign to me' }));
+
+    await waitFor(() =>
+      expect(apiMocks.updateStaffPatientMessageThread).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'portal-1',
+        { assignedTo: 'user-1' },
+      ),
+    );
+
+    fireEvent.change(screen.getByLabelText('Filter by owner'), { target: { value: 'mine' } });
+    expect(within(screen.getByLabelText('Clinical inbox work list')).getByRole('button', { name: /Portal rash question/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Assign to me' })).not.toBeInTheDocument();
+  });
+
+  it('sends a reply and moves the thread to waiting on the patient in one action', async () => {
+    render(
+      <MemoryRouter initialEntries={['/clinical-inbox']}>
+        <ClinicalInboxPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Portal rash question');
+    fireEvent.click(within(screen.getByLabelText('Clinical inbox work list')).getByRole('button', { name: /Portal rash question/ }));
+    await waitFor(() => expect(apiMocks.fetchStaffPatientMessageThread).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByPlaceholderText('Write the reply or internal note...'), {
+      target: { value: 'Please send us a photo before tomorrow.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send & wait on patient' }));
+
+    await waitFor(() =>
+      expect(apiMocks.sendStaffPatientMessageThreadMessage).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'portal-1',
+        'Please send us a photo before tomorrow.',
+        false,
+      ),
+    );
+    expect(apiMocks.updateStaffPatientMessageThread).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      'portal-1',
+      { status: 'waiting-patient' },
+    );
+
+    const waitingGroup = screen.getByRole('button', { name: /Waiting on patient/ }).closest('section');
+    expect(waitingGroup).not.toBeNull();
+    expect(within(waitingGroup as HTMLElement).getByRole('button', { name: /Portal rash question/ })).toBeInTheDocument();
   });
 });

@@ -13629,6 +13629,21 @@ kbd {
   color: #ffffff;
 }
 
+.clinical-inbox-hero-actions {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 0.75rem;
+}
+
+.clinical-inbox-hero-actions > strong {
+  white-space: nowrap;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.45rem 0.75rem;
+}
+
 .clinical-inbox-refresh:disabled,
 .clinical-inbox-actions button:disabled,
 .clinical-inbox-reply-box button:disabled,
@@ -13639,20 +13654,36 @@ kbd {
 
 .clinical-inbox-stats {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
 }
 
 .clinical-inbox-stat {
   display: grid;
-  gap: 0.35rem;
-  align-content: start;
-  min-height: 7rem;
-  padding: 0.95rem;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.4rem 0.65rem;
+  align-items: center;
+  min-height: 4.5rem;
+  padding: 0.75rem 0.9rem;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #ffffff;
+  color: #111827;
+  font: inherit;
+  text-align: left;
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.clinical-inbox-stat:hover,
+.clinical-inbox-stat.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.clinical-inbox-stat:hover {
+  transform: translateY(-1px);
 }
 
 .clinical-inbox-stat svg {
@@ -13673,7 +13704,7 @@ kbd {
 
 .clinical-inbox-stat strong {
   color: #111827;
-  font-size: 2rem;
+  font-size: 1.55rem;
   line-height: 1;
 }
 
@@ -13691,7 +13722,7 @@ kbd {
 
 .clinical-inbox-shell {
   display: grid;
-  grid-template-columns: minmax(360px, 0.92fr) minmax(0, 1.35fr);
+  grid-template-columns: minmax(400px, 0.98fr) minmax(0, 1.35fr);
   gap: 1rem;
   align-items: start;
 }
@@ -13710,8 +13741,8 @@ kbd {
 }
 
 .clinical-inbox-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 10.5rem;
+  display: flex;
+  flex-direction: column;
   gap: 0.6rem;
   padding: 0.9rem;
   border-bottom: 1px solid #e5e7eb;
@@ -13738,6 +13769,12 @@ kbd {
   color: #111827;
   font: inherit;
   outline: none;
+}
+
+.clinical-inbox-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
 }
 
 .clinical-inbox-toolbar select,
@@ -13804,22 +13841,94 @@ kbd {
 }
 
 .clinical-inbox-items {
-  max-height: calc(100vh - 23rem);
+  max-height: calc(100vh - 18rem);
   min-height: 24rem;
   overflow-y: auto;
+}
+
+.clinical-inbox-group {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.clinical-inbox-group + .clinical-inbox-group {
+  margin-top: 0.2rem;
+}
+
+.clinical-inbox-group-header {
+  position: sticky;
+  top: -0.9rem;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #dbe3ef;
+  background: rgba(248, 250, 252, 0.96);
+  color: #111827;
+  padding: 0.55rem 0.25rem;
+  text-align: left;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.clinical-inbox-group-header > span:first-child {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.clinical-inbox-group-header strong {
+  font-size: 0.83rem;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.clinical-inbox-group-header small {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.clinical-inbox-group-header svg {
+  color: #64748b;
+  transition: transform 0.15s ease;
+}
+
+.clinical-inbox-group.collapsed .clinical-inbox-group-header svg {
+  transform: rotate(-90deg);
+}
+
+.clinical-inbox-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.clinical-inbox-group-items {
+  display: grid;
+  gap: 0.45rem;
 }
 
 .clinical-inbox-item {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 0.35rem 0.6rem;
+  gap: 0.25rem 0.55rem;
   width: 100%;
   min-width: 0;
   text-align: left;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #ffffff;
-  padding: 0.85rem;
+  padding: 0.65rem 0.72rem;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
@@ -13917,7 +14026,7 @@ kbd {
 
 .clinical-inbox-item strong {
   color: #111827;
-  font-size: 0.96rem;
+  font-size: 0.9rem;
   line-height: 1.25;
 }
 
@@ -13933,7 +14042,7 @@ kbd {
   line-height: 1.35;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
 }
 
@@ -14001,6 +14110,15 @@ kbd {
   min-width: 0;
   color: #111827;
   overflow-wrap: anywhere;
+}
+
+.clinical-inbox-detail-grid small {
+  min-width: 0;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  text-transform: capitalize;
 }
 
 .clinical-inbox-detail-summary {
@@ -14110,6 +14228,13 @@ kbd {
   gap: 0.75rem;
 }
 
+.clinical-inbox-send-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .clinical-inbox-check {
   display: inline-flex;
   align-items: center;
@@ -14161,7 +14286,7 @@ kbd {
 
 @media (max-width: 1200px) {
   .clinical-inbox-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .clinical-inbox-shell {
@@ -14176,6 +14301,7 @@ kbd {
 
 @media (max-width: 768px) {
   .clinical-inbox-hero,
+  .clinical-inbox-hero-actions,
   .clinical-inbox-detail-header,
   .clinical-inbox-reply-box > div,
   .clinical-inbox-message-list header {
@@ -14190,7 +14316,8 @@ kbd {
   .clinical-inbox-stats,
   .clinical-inbox-detail-grid,
   .clinical-inbox-inline-controls,
-  .clinical-inbox-toolbar {
+  .clinical-inbox-toolbar,
+  .clinical-inbox-filter-grid {
     grid-template-columns: 1fr;
   }
 
@@ -14203,7 +14330,8 @@ kbd {
   }
 
   .clinical-inbox-actions button,
-  .clinical-inbox-reply-box button {
+  .clinical-inbox-reply-box button,
+  .clinical-inbox-send-actions {
     width: 100%;
   }
 }

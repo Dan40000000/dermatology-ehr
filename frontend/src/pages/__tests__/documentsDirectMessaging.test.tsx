@@ -191,6 +191,13 @@ describe('DocumentsPage', () => {
     );
 
     await screen.findByText('Document Management');
+    expect(screen.getByRole('button', { name: 'Lab Result Templates' }).parentElement).toHaveClass(
+      'document-template-actions',
+    );
+    expect(screen.getByRole('button', { name: 'Upload New Attachments' }).parentElement).toHaveClass(
+      'document-attachment-actions',
+    );
+    expect(screen.getByRole('button', { name: 'Recent (7 days)' }).parentElement).toHaveClass('filter-tabs');
     fireEvent.change(screen.getByPlaceholderText('Search documents...'), { target: { value: 'Lab' } });
     expect(screen.getByText('Lab Result Report')).toBeInTheDocument();
     expect(screen.queryByText('Consent Form')).not.toBeInTheDocument();

@@ -1479,7 +1479,7 @@ export function HandoutsPage() {
                               {handout.content.length > 110 ? '...' : ''}
                             </div>
 
-                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <div className="handout-card-actions">
                               <button type="button" className="btn-primary btn-sm" onClick={() => openPreview(handout)}>
                                 Preview / Print
                               </button>
@@ -1647,7 +1647,7 @@ export function HandoutsPage() {
               )}
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer handout-modal-actions">
               <div style={{ fontSize: '0.78rem', color: '#6b7280', marginRight: 'auto' }}>
                 Printing uses your browser + system printer dialog. Choose printer after clicking Print.
               </div>
@@ -1772,7 +1772,7 @@ export function HandoutsPage() {
           </div>
         </div>
 
-        <div className="modal-footer">
+        <div className="modal-footer handout-modal-actions">
           <button type="button" className="btn-secondary" onClick={() => setShowCreateModal(false)}>
             Cancel
           </button>
@@ -1885,7 +1885,7 @@ export function HandoutsPage() {
           </div>
         </div>
 
-        <div className="modal-footer">
+        <div className="modal-footer handout-modal-actions">
           <button type="button" className="btn-secondary" onClick={() => setShowEditModal(false)}>
             Cancel
           </button>

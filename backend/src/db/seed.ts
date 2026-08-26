@@ -1079,7 +1079,7 @@ async function seed() {
           "Melanoma Surveillance",
           3,
           JSON.stringify({ diagnoses: ["C43.%", "D03.%", "Z85.820"], intervalsMonths: [3, 6], riskLevel: ["high"] }),
-          "Dermatology DEMO Office: You are due for a dermatology follow-up visit. Please call us or reply to schedule. Reply STOP to opt out.",
+          "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.",
         ],
       );
 
@@ -1115,7 +1115,7 @@ async function seed() {
           "Annual Skin Check",
           12,
           JSON.stringify({ appointmentType: ["Derm Consult", "Skin Check"], intervalMonths: [12], riskLevel: ["routine", "elevated"] }),
-          "Dermatology DEMO Office: It is time to schedule your annual skin check. Please call us or reply to schedule. Reply STOP to opt out.",
+          "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.",
         ],
       );
 

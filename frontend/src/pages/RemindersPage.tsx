@@ -24,6 +24,13 @@ import {
   type RecallStats,
   type Patient,
 } from '../api';
+import {
+  DEFAULT_RECALL_SMS_TEMPLATE,
+  RECALL_SMS_VARIABLES,
+  estimateSmsSegments,
+  findUnsupportedRecallSmsVariables,
+  renderRecallSmsTemplate,
+} from '../utils/recallSms';
 
 const RECALL_TYPES = [
   'Annual Skin Check',
@@ -131,6 +138,7 @@ export function RemindersPage() {
     recallType: RECALL_TYPES[0],
     intervalMonths: 12,
     isActive: true,
+    messageTemplate: DEFAULT_RECALL_SMS_TEMPLATE,
   });
 
   // Due Recalls
@@ -150,6 +158,12 @@ export function RemindersPage() {
     notes: '',
     messageContent: '',
   });
+
+  // Recall SMS Preview
+  const [showSmsPreviewModal, setShowSmsPreviewModal] = useState(false);
+  const [smsRecall, setSmsRecall] = useState<PatientRecall | null>(null);
+  const [smsDraft, setSmsDraft] = useState('');
+  const [sendingRecallSms, setSendingRecallSms] = useState(false);
 
   // History
   const [history, setHistory] = useState<ReminderLogEntry[]>([]);
@@ -304,6 +318,17 @@ export function RemindersPage() {
       return;
     }
 
+    if (!campaignForm.messageTemplate.trim()) {
+      showError('Recall SMS template is required');
+      return;
+    }
+
+    const unsupportedVariables = findUnsupportedRecallSmsVariables(campaignForm.messageTemplate);
+    if (unsupportedVariables.length > 0) {
+      showError(`Unsupported SMS variable: {${unsupportedVariables.join('}, {')}}`);
+      return;
+    }
+
     try {
       if (editingCampaign) {
         await updateRecallCampaign(session.tenantId, session.accessToken, editingCampaign.id, campaignForm);
@@ -321,6 +346,7 @@ export function RemindersPage() {
         recallType: RECALL_TYPES[0],
         intervalMonths: 12,
         isActive: true,
+        messageTemplate: DEFAULT_RECALL_SMS_TEMPLATE,
       });
       loadCampaigns();
     } catch (err: any) {
@@ -336,6 +362,7 @@ export function RemindersPage() {
       recallType: campaign.recallType,
       intervalMonths: campaign.intervalMonths,
       isActive: campaign.isActive,
+      messageTemplate: campaign.messageTemplate || DEFAULT_RECALL_SMS_TEMPLATE,
     });
     setShowCampaignModal(true);
   };
@@ -434,25 +461,57 @@ export function RemindersPage() {
     }
   };
 
-  const handleSendRecallSms = async (recall: PatientRecall) => {
-    if (!session) return;
+  const handleSendRecallSms = (recall: PatientRecall) => {
     if (!recall.phone) {
       showError('Patient does not have a phone number for SMS outreach');
       return;
     }
 
+    const campaignTemplate = campaigns.find((campaign) => campaign.id === recall.campaignId)?.messageTemplate;
+    setSmsRecall(recall);
+    setSmsDraft(
+      renderRecallSmsTemplate(recall.messageTemplate || campaignTemplate, {
+        firstName: recall.firstName,
+        practiceName: recall.practiceName,
+        clinicPhone: recall.clinicPhone,
+        portalUrl: recall.portalUrl,
+      }),
+    );
+    setShowSmsPreviewModal(true);
+  };
+
+  const handleConfirmSendRecallSms = async () => {
+    if (!session || !smsRecall || sendingRecallSms) return;
+    const messageContent = smsDraft.trim();
+    if (!messageContent) {
+      showError('Enter a message before sending');
+      return;
+    }
+
+    const unsupportedVariables = findUnsupportedRecallSmsVariables(messageContent);
+    if (unsupportedVariables.length > 0) {
+      showError(`Replace unsupported SMS variable: {${unsupportedVariables.join('}, {')}}`);
+      return;
+    }
+
+    setSendingRecallSms(true);
     try {
-      await recordRecallContact(session.tenantId, session.accessToken, recall.id, {
+      await recordRecallContact(session.tenantId, session.accessToken, smsRecall.id, {
         contactMethod: 'sms',
-        notes: `Recall SMS sent from reminders worklist for ${recall.campaignName || 'recall campaign'}`,
-        messageContent: `Reminder: please contact our office to schedule your ${recall.recallType || 'recall'} visit.`,
+        notes: `Recall SMS sent from reminders worklist for ${smsRecall.campaignName || 'manual recall'}`,
+        messageContent,
       });
       showSuccess('Recall SMS sent and logged');
+      setShowSmsPreviewModal(false);
+      setSmsRecall(null);
+      setSmsDraft('');
       loadDueRecalls();
       loadHistory();
       loadStats();
-    } catch (err: any) {
-      showError(err.message || 'Failed to send recall SMS');
+    } catch (err: unknown) {
+      showError(err instanceof Error ? err.message : 'Failed to send recall SMS');
+    } finally {
+      setSendingRecallSms(false);
     }
   };
 
@@ -502,6 +561,12 @@ export function RemindersPage() {
   const duePanelTitle = selectedDueCampaign
     ? `${selectedDueCampaign.name} Patients (${dueRecalls.length})`
     : `Due Recalls (${dueRecalls.length})`;
+  const campaignTemplatePreview = renderRecallSmsTemplate(campaignForm.messageTemplate, {
+    firstName: 'Jordan',
+    practiceName: 'Your Practice',
+    clinicPhone: '(555) 555-5555',
+    portalUrl: 'your portal link',
+  });
 
   return (
     <div className="reminders-page">
@@ -674,6 +739,11 @@ export function RemindersPage() {
 
                     <div className="campaign-interval">
                       <strong>Interval:</strong> Every {campaign.intervalMonths} months
+                    </div>
+
+                    <div className="campaign-sms-summary">
+                      <div className="campaign-sms-label">Recall text</div>
+                      <div>{campaign.messageTemplate || DEFAULT_RECALL_SMS_TEMPLATE}</div>
                     </div>
 
                     {campaignStats && (
@@ -1259,6 +1329,33 @@ export function RemindersPage() {
           </div>
 
           <div className="form-field">
+            <label htmlFor="recall-sms-template">Recall SMS template *</label>
+            <textarea
+              id="recall-sms-template"
+              value={campaignForm.messageTemplate}
+              onChange={(e) => setCampaignForm({ ...campaignForm, messageTemplate: e.target.value })}
+              rows={5}
+              maxLength={1600}
+            />
+            <small className="muted">
+              Used for this campaign's recall texts. Keep it administrative—do not include diagnoses,
+              medications, results, or procedure details.
+            </small>
+            <div className="template-variables" aria-label="Available template variables">
+              {RECALL_SMS_VARIABLES.map((variable) => (
+                <code key={variable}>{variable}</code>
+              ))}
+            </div>
+            <div className="sms-preview-card">
+              <div className="sms-preview-heading">Patient preview</div>
+              <div>{campaignTemplatePreview}</div>
+              <div className="sms-message-meta">
+                {campaignTemplatePreview.length} characters · {estimateSmsSegments(campaignTemplatePreview)} SMS segment{estimateSmsSegments(campaignTemplatePreview) === 1 ? '' : 's'}
+              </div>
+            </div>
+          </div>
+
+          <div className="form-field">
             <label className="checkbox-label">
               <input
                 type="checkbox"
@@ -1283,6 +1380,73 @@ export function RemindersPage() {
           </button>
           <button type="button" className="btn-primary" onClick={handleCreateCampaign}>
             {editingCampaign ? 'Update' : 'Create'} Campaign
+          </button>
+        </div>
+      </Modal>
+
+      {/* Recall SMS Preview Modal */}
+      <Modal
+        isOpen={showSmsPreviewModal}
+        title="Review recall text"
+        onClose={() => {
+          if (sendingRecallSms) return;
+          setShowSmsPreviewModal(false);
+          setSmsRecall(null);
+          setSmsDraft('');
+        }}
+      >
+        {smsRecall && (
+          <div className="modal-form">
+            <div className="contact-patient-info">
+              <h4>{getPatientName(smsRecall)}</h4>
+              <div>{smsRecall.phone}</div>
+              <div className="muted tiny">
+                Nothing is sent until you click Send SMS.
+              </div>
+            </div>
+
+            <div className="sms-safety-note">
+              Keep texts limited to scheduling. Do not include diagnoses, medications, test results,
+              or procedure details.
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="recall-sms-draft">Message</label>
+              <textarea
+                id="recall-sms-draft"
+                value={smsDraft}
+                onChange={(e) => setSmsDraft(e.target.value)}
+                rows={6}
+                maxLength={1600}
+                autoFocus
+              />
+              <div className="sms-message-meta">
+                {smsDraft.length} characters · {estimateSmsSegments(smsDraft)} SMS segment{estimateSmsSegments(smsDraft) === 1 ? '' : 's'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowSmsPreviewModal(false);
+              setSmsRecall(null);
+              setSmsDraft('');
+            }}
+            disabled={sendingRecallSms}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleConfirmSendRecallSms}
+            disabled={sendingRecallSms || !smsDraft.trim()}
+          >
+            {sendingRecallSms ? 'Sending…' : 'Send SMS'}
           </button>
         </div>
       </Modal>
@@ -1528,6 +1692,69 @@ export function RemindersPage() {
           background: #f9fafb;
           border-radius: 4px;
           font-size: 0.875rem;
+        }
+
+        .campaign-sms-summary {
+          margin-bottom: 1rem;
+          padding: 0.75rem;
+          border: 1px solid #dbeafe;
+          border-radius: 8px;
+          background: #f8fafc;
+          color: #475569;
+          font-size: 0.8rem;
+          line-height: 1.45;
+        }
+
+        .campaign-sms-label,
+        .sms-preview-heading {
+          margin-bottom: 0.35rem;
+          color: #0f172a;
+          font-size: 0.75rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        .template-variables {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.35rem;
+          margin-top: 0.55rem;
+        }
+
+        .template-variables code {
+          padding: 0.2rem 0.4rem;
+          border: 1px solid #bae6fd;
+          border-radius: 999px;
+          background: #f0f9ff;
+          color: #0369a1;
+          font-size: 0.72rem;
+        }
+
+        .sms-preview-card {
+          margin-top: 0.75rem;
+          padding: 0.9rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          background: white;
+          color: #1e293b;
+          line-height: 1.5;
+        }
+
+        .sms-message-meta {
+          margin-top: 0.45rem;
+          color: #64748b;
+          font-size: 0.75rem;
+        }
+
+        .sms-safety-note {
+          padding: 0.75rem 0.9rem;
+          border: 1px solid #fde68a;
+          border-radius: 8px;
+          background: #fffbeb;
+          color: #92400e;
+          font-size: 0.825rem;
+          line-height: 1.45;
         }
 
         .campaign-stats-mini {

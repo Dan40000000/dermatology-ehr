@@ -665,7 +665,7 @@ export function DocumentsPage() {
             Open office-editable pre-made templates for patient printouts: lab results, prescription instructions,
             aftercare, rash care, and cleansing routines.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+          <div className="document-template-actions">
             <button onClick={() => openTemplateLibrary('lab_results')} style={{
               padding: '0.75rem',
               background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
@@ -746,9 +746,8 @@ export function DocumentsPage() {
           <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
             Upload attachments (images, scans, etc) and associate them with patients or add to the fax queue.
           </p>
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <div className="document-attachment-actions">
             <button onClick={openUploadModal} style={{
-              flex: 1,
               padding: '0.75rem',
               background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
               color: '#ffffff',
@@ -760,7 +759,6 @@ export function DocumentsPage() {
               transition: 'all 0.3s ease',
             }}>Upload New Attachments</button>
             <button style={{
-              flex: 1,
               padding: '0.75rem',
               background: '#ffffff',
               color: '#0d9488',

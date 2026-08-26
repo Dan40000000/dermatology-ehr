@@ -328,6 +328,7 @@ describe('RemindersPage', () => {
           recallType: 'Annual Skin Check',
           intervalMonths: 12,
           isActive: true,
+          messageTemplate: "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.",
         },
       ],
     });
@@ -338,8 +339,11 @@ describe('RemindersPage', () => {
           firstName: 'Ana',
           lastName: 'Derm',
           phone: '555-1000',
+          campaignId: 'camp-1',
           campaignName: 'Annual Skin Check',
           recallType: 'Annual Skin Check',
+          practiceName: 'Mountain Dermatology',
+          clinicPhone: '555-2000',
           dueDate: '2024-02-10',
           status: 'pending',
           contactAttempts: 0,
@@ -436,6 +440,7 @@ describe('RemindersPage', () => {
         recallType: 'Annual Skin Check',
         intervalMonths: 12,
         isActive: true,
+        messageTemplate: "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.",
       }),
     );
 
@@ -526,6 +531,61 @@ describe('RemindersPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Statistics' }));
     await screen.findByText('Total Recalls');
+  });
+
+  it('previews and edits a patient-safe recall text before sending it', async () => {
+    apiMocks.fetchDueRecalls.mockResolvedValue({
+      recalls: [
+        {
+          id: 'manual-recall-1',
+          firstName: 'Ana',
+          lastName: 'Derm',
+          phone: '555-1000',
+          campaignName: 'Manual Recall',
+          recallType: 'Manual Recall',
+          practiceName: 'Mountain Dermatology',
+          clinicPhone: '555-2000',
+          dueDate: '2024-02-10',
+          status: 'pending',
+          contactAttempts: 0,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <RemindersPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Registry, Reminders & Recalls');
+    fireEvent.click(screen.getByRole('button', { name: /Due for Recall/i }));
+    const row = (await screen.findByText('Derm, Ana')).closest('tr');
+    expect(row).toBeTruthy();
+
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Send Recall SMS' }));
+    expect(apiMocks.recordRecallContact).not.toHaveBeenCalled();
+
+    const previewModal = await screen.findByTestId('modal-review-recall-text');
+    const previewScope = within(previewModal);
+    const message = previewScope.getByLabelText('Message') as HTMLTextAreaElement;
+    expect(message.value).toContain('Hi Ana, this is Mountain Dermatology.');
+    expect(message.value).toContain('follow-up visit');
+    expect(message.value).not.toContain('Manual Recall');
+    expect(previewScope.getByText(/Nothing is sent until/i)).toBeInTheDocument();
+
+    fireEvent.change(message, {
+      target: { value: 'Hi Ana, this is Mountain Dermatology. Reply here and we will help you schedule. Reply STOP to opt out.' },
+    });
+    fireEvent.click(previewScope.getByRole('button', { name: 'Send SMS' }));
+
+    await waitFor(() =>
+      expect(apiMocks.recordRecallContact).toHaveBeenCalledWith('tenant-1', 'token-1', 'manual-recall-1', {
+        contactMethod: 'sms',
+        notes: 'Recall SMS sent from reminders worklist for Manual Recall',
+        messageContent: 'Hi Ana, this is Mountain Dermatology. Reply here and we will help you schedule. Reply STOP to opt out.',
+      }),
+    );
   });
 
   it('shows disease registry inside the reminders workspace', async () => {

@@ -4,6 +4,7 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { randomUUID } from 'crypto';
 import { logger } from '../lib/logger';
 import { SMSService } from '../services/smsService';
+import { scanSmsPrivacyRisks } from '../utils/smsPrivacyGuard';
 import {
   generateRecalls,
   generateAllRecalls,
@@ -29,6 +30,7 @@ function campaignSelect(): string {
     recall_type as "recallType",
     interval_months as "intervalMonths",
     is_active as "isActive",
+    message_template as "messageTemplate",
     created_at as "createdAt",
     updated_at as "updatedAt"
   `;
@@ -80,14 +82,75 @@ function patientRecallReturning(prefix = 'patient_recalls'): string {
   `;
 }
 
+const RECALL_MESSAGE_VARIABLE_PATTERN = /\{([a-zA-Z]+)\}/g;
+const MAX_RECALL_MESSAGE_TEMPLATE_LENGTH = 1600;
+
+function renderRecallMessageTemplate(template: string, recall: Record<string, any>): string {
+  const values: Record<string, string> = {
+    firstName: String(recall.firstName || recall.first_name || 'there').trim(),
+    practiceName: String(recall.practiceName || recall.practice_name || 'your dermatology office').trim(),
+    clinicName: String(recall.practiceName || recall.practice_name || 'your dermatology office').trim(),
+    clinicPhone: String(recall.clinicPhone || recall.clinic_phone || 'our office').trim(),
+    portalUrl: String(recall.portalUrl || recall.portal_url || 'the patient portal').trim(),
+  };
+
+  return template
+    .replace(RECALL_MESSAGE_VARIABLE_PATTERN, (match, variable: string) => values[variable] ?? match)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function defaultRecallMessage(recall: Record<string, any>): string {
-  const template = recall.messageTemplate || recall.message_template;
-  if (template) {
-    return template;
+  const configuredTemplate = recall.messageTemplate || recall.message_template;
+  if (configuredTemplate) {
+    return renderRecallMessageTemplate(String(configuredTemplate), recall);
   }
 
-  // Avoid diagnosis-specific PHI in SMS by default.
-  return 'Dermatology DEMO Office: You are due for a dermatology follow-up visit. Please call us or reply to schedule. Reply STOP to opt out.';
+  // Keep default SMS content administrative and minimum-necessary. Internal recall
+  // types can contain diagnoses, medications, or workflow labels and must not leak.
+  const firstName = String(recall.firstName || recall.first_name || 'there').trim();
+  const practiceName = String(
+    recall.practiceName || recall.practice_name || 'your dermatology office'
+  ).trim();
+  const clinicPhone = String(recall.clinicPhone || recall.clinic_phone || '').trim();
+  const responseInstructions = clinicPhone
+    ? `Reply here or call ${clinicPhone} and we'll help.`
+    : `Reply here and we'll help.`;
+
+  return `Hi ${firstName}, this is ${practiceName}. It's time to schedule your follow-up visit. ${responseInstructions} Reply STOP to opt out.`;
+}
+
+function validateMessageTemplate(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw new Error('Recall SMS template must be text');
+  }
+
+  const template = value.trim();
+  if (template.length > MAX_RECALL_MESSAGE_TEMPLATE_LENGTH) {
+    throw new Error(`Recall SMS template must be ${MAX_RECALL_MESSAGE_TEMPLATE_LENGTH} characters or fewer`);
+  }
+
+  const supportedVariables = new Set(['firstName', 'practiceName', 'clinicName', 'clinicPhone', 'portalUrl']);
+  const unsupportedVariables = Array.from(
+    new Set(
+      Array.from(template.matchAll(RECALL_MESSAGE_VARIABLE_PATTERN), (match) => match[1] || '').filter(
+        (variable) => !supportedVariables.has(variable)
+      )
+    )
+  );
+
+  if (unsupportedVariables.length > 0) {
+    throw new Error(`Unsupported recall SMS variable: {${unsupportedVariables.join('}, {')}}`);
+  }
+
+  if (scanSmsPrivacyRisks(template).length > 0) {
+    throw new Error(
+      'Recall SMS templates must be limited to scheduling and cannot include diagnoses, medications, results, procedures, or other clinical details'
+    );
+  }
+
+  return template || null;
 }
 
 function getRecallPatientId(recall: Record<string, any>): string | undefined {
@@ -165,20 +228,27 @@ router.get('/campaigns', async (req: AuthedRequest, res) => {
 router.post('/campaigns', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
-    const { name, description, recallType, intervalMonths, isActive } = req.body;
+    const { name, description, recallType, intervalMonths, isActive, messageTemplate } = req.body;
 
     if (!name || !recallType) {
       return res.status(400).json({ error: 'Name and recall type are required' });
+    }
+
+    let normalizedMessageTemplate: string | null;
+    try {
+      normalizedMessageTemplate = validateMessageTemplate(messageTemplate);
+    } catch (error) {
+      return res.status(400).json({ error: toSafeErrorMessage(error) });
     }
 
     const id = randomUUID();
 
     const result = await pool.query<RecallCampaign>(
       `INSERT INTO recall_campaigns (
-        id, tenant_id, name, description, recall_type, interval_months, is_active, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+        id, tenant_id, name, description, recall_type, interval_months, is_active, message_template, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
       RETURNING ${campaignSelect()}`,
-      [id, tenantId, name, description, recallType, intervalMonths || 12, isActive ?? true]
+      [id, tenantId, name, description, recallType, intervalMonths || 12, isActive ?? true, normalizedMessageTemplate]
     );
 
     res.status(201).json(result.rows[0]);
@@ -196,7 +266,16 @@ router.put('/campaigns/:id', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { id } = req.params;
-    const { name, description, recallType, intervalMonths, isActive } = req.body;
+    const { name, description, recallType, intervalMonths, isActive, messageTemplate } = req.body;
+
+    let normalizedMessageTemplate: string | null = null;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'messageTemplate')) {
+      try {
+        normalizedMessageTemplate = validateMessageTemplate(messageTemplate);
+      } catch (error) {
+        return res.status(400).json({ error: toSafeErrorMessage(error) });
+      }
+    }
 
     const result = await pool.query<RecallCampaign>(
       `UPDATE recall_campaigns
@@ -205,10 +284,21 @@ router.put('/campaigns/:id', async (req: AuthedRequest, res) => {
            recall_type = COALESCE($3, recall_type),
            interval_months = COALESCE($4, interval_months),
            is_active = COALESCE($5, is_active),
+           message_template = CASE WHEN $6::boolean THEN $7::text ELSE message_template END,
            updated_at = NOW()
-       WHERE id = $6 AND tenant_id = $7
+       WHERE id = $8 AND tenant_id = $9
        RETURNING ${campaignSelect()}`,
-      [name, description, recallType, intervalMonths, isActive, id, tenantId]
+      [
+        name,
+        description,
+        recallType,
+        intervalMonths,
+        isActive,
+        Object.prototype.hasOwnProperty.call(req.body, 'messageTemplate'),
+        normalizedMessageTemplate,
+        id,
+        tenantId,
+      ]
     );
 
     if (result.rows.length === 0) {
@@ -308,6 +398,10 @@ router.get('/due', async (req: AuthedRequest, res) => {
         p.dob as "dateOfBirth",
         rc.name as "campaignName",
         rc.recall_type as "campaignRecallType",
+        rc.message_template as "messageTemplate",
+        COALESCE(ss.clinic_name, t.practice_name, t.name, 'your dermatology office') as "practiceName",
+        COALESCE(ss.clinic_phone, t.practice_phone) as "clinicPhone",
+        ss.portal_url as "portalUrl",
         latest_log.reminder_type as "lastReminderType",
         latest_log.sent_at as "lastReminderSentAt",
         latest_log.delivery_status as "lastReminderDeliveryStatus",
@@ -321,6 +415,8 @@ router.get('/due', async (req: AuthedRequest, res) => {
       FROM patient_recalls pr
       JOIN patients p ON p.id = pr.patient_id
       LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
+      JOIN tenants t ON t.id = pr.tenant_id
+      LEFT JOIN sms_settings ss ON ss.tenant_id = pr.tenant_id
       LEFT JOIN LATERAL (
         SELECT rl.reminder_type, rl.sent_at, rl.delivery_status
         FROM reminder_log rl
@@ -542,10 +638,15 @@ router.post('/:id/contact', async (req: AuthedRequest, res) => {
         p.phone,
         p.email,
         rc.name as "campaignName",
-        rc.message_template as "messageTemplate"
+        rc.message_template as "messageTemplate",
+        COALESCE(ss.clinic_name, t.practice_name, t.name, 'your dermatology office') as "practiceName",
+        COALESCE(ss.clinic_phone, t.practice_phone) as "clinicPhone",
+        ss.portal_url as "portalUrl"
        FROM patient_recalls pr
        JOIN patients p ON p.id = pr.patient_id
        LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
+       JOIN tenants t ON t.id = pr.tenant_id
+       LEFT JOIN sms_settings ss ON ss.tenant_id = pr.tenant_id
        WHERE pr.id = $1 AND pr.tenant_id = $2`,
       [id, tenantId]
     );
@@ -863,10 +964,15 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
              p.email,
              p.phone,
              rc.name as "campaignName",
-             rc.message_template as "messageTemplate"
+             rc.message_template as "messageTemplate",
+             COALESCE(ss.clinic_name, t.practice_name, t.name, 'your dermatology office') as "practiceName",
+             COALESCE(ss.clinic_phone, t.practice_phone) as "clinicPhone",
+             ss.portal_url as "portalUrl"
            FROM patient_recalls pr
            JOIN patients p ON p.id = pr.patient_id
            LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
+           JOIN tenants t ON t.id = pr.tenant_id
+           LEFT JOIN sms_settings ss ON ss.tenant_id = pr.tenant_id
            WHERE pr.id = $1 AND pr.tenant_id = $2`,
           [recallId, tenantId]
         );
@@ -896,7 +1002,9 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
         }
 
         // Create notification message
-        const messageContent = messageTemplate || defaultRecallMessage(recall);
+        const messageContent = messageTemplate
+          ? renderRecallMessageTemplate(String(messageTemplate), recall)
+          : defaultRecallMessage(recall);
 
         if (notificationType === 'sms') {
           const smsResult = await sendSmsIfRequested(tenantId, userId, patientId, messageContent);

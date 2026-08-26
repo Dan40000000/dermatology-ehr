@@ -122,10 +122,15 @@ describe('Recalls Routes', () => {
           recallType: 'medication_check',
           intervalMonths: 1,
           isActive: true,
+          messageTemplate:
+            'Hi {firstName}, this is {practiceName}. Please call {clinicPhone} to schedule. Reply STOP to opt out.',
         });
 
       expect(response.status).toBe(201);
       expect(response.body.name).toBe('Isotretinoin Follow-up');
+      expect(queryMock.mock.calls[0][1][7]).toBe(
+        'Hi {firstName}, this is {practiceName}. Please call {clinicPhone} to schedule. Reply STOP to opt out.'
+      );
     });
 
     it('should validate required fields', async () => {
@@ -135,6 +140,30 @@ describe('Recalls Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toBe('Name and recall type are required');
+    });
+
+    it('should reject unsupported recall SMS variables', async () => {
+      const response = await request(app).post('/api/recalls/campaigns').send({
+        name: 'Recall campaign',
+        recallType: 'follow_up',
+        messageTemplate: 'Hi {patientName}, please call us.',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('{patientName}');
+      expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('should reject clinical details in a recall SMS template', async () => {
+      const response = await request(app).post('/api/recalls/campaigns').send({
+        name: 'Recall campaign',
+        recallType: 'follow_up',
+        messageTemplate: 'Hi {firstName}, schedule your melanoma follow-up.',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('limited to scheduling');
+      expect(queryMock).not.toHaveBeenCalled();
     });
   });
 
@@ -486,6 +515,41 @@ describe('Recalls Routes', () => {
 
       expect(response.status).toBe(403);
       expect(response.body.error).toBe('Patient opted out of email');
+    });
+
+    it('should render campaign variables without exposing the internal recall type', async () => {
+      const mockRecall = {
+        id: 'recall-123',
+        patient_id: 'patient-456',
+        patientId: 'patient-456',
+        firstName: 'Ana',
+        recallType: 'Manual Recall',
+        practiceName: 'Mountain Dermatology',
+        clinicPhone: '555-2000',
+        messageTemplate:
+          'Hi {firstName}, this is {practiceName}. Please call {clinicPhone} to schedule. Reply STOP to opt out.',
+      };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [mockRecall] })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+      canContactPatientMock.mockResolvedValueOnce({ canContact: true });
+      logReminderMock.mockResolvedValueOnce({ id: 'reminder-123' });
+
+      const response = await request(app).post('/api/recalls/recall-123/contact').send({
+        contactMethod: 'email',
+      });
+
+      expect(response.status).toBe(200);
+      expect(logReminderMock).toHaveBeenCalledWith(
+        'tenant-123',
+        'patient-456',
+        'recall-123',
+        'email',
+        'Hi Ana, this is Mountain Dermatology. Please call 555-2000 to schedule. Reply STOP to opt out.',
+        'user-123'
+      );
+      expect(logReminderMock.mock.calls[0][4]).not.toContain('Manual Recall');
     });
   });
 

@@ -517,6 +517,28 @@ describe('Recalls Routes', () => {
       expect(response.body.error).toBe('Patient opted out of email');
     });
 
+    it('should reject unsafe SMS content before looking up the recall', async () => {
+      const response = await request(app).post('/api/recalls/recall-123/contact').send({
+        contactMethod: 'sms',
+        messageContent: 'Hi Ana, please schedule your melanoma follow-up.',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('limited to scheduling');
+      expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('should reject oversized SMS content before looking up the recall', async () => {
+      const response = await request(app).post('/api/recalls/recall-123/contact').send({
+        contactMethod: 'sms',
+        messageContent: 'a'.repeat(1601),
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('1600 characters');
+      expect(queryMock).not.toHaveBeenCalled();
+    });
+
     it('should render campaign variables without exposing the internal recall type', async () => {
       const mockRecall = {
         id: 'recall-123',

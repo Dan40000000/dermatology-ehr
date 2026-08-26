@@ -16251,7 +16251,8 @@ Consider age-appropriate treatments and include family counseling points.',
     WHERE trim(coalesce(message_template, '')) IN (
       'Dermatology DEMO Office: You are due for a dermatology follow-up visit. Please call us or reply to schedule. Reply STOP to opt out.',
       'Dermatology DEMO Office: It is time to schedule your annual skin check. Please call us or reply to schedule. Reply STOP to opt out.'
-    );
+    )
+      AND tenant_id = 'tenant-demo';
     `,
   },
 

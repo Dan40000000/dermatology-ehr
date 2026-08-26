@@ -15,7 +15,7 @@ type RecallSmsContext = {
   portalUrl?: string | null;
 };
 
-const VARIABLE_PATTERN = /\{([a-zA-Z]+)\}/g;
+const VARIABLE_PATTERN = /\{([^{}\s]+)\}/g;
 
 export function renderRecallSmsTemplate(
   template: string | null | undefined,

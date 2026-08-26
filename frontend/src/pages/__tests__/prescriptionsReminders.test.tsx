@@ -116,6 +116,7 @@ vi.mock('../../components/prescriptions', () => ({
 
 import { PrescriptionsPage } from '../PrescriptionsPage';
 import { RemindersPage } from '../RemindersPage';
+import { RegistryPage } from '../RegistryPage';
 
 const adminSession = {
   tenantId: 'tenant-1',
@@ -455,6 +456,22 @@ describe('RemindersPage', () => {
     );
   });
 
+  it('restores the default SMS template when opening a new campaign', async () => {
+    render(
+      <MemoryRouter>
+        <RemindersPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Registry, Reminders & Recalls');
+    fireEvent.click(screen.getByRole('button', { name: '+ New Campaign' }));
+
+    const modal = await screen.findByTestId('modal-create-campaign');
+    expect(within(modal).getByLabelText(/Recall SMS template/)).toHaveValue(
+      "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.",
+    );
+  });
+
   it('opens a campaign patient list from the campaign card', async () => {
     render(
       <MemoryRouter>
@@ -497,7 +514,7 @@ describe('RemindersPage', () => {
     fireEvent.click(within(recallRow as HTMLElement).getByRole('button', { name: 'Log Outreach' }));
     const contactModal = await screen.findByTestId('modal-record-contact');
     const contactScope = within(contactModal);
-    fireEvent.change(contactScope.getByRole('combobox'), { target: { value: 'sms' } });
+    fireEvent.change(contactScope.getByRole('combobox'), { target: { value: 'phone' } });
     fireEvent.change(contactScope.getByPlaceholderText('Call notes, patient response, etc...'), {
       target: { value: 'Sent SMS' },
     });
@@ -507,7 +524,7 @@ describe('RemindersPage', () => {
     fireEvent.click(contactScope.getByRole('button', { name: 'Record Contact' }));
     await waitFor(() =>
       expect(apiMocks.recordRecallContact).toHaveBeenCalledWith('tenant-1', 'token-1', 'recall-1', {
-        contactMethod: 'sms',
+        contactMethod: 'phone',
         notes: 'Sent SMS',
         messageContent: 'Please call to schedule.',
       }),
@@ -588,6 +605,44 @@ describe('RemindersPage', () => {
     );
   });
 
+  it('routes SMS logged from outreach through the review step', async () => {
+    render(
+      <MemoryRouter>
+        <RemindersPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Registry, Reminders & Recalls');
+    fireEvent.click(screen.getByRole('button', { name: /Due for Recall/i }));
+    const row = (await screen.findByText('Derm, Ana')).closest('tr');
+    expect(row).toBeTruthy();
+
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Log Outreach' }));
+    const contactModal = await screen.findByTestId('modal-record-contact');
+    const contactScope = within(contactModal);
+    fireEvent.change(contactScope.getByRole('combobox'), { target: { value: 'sms' } });
+    fireEvent.change(contactScope.getByPlaceholderText('Call notes, patient response, etc...'), {
+      target: { value: 'Reviewed text with patient' },
+    });
+    fireEvent.change(contactScope.getByPlaceholderText('Content of email/SMS/voicemail sent...'), {
+      target: { value: 'Hi Ana, reply here to schedule. Reply STOP to opt out.' },
+    });
+    fireEvent.click(contactScope.getByRole('button', { name: 'Record Contact' }));
+
+    expect(apiMocks.recordRecallContact).not.toHaveBeenCalled();
+    const previewModal = await screen.findByTestId('modal-review-recall-text');
+    const previewScope = within(previewModal);
+    fireEvent.click(previewScope.getByRole('button', { name: 'Send SMS' }));
+
+    await waitFor(() =>
+      expect(apiMocks.recordRecallContact).toHaveBeenCalledWith('tenant-1', 'token-1', 'recall-1', {
+        contactMethod: 'sms',
+        notes: 'Reviewed text with patient',
+        messageContent: 'Hi Ana, reply here to schedule. Reply STOP to opt out.',
+      }),
+    );
+  });
+
   it('shows disease registry inside the reminders workspace', async () => {
     render(
       <MemoryRouter>
@@ -600,5 +655,47 @@ describe('RemindersPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Patient Registries' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Melanoma' })).toBeInTheDocument();
+  });
+
+  it('previews melanoma registry SMS before recording the contact', async () => {
+    apiMocks.fetchMelanomaRegistry.mockResolvedValue({
+      data: [
+        {
+          id: 'melanoma-1',
+          patient_id: 'patient-1',
+          patient_name: 'Ana Derm',
+          phone: '555-1000',
+          recall_id: 'melanoma-recall-1',
+          messageTemplate: "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply STOP to opt out.",
+          practiceName: 'Mountain Dermatology',
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/registry?tab=melanoma']}>
+        <RegistryPage />
+      </MemoryRouter>,
+    );
+
+    const row = (await screen.findByText('Ana Derm')).closest('tr');
+    expect(row).toBeTruthy();
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Send Recall SMS' }));
+
+    const previewModal = await screen.findByTestId('modal-review-recall-text');
+    const previewScope = within(previewModal);
+    expect(previewScope.getByLabelText('Message')).toHaveValue(
+      "Hi Ana, this is Mountain Dermatology. It's time to schedule your follow-up visit. Reply STOP to opt out.",
+    );
+    expect(apiMocks.recordRecallContact).not.toHaveBeenCalled();
+
+    fireEvent.click(previewScope.getByRole('button', { name: 'Send SMS' }));
+    await waitFor(() =>
+      expect(apiMocks.recordRecallContact).toHaveBeenCalledWith('tenant-1', 'token-1', 'melanoma-recall-1', {
+        contactMethod: 'sms',
+        notes: 'Recall SMS sent from disease registry after review',
+        messageContent: "Hi Ana, this is Mountain Dermatology. It's time to schedule your follow-up visit. Reply STOP to opt out.",
+      }),
+    );
   });
 });

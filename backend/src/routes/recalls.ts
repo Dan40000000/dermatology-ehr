@@ -82,8 +82,10 @@ function patientRecallReturning(prefix = 'patient_recalls'): string {
   `;
 }
 
-const RECALL_MESSAGE_VARIABLE_PATTERN = /\{([a-zA-Z]+)\}/g;
+const RECALL_MESSAGE_VARIABLE_PATTERN = /\{([^{}\s]+)\}/g;
 const MAX_RECALL_MESSAGE_TEMPLATE_LENGTH = 1600;
+const DEFAULT_RECALL_MESSAGE_TEMPLATE =
+  "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.";
 
 function renderRecallMessageTemplate(template: string, recall: Record<string, any>): string {
   const values: Record<string, string> = {
@@ -94,7 +96,12 @@ function renderRecallMessageTemplate(template: string, recall: Record<string, an
     portalUrl: String(recall.portalUrl || recall.portal_url || 'the patient portal').trim(),
   };
 
-  return template
+  const source = template.trim();
+  const message = !String(recall.clinicPhone || recall.clinic_phone || '').trim() && source === DEFAULT_RECALL_MESSAGE_TEMPLATE
+    ? source.replace("Reply here or call {clinicPhone} and we'll help.", "Reply here and we'll help.")
+    : source;
+
+  return message
     .replace(RECALL_MESSAGE_VARIABLE_PATTERN, (match, variable: string) => values[variable] ?? match)
     .replace(/\s+/g, ' ')
     .trim();
@@ -103,7 +110,13 @@ function renderRecallMessageTemplate(template: string, recall: Record<string, an
 function defaultRecallMessage(recall: Record<string, any>): string {
   const configuredTemplate = recall.messageTemplate || recall.message_template;
   if (configuredTemplate) {
-    return renderRecallMessageTemplate(String(configuredTemplate), recall);
+    const renderedTemplate = renderRecallMessageTemplate(String(configuredTemplate), recall);
+    try {
+      validateMessageTemplate(renderedTemplate);
+      return renderedTemplate;
+    } catch {
+      // Legacy or externally modified templates must not bypass the safe fallback.
+    }
   }
 
   // Keep default SMS content administrative and minimum-necessary. Internal recall
@@ -629,6 +642,22 @@ router.post('/:id/contact', async (req: AuthedRequest, res) => {
       return res.status(400).json({ error: 'Invalid contact method' });
     }
 
+    if (messageContent !== undefined && messageContent !== null && typeof messageContent !== 'string') {
+      return res.status(400).json({ error: 'Message content must be text' });
+    }
+
+    if (contactMethod === 'sms' && messageContent !== undefined && messageContent !== null) {
+      if (!messageContent.trim()) {
+        return res.status(400).json({ error: 'Message content is required for SMS outreach' });
+      }
+
+      try {
+        validateMessageTemplate(messageContent);
+      } catch (error) {
+        return res.status(400).json({ error: toSafeErrorMessage(error) });
+      }
+    }
+
     // Get recall details
     const recallResult = await pool.query(
       `SELECT
@@ -669,7 +698,19 @@ router.post('/:id/contact', async (req: AuthedRequest, res) => {
       return res.status(403).json({ error: canContact.reason });
     }
 
-    const outboundMessage = messageContent || defaultRecallMessage(recall);
+    let outboundMessage = messageContent || defaultRecallMessage(recall);
+
+    if (contactMethod === 'sms' && messageContent) {
+      outboundMessage = renderRecallMessageTemplate(messageContent.trim(), recall);
+    }
+
+    if (contactMethod === 'sms') {
+      try {
+        validateMessageTemplate(outboundMessage);
+      } catch (error) {
+        return res.status(400).json({ error: toSafeErrorMessage(error) });
+      }
+    }
 
     if (contactMethod === 'sms') {
       const smsResult = await sendSmsIfRequested(tenantId, userId, patientId, outboundMessage);
@@ -945,6 +986,15 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
       return res.status(400).json({ error: 'Invalid notification type' });
     }
 
+    let normalizedMessageTemplate: string | null = null;
+    if (notificationType === 'sms' && messageTemplate !== undefined && messageTemplate !== null) {
+      try {
+        normalizedMessageTemplate = validateMessageTemplate(messageTemplate);
+      } catch (error) {
+        return res.status(400).json({ error: toSafeErrorMessage(error) });
+      }
+    }
+
     const results = {
       total: recallIds.length,
       successful: 0,
@@ -1002,9 +1052,19 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
         }
 
         // Create notification message
-        const messageContent = messageTemplate
-          ? renderRecallMessageTemplate(String(messageTemplate), recall)
+        const messageContent = (notificationType === 'sms' ? normalizedMessageTemplate : messageTemplate)
+          ? renderRecallMessageTemplate(String(notificationType === 'sms' ? normalizedMessageTemplate : messageTemplate), recall)
           : defaultRecallMessage(recall);
+
+        if (notificationType === 'sms') {
+          try {
+            validateMessageTemplate(messageContent);
+          } catch (error) {
+            results.failed++;
+            results.errors.push({ recallId, error: toSafeErrorMessage(error) });
+            continue;
+          }
+        }
 
         if (notificationType === 'sms') {
           const smsResult = await sendSmsIfRequested(tenantId, userId, patientId, messageContent);

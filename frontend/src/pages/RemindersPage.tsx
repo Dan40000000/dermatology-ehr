@@ -163,6 +163,7 @@ export function RemindersPage() {
   const [showSmsPreviewModal, setShowSmsPreviewModal] = useState(false);
   const [smsRecall, setSmsRecall] = useState<PatientRecall | null>(null);
   const [smsDraft, setSmsDraft] = useState('');
+  const [smsNotes, setSmsNotes] = useState('');
   const [sendingRecallSms, setSendingRecallSms] = useState(false);
 
   // History
@@ -428,8 +429,39 @@ export function RemindersPage() {
     setShowContactModal(true);
   };
 
+  const openRecallSmsPreview = (recall: PatientRecall, draft = '', notes = '') => {
+    if (!recall.phone) {
+      showError('Patient does not have a phone number for SMS outreach');
+      return;
+    }
+
+    const campaignTemplate = campaigns.find((campaign) => campaign.id === recall.campaignId)?.messageTemplate;
+    setSmsRecall(recall);
+    setSmsNotes(notes);
+    setSmsDraft(
+      draft.trim() || renderRecallSmsTemplate(recall.messageTemplate || campaignTemplate, {
+        firstName: recall.firstName,
+        practiceName: recall.practiceName,
+        clinicPhone: recall.clinicPhone,
+        portalUrl: recall.portalUrl,
+      }),
+    );
+    setShowSmsPreviewModal(true);
+  };
+
   const handleRecordContact = async () => {
     if (!session || !selectedRecall) return;
+
+    if (contactForm.contactMethod === 'sms') {
+      if (!selectedRecall.phone) {
+        showError('Patient does not have a phone number for SMS outreach');
+        return;
+      }
+      openRecallSmsPreview(selectedRecall, contactForm.messageContent, contactForm.notes);
+      setShowContactModal(false);
+      setSelectedRecall(null);
+      return;
+    }
 
     try {
       await recordRecallContact(
@@ -462,22 +494,7 @@ export function RemindersPage() {
   };
 
   const handleSendRecallSms = (recall: PatientRecall) => {
-    if (!recall.phone) {
-      showError('Patient does not have a phone number for SMS outreach');
-      return;
-    }
-
-    const campaignTemplate = campaigns.find((campaign) => campaign.id === recall.campaignId)?.messageTemplate;
-    setSmsRecall(recall);
-    setSmsDraft(
-      renderRecallSmsTemplate(recall.messageTemplate || campaignTemplate, {
-        firstName: recall.firstName,
-        practiceName: recall.practiceName,
-        clinicPhone: recall.clinicPhone,
-        portalUrl: recall.portalUrl,
-      }),
-    );
-    setShowSmsPreviewModal(true);
+    openRecallSmsPreview(recall);
   };
 
   const handleConfirmSendRecallSms = async () => {
@@ -498,13 +515,14 @@ export function RemindersPage() {
     try {
       await recordRecallContact(session.tenantId, session.accessToken, smsRecall.id, {
         contactMethod: 'sms',
-        notes: `Recall SMS sent from reminders worklist for ${smsRecall.campaignName || 'manual recall'}`,
+        notes: smsNotes.trim() || `Recall SMS sent from reminders worklist for ${smsRecall.campaignName || 'manual recall'}`,
         messageContent,
       });
       showSuccess('Recall SMS sent and logged');
       setShowSmsPreviewModal(false);
       setSmsRecall(null);
       setSmsDraft('');
+      setSmsNotes('');
       loadDueRecalls();
       loadHistory();
       loadStats();
@@ -593,6 +611,7 @@ export function RemindersPage() {
                     recallType: RECALL_TYPES[0],
                     intervalMonths: 12,
                     isActive: true,
+                    messageTemplate: DEFAULT_RECALL_SMS_TEMPLATE,
                   });
                   setShowCampaignModal(true);
                 }}
@@ -1393,6 +1412,7 @@ export function RemindersPage() {
           setShowSmsPreviewModal(false);
           setSmsRecall(null);
           setSmsDraft('');
+          setSmsNotes('');
         }}
       >
         {smsRecall && (
@@ -1435,6 +1455,7 @@ export function RemindersPage() {
               setShowSmsPreviewModal(false);
               setSmsRecall(null);
               setSmsDraft('');
+              setSmsNotes('');
             }}
             disabled={sendingRecallSms}
           >

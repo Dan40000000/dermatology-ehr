@@ -8,7 +8,7 @@ import { BasePage } from './BasePage';
 export class LoginPage extends BasePage {
   // Locators
   private readonly emailInput = () => this.page.getByLabel(/email/i);
-  private readonly passwordInput = () => this.page.getByLabel(/password/i);
+  private readonly passwordInput = () => this.page.getByLabel('Password', { exact: true });
   private readonly signInButton = () => this.page.getByRole('button', { name: /sign in/i });
   private readonly heading = () => this.page.getByRole('heading', { name: /mountain pine dermatology/i });
   private readonly errorMessage = () => this.page.getByText(/invalid credentials|error|unable/i);

@@ -203,7 +203,7 @@ describe('ClaimsPage', () => {
     const claimRow = getClaimsTableRow('CLM-001');
     fireEvent.click(within(claimRow).getByRole('button', { name: 'View' }));
     await waitFor(() => expect(apiMocks.fetchClaimDetail).toHaveBeenCalledWith('tenant-1', 'token-1', 'claim-1'));
-    expect(screen.getByText('Claim Information')).toBeInTheDocument();
+    expect(await screen.findByText('Claim Information')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark Rejected' }));
     await waitFor(() => expect(apiMocks.updateClaimStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'claim-1', { status: 'rejected', notes: undefined }));

@@ -268,6 +268,10 @@ diseaseRegistryRouter.get("/melanoma", async (req: AuthedRequest, res) => {
            pr.id,
            pr.status as recall_status,
            COALESCE(pr.due_date, pr.recall_date) as recall_due_date,
+           rc.message_template as "messageTemplate",
+           COALESCE(ss.clinic_name, t.practice_name, t.name, 'your dermatology office') as "practiceName",
+           COALESCE(ss.clinic_phone, t.practice_phone) as "clinicPhone",
+           ss.portal_url as "portalUrl",
            latest_log.reminder_type as last_reminder_type,
            latest_log.sent_at as last_reminder_sent_at,
            latest_log.delivery_status as last_reminder_delivery_status,
@@ -280,6 +284,8 @@ diseaseRegistryRouter.get("/melanoma", async (req: AuthedRequest, res) => {
            latest_thread.status as text_thread_status
          FROM patient_recalls pr
          LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
+         LEFT JOIN tenants t ON t.id = pr.tenant_id
+         LEFT JOIN sms_settings ss ON ss.tenant_id = pr.tenant_id
          LEFT JOIN LATERAL (
            SELECT rl.reminder_type, rl.sent_at, rl.delivery_status
            FROM reminder_log rl

@@ -6,7 +6,7 @@ export const MELANOMA_RECALL_CAMPAIGN_ID = 'recall-campaign-melanoma-surveillanc
 const MELANOMA_RECALL_TYPE = 'Melanoma Surveillance';
 const DEFAULT_INTERVAL_MONTHS = 3;
 const DEFAULT_SMS_TEMPLATE =
-  'Dermatology DEMO Office: You are due for a dermatology follow-up visit. Please call us or reply to schedule. Reply STOP to opt out.';
+  "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.";
 
 export interface MelanomaRecallResult {
   triggered: boolean;

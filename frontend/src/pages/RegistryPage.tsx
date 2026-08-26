@@ -14,6 +14,12 @@ import {
 } from '../api';
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatPhoneDisplay } from '../utils/phone';
+import {
+  DEFAULT_RECALL_SMS_TEMPLATE,
+  estimateSmsSegments,
+  findUnsupportedRecallSmsVariables,
+  renderRecallSmsTemplate,
+} from '../utils/recallSms';
 
 export type RegistryType = 'dashboard' | 'melanoma' | 'psoriasis' | 'acne' | 'chronic_therapy' | 'alerts';
 
@@ -46,10 +52,11 @@ type MelanomaRegistryPatient = {
   contact_attempts?: number | null;
   text_thread_id?: string | null;
   text_thread_status?: string | null;
+  messageTemplate?: string | null;
+  practiceName?: string | null;
+  clinicPhone?: string | null;
+  portalUrl?: string | null;
 };
-
-const defaultMelanomaRecallSms =
-  'Dermatology DEMO Office: You are overdue for your melanoma follow-up skin exam. Please call us or reply to schedule. Reply STOP to opt out.';
 
 const REGISTRY_TAB_QUERY_MAP: Record<string, RegistryType> = {
   dashboard: 'dashboard',
@@ -86,6 +93,10 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [pasiHistory, setPasiHistory] = useState<any[]>([]);
   const [melanomaActionPatientId, setMelanomaActionPatientId] = useState<string | null>(null);
+  const [showMelanomaSmsPreview, setShowMelanomaSmsPreview] = useState(false);
+  const [melanomaSmsPatient, setMelanomaSmsPatient] = useState<MelanomaRegistryPatient | null>(null);
+  const [melanomaSmsDraft, setMelanomaSmsDraft] = useState('');
+  const [sendingMelanomaSms, setSendingMelanomaSms] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     if (!session) return;
@@ -429,28 +440,67 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
     }
   };
 
-  const handleSendMelanomaRecallSms = useCallback(async (patient: MelanomaRegistryPatient) => {
-    if (!session) return;
+  const handleReviewMelanomaRecallSms = (patient: MelanomaRegistryPatient) => {
     if (!patient.recall_id) {
       showError('No melanoma recall is linked for this patient yet');
       return;
     }
+    if (!patient.phone) {
+      showError('Patient does not have a phone number for SMS outreach');
+      return;
+    }
 
-    setMelanomaActionPatientId(patient.patient_id);
+    setMelanomaSmsPatient(patient);
+    setMelanomaSmsDraft(
+      renderRecallSmsTemplate(patient.messageTemplate || DEFAULT_RECALL_SMS_TEMPLATE, {
+        firstName: patient.patient_name?.trim().split(/\s+/)[0],
+        practiceName: patient.practiceName,
+        clinicPhone: patient.clinicPhone,
+        portalUrl: patient.portalUrl,
+      }),
+    );
+    setShowMelanomaSmsPreview(true);
+  };
+
+  const handleConfirmMelanomaRecallSms = useCallback(async () => {
+    if (!session || !melanomaSmsPatient || sendingMelanomaSms) return;
+    if (!melanomaSmsPatient.recall_id) {
+      showError('No melanoma recall is linked for this patient yet');
+      return;
+    }
+
+    const messageContent = melanomaSmsDraft.trim();
+    if (!messageContent) {
+      showError('Enter a message before sending');
+      return;
+    }
+
+    const unsupportedVariables = findUnsupportedRecallSmsVariables(messageContent);
+    if (unsupportedVariables.length > 0) {
+      showError(`Replace unsupported SMS variable: {${unsupportedVariables.join('}, {')}}`);
+      return;
+    }
+
+    setMelanomaActionPatientId(melanomaSmsPatient.patient_id);
+    setSendingMelanomaSms(true);
     try {
-      await recordRecallContact(session.tenantId, session.accessToken, patient.recall_id, {
+      await recordRecallContact(session.tenantId, session.accessToken, melanomaSmsPatient.recall_id, {
         contactMethod: 'sms',
-        notes: 'Melanoma registry SMS sent from disease registry',
-        messageContent: defaultMelanomaRecallSms,
+        notes: 'Recall SMS sent from disease registry after review',
+        messageContent,
       });
-      showSuccess(`Recall SMS sent to ${patient.patient_name}`);
+      showSuccess(`Recall SMS sent to ${melanomaSmsPatient.patient_name}`);
+      setShowMelanomaSmsPreview(false);
+      setMelanomaSmsPatient(null);
+      setMelanomaSmsDraft('');
       await loadMelanoma();
     } catch (err: any) {
       showError(err.message || 'Failed to send melanoma recall SMS');
     } finally {
       setMelanomaActionPatientId(null);
+      setSendingMelanomaSms(false);
     }
-  }, [loadMelanoma, session, showError, showSuccess]);
+  }, [loadMelanoma, melanomaSmsDraft, melanomaSmsPatient, sendingMelanomaSms, session, showError, showSuccess]);
 
   return (
     <div className={embedded ? 'registry-embedded' : 'content-card'}>
@@ -802,7 +852,7 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
                               <button
                                 type="button"
                                 className="btn-sm btn-primary"
-                                onClick={() => handleSendMelanomaRecallSms(patient)}
+                                onClick={() => handleReviewMelanomaRecallSms(patient)}
                                 disabled={isSendingSms || !patient.phone}
                                 title={!patient.phone ? 'Patient has no phone number' : undefined}
                               >
@@ -1167,6 +1217,71 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
           )}
         </div>
       )}
+
+      {/* Melanoma Recall SMS Preview Modal */}
+      <Modal
+        isOpen={showMelanomaSmsPreview}
+        title="Review recall text"
+        onClose={() => {
+          if (sendingMelanomaSms) return;
+          setShowMelanomaSmsPreview(false);
+          setMelanomaSmsPatient(null);
+          setMelanomaSmsDraft('');
+        }}
+      >
+        {melanomaSmsPatient && (
+          <div className="modal-form">
+            <div className="contact-patient-info">
+              <h4>{melanomaSmsPatient.patient_name}</h4>
+              <div>{formatPhoneDisplay(melanomaSmsPatient.phone) || melanomaSmsPatient.phone}</div>
+              <div className="muted tiny">Nothing is sent until you click Send SMS.</div>
+            </div>
+
+            <div className="sms-safety-note">
+              Keep texts limited to scheduling. Do not include diagnoses, medications, test results,
+              or procedure details.
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="melanoma-recall-sms-draft">Message</label>
+              <textarea
+                id="melanoma-recall-sms-draft"
+                value={melanomaSmsDraft}
+                onChange={(e) => setMelanomaSmsDraft(e.target.value)}
+                rows={6}
+                maxLength={1600}
+                autoFocus
+              />
+              <div className="sms-message-meta">
+                {melanomaSmsDraft.length} characters · {estimateSmsSegments(melanomaSmsDraft)} SMS segment{estimateSmsSegments(melanomaSmsDraft) === 1 ? '' : 's'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowMelanomaSmsPreview(false);
+              setMelanomaSmsPatient(null);
+              setMelanomaSmsDraft('');
+            }}
+            disabled={sendingMelanomaSms}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleConfirmMelanomaRecallSms}
+            disabled={sendingMelanomaSms || !melanomaSmsDraft.trim()}
+          >
+            {sendingMelanomaSms ? 'Sending…' : 'Send SMS'}
+          </button>
+        </div>
+      </Modal>
 
       {/* PASI History Modal */}
       {selectedPatient && (

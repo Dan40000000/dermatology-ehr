@@ -9,6 +9,7 @@ export interface RecallCampaign {
   recallType: string;
   intervalMonths: number;
   isActive: boolean;
+  messageTemplate?: string;
   createdAt: string;
   updatedAt: string;
 }

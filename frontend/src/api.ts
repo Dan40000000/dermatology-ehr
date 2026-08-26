@@ -2991,6 +2991,7 @@ export interface RecallCampaign {
   recallType: string;
   intervalMonths: number;
   isActive: boolean;
+  messageTemplate?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -3020,6 +3021,10 @@ export interface PatientRecall {
   phone?: string;
   campaignName?: string;
   recallType?: string;
+  messageTemplate?: string;
+  practiceName?: string;
+  clinicPhone?: string;
+  portalUrl?: string;
   contactAttempts?: number;
   lastReminderType?: 'email' | 'sms' | 'phone' | 'mail' | 'portal' | string;
   lastReminderSentAt?: string;
@@ -3094,6 +3099,7 @@ export async function createRecallCampaign(
     recallType: string;
     intervalMonths: number;
     isActive?: boolean;
+    messageTemplate?: string;
   }
 ): Promise<RecallCampaign> {
   return authedPost(tenantId, accessToken, `/api/recalls/campaigns`, data);
@@ -3109,6 +3115,7 @@ export async function updateRecallCampaign(
     recallType: string;
     intervalMonths: number;
     isActive: boolean;
+    messageTemplate: string;
   }>
 ): Promise<RecallCampaign> {
   const res = await fetch(`${API_BASE}/api/recalls/campaigns/${campaignId}`, {
@@ -3120,7 +3127,10 @@ export async function updateRecallCampaign(
     },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to update campaign");
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to update campaign');
+  }
   return res.json();
 }
 

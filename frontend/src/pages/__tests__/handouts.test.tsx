@@ -147,6 +147,9 @@ describe('HandoutsPage tabs', () => {
     );
 
     await waitFor(() => expect(screen.getByText('System Biopsy Aftercare')).toBeInTheDocument());
+    expect(screen.getAllByRole('button', { name: 'Preview / Print' })[0].parentElement).toHaveClass(
+      'handout-card-actions',
+    );
     expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
 

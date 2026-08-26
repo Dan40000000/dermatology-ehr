@@ -929,6 +929,8 @@ function getSeedRecallPatients(): DemoItem[] {
 }
 
 function seedDemoRecallCampaigns(): DemoItem[] {
+  const messageTemplate =
+    "Hi {firstName}, this is {practiceName}. It's time to schedule your follow-up visit. Reply here or call {clinicPhone} and we'll help. Reply STOP to opt out.";
   return [
     {
       id: 'rec-camp-annual',
@@ -938,6 +940,7 @@ function seedDemoRecallCampaigns(): DemoItem[] {
       recallType: 'Annual Skin Check',
       intervalMonths: 12,
       isActive: true,
+      messageTemplate,
       createdAt: '2026-01-05T09:00:00Z',
       updatedAt: '2026-04-01T09:00:00Z',
     },
@@ -949,6 +952,7 @@ function seedDemoRecallCampaigns(): DemoItem[] {
       recallType: 'Melanoma Surveillance',
       intervalMonths: 6,
       isActive: true,
+      messageTemplate,
       createdAt: '2026-01-12T10:00:00Z',
       updatedAt: '2026-04-08T11:15:00Z',
     },
@@ -960,6 +964,7 @@ function seedDemoRecallCampaigns(): DemoItem[] {
       recallType: 'Lab Result Follow-up',
       intervalMonths: 3,
       isActive: true,
+      messageTemplate,
       createdAt: '2026-02-01T08:30:00Z',
       updatedAt: '2026-04-11T08:30:00Z',
     },
@@ -971,6 +976,7 @@ function seedDemoRecallCampaigns(): DemoItem[] {
       recallType: 'Medication Refill',
       intervalMonths: 1,
       isActive: true,
+      messageTemplate,
       createdAt: '2026-02-14T12:00:00Z',
       updatedAt: '2026-04-10T12:00:00Z',
     },
@@ -982,6 +988,7 @@ function seedDemoRecallCampaigns(): DemoItem[] {
       recallType: 'Post-Procedure Follow-up',
       intervalMonths: 1,
       isActive: false,
+      messageTemplate,
       createdAt: '2026-01-22T14:00:00Z',
       updatedAt: '2026-03-15T14:00:00Z',
     },
@@ -1001,6 +1008,10 @@ function normalizeDemoRecall(recall: DemoItem, campaigns: DemoItem[]): DemoItem 
     ...recall,
     campaignName: recall.campaignName || campaign?.name || 'Manual Recall',
     recallType: recall.recallType || campaign?.recallType || 'Follow-Up Recall',
+    messageTemplate: recall.messageTemplate || campaign?.messageTemplate,
+    practiceName: recall.practiceName || 'Demo Dermatology',
+    clinicPhone: recall.clinicPhone || '(555) 123-4567',
+    portalUrl: recall.portalUrl || '/portal/login',
     firstName: recall.firstName || patient?.firstName || '',
     lastName: recall.lastName || patient?.lastName || '',
     email: recall.email || patient?.email || '',
@@ -4016,6 +4027,7 @@ function handleProviderRoute(
       recallType: String(body?.recallType || 'Annual Skin Check'),
       intervalMonths: Math.max(1, Number(body?.intervalMonths || 12)),
       isActive: body?.isActive !== false,
+      messageTemplate: body?.messageTemplate ? String(body.messageTemplate) : undefined,
       createdAt: now,
       updatedAt: now,
     };

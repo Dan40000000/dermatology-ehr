@@ -933,6 +933,21 @@ async function installMockDataRoutes(page: Page) {
       return;
     }
 
+    if (method === 'GET' && path === '/api/coding-review/post-visit') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          startDate: url.searchParams.get('startDate') || '',
+          endDate: url.searchParams.get('endDate') || '',
+          includeCleared: url.searchParams.get('includeCleared') === 'true',
+          summary: { total: 0, cleared: 0, issueCounts: {} },
+          items: [],
+        }),
+      });
+      return;
+    }
+
     if (method === 'GET' && path === '/api/referrals') {
       const statusFilter = url.searchParams.get('status');
       const directionFilter = url.searchParams.get('direction');

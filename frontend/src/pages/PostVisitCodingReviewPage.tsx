@@ -325,7 +325,7 @@ export function PostVisitCodingReviewPage() {
       >
         <button type="button" onClick={() => selectIssue('all')} aria-pressed={selectedIssue === 'all'} style={summaryButtonStyle(selectedIssue === 'all')}>
           <span style={summaryLabelStyle}>Open review items</span>
-          <strong style={summaryValueStyle}>{data?.summary.total ?? 0}</strong>
+          <strong style={summaryValueStyle}>{data?.summary?.total ?? 0}</strong>
         </button>
         <div style={summaryCardStyle}>
           <span style={summaryLabelStyle}>True coding gaps</span>
@@ -349,7 +349,7 @@ export function PostVisitCodingReviewPage() {
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
               {group.issues.map((issue) => {
-                const count = data?.summary.issueCounts[issue] || 0;
+                const count = data?.summary?.issueCounts?.[issue] || 0;
                 const active = selectedIssue === issue;
                 return (
                   <button

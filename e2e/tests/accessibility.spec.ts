@@ -1,17 +1,8 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/auth.fixture';
 import AxeBuilder from '@axe-core/playwright';
 
 const APP_A11Y_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const INTERNAL_KNOWN_EXCEPTIONS = ['color-contrast'];
-
-// Helper to login
-async function login(page: any) {
-  await page.goto('/login');
-  await page.getByLabel(/email/i).fill('admin@demo.practice');
-  await page.getByRole('textbox', { name: /^password$/i }).fill('Password123!');
-  await page.getByRole('button', { name: /sign in/i }).click();
-  await expect(page).toHaveURL(/\/(home|dashboard)/i);
-}
 
 function summarizeViolations(violations: any[]) {
   return violations.map((violation) => ({
@@ -41,45 +32,39 @@ test.describe('Accessibility', () => {
     await expectNoA11yViolations(page);
   });
 
-  test('dashboard should be accessible', async ({ page }) => {
-    await login(page);
+  test('dashboard should be accessible', async ({ authenticatedPage: page }) => {
     await page.goto('/home');
 
     await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
-  test('patients page should be accessible', async ({ page }) => {
-    await login(page);
+  test('patients page should be accessible', async ({ authenticatedPage: page }) => {
     await page.goto('/patients');
 
     await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
-  test('appointments page should be accessible', async ({ page }) => {
-    await login(page);
+  test('appointments page should be accessible', async ({ authenticatedPage: page }) => {
     await page.goto('/schedule');
 
     await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
-  test('post-visit coding review should be accessible', async ({ page }) => {
-    await login(page);
+  test('post-visit coding review should be accessible', async ({ authenticatedPage: page }) => {
     await page.goto('/coding-review');
     await expect(page.getByRole('heading', { name: /post-visit coding review/i })).toBeVisible();
 
     await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
-  test('patient access needs workflow should be accessible', async ({ page }) => {
-    await login(page);
-    await page.goto('/patients/demo-patient-2?tab=accessibility');
+  test('patient access needs workflow should be accessible', async ({ authenticatedPage: page }) => {
+    await page.goto('/patients/patient-smoke-1?tab=accessibility');
     await expect(page.getByText(/access needs & accommodations/i)).toBeVisible();
 
     await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
-  test('new patient access needs form should be accessible', async ({ page }) => {
-    await login(page);
+  test('new patient access needs form should be accessible', async ({ authenticatedPage: page }) => {
     await page.goto('/patients/new');
     await page.getByRole('button', { name: /access needs/i }).click();
     await expect(page.getByText(/optional, patient-requested accommodation details/i)).toBeVisible();
@@ -108,11 +93,13 @@ test.describe('Accessibility', () => {
     await expect(page.getByRole('textbox', { name: /^password$/i })).toBeFocused();
 
     await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: /show password/i })).toBeFocused();
+
+    await page.keyboard.press('Tab');
     await expect(page.getByRole('button', { name: /sign in/i })).toBeFocused();
   });
 
-  test('should have proper ARIA labels', async ({ page }) => {
-    await login(page);
+  test('should have proper ARIA labels', async ({ authenticatedPage: page }) => {
     await page.goto('/patients');
 
     // Check for proper ARIA labels on interactive elements
@@ -129,8 +116,7 @@ test.describe('Accessibility', () => {
     }
   });
 
-  test('images should have alt text', async ({ page }) => {
-    await login(page);
+  test('images should have alt text', async ({ authenticatedPage: page }) => {
     await page.goto('/home');
 
     const images = page.locator('img');

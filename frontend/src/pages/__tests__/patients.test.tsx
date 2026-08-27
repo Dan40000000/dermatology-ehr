@@ -147,11 +147,11 @@ describe('PatientsPage', () => {
     expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1');
 
     expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next patient search results page' }));
     expect(window.scrollTo).toHaveBeenCalled();
     await waitFor(() => expect(screen.getByText(/Page 2 of 2/)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId('export-buttons')).toHaveAttribute('data-count', '5'));
-    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous patient search results page' }));
     await waitFor(() => expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument());
 
     const lastNameHeader = screen.getByRole('button', { name: /Sort by Last Name/ });

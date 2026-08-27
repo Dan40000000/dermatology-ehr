@@ -275,7 +275,7 @@ describe('DocumentsPage', () => {
     const patientLookup = screen.getByLabelText('Patient filter');
     fireEvent.focus(patientLookup);
     fireEvent.change(patientLookup, { target: { value: 'Ana' } });
-    fireEvent.click(screen.getByRole('button', { name: /Derm, Ana/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Derm, Ana/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Lab Result Templates' }));
 
     await waitFor(() =>

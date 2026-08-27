@@ -1054,7 +1054,6 @@ export function PatientDetailPage() {
   if (!patient) {
     return (
       <div className="patient-detail-page">
-        <h1 className="sr-only">Patient Not Found</h1>
         <div style={{
           background: '#ffffff',
           border: '1px solid #e5e7eb',
@@ -1062,7 +1061,7 @@ export function PatientDetailPage() {
           padding: '2rem',
           textAlign: 'center'
         }}>
-          <h3 style={{ color: '#374151', marginBottom: '0.5rem' }}>Patient Not Found</h3>
+          <h1 style={{ color: '#374151', marginBottom: '0.5rem' }}>Patient Not Found</h1>
           <p style={{ color: '#6b7280', marginBottom: '1rem' }}>The requested patient could not be found.</p>
           <button
             type="button"

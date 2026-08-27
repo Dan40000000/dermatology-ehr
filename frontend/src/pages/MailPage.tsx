@@ -1046,6 +1046,7 @@ export function MailPage() {
         <div style={{ padding: '1rem' }}>
           <div style={{ marginBottom: '1rem' }}>
             <label
+              htmlFor="new-message-staff-recipients"
               style={{
                 display: 'block',
                 marginBottom: '0.5rem',
@@ -1057,6 +1058,7 @@ export function MailPage() {
               To (Staff Members)
             </label>
             <select
+              id="new-message-staff-recipients"
               multiple
               value={newThread.participantIds}
               onChange={(e) => {

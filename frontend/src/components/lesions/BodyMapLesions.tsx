@@ -302,8 +302,6 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                         width: '100%',
                         textAlign: 'left',
                         border: '1px solid',
-                        borderColor: lesion.suspicionLevel >= 4 ? 'error.main' :
-                                    lesion.suspicionLevel >= 3 ? 'warning.main' : 'success.main',
                         p: 1.5,
                         mb: 1,
                         cursor: 'pointer',

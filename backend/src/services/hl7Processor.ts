@@ -29,6 +29,10 @@ export interface ProcessingResult {
  * Main processor - routes to appropriate handler based on message type
  */
 export async function processHL7Message(message: HL7Message, tenantId: string, userId?: string): Promise<ProcessingResult> {
+  if (!tenantId || !tenantId.trim()) {
+    throw new Error("Tenant ID is required to process an HL7 message");
+  }
+
   const client = await pool.connect();
 
   try {

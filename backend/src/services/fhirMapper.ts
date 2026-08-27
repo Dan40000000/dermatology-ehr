@@ -63,6 +63,12 @@ export interface FHIRPeriod {
   end?: string;
 }
 
+export interface FHIRBundleLinks {
+  self?: string;
+  next?: string;
+  previous?: string;
+}
+
 // Helper Functions
 function mapGender(sex?: string): "male" | "female" | "other" | "unknown" {
   if (!sex) return "unknown";
@@ -509,7 +515,7 @@ export function mapVitalsToFHIRObservations(dbVital: any): any[] {
  * Map Encounter Diagnosis to FHIR R4 Condition resource
  */
 export function mapDiagnosisToFHIRCondition(dbDiagnosis: any): any {
-  return {
+  const resource: any = {
     resourceType: "Condition",
     id: dbDiagnosis.id,
     meta: {
@@ -521,24 +527,6 @@ export function mapDiagnosisToFHIRCondition(dbDiagnosis: any): any {
         value: dbDiagnosis.id,
       },
     ],
-    clinicalStatus: {
-      coding: [
-        {
-          system: "http://terminology.hl7.org/CodeSystem/condition-clinical",
-          code: "active",
-          display: "Active",
-        },
-      ],
-    },
-    verificationStatus: {
-      coding: [
-        {
-          system: "http://terminology.hl7.org/CodeSystem/condition-ver-status",
-          code: "confirmed",
-          display: "Confirmed",
-        },
-      ],
-    },
     category: [
       {
         coding: [
@@ -568,13 +556,52 @@ export function mapDiagnosisToFHIRCondition(dbDiagnosis: any): any {
     } : undefined,
     recordedDate: formatFHIRDateTime(dbDiagnosis.created_at),
   };
+
+  // Diagnosis rows historically did not carry clinical or verification status.
+  // Do not infer either value from the existence of a diagnosis or from the
+  // primary-diagnosis flag. Include a status only when the source explicitly
+  // provides a valid FHIR code.
+  const clinicalStatus = String(
+    dbDiagnosis.clinical_status || dbDiagnosis.clinicalStatus || dbDiagnosis.status || ""
+  ).toLowerCase();
+  const validClinicalStatuses = new Set(["active", "recurrence", "relapse", "inactive", "remission", "resolved"]);
+  if (validClinicalStatuses.has(clinicalStatus)) {
+    resource.clinicalStatus = {
+      coding: [{
+        system: "http://terminology.hl7.org/CodeSystem/condition-clinical",
+        code: clinicalStatus,
+      }],
+    };
+  }
+
+  const verificationStatus = String(
+    dbDiagnosis.verification_status || dbDiagnosis.verificationStatus || dbDiagnosis.certainty || ""
+  ).toLowerCase();
+  const validVerificationStatuses = new Set([
+    "unconfirmed",
+    "provisional",
+    "differential",
+    "confirmed",
+    "refuted",
+    "entered-in-error",
+  ]);
+  if (validVerificationStatuses.has(verificationStatus)) {
+    resource.verificationStatus = {
+      coding: [{
+        system: "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+        code: verificationStatus,
+      }],
+    };
+  }
+
+  return resource;
 }
 
 /**
  * Map Charge (CPT code) to FHIR R4 Procedure resource
  */
 export function mapChargeToProcedure(dbCharge: any): any {
-  return {
+  const resource: any = {
     resourceType: "Procedure",
     id: dbCharge.id,
     meta: {
@@ -586,7 +613,6 @@ export function mapChargeToProcedure(dbCharge: any): any {
         value: dbCharge.id,
       },
     ],
-    status: dbCharge.status === "paid" ? "completed" : "preparation",
     code: {
       coding: [
         {
@@ -605,6 +631,28 @@ export function mapChargeToProcedure(dbCharge: any): any {
     } : undefined,
     performedDateTime: formatFHIRDateTime(dbCharge.created_at),
   };
+
+  // A billing/charge status is not a clinical Procedure status. Preserve an
+  // explicitly supplied FHIR procedure status, and otherwise omit status
+  // rather than translating values such as "pending" or "paid".
+  const procedureStatus = String(
+    dbCharge.procedure_status || dbCharge.procedureStatus || dbCharge.status || ""
+  ).toLowerCase();
+  const validProcedureStatuses = new Set([
+    "preparation",
+    "in-progress",
+    "not-done",
+    "on-hold",
+    "stopped",
+    "completed",
+    "entered-in-error",
+    "unknown",
+  ]);
+  if (validProcedureStatuses.has(procedureStatus)) {
+    resource.status = procedureStatus;
+  }
+
+  return resource;
 }
 
 /**
@@ -779,16 +827,35 @@ export function mapAllergyToFHIR(dbAllergy: any): any {
 /**
  * Create FHIR Bundle for search results
  */
-export function createFHIRBundle(entries: any[], type: "searchset" | "collection" = "searchset", total?: number): any {
-  return {
+export function createFHIRBundle(
+  entries: any[],
+  type: "searchset" | "collection" = "searchset",
+  total?: number,
+  links?: FHIRBundleLinks,
+): any {
+  const bundle: any = {
     resourceType: "Bundle",
     type,
-    total: total !== undefined ? total : entries.length,
     entry: entries.map((resource) => ({
       fullUrl: `${resource.resourceType}/${resource.id}`,
       resource,
     })),
   };
+
+  // A search total is meaningful only when the caller has an exact value. Do
+  // not manufacture a page-sized or approximate total when one is unavailable.
+  if (total !== undefined) {
+    bundle.total = total;
+  }
+
+  const bundleLinks = Object.entries(links || {})
+    .filter(([, url]) => Boolean(url))
+    .map(([relation, url]) => ({ relation, url }));
+  if (bundleLinks.length > 0) {
+    bundle.link = bundleLinks;
+  }
+
+  return bundle;
 }
 
 /**
@@ -821,13 +888,18 @@ export async function fetchPatientWithContext(patientId: string, tenantId: strin
 /**
  * Fetch diagnosis with patient context for Condition mapping
  */
-export async function fetchDiagnosisWithContext(diagnosisId: string, tenantId: string): Promise<any> {
+export async function fetchDiagnosisWithContext(
+  diagnosisId: string,
+  tenantId: string,
+  patientId?: string,
+): Promise<any> {
   const result = await pool.query(
     `SELECT ed.*, e.patient_id
      FROM encounter_diagnoses ed
      LEFT JOIN encounters e ON e.id = ed.encounter_id
-     WHERE ed.id = $1 AND ed.tenant_id = $2`,
-    [diagnosisId, tenantId]
+     WHERE ed.id = $1 AND ed.tenant_id = $2
+       ${patientId ? "AND e.patient_id = $3" : ""}`,
+    patientId ? [diagnosisId, tenantId, patientId] : [diagnosisId, tenantId]
   );
   return result.rows[0];
 }
@@ -835,13 +907,18 @@ export async function fetchDiagnosisWithContext(diagnosisId: string, tenantId: s
 /**
  * Fetch charge with patient context for Procedure mapping
  */
-export async function fetchChargeWithContext(chargeId: string, tenantId: string): Promise<any> {
+export async function fetchChargeWithContext(
+  chargeId: string,
+  tenantId: string,
+  patientId?: string,
+): Promise<any> {
   const result = await pool.query(
     `SELECT c.*, e.patient_id
      FROM charges c
      LEFT JOIN encounters e ON e.id = c.encounter_id
-     WHERE c.id = $1 AND c.tenant_id = $2`,
-    [chargeId, tenantId]
+     WHERE c.id = $1 AND c.tenant_id = $2
+       ${patientId ? "AND e.patient_id = $3" : ""}`,
+    patientId ? [chargeId, tenantId, patientId] : [chargeId, tenantId]
   );
   return result.rows[0];
 }
@@ -849,13 +926,18 @@ export async function fetchChargeWithContext(chargeId: string, tenantId: string)
 /**
  * Fetch vital with patient context for Observation mapping
  */
-export async function fetchVitalWithContext(vitalId: string, tenantId: string): Promise<any> {
+export async function fetchVitalWithContext(
+  vitalId: string,
+  tenantId: string,
+  patientId?: string,
+): Promise<any> {
   const result = await pool.query(
     `SELECT v.*, e.patient_id
      FROM vitals v
      LEFT JOIN encounters e ON e.id = v.encounter_id
-     WHERE v.id = $1 AND v.tenant_id = $2`,
-    [vitalId, tenantId]
+     WHERE v.id = $1 AND v.tenant_id = $2
+       ${patientId ? "AND e.patient_id = $3" : ""}`,
+    patientId ? [vitalId, tenantId, patientId] : [vitalId, tenantId]
   );
   return result.rows[0];
 }
@@ -863,10 +945,16 @@ export async function fetchVitalWithContext(vitalId: string, tenantId: string): 
 /**
  * Fetch allergy with patient context for AllergyIntolerance mapping
  */
-export async function fetchAllergyWithContext(allergyId: string, tenantId: string): Promise<any> {
+export async function fetchAllergyWithContext(
+  allergyId: string,
+  tenantId: string,
+  patientId?: string,
+): Promise<any> {
   const result = await pool.query(
-    `SELECT * FROM patient_allergies WHERE id = $1 AND tenant_id = $2`,
-    [allergyId, tenantId]
+    `SELECT * FROM patient_allergies
+     WHERE id = $1 AND tenant_id = $2
+       ${patientId ? "AND patient_id = $3" : ""}`,
+    patientId ? [allergyId, tenantId, patientId] : [allergyId, tenantId]
   );
   return result.rows[0];
 }

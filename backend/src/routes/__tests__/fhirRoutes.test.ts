@@ -17,6 +17,7 @@ jest.mock('../../middleware/fhirAuth', () => ({
     return next();
   },
   requireFHIRScope: () => (_req: any, _res: any, next: any) => next(),
+  getFHIRPatientContext: jest.fn(() => undefined),
   logFHIRAccess: jest.fn(),
 }));
 

@@ -10,6 +10,9 @@ create table if not exists fhir_oauth_tokens (
   access_token varchar(500) not null unique,
   refresh_token varchar(500),
   scope text,
+  -- SMART launch context. Patient-scoped tokens must carry patient_id.
+  patient_id varchar(255),
+  user_id varchar(255),
   expires_at timestamp,
   created_at timestamp default current_timestamp,
   updated_at timestamp default current_timestamp,
@@ -32,6 +35,7 @@ create index if not exists idx_fhir_tokens_tenant on fhir_oauth_tokens(tenant_id
 create index if not exists idx_fhir_tokens_access on fhir_oauth_tokens(access_token);
 create index if not exists idx_fhir_tokens_client on fhir_oauth_tokens(client_id);
 create index if not exists idx_fhir_tokens_expires on fhir_oauth_tokens(expires_at);
+create index if not exists idx_fhir_tokens_patient on fhir_oauth_tokens(patient_id);
 
 -- Update timestamp trigger
 create or replace function update_fhir_oauth_tokens_updated_at()
@@ -46,26 +50,3 @@ create trigger trigger_update_fhir_oauth_tokens_updated_at
   before update on fhir_oauth_tokens
   for each row
   execute function update_fhir_oauth_tokens_updated_at();
-
--- Insert demo FHIR client for testing
-insert into fhir_oauth_tokens(
-  id,
-  tenant_id,
-  client_id,
-  client_secret,
-  access_token,
-  refresh_token,
-  scope,
-  expires_at,
-  client_name
-) values (
-  'fhir-token-demo',
-  'tenant-demo',
-  'demo-fhir-client',
-  'demo-secret-12345',
-  'demo-fhir-access-token-abcdef123456',
-  'demo-fhir-refresh-token-xyz789',
-  'patient/*.read user/*.read',
-  current_timestamp + interval '1 year',
-  'Demo FHIR Client'
-) on conflict (id) do nothing;

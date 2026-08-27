@@ -47,6 +47,10 @@ function logHL7QueueError(message: string, error: unknown): void {
  * Enqueue an HL7 message for processing
  */
 export async function enqueueHL7Message(rawMessage: string, tenantId: string): Promise<string> {
+  if (!tenantId || !tenantId.trim()) {
+    throw new Error("Tenant ID is required to enqueue an HL7 message");
+  }
+
   const client = await pool.connect();
 
   try {

@@ -1,6 +1,6 @@
 /**
  * HL7 Integration Service
- * Mock HL7 v2.x message generation and parsing for lab orders and results
+ * HL7 v2.x message generation and parsing for lab orders and results
  */
 
 import crypto from 'crypto';
@@ -561,23 +561,17 @@ export class HL7Service {
     endpoint: string,
     labName: string
   ): Promise<{ success: boolean; acknowledgment?: string; error?: string }> {
-    // In a real implementation, this would:
-    // 1. Establish MLLP connection to lab interface
-    // 2. Send the HL7 message
-    // 3. Receive ACK/NAK response
-    // 4. Handle errors and retries
-
-    logger.info('Sending HL7 message to lab', { labName, endpoint, messageLength: message.length });
-
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Mock success response with ACK
-    const ack = this.generateACK(message, 'AA'); // AA = Application Accept
-
+    logger.info('Sending HL7 message to lab', {
+      labName,
+      endpointConfigured: Boolean(endpoint),
+      messageLength: message.length,
+    });
+    // MLLP transport is not implemented in this service. Do not fabricate an
+    // AA acknowledgment: callers must treat this as undelivered and route the
+    // message through a configured transport adapter before retrying.
     return {
-      success: true,
-      acknowledgment: ack
+      success: false,
+      error: 'HL7 MLLP transport is not implemented; message was not sent',
     };
   }
 

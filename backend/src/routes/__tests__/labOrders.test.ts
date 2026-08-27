@@ -153,13 +153,52 @@ describe("Lab orders routes", () => {
       .mockResolvedValueOnce({ rows: [] });
 
     generateMock.mockReturnValueOnce("HL7MSG");
-    sendMock.mockResolvedValueOnce({ acknowledgment: "ACK" });
+    sendMock.mockResolvedValueOnce({ success: true, acknowledgment: "ACK" });
 
     const res = await request(app).post("/lab-orders/order-1/submit");
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(generateMock).toHaveBeenCalled();
     expect(sendMock).toHaveBeenCalled();
+  });
+
+  it("POST /lab-orders/:id/submit does not mark order sent when transport fails", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "order-1",
+            patient_uuid: "p1",
+            provider_uuid: "prov-1",
+            hl7_enabled: true,
+            vendor_name: "Lab",
+            api_endpoint: "mllp://lab",
+            priority: "routine",
+            clinical_indication: "rash",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ test_code: "T1", test_name: "Test" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    generateMock.mockReturnValueOnce("HL7MSG");
+    sendMock.mockResolvedValueOnce({
+      success: false,
+      error: "HL7 MLLP transport is not implemented",
+    });
+
+    const res = await request(app).post("/lab-orders/order-1/submit");
+
+    expect(res.status).toBe(502);
+    expect(res.body).toEqual({
+      success: false,
+      error: "HL7 MLLP transport is not implemented",
+    });
+    expect(queryMock).toHaveBeenLastCalledWith(
+      expect.stringContaining("transmission_status"),
+      ["pending", "error", "HL7 MLLP transport is not implemented", "order-1", "tenant-1"],
+    );
+    expect(queryMock.mock.calls.some(([, params]) => Array.isArray(params) && params[0] === "sent")).toBe(false);
   });
 
   it("POST /lab-orders/:id/demo-generate-results rejects invalid profile", async () => {

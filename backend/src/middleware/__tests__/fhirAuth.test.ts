@@ -1,4 +1,11 @@
-import { requireFHIRAuth, requireFHIRScope, logFHIRAccess } from "../fhirAuth";
+import {
+  requireFHIRAuth,
+  requireFHIRScope,
+  logFHIRAccess,
+  parseScopes,
+  checkScopePermission,
+  getFHIRPatientContext,
+} from "../fhirAuth";
 import { pool } from "../../db/pool";
 import { createAuditLog } from "../../services/audit";
 
@@ -72,6 +79,38 @@ describe("FHIR auth middleware", () => {
     expect(req.fhirAuth).toBeTruthy();
   });
 
+  it("rejects patient-scoped tokens without launch patient context", async () => {
+    const req: any = { headers: { authorization: "Bearer patient-token" }, ip: "1.1.1.1", get: jest.fn(), query: {} };
+    const res = createRes();
+    const next = jest.fn();
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "tok-patient", tenant_id: "tenant-1", client_id: "client-1", scope: "patient/*.read", expires_at: null }],
+    });
+
+    await requireFHIRAuth(req, res as any, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].issue[0].diagnostics).toContain("patient context");
+  });
+
+  it("attaches patient launch context and accepts SMART v2 read/search scopes", async () => {
+    const req: any = { headers: { authorization: "Bearer patient-token" }, ip: "1.1.1.1", get: jest.fn(), query: {}, path: "/fhir/AllergyIntolerance" };
+    const res = createRes();
+    const next = jest.fn();
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "tok-patient", tenant_id: "tenant-1", client_id: "client-1", scope: "patient/AllergyIntolerance.rs", patient_id: "p1", expires_at: null }],
+    });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    await requireFHIRAuth(req, res as any, next);
+
+    expect(next).toHaveBeenCalled();
+    expect(req.fhirAuth.patientId).toBe("p1");
+    expect(parseScopes("patient/AllergyIntolerance.rs")).toEqual(["patient/AllergyIntolerance.rs"]);
+    expect(checkScopePermission(["patient/AllergyIntolerance.rs"], "AllergyIntolerance", "search")).toBe(true);
+  });
+
   it("requireFHIRScope blocks without auth", async () => {
     const middleware = requireFHIRScope("Patient", "read");
     const req: any = { fhirAuth: undefined };
@@ -97,6 +136,53 @@ describe("FHIR auth middleware", () => {
     const next = jest.fn();
     middleware(req, res as any, next);
     expect(next).toHaveBeenCalled();
+  });
+
+  it("blocks patient tokens from unrelated resources", () => {
+    const middleware = requireFHIRScope("Organization", "read");
+    const req: any = {
+      fhirAuth: { tenantId: "tenant-1", clientId: "client-1", scope: ["patient/*.read"], patientId: "p1" },
+      ip: "1.1.1.1",
+      query: {},
+      params: {},
+      path: "/fhir/Organization",
+    };
+    const res = createRes();
+    const next = jest.fn();
+
+    middleware(req, res as any, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("blocks patient tokens from another patient's resource", () => {
+    const middleware = requireFHIRScope("AllergyIntolerance", "read");
+    const req: any = {
+      fhirAuth: { tenantId: "tenant-1", clientId: "client-1", scope: ["patient/*.read"], patientId: "p1" },
+      ip: "1.1.1.1",
+      query: { patient: "Patient/p2" },
+      params: {},
+      path: "/fhir/AllergyIntolerance",
+    };
+    const res = createRes();
+    const next = jest.fn();
+
+    middleware(req, res as any, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a member resource _id filter as a patient id", () => {
+    const req: any = {
+      fhirAuth: { tenantId: "tenant-1", clientId: "client-1", scope: ["patient/*.read"], patientId: "p1" },
+      query: { _id: "allergy-1" },
+      params: {},
+      path: "/fhir/AllergyIntolerance",
+    };
+
+    expect(getFHIRPatientContext(req, "AllergyIntolerance", "read")).toBe("p1");
   });
 
   it("logFHIRAccess no-ops without auth", async () => {

@@ -268,7 +268,7 @@ describe('HL7Service', () => {
   });
 
   describe('sendHL7Message', () => {
-    it('should simulate successful message transmission', async () => {
+    it('reports that transmission is unavailable when MLLP is not configured', async () => {
       const message = 'MSH|^|TEST||20240115||ORM^O01|MSG001|P|2.5.1\rPID|1|MRN001';
 
       const result = await HL7Service.sendHL7Message(
@@ -277,23 +277,21 @@ describe('HL7Service', () => {
         'Quest Diagnostics'
       );
 
-      expect(result.success).toBe(true);
-      expect(result.acknowledgment).toBeDefined();
-      expect(result.acknowledgment).toContain('MSA');
-      expect(result.acknowledgment).toContain('AA');
-      expect(result.acknowledgment).toContain('MSG001');
+      expect(result.success).toBe(false);
+      expect(result.acknowledgment).toBeUndefined();
+      expect(result.error).toContain('MLLP transport is not implemented');
 
       expect(logger.info).toHaveBeenCalledWith(
         'Sending HL7 message to lab',
         expect.objectContaining({
           labName: 'Quest Diagnostics',
-          endpoint: 'mllp://lab.example.com:2575',
+          endpointConfigured: true,
           messageLength: message.length,
         })
       );
     });
 
-    it('should generate proper ACK message', async () => {
+    it('does not fabricate an ACK when transmission is unavailable', async () => {
       const message = [
         'MSH|^|CLINIC^Clinic|LAB^Lab|20240115120000||ORM^O01|CTRL123|P|2.5.1',
         'PID|1|MRN001|patient-123',
@@ -305,10 +303,8 @@ describe('HL7Service', () => {
         'LabCorp'
       );
 
-      expect(result.acknowledgment).toContain('MSH');
-      expect(result.acknowledgment).toContain('ACK');
-      expect(result.acknowledgment).toContain('CTRL123');
-      expect(result.acknowledgment).toContain('MSA|AA|CTRL123');
+      expect(result.success).toBe(false);
+      expect(result.acknowledgment).toBeUndefined();
     });
   });
 

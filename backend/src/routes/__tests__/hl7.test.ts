@@ -305,7 +305,7 @@ describe("HL7 Routes", () => {
       expect(res.body.error).toBe("Processing failed");
     });
 
-    it("should return 500 on exception", async () => {
+    it("should return 400 on parse exception", async () => {
       parseHL7Mock.mockImplementation(() => {
         throw new Error("Parse error");
       });
@@ -314,8 +314,8 @@ describe("HL7 Routes", () => {
         .post("/api/hl7/inbound/sync")
         .send({ message: sampleHL7 });
 
-      expect(res.status).toBe(500);
-      expect(res.body.error).toBe("Internal server error");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid HL7 message format");
     });
 
     it("should create audit log on success", async () => {

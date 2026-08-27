@@ -864,11 +864,16 @@ fhirRouter.put(
       }
 
       updates.push("updated_at = now()");
+      const idParam = paramIndex++;
+      const tenantParam = paramIndex++;
+      const patientParam = patientContext ? paramIndex++ : undefined;
       values.push(id, tenantId);
+      if (patientContext) values.push(patientContext);
 
       const result = await pool.query(
         `UPDATE patient_allergies SET ${updates.join(", ")}
-         WHERE id = $${paramIndex++} AND tenant_id = $${paramIndex}
+         WHERE id = $${idParam} AND tenant_id = $${tenantParam}
+         ${patientParam ? `AND patient_id = $${patientParam}` : ""}
          RETURNING *`,
         values
       );

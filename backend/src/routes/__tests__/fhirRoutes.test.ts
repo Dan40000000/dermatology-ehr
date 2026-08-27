@@ -8,7 +8,7 @@ import {
   fetchVitalWithContext,
   fetchAllergyWithContext,
 } from '../../services/fhirMapper';
-import { logFHIRAccess } from '../../middleware/fhirAuth';
+import { getFHIRPatientContext, logFHIRAccess } from '../../middleware/fhirAuth';
 import { logger } from '../../lib/logger';
 
 jest.mock('../../middleware/fhirAuth', () => ({
@@ -68,6 +68,7 @@ app.use('/fhir', fhirRouter);
 
 const queryMock = pool.query as jest.Mock;
 const logAccessMock = logFHIRAccess as jest.Mock;
+const patientContextMock = getFHIRPatientContext as jest.Mock;
 const fetchDiagnosisMock = fetchDiagnosisWithContext as jest.Mock;
 const fetchChargeMock = fetchChargeWithContext as jest.Mock;
 const fetchVitalMock = fetchVitalWithContext as jest.Mock;
@@ -81,6 +82,8 @@ beforeEach(() => {
   fetchChargeMock.mockReset();
   fetchVitalMock.mockReset();
   fetchAllergyMock.mockReset();
+  patientContextMock.mockReset();
+  patientContextMock.mockReturnValue(undefined);
   loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
 });
@@ -249,6 +252,22 @@ describe('FHIR routes', () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  it('PUT /fhir/AllergyIntolerance/:id enforces the patient context in the database predicate', async () => {
+    patientContextMock.mockReturnValue('p1');
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const res = await request(app).put('/fhir/AllergyIntolerance/a1').send({
+      resourceType: 'AllergyIntolerance',
+      code: { text: 'peanut' },
+    });
+
+    expect(res.status).toBe(404);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining('AND patient_id = $'),
+      expect.arrayContaining(['a1', 'tenant-1', 'p1']),
+    );
   });
 
   it('PUT /fhir/AllergyIntolerance/:id updates allergy', async () => {

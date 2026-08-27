@@ -1,15 +1,17 @@
 # FHIR R4 API Documentation
 
+> **Conformance boundary:** This service exposes a limited set of FHIR R4-shaped resources protected by pre-issued OAuth bearer tokens. It does not currently implement SMART App Launch authorization/token/discovery endpoints, US Core profile validation, `$validate`, or a complete FHIR R4 server. Do not advertise SMART or US Core conformance until those capabilities are implemented and verified with an external validator.
+
 ## Overview
 
-The Dermatology EHR system implements a comprehensive FHIR R4 (Fast Healthcare Interoperability Resources) API for healthcare data exchange and interoperability. This API enables external systems to securely access and integrate with patient data, clinical records, and scheduling information.
+The Dermatology EHR system implements a constrained FHIR R4-compatible exchange surface for selected patient, clinical, and scheduling data.
 
 ### Key Features
 
-- **FHIR R4 Compliant**: Implements FHIR Release 4 specifications
-- **OAuth 2.0 Security**: Secure authentication using Bearer tokens with SMART on FHIR scopes
+- **FHIR R4 Shapes**: Implements a tested subset of Release 4 resource mappings and search behavior
+- **OAuth 2.0 Security**: Validates pre-issued bearer tokens and context-bound scope syntax; it is not a SMART App Launch authorization server
 - **Multi-tenant Isolation**: Complete data isolation per tenant organization
-- **Comprehensive Audit Logging**: All FHIR access is logged for HIPAA compliance
+- **Audit Logging**: FHIR access events are recorded as one technical safeguard
 - **RESTful API**: Standard HTTP methods and FHIR search parameters
 - **8 Core Resources**: Patient, Practitioner, Encounter, Observation, Condition, Procedure, Appointment, Organization
 

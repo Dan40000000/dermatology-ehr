@@ -633,8 +633,9 @@ export function mapChargeToProcedure(dbCharge: any): any {
   };
 
   // A billing/charge status is not a clinical Procedure status. Preserve an
-  // explicitly supplied FHIR procedure status, and otherwise omit status
-  // rather than translating values such as "pending" or "paid".
+  // explicitly supplied FHIR procedure status. FHIR R4 requires Procedure.status,
+  // so use its explicit `unknown` code when the source has no clinical status
+  // rather than translating billing values such as "pending" or "paid".
   const procedureStatus = String(
     dbCharge.procedure_status || dbCharge.procedureStatus || dbCharge.status || ""
   ).toLowerCase();
@@ -648,9 +649,7 @@ export function mapChargeToProcedure(dbCharge: any): any {
     "entered-in-error",
     "unknown",
   ]);
-  if (validProcedureStatuses.has(procedureStatus)) {
-    resource.status = procedureStatus;
-  }
+  resource.status = validProcedureStatuses.has(procedureStatus) ? procedureStatus : "unknown";
 
   return resource;
 }

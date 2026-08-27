@@ -152,9 +152,7 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
         arrow
       >
         <ButtonBase
-          component="div"
-          role="button"
-          tabIndex={0}
+          type="button"
           aria-label={`${regionCode}: ${lesionCount} lesion${lesionCount === 1 ? '' : 's'}${alertCount ? `, ${alertCount} active alert${alertCount === 1 ? '' : 's'}` : ''}`}
           onClick={() => {
             if (regionLesions.length === 1) {
@@ -280,9 +278,7 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                   {regionLesions.map(lesion => (
                     <ButtonBase
                       key={lesion.id}
-                      component="div"
-                      role="button"
-                      tabIndex={0}
+                      type="button"
                       aria-label={`${lesion.bodyLocationDescription}, suspicion level ${lesion.suspicionLevel}, ${lesion.status}`}
                       sx={{
                         display: 'block',

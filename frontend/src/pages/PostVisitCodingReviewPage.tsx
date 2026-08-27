@@ -214,15 +214,15 @@ export function PostVisitCodingReviewPage() {
 
   if (!session) {
     return (
-      <main style={{ padding: '2rem' }}>
+      <div style={{ padding: '2rem' }}>
         <h1 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Post-Visit Coding Review</h1>
         <p style={{ color: '#6b7280' }}>Sign in to review coding work.</p>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main style={{ padding: '1.5rem', maxWidth: '1440px', margin: '0 auto' }}>
+    <div style={{ padding: '1.5rem', maxWidth: '1440px', margin: '0 auto' }}>
       <section style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', margin: 0, color: '#111827' }}>Post-Visit Coding Review</h1>
@@ -483,7 +483,7 @@ export function PostVisitCodingReviewPage() {
           </div>
         )}
       </section>
-    </main>
+    </div>
   );
 }
 

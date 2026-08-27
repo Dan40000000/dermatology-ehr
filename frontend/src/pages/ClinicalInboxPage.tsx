@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -1430,9 +1430,13 @@ function ReplyBox({
   onInternalNoteChange?: (value: boolean) => void;
   allowWorkflowActions?: boolean;
 }) {
+  const replyId = useId();
+
   return (
     <div className="clinical-inbox-reply-box">
+      <label htmlFor={replyId}>Reply or internal note</label>
       <textarea
+        id={replyId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder="Write the reply or internal note..."

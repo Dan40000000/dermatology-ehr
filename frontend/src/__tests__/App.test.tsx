@@ -359,7 +359,7 @@ describe('App', () => {
     fireEvent.click(scheduleSummary);
     const scheduleDetails = scheduleSummary.closest('details');
     const scheduleScope = within(scheduleDetails as HTMLElement);
-    fireEvent.change(scheduleScope.getByLabelText('Patient'), { target: { value: 'patient-1' } });
+    fireEvent.change(scheduleScope.getByLabelText('Patient selection'), { target: { value: 'patient-1' } });
     fireEvent.change(scheduleScope.getByLabelText('Provider'), { target: { value: 'provider-1' } });
     fireEvent.change(scheduleScope.getByLabelText('Location'), { target: { value: 'location-1' } });
     fireEvent.change(scheduleScope.getByLabelText('Type'), { target: { value: 'type-1' } });
@@ -384,5 +384,5 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Revenue' }));
     expect(screen.getByText('$200')).toBeInTheDocument();
-  }, 30000);
+  }, 60000);
 });

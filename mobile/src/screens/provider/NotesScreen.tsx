@@ -31,8 +31,17 @@ export default function NotesScreen({ navigation }: any) {
   const loadNotes = async () => {
     setLoading(true);
     try {
-      const response = await apiClient.get('/api/ambient/notes');
-      setNotes(response.data);
+      const response = await apiClient.get('/api/notes');
+      setNotes(
+        (response.data?.notes || []).map((note: any) => ({
+          id: note.id,
+          patientName: `${note.patientFirstName || ''} ${note.patientLastName || ''}`.trim() || 'Unknown patient',
+          noteType: note.visitCode || 'Clinical note',
+          createdAt: note.createdAt,
+          chiefComplaint: note.chiefComplaint || 'No chief complaint documented',
+          status: note.status,
+        }))
+      );
     } catch (error) {
       console.error('Failed to load notes:', error);
     } finally {
@@ -77,7 +86,7 @@ export default function NotesScreen({ navigation }: any) {
         <Text style={styles.title}>Clinical Notes</Text>
         <TouchableOpacity
           style={styles.newNoteButton}
-          onPress={() => navigation.navigate('AINoteTaking')}
+          onPress={() => navigation.navigate('Patients')}
         >
           <MaterialCommunityIcons name="microphone" size={24} color="#fff" />
         </TouchableOpacity>
@@ -95,7 +104,7 @@ export default function NotesScreen({ navigation }: any) {
             <Text style={styles.emptyText}>No clinical notes</Text>
             <TouchableOpacity
               style={styles.createButton}
-              onPress={() => navigation.navigate('AINoteTaking')}
+              onPress={() => navigation.navigate('Patients')}
             >
               <Text style={styles.createButtonText}>Create Voice Note</Text>
             </TouchableOpacity>

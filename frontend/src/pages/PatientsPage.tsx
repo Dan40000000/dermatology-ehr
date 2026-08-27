@@ -411,8 +411,8 @@ export function PatientsPage() {
             </div>
           </div>
 
-          <div className="ema-filter-group">
-            <span className="ema-filter-label" id="patient-status-label">Patient Status</span>
+          <fieldset className="ema-filter-group">
+            <legend className="ema-filter-label">Patient Status</legend>
             <div className="ema-radio-group">
               <label className="ema-radio">
                 <input
@@ -420,7 +420,6 @@ export function PatientsPage() {
                   name="patientStatus"
                   checked={patientStatus === 'active'}
                   onChange={() => setPatientStatus('active')}
-                  aria-labelledby="patient-status-label"
                 />
                 Active
               </label>
@@ -430,12 +429,11 @@ export function PatientsPage() {
                   name="patientStatus"
                   checked={patientStatus === 'inactive'}
                   onChange={() => setPatientStatus('inactive')}
-                  aria-labelledby="patient-status-label"
                 />
                 Inactive
               </label>
             </div>
-          </div>
+          </fieldset>
         </div>
 
         <div style={{ marginTop: '1rem' }}>

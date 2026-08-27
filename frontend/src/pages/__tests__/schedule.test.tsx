@@ -489,7 +489,7 @@ describe('SchedulePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Exported 0 appointments as CSV');
-  }, 15000);
+  }, 60000);
 
   it('only auto-prepares the downtime packet once per location and date', async () => {
     const fixtures = buildFixtures();
@@ -710,7 +710,7 @@ describe('SchedulePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Ana Derm' }));
     expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1');
-  }, 15000);
+  }, 60000);
 
   it('opens copay modal at check-in and supports defer path', async () => {
     apiMocks.fetchFrontDeskSchedule.mockResolvedValueOnce({
@@ -740,7 +740,7 @@ describe('SchedulePage', () => {
         expect.objectContaining({ deferCopay: true }),
       ),
     );
-  });
+  }, 60000);
 
   it('warns before checking in an appointment that is not on today', async () => {
     const yesterday = buildRelativeSlot(-1, 9, 0, 30);

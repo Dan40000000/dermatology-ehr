@@ -197,8 +197,8 @@ describe('WaitlistPage', () => {
     const createModal = await screen.findByTestId('modal-add-patient-to-waitlist');
     const createScope = within(createModal);
     const createSelects = createScope.getAllByRole('combobox');
-    fireEvent.change(createSelects[0], { target: { value: 'patient-1' } });
-    fireEvent.change(createSelects[1], { target: { value: 'urgent' } });
+    fireEvent.change(createScope.getByLabelText('Patient selection'), { target: { value: 'patient-1' } });
+    fireEvent.change(createSelects[2], { target: { value: 'urgent' } });
     fireEvent.change(createScope.getByPlaceholderText('e.g., Earlier appointment, specific time slot'), {
       target: { value: 'Urgent visit' },
     });
@@ -347,7 +347,7 @@ describe('FaxPage', () => {
     fireEvent.change(sendScope.getByPlaceholderText('Patient Referral - Smith, John'), {
       target: { value: 'New Referral' },
     });
-    fireEvent.change(sendScope.getByRole('combobox'), { target: { value: 'patient-1' } });
+    fireEvent.change(sendScope.getByLabelText('Patient (Optional) selection'), { target: { value: 'patient-1' } });
     const pagesInput = sendScope.getByText('Number of Pages').parentElement?.querySelector('input');
     if (!pagesInput) {
       throw new Error('Pages input not found');

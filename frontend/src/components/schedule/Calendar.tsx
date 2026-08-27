@@ -821,7 +821,7 @@ export function Calendar({
                     className={`calendar-slot ${isAvailable ? 'available' : 'unavailable'} ${
                       slotAppointments.length > 0 || timeBlock ? 'has-appointment' : ''
                     } ${minute === 0 ? 'hour-mark' : ''}`}
-                    role={slotAppointments.length === 0 && !timeBlock ? 'button' : undefined}
+                    role={slotAppointments.length === 0 && !timeBlock && isAvailable ? 'button' : undefined}
                     tabIndex={slotAppointments.length === 0 && !timeBlock && isAvailable ? 0 : -1}
                     aria-label={slotAppointments.length === 0 && !timeBlock
                       ? formatSlotLabel(day, hour, minute, isAvailable ? 'Available' : 'Unavailable')
@@ -999,7 +999,7 @@ export function Calendar({
                     className={`calendar-slot ${anyProviderAvailable ? 'available' : 'unavailable'} ${
                       allSlotAppointments.length > 0 ? 'has-appointment' : ''
                     } ${minute === 0 ? 'hour-mark' : ''}`}
-                    role={allSlotAppointments.length === 0 ? 'button' : undefined}
+                    role={allSlotAppointments.length === 0 && anyProviderAvailable ? 'button' : undefined}
                     tabIndex={allSlotAppointments.length === 0 && anyProviderAvailable ? 0 : -1}
                     aria-label={allSlotAppointments.length === 0
                       ? formatSlotLabel(day, hour, minute, anyProviderAvailable ? 'Available' : 'Unavailable')

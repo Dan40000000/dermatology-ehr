@@ -424,7 +424,7 @@ describe('PriorAuthPage', () => {
     const modalHeader = await screen.findByText('New Prior Authorization Request');
     const modalScope = within(modalHeader.closest('.epa-modal') as HTMLElement);
 
-    fireEvent.change(modalScope.getByRole('combobox'), { target: { value: 'patient-1' } });
+    fireEvent.change(modalScope.getByLabelText('Select Patient selection'), { target: { value: 'patient-1' } });
     fireEvent.change(screen.getByPlaceholderText('e.g., Dupixent, Humira, Accutane'), {
       target: { value: 'Dupixent' },
     });
@@ -520,7 +520,7 @@ describe('QuotesPage', () => {
     const modalHeader = await screen.findByText('Create Cosmetic Quote');
     const modalScope = within(modalHeader.closest('[data-testid^="modal-"]') as HTMLElement);
 
-    fireEvent.change(modalScope.getAllByRole('combobox')[0], { target: { value: '1' } });
+    fireEvent.change(modalScope.getByLabelText('Patient selection'), { target: { value: '1' } });
     fireEvent.change(modalScope.getByDisplayValue('Select procedure...'), { target: { value: 'BOT-001' } });
     fireEvent.change(modalScope.getByDisplayValue('1'), { target: { value: '2' } });
     fireEvent.click(modalScope.getByRole('button', { name: 'Add' }));

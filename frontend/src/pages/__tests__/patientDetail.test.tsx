@@ -297,20 +297,20 @@ describe('PatientDetailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Message' }));
     expect(navigateMock).toHaveBeenCalledWith('/mail');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Documents' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Documents/ }));
     expect(screen.getByRole('button', { name: /Upload Document/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Photos' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Overview/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Photos/ }));
     expect(screen.getByText('Clinical Photos')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Overview/ }));
     const insuranceButtons = screen.getAllByRole('button', { name: 'Insurance' });
     fireEvent.click(insuranceButtons[insuranceButtons.length - 1]);
     expect(screen.getByText('Insurance Information')).toBeInTheDocument();
     expect(screen.getByText('Eligibility & Coverage')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Demographics' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Demographics/ }));
     fireEvent.click(screen.getByRole('button', { name: /Edit Demographics/i }));
     const demographicsModal = await screen.findByTestId('modal-edit-demographics');
     const demoScope = within(demographicsModal);
@@ -318,12 +318,12 @@ describe('PatientDetailPage', () => {
     fireEvent.click(demoScope.getByRole('button', { name: 'Save Changes' }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Insurance' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Insurance/ }));
     fireEvent.click(screen.getByRole('button', { name: /Edit Insurance/i }));
     const insuranceModal = await screen.findByTestId('modal-edit-insurance');
     fireEvent.click(within(insuranceModal).getByRole('button', { name: 'Close Modal' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Medical History' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Medical History/ }));
     fireEvent.click(screen.getByRole('button', { name: /Add Allergy/i }));
     const allergyModal = await screen.findByTestId('modal-add-allergy');
     fireEvent.click(within(allergyModal).getByRole('button', { name: 'Close' }));
@@ -336,22 +336,22 @@ describe('PatientDetailPage', () => {
     const problemModal = await screen.findByTestId('modal-add-problem');
     fireEvent.click(within(problemModal).getByRole('button', { name: 'Close' }));
 
-    fireEvent.click(screen.getByRole('button', { name: /Encounters/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Encounters/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1/encounter/enc-1');
 
-    fireEvent.click(screen.getByRole('button', { name: /Appointments/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Appointments/ }));
     fireEvent.click(screen.getByRole('button', { name: /\+Schedule/ }));
     expect(navigateMock).toHaveBeenCalledWith('/schedule');
 
-    fireEvent.click(screen.getByRole('button', { name: /Documents/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Documents/ }));
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     expect(window.open).toHaveBeenCalledWith('http://files/doc1.pdf', '_blank');
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     fireEvent.click(screen.getByRole('button', { name: /Upload Document/i }));
     expect(window.alert).toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: /Photos/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Photos/ }));
     const photoCard = screen.getByAltText('Left arm lesion').closest('div')?.parentElement as HTMLElement;
     fireEvent.mouseEnter(photoCard);
     fireEvent.mouseLeave(photoCard);
@@ -411,7 +411,7 @@ describe('PatientDetailPage', () => {
 
     render(<PatientDetailPage />);
 
-    await screen.findByText('Patient Not Found');
+    expect((await screen.findAllByText('Patient Not Found')).length).toBeGreaterThan(0);
     expect(toastMocks.showError).toHaveBeenCalledWith('Patient not found');
     expect(navigateMock).toHaveBeenCalledWith('/patients');
   });
@@ -444,19 +444,19 @@ describe('PatientDetailPage', () => {
 
     await screen.findByText('No recent activity');
 
-    fireEvent.click(screen.getByRole('button', { name: /Encounters/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Encounters/ }));
     expect(screen.getByText('No encounters yet')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Appointments/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Appointments/ }));
     expect(screen.getByText('No appointments')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Documents/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Documents/ }));
     expect(screen.getByText('No documents')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Photos/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Photos/ }));
     expect(screen.getByText('No photos')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Medical History' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Medical History/ }));
     expect(screen.getByText('No known allergies')).toBeInTheDocument();
     expect(screen.getByText('No current medications')).toBeInTheDocument();
     expect(screen.getByText('No problems recorded')).toBeInTheDocument();
@@ -516,13 +516,13 @@ describe('PatientDetailPage', () => {
     expect(screen.getByText('Appointment')).toBeInTheDocument();
     expect(screen.getByText('completed').className).toContain('established');
 
-    fireEvent.click(screen.getByRole('button', { name: /Encounters/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Encounters/ }));
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
     expect(screen.getByText('Unknown')).toBeInTheDocument();
     expect(screen.getByText('signed').className).toContain('established');
     expect(screen.getByText('archived').className).toContain('inactive');
 
-    fireEvent.click(screen.getByRole('button', { name: /Appointments/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Appointments/ }));
     expect(screen.getByText('completed').className).toContain('established');
     expect(screen.getByText('cancelled').className).toContain('inactive');
   });
@@ -566,7 +566,7 @@ describe('PatientDetailPage', () => {
 
     await screen.findByTestId('patient-banner');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Demographics' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Demographics/ }));
     expect(screen.getAllByText('Not provided').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Not specified').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Not assigned').length).toBeGreaterThan(0);
@@ -678,7 +678,7 @@ describe('PatientDetailPage', () => {
 
     await screen.findByTestId('patient-banner');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Medical History' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Medical History/ }));
     expect(screen.getByText('mild')).toBeInTheDocument();
     expect(screen.getByText('Resolved')).toBeInTheDocument();
   });
@@ -714,14 +714,14 @@ describe('PatientDetailPage', () => {
 
     await screen.findByText('Patient Chart - Derm, Ana');
 
-    fireEvent.click(screen.getAllByRole('button', { name: /Documents/ })[0]);
+    fireEvent.click(screen.getByRole('tab', { name: /Documents/ }));
     expect(screen.getByText('General')).toBeInTheDocument();
     expect(screen.getByText('System')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
 
-    fireEvent.click(screen.getAllByRole('button', { name: /Photos/ })[0]);
+    fireEvent.click(screen.getByRole('tab', { name: /Photos/ }));
     expect(screen.getByText('Unknown location')).toBeInTheDocument();
-    const photoImg = screen.getByRole('img', { name: 'Patient photo' });
+    const photoImg = screen.getByRole('img', { name: 'Clinical photo of patient lesion' });
     fireEvent.click(photoImg);
     const photoModal = await screen.findByTestId('modal-photo-viewer');
     expect(within(photoModal).getByRole('img', { name: 'Patient photo' })).toBeInTheDocument();
@@ -733,7 +733,7 @@ describe('PatientDetailPage', () => {
 
     render(<PatientDetailPage />);
 
-    await screen.findByText('Patient Not Found');
+    expect((await screen.findAllByText('Patient Not Found')).length).toBeGreaterThan(0);
     expect(toastMocks.showError).toHaveBeenCalledWith('Patient not found');
     expect(navigateMock).toHaveBeenCalledWith('/patients');
   });
@@ -758,7 +758,7 @@ describe('PatientDetailPage', () => {
 
     await screen.findByText('Patient Chart - Derm, Ana');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Demographics' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Demographics/ }));
     const ageLabel = screen.getByText('Age');
     const ageRow = ageLabel.parentElement as HTMLElement;
     expect(within(ageRow).getByText('N/A')).toBeInTheDocument();

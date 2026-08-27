@@ -20,7 +20,7 @@ interface Patient {
   lastVisit?: string;
 }
 
-export default function PatientLookupScreen() {
+export default function PatientLookupScreen({ navigation }: { navigation: any }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searching, setSearching] = useState(false);
@@ -34,8 +34,21 @@ export default function PatientLookupScreen() {
 
     setSearching(true);
     try {
-      const response = await apiClient.get(`/api/patients/search?q=${query}`);
-      setPatients(response.data);
+      const response = await apiClient.get('/api/patients', {
+        params: {
+          fields: 'id,firstName,lastName,dateOfBirth,mrn',
+          limit: 100,
+        },
+      });
+      const normalizedQuery = query.trim().toLowerCase();
+      const candidates: Patient[] = response.data?.data || [];
+      setPatients(
+        candidates.filter((patient) =>
+          `${patient.firstName} ${patient.lastName} ${patient.mrn}`
+            .toLowerCase()
+            .includes(normalizedQuery)
+        )
+      );
     } catch (error) {
       console.error('Search failed:', error);
     } finally {
@@ -44,7 +57,14 @@ export default function PatientLookupScreen() {
   };
 
   const renderPatient = ({ item }: { item: Patient }) => (
-    <TouchableOpacity style={styles.patientCard}>
+    <TouchableOpacity
+      style={styles.patientCard}
+      accessibilityRole="button"
+      accessibilityLabel={`Start voice note for ${item.firstName} ${item.lastName}`}
+      onPress={() =>
+        navigation.getParent()?.navigate('AINoteTaking', { patient: item })
+      }
+    >
       <View style={styles.patientAvatar}>
         <Text style={styles.patientInitials}>
           {item.firstName[0]}

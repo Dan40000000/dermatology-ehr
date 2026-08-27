@@ -1983,9 +1983,9 @@ export function ClaimsPage() {
             <div className="claims-filters">
               <div className="filter-row">
                 <div className="form-field">
-                  <label>Status Filter</label>
+                  <label htmlFor="claims-status-filter">Status Filter</label>
                   <select
-                    aria-label="Claim status filter"
+                    id="claims-status-filter"
                     value={statusFilter}
                     onChange={(event) => {
                       const nextStatus = event.target.value as ClaimUiStatus | 'all';
@@ -2006,8 +2006,9 @@ export function ClaimsPage() {
                   </select>
                 </div>
                 <div className="form-field">
-                  <label>Search</label>
+                  <label htmlFor="claims-search">Search</label>
                   <input
+                    id="claims-search"
                     type="text"
                     placeholder="Search by claim #, patient, or provider..."
                     value={searchTerm}
@@ -2600,8 +2601,9 @@ export function ClaimsPage() {
 
             <div className="form-row">
               <div className="form-field">
-                <label>Payer Payment Amount *</label>
+                <label htmlFor="payer-payment-amount">Payer Payment Amount *</label>
                 <input
+                  id="payer-payment-amount"
                   type="number"
                   step="0.01"
                   value={paymentAmount}
@@ -2611,8 +2613,9 @@ export function ClaimsPage() {
               </div>
 
               <div className="form-field">
-                <label>Payment Date *</label>
+                <label htmlFor="payer-payment-date">Payment Date *</label>
                 <input
+                  id="payer-payment-date"
                   type="date"
                   value={paymentDate}
                   onChange={(event) => setPaymentDate(event.target.value)}
@@ -2622,8 +2625,8 @@ export function ClaimsPage() {
 
             <div className="form-row">
               <div className="form-field">
-                <label>Payment Method</label>
-                <select aria-label="Payment method" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                <label htmlFor="payer-payment-method">Payment Method</label>
+                <select id="payer-payment-method" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
                   <option value="">Select...</option>
                   <option value="check">Check</option>
                   <option value="eft">EFT</option>
@@ -2633,8 +2636,9 @@ export function ClaimsPage() {
               </div>
 
               <div className="form-field">
-                <label>Payer Name</label>
+                <label htmlFor="payer-name">Payer Name</label>
                 <input
+                  id="payer-name"
                   type="text"
                   value={paymentPayer}
                   onChange={(event) => setPaymentPayer(event.target.value)}
@@ -2645,8 +2649,9 @@ export function ClaimsPage() {
 
             <div className="form-row">
               <div className="form-field">
-                <label>Check Number</label>
+                <label htmlFor="payer-check-number">Check Number</label>
                 <input
+                  id="payer-check-number"
                   type="text"
                   value={checkNumber}
                   onChange={(event) => setCheckNumber(event.target.value)}
@@ -2656,8 +2661,9 @@ export function ClaimsPage() {
             </div>
 
             <div className="form-field">
-              <label>Notes</label>
+              <label htmlFor="payer-payment-notes">Notes</label>
               <textarea
+                id="payer-payment-notes"
                 value={paymentNotes}
                 onChange={(event) => setPaymentNotes(event.target.value)}
                 placeholder="Optional notes about this payment"

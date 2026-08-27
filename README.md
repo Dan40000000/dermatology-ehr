@@ -1,6 +1,6 @@
 # Dermatology EHR System
 
-A comprehensive, HIPAA-compliant Electronic Health Record (EHR) system specifically designed for dermatology practices. This multi-tenant healthcare application provides complete patient management, appointment scheduling, clinical documentation, and secure messaging capabilities.
+A comprehensive dermatology Electronic Health Record (EHR) system engineered toward HIPAA-aligned safeguards. Technical controls alone are not a compliance attestation; production PHI use requires deployment-specific risk analysis, policies, access governance, vendor BAAs, and verified operational evidence.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ The Dermatology EHR System is a modern, cloud-native healthcare application buil
 - **Multi-Tenant Architecture**: Support for multiple practices with complete data isolation
 - **Role-Based Access Control (RBAC)**: Granular permissions for Admin, Physician, Nurse, and Front Desk roles
 - **Patient Portal**: Secure patient access to records, messaging, and appointment management
-- **Messaging System**: HIPAA-compliant internal messaging between staff and patients
+- **Messaging System**: Authenticated, audited internal messaging between staff and patients; production use depends on approved infrastructure and operating controls
 - **Task Management**: Integrated task tracking with assignments and priorities
 - **Data Export**: Comprehensive export capabilities in PDF, CSV, and Excel formats
 - **Audit Logging**: Complete audit trail for HIPAA compliance

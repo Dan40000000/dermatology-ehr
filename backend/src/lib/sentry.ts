@@ -84,7 +84,7 @@ export function initSentry(): void {
         // Redact request body data
         if (event.request.data) {
           if (typeof event.request.data === 'object') {
-            event.request.data = redactPHI(event.request.data);
+            event.request.data = redactTelemetryValue(redactPHI(event.request.data));
           } else if (typeof event.request.data === 'string') {
             event.request.data = '[Request Body Redacted]';
           }
@@ -130,7 +130,7 @@ export function initSentry(): void {
             breadcrumb.message = redactError(new Error(breadcrumb.message)).message;
           }
           if (breadcrumb.data) {
-            breadcrumb.data = redactPHI(breadcrumb.data);
+            breadcrumb.data = redactTelemetryValue(redactPHI(breadcrumb.data));
           }
           return breadcrumb;
         });
@@ -140,14 +140,14 @@ export function initSentry(): void {
       if (event.contexts) {
         Object.keys(event.contexts).forEach(contextKey => {
           if (event.contexts![contextKey]) {
-            event.contexts![contextKey] = redactPHI(event.contexts![contextKey]);
+            event.contexts![contextKey] = redactTelemetryValue(redactPHI(event.contexts![contextKey]));
           }
         });
       }
 
       // Redact extra data
       if (event.extra) {
-        event.extra = redactPHI(event.extra);
+        event.extra = redactTelemetryValue(redactPHI(event.extra));
       }
 
       if (event.user) {
@@ -203,7 +203,7 @@ export function initSentry(): void {
 export function captureException(error: Error, context?: Record<string, any>): void {
   // Redact PHI from context before sending to Sentry
   if (context) {
-    const redactedContext = redactPHI(context);
+    const redactedContext = redactTelemetryValue(redactPHI(context));
     Sentry.setContext('custom', redactedContext);
   }
 
@@ -241,7 +241,7 @@ export function clearUser(): void {
  */
 export function addBreadcrumb(message: string, category: string, data?: Record<string, any>): void {
   // Redact PHI from breadcrumb data
-  const redactedData = data ? redactPHI(data) : undefined;
+  const redactedData = data ? redactTelemetryValue(redactPHI(data)) : undefined;
   const redactedMessage = redactError(new Error(message)).message;
 
   Sentry.addBreadcrumb({

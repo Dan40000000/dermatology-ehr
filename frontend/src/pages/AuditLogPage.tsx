@@ -443,7 +443,7 @@ export function AuditLogPage() {
           Audit Log Viewer
         </h1>
         <p style={{ color: "#6b7280", fontSize: "0.875rem" }}>
-          HIPAA-compliant audit trail and security monitoring
+          Audit trail and security monitoring
         </p>
       </div>
 

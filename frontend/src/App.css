@@ -3340,6 +3340,35 @@ pre {
   justify-content: space-between;
 }
 
+.month-view-day-open {
+  align-self: flex-start;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--gray-700);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.month-view-day-open:hover,
+.month-view-day-open:focus-visible {
+  background: var(--primary-50);
+  color: var(--primary-700);
+  outline: 2px solid var(--primary-600);
+  outline-offset: 1px;
+}
+
+.month-view-day.today .month-view-day-open {
+  color: var(--primary-700);
+  font-weight: 700;
+}
+
 .month-view-day-count {
   background: var(--primary-600);
   color: var(--white);
@@ -10819,6 +10848,13 @@ pre {
   gap: 0.25rem;
 }
 
+fieldset.ema-filter-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .ema-filter-label {
   font-size: 0.75rem;
   font-weight: 600;
@@ -10935,8 +10971,9 @@ pre {
 }
 
 .ema-table td a {
-  color: #3b82f6;
-  text-decoration: none;
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
 }
 
 .ema-table td a:hover {
@@ -10945,8 +10982,9 @@ pre {
 
 /* Patient name link styling like ModMed */
 .ema-patient-link {
-  color: #3b82f6;
-  text-decoration: none;
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
   font-weight: 500;
 }
 
@@ -12195,6 +12233,14 @@ pre {
     display: block;
     position: relative;
     z-index: 1100;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    overflow: visible;
+    background: transparent;
+    transform: none;
+    transition: none;
   }
 
   .mobile-menu-btn {
@@ -12235,6 +12281,9 @@ pre {
     z-index: 1198;
     border: 0;
     background: rgba(15, 23, 42, 0.62);
+    opacity: 1;
+    pointer-events: auto;
+    transition: none;
     cursor: pointer;
   }
 

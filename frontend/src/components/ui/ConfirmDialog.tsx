@@ -38,8 +38,8 @@ export function ConfirmDialog({
     };
   }, [isOpen]);
 
-  // Confirmation dialogs remain explicit: Escape is intentionally not a
-  // destructive/cancel action. Focus is trapped and returned to the opener.
+  // Escape is a safe, non-destructive cancel while idle and is ignored during
+  // an in-flight confirmation. Focus is trapped and returned to the opener.
   useDialogFocusTrap({
     isOpen,
     dialogRef,

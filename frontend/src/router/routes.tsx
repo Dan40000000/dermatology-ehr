@@ -308,6 +308,7 @@ export const routes: RouteObject[] = [
       { path: 'photos', element: lazyWithSuspense(PhotosPage) },
       { path: 'body-diagram', element: lazyWithSuspense(BodyDiagramPage) },
       { path: 'lesion-tracking', element: lazyWithSuspense(LesionTrackingPage) },
+      { path: 'lesion-tracking/:patientId', element: lazyWithSuspense(LesionTrackingPage) },
       { path: 'handouts', element: lazyWithSuspense(HandoutsPage) },
 
       // Operations

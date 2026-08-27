@@ -93,16 +93,9 @@ const navItems: NavItem[] = [
       { label: 'Advanced Search', path: '/patients?advanced=true' },
       { label: 'Handout Library', path: '/handouts' },
       { label: 'Reports', path: '/patients/reports' },
+      { label: 'Lesion Tracking', path: '/lesion-tracking', module: 'body_diagram' },
+      { label: 'Body Diagram', path: '/body-diagram', module: 'body_diagram' },
     ]
-  },
-  {
-    label: 'Lesion Tracking',
-    path: '/lesion-tracking',
-    module: 'body_diagram',
-    dropdown: [
-      { label: 'Lesion Dashboard', path: '/lesion-tracking' },
-      { label: 'Body Diagram', path: '/body-diagram' },
-    ],
   },
   {
     label: 'Notes',
@@ -421,9 +414,11 @@ export function MainNav() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+  const [dropdownActivePath, setDropdownActivePath] = useState<string | null>(null);
   const navItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const dropdownMenuRef = useRef<HTMLDivElement>(null);
   const dropdownTriggerRef = useRef<HTMLElement | null>(null);
+  const returnFocusRef = useRef(false);
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const userRole = useMemo(() => getEffectiveRoles(user), [user]);
 
@@ -488,14 +483,25 @@ export function MainNav() {
     dropdownTriggerRef.current = trigger || element.querySelector<HTMLElement>('.ema-nav-link');
     const rect = element.getBoundingClientRect();
     setDropdownPos({ top: rect.bottom, left: getDropdownLeft(rect) });
+    const firstVisibleItem = item.dropdown.find((dropdownItem) => {
+      if (dropdownItem.requiresFeedbackAccess && !canViewProfessionalFeedback(user)) return false;
+      return !dropdownItem.module || accessControl.canAccessModule(dropdownItem.module, userRole);
+    });
+    setDropdownActivePath(firstVisibleItem?.path || null);
     setHoveredItem(itemPath);
   };
 
   const closeDropdown = (returnFocus = false) => {
     setHoveredItem(null);
     setDropdownPos(null);
-    if (returnFocus) {
-      window.setTimeout(() => dropdownTriggerRef.current?.focus(), 0);
+    setDropdownActivePath(null);
+    const trigger = dropdownTriggerRef.current;
+    if (returnFocus && trigger && document.activeElement !== trigger) {
+      window.setTimeout(() => {
+        returnFocusRef.current = true;
+        trigger.focus();
+        returnFocusRef.current = false;
+      }, 0);
     }
   };
 
@@ -510,7 +516,11 @@ export function MainNav() {
       openDropdown(item.path, event.currentTarget);
       window.setTimeout(() => {
         const items = dropdownMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
-        items?.[items.length - 1]?.focus();
+        const lastItem = items?.[items.length - 1];
+        if (lastItem) {
+          setDropdownActivePath(lastItem.dataset.menuPath || null);
+          lastItem.focus();
+        }
       }, 0);
     } else if (event.key === 'Escape' && hoveredItem === item.path) {
       event.preventDefault();
@@ -537,10 +547,18 @@ export function MainNav() {
       const nextIndex = event.key === 'ArrowDown'
         ? (activeIndex + 1) % menuItems.length
         : (activeIndex - 1 + menuItems.length) % menuItems.length;
-      menuItems[nextIndex]?.focus();
+      const nextItem = menuItems[nextIndex];
+      if (nextItem) {
+        setDropdownActivePath(nextItem.dataset.menuPath || null);
+        nextItem.focus();
+      }
     } else if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault();
-      (event.key === 'Home' ? menuItems[0] : menuItems[menuItems.length - 1])?.focus();
+      const nextItem = event.key === 'Home' ? menuItems[0] : menuItems[menuItems.length - 1];
+      if (nextItem) {
+        setDropdownActivePath(nextItem.dataset.menuPath || null);
+        nextItem.focus();
+      }
     } else if (event.key === 'Escape') {
       event.preventDefault();
       closeDropdown(true);
@@ -609,13 +627,16 @@ export function MainNav() {
                 aria-current={isActive(item) ? 'page' : undefined}
                 aria-haspopup={item.dropdown ? 'menu' : undefined}
                 aria-expanded={item.dropdown ? (hoveredItem === item.path ? 'true' : 'false') : undefined}
-                onFocus={() => item.dropdown && openDropdown(item.path)}
+                onFocus={() => {
+                  if (returnFocusRef.current) return;
+                  if (item.dropdown) openDropdown(item.path);
+                }}
                 onKeyDown={(event) => handleNavKeyDown(event, item)}
                 onBlur={(event) => item.dropdown && handleNavBlur(event, item.path)}
               >
                 {item.label}
                 {item.dropdown && (
-                  <span className="dropdown-arrow">▼</span>
+                  <span className="dropdown-arrow" aria-hidden="true">▼</span>
                 )}
                 {item.path === '/mail' && unreadCount > 0 && (
                   <span
@@ -671,13 +692,15 @@ export function MainNav() {
                     <div className="ema-nav-dropdown-section-title">{section}</div>
                     {visibleDropdown
                       .filter(d => d.section === section)
-                      .map((dropdownItem, index) => (
+                      .map((dropdownItem) => (
                         <NavLink
                           key={dropdownItem.path}
                           to={dropdownItem.path}
                           className="ema-nav-dropdown-item"
                           role="menuitem"
-                          tabIndex={index === 0 ? 0 : -1}
+                          data-menu-path={dropdownItem.path}
+                          tabIndex={dropdownItem.path === dropdownActivePath ? 0 : -1}
+                          onFocus={() => setDropdownActivePath(dropdownItem.path)}
                           onClick={() => closeDropdown()}
                         >
                           {dropdownItem.label}
@@ -686,13 +709,15 @@ export function MainNav() {
                   </div>
                 ));
               } else {
-                return visibleDropdown.map((dropdownItem, index) => (
+                return visibleDropdown.map((dropdownItem) => (
                   <NavLink
                     key={dropdownItem.path}
                     to={dropdownItem.path}
                     className="ema-nav-dropdown-item"
                     role="menuitem"
-                    tabIndex={index === 0 ? 0 : -1}
+                    data-menu-path={dropdownItem.path}
+                    tabIndex={dropdownItem.path === dropdownActivePath ? 0 : -1}
+                    onFocus={() => setDropdownActivePath(dropdownItem.path)}
                     onClick={() => closeDropdown()}
                   >
                     {dropdownItem.label}

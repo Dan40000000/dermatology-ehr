@@ -274,7 +274,7 @@ export function DirectMessagingPage() {
             Direct Secure Messaging
           </h1>
           <p style={{ margin: 0, fontSize: '0.875rem', color: '#6b7280' }}>
-            HIPAA-compliant provider-to-provider communication
+            Authenticated, audited provider-to-provider communication
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>

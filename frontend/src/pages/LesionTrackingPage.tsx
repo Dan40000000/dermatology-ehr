@@ -33,13 +33,16 @@ import {
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import LesionCard from '../components/lesions/LesionCard';
-import { closeDialogByExplicitAction } from '../utils/dialogClose';
 import LesionTimeline from '../components/lesions/LesionTimeline';
 import BodyMapLesions from '../components/lesions/BodyMapLesions';
 import ChangeAlert from '../components/lesions/ChangeAlert';
 import ABCDEScorer from '../components/lesions/ABCDEScorer';
 import MeasurementForm from '../components/lesions/MeasurementForm';
 import ImageComparison from '../components/lesions/ImageComparison';
+import { PatientLookupSelect } from '../components/patients/PatientLookupSelect';
+import { fetchPatients } from '../api';
+import type { Patient } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 interface TrackedLesion {
   id: string;
@@ -86,9 +89,17 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+function closeDialogExceptBackdrop(onClose: () => void) {
+  return (_event: unknown, reason?: string) => {
+    if (reason === 'backdropClick') return;
+    onClose();
+  };
+}
+
 const LesionTrackingPage: React.FC = () => {
   const { patientId } = useParams<{ patientId: string }>();
   const navigate = useNavigate();
+  const { session } = useAuth();
 
   const [lesions, setLesions] = useState<TrackedLesion[]>([]);
   const [alerts, setAlerts] = useState<LesionAlert[]>([]);
@@ -97,6 +108,8 @@ const LesionTrackingPage: React.FC = () => {
   const [selectedLesion, setSelectedLesion] = useState<TrackedLesion | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [suspicionFilter, setSuspicionFilter] = useState<string>('all');
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientsLoading, setPatientsLoading] = useState(!patientId);
 
   // Dialog states
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -169,6 +182,25 @@ const LesionTrackingPage: React.FC = () => {
     fetchLesions();
     fetchAlerts();
   }, [fetchLesions, fetchAlerts]);
+
+  useEffect(() => {
+    if (patientId) return;
+
+    const loadPatients = async () => {
+      try {
+        if (!session?.tenantId || !session.accessToken) return;
+        const response = await fetchPatients(session.tenantId, session.accessToken);
+        setPatients(response.patients || []);
+      } catch (error) {
+        console.error('Failed to load patients for lesion tracking:', error);
+        toast.error('Failed to load patients');
+      } finally {
+        setPatientsLoading(false);
+      }
+    };
+
+    void loadPatients();
+  }, [patientId, session]);
 
   const handleAddLesion = async () => {
     if (!patientId) return;
@@ -247,6 +279,29 @@ const LesionTrackingPage: React.FC = () => {
     return 'success';
   };
 
+  if (!patientId) {
+    return (
+      <Box sx={{ p: 3, maxWidth: 800 }}>
+        <Typography variant="h4" component="h1" gutterBottom>Lesion Tracking</Typography>
+        <Typography sx={{ mb: 3 }}>
+          Select a patient to review or document tracked lesions.
+        </Typography>
+        <Paper sx={{ p: 3 }}>
+          <PatientLookupSelect
+            patients={patients}
+            value=""
+            onChange={(selectedPatientId) => {
+              if (selectedPatientId) navigate(`/lesion-tracking/${selectedPatientId}`);
+            }}
+            label="Patient"
+            loading={patientsLoading}
+            showInitialResults
+          />
+        </Paper>
+      </Box>
+    );
+  }
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -310,9 +365,13 @@ const LesionTrackingPage: React.FC = () => {
 
       {/* Tabs */}
       <Paper sx={{ mb: 3 }}>
-        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
-          <Tab label="List View" />
-          <Tab label="Body Map" />
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          aria-label="Lesion tracking views"
+        >
+          <Tab id="lesion-tab-0" aria-controls="lesion-tabpanel-0" label="List View" />
+          <Tab id="lesion-tab-1" aria-controls="lesion-tabpanel-1" label="Body Map" />
         </Tabs>
       </Paper>
 
@@ -406,7 +465,7 @@ const LesionTrackingPage: React.FC = () => {
       </TabPanel>
 
       {/* Add Lesion Dialog */}
-      <Dialog open={showAddDialog} onClose={closeDialogByExplicitAction(() => setShowAddDialog(false))} disableEscapeKeyDown maxWidth="sm" fullWidth>
+      <Dialog open={showAddDialog} onClose={closeDialogExceptBackdrop(() => setShowAddDialog(false))} maxWidth="sm" fullWidth>
         <DialogTitle>Track New Lesion</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -466,8 +525,7 @@ const LesionTrackingPage: React.FC = () => {
       {/* Timeline Dialog */}
       <Dialog
         open={showTimelineDialog}
-        onClose={closeDialogByExplicitAction(() => setShowTimelineDialog(false))}
-        disableEscapeKeyDown
+        onClose={closeDialogExceptBackdrop(() => setShowTimelineDialog(false))}
         maxWidth="lg"
         fullWidth
       >
@@ -490,8 +548,7 @@ const LesionTrackingPage: React.FC = () => {
       {/* Compare Dialog */}
       <Dialog
         open={showCompareDialog}
-        onClose={closeDialogByExplicitAction(() => setShowCompareDialog(false))}
-        disableEscapeKeyDown
+        onClose={closeDialogExceptBackdrop(() => setShowCompareDialog(false))}
         maxWidth="lg"
         fullWidth
       >
@@ -513,8 +570,7 @@ const LesionTrackingPage: React.FC = () => {
       {/* ABCDE Scorer Dialog */}
       <Dialog
         open={showABCDEDialog}
-        onClose={closeDialogByExplicitAction(() => setShowABCDEDialog(false))}
-        disableEscapeKeyDown
+        onClose={closeDialogExceptBackdrop(() => setShowABCDEDialog(false))}
         maxWidth="md"
         fullWidth
       >
@@ -540,8 +596,7 @@ const LesionTrackingPage: React.FC = () => {
       {/* Measurement Dialog */}
       <Dialog
         open={showMeasurementDialog}
-        onClose={closeDialogByExplicitAction(() => setShowMeasurementDialog(false))}
-        disableEscapeKeyDown
+        onClose={closeDialogExceptBackdrop(() => setShowMeasurementDialog(false))}
         maxWidth="sm"
         fullWidth
       >

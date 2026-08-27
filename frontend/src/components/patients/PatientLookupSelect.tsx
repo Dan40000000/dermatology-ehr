@@ -208,21 +208,20 @@ export function PatientLookupSelect({
         ? selectedPatient.name
         : '';
   const hasSelectedPatientValue = Boolean(value) && (!includeAllOption || value !== allValue);
+  const includesAllResult = includeAllOption && Boolean(query) && allLabel.toLowerCase().includes(search.toLowerCase());
 
   const shouldShowResults =
     !disabled &&
     !loading &&
-    filteredPatients.length > 0 &&
+    (filteredPatients.length > 0 || includesAllResult) &&
     (Boolean(query) || focused || (showInitialResults && !includeAllOption && !value));
 
   const visibleResults = filteredPatients.slice(0, maxResults);
-  const includesAllResult = includeAllOption && Boolean(query) && allLabel.toLowerCase().includes(search.toLowerCase());
   const resultCount = visibleResults.length + (includesAllResult ? 1 : 0);
   const getResultId = (index: number) => `${listboxId}-option-${index}`;
-
-  useEffect(() => {
-    setActiveIndex(resultCount > 0 && shouldShowResults ? 0 : -1);
-  }, [query, resultCount, shouldShowResults]);
+  const effectiveActiveIndex = shouldShowResults && resultCount > 0
+    ? Math.min(Math.max(activeIndex, 0), resultCount - 1)
+    : -1;
 
   const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -245,12 +244,12 @@ export function PatientLookupSelect({
       setActiveIndex(resultCount - 1);
       return;
     }
-    if (event.key === 'Enter' && shouldShowResults && activeIndex >= 0) {
+    if (event.key === 'Enter' && effectiveActiveIndex >= 0) {
       event.preventDefault();
-      if (includesAllResult && activeIndex === 0) {
+      if (includesAllResult && effectiveActiveIndex === 0) {
         handleChange(allValue);
       } else {
-        const patient = visibleResults[activeIndex - (includesAllResult ? 1 : 0)];
+        const patient = visibleResults[effectiveActiveIndex - (includesAllResult ? 1 : 0)];
         if (patient) handleChange(patient.id);
       }
       setFocused(false);
@@ -289,8 +288,14 @@ export function PatientLookupSelect({
           type="text"
           className={`patient-lookup__search ${inputClassName}`.trim()}
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          onFocus={() => setFocused(true)}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setActiveIndex(0);
+          }}
+          onFocus={() => {
+            setFocused(true);
+            setActiveIndex(0);
+          }}
           onBlur={() => window.setTimeout(() => setFocused(false), 120)}
           onKeyDown={handleSearchKeyDown}
           placeholder={loading ? 'Loading patients...' : searchPlaceholder}
@@ -301,7 +306,7 @@ export function PatientLookupSelect({
           aria-autocomplete="list"
           aria-expanded={shouldShowResults}
           aria-controls={shouldShowResults ? listboxId : undefined}
-          aria-activedescendant={shouldShowResults && activeIndex >= 0 ? getResultId(activeIndex) : undefined}
+          aria-activedescendant={effectiveActiveIndex >= 0 ? getResultId(effectiveActiveIndex) : undefined}
           aria-describedby={helperText ? `${statusId} ${inputId}-helper` : statusId}
           autoComplete="off"
         />
@@ -329,7 +334,7 @@ export function PatientLookupSelect({
               role="option"
               tabIndex={-1}
               aria-selected={value === allValue}
-              className={`patient-lookup__result ${value === allValue ? 'is-selected' : ''} ${activeIndex === 0 ? 'is-active' : ''}`}
+              className={`patient-lookup__result ${value === allValue ? 'is-selected' : ''} ${effectiveActiveIndex === 0 ? 'is-active' : ''}`}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => { handleChange(allValue); setFocused(false); }}
             >
@@ -346,7 +351,7 @@ export function PatientLookupSelect({
                 role="option"
                 tabIndex={-1}
                 aria-selected={patient.id === value}
-                className={`patient-lookup__result ${patient.id === value ? 'is-selected' : ''} ${activeIndex === optionIndex ? 'is-active' : ''}`}
+                className={`patient-lookup__result ${patient.id === value ? 'is-selected' : ''} ${effectiveActiveIndex === optionIndex ? 'is-active' : ''}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => { handleChange(patient.id); setFocused(false); }}
               >

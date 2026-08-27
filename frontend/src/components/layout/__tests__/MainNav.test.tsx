@@ -133,6 +133,35 @@ describe('MainNav role-based visibility', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
   });
 
+  it('opens desktop dropdowns from the keyboard and returns focus after Escape', async () => {
+    mockRole = 'admin';
+    renderNav();
+
+    const scheduleTrigger = screen.getByRole('link', { name: /^Schedule/ });
+    await act(async () => { scheduleTrigger.focus(); });
+
+    await act(async () => {
+      fireEvent.keyDown(scheduleTrigger, { key: 'ArrowDown' });
+      vi.runOnlyPendingTimers();
+    });
+    const menu = screen.getByRole('menu');
+    const menuItems = screen.getAllByRole('menuitem');
+    expect(menuItems[0]).toHaveFocus();
+    expect(scheduleTrigger).toHaveAttribute('aria-expanded', 'true');
+
+    await act(async () => { fireEvent.keyDown(menuItems[0], { key: 'ArrowDown' }); });
+    expect(menuItems[1]).toHaveFocus();
+    await act(async () => {
+      fireEvent.keyDown(menuItems[1], { key: 'Escape' });
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(scheduleTrigger).toHaveFocus();
+    expect(scheduleTrigger).toHaveAttribute('aria-expanded', 'false');
+    expect(menu).not.toBeInTheDocument();
+  });
+
   it('does not fetch unread mail count for roles without mail access', () => {
     mockRole = 'compliance_officer';
     renderNav();

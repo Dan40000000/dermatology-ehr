@@ -212,6 +212,7 @@ describe("FHIR Resource Mapping", () => {
       expect(fhirProcedure.code.coding).toHaveLength(1);
       expect(fhirProcedure.code.coding[0].system).toBe("http://www.ama-assn.org/go/cpt");
       expect(fhirProcedure.code.coding[0].code).toBe("11100");
+      expect(fhirProcedure.status).toBe("unknown");
       expect(fhirProcedure.subject.reference).toBe("Patient/patient-123");
       expect(fhirProcedure.encounter.reference).toBe("Encounter/enc-123");
     });

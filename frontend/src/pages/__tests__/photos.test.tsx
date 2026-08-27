@@ -189,9 +189,9 @@ describe('PhotosPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ Upload Photo' }));
     const uploadModal = await screen.findByTestId('modal-upload-clinical-photo');
     const selects = within(uploadModal).getAllByRole('combobox');
-    fireEvent.change(selects[0], { target: { value: 'patient-1' } });
-    fireEvent.change(selects[1], { target: { value: 'clinical' } });
-    fireEvent.change(selects[2], { target: { value: 'Face' } });
+    fireEvent.change(within(uploadModal).getByLabelText('Patient selection'), { target: { value: 'patient-1' } });
+    fireEvent.change(selects[2], { target: { value: 'clinical' } });
+    fireEvent.change(selects[3], { target: { value: 'Face' } });
     fireEvent.change(within(uploadModal).getByPlaceholderText('Clinical notes about this photo...'), {
       target: { value: 'New lesion' },
     });

@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useMemo, useState } from 'react';
 import type { Appointment, Provider } from '../../types';
 
 interface MonthViewProps {
@@ -166,23 +166,26 @@ export function MonthView({
               className={`month-view-day ${!isCurrentMonth ? 'other-month' : ''} ${
                 today ? 'today' : ''
               } ${hoveredDate === dateKey ? 'hovered' : ''}`}
-              role={dayAppointments.length === 0 ? 'button' : undefined}
-              tabIndex={dayAppointments.length === 0 ? 0 : -1}
-              aria-current={dayAppointments.length === 0 && today ? 'date' : undefined}
-              aria-label={dayAppointments.length === 0 ? `${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}, no appointments` : undefined}
+              role="group"
+              aria-label={`${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}, ${dayAppointments.length} appointment${dayAppointments.length === 1 ? '' : 's'}`}
               onMouseEnter={() => setHoveredDate(dateKey)}
               onMouseLeave={() => setHoveredDate(null)}
               onClick={() => onDayClick(date)}
-              onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-                if (event.target !== event.currentTarget) return;
-                if (event.key !== 'Enter' && event.key !== ' ') return;
-                event.preventDefault();
-                onDayClick(date);
-              }}
             >
+              <button
+                type="button"
+                className="month-view-day-open"
+                aria-current={today ? 'date' : undefined}
+                aria-label={`Open ${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDayClick(date);
+                }}
+              >
+                {date.getDate()}
+              </button>
               {/* Day number */}
               <div className="month-view-day-number">
-                {date.getDate()}
                 {dayAppointments.length > 0 && (
                   <span className="month-view-day-count">
                     {dayAppointments.length}

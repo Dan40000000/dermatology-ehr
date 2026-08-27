@@ -8,7 +8,7 @@ A complete **Ambient AI Medical Scribe** system for automatic clinical documenta
 
 ### 1. Conversation Recording & Transcription
 - **Real-time Audio Recording**: Browser-based recording using MediaRecorder API
-- **HIPAA-Compliant**: Encrypted storage with automatic PHI detection and masking
+- **HIPAA-aligned safeguards**: Encrypted-storage support plus PHI detection and masking; production use still requires verified configuration, vendor BAAs, policies, and operational controls
 - **Speaker Diarization**: Automatic identification of doctor vs patient speech
 - **Consent Workflow**: Built-in patient consent tracking (verbal, written, electronic)
 - **Live Transcription**: Streaming transcript updates during recording (WebSocket-based)

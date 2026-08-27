@@ -182,9 +182,7 @@ const ABCDEScorer: React.FC<ABCDEScorerProps> = ({
             {info.options.map((option) => (
               <Grid item xs={4} key={option.value}>
                 <ButtonBase
-                  component="div"
-                  role="button"
-                  tabIndex={0}
+                  type="button"
                   aria-pressed={value === option.value}
                   aria-label={`${info.title}: ${option.label}. ${option.description}`}
                   sx={{
@@ -203,11 +201,6 @@ const ABCDEScorer: React.FC<ABCDEScorerProps> = ({
                     }
                   }}
                   onClick={() => setScores({ ...scores, [key]: option.value })}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    setScores({ ...scores, [key]: option.value });
-                  }}
                 >
                   <Box display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="body2" fontWeight="medium">

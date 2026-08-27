@@ -61,8 +61,11 @@ function parseScope(scope: string): ParsedScope | null {
   const match = /^(patient|user|system)\/([^.?]+|\*)(?:\.([a-z*]+))?(?:\?.*)?$/i.exec(scope);
   if (!match) return null;
 
-  const context = match[1].toLowerCase() as ScopeContext;
+  const contextValue = match[1];
   const resource = match[2];
+  if (!contextValue || !resource) return null;
+
+  const context = contextValue.toLowerCase() as ScopeContext;
   const operationPart = (match[3] || "").toLowerCase();
   const operations = new Set<string>();
 

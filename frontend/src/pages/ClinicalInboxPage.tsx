@@ -1069,12 +1069,19 @@ export function ClinicalInboxPage() {
         </button>
       </section>
 
-      {warnings.length > 0 && (
-        <div className="clinical-inbox-warning" role="status">
-          <AlertTriangle size={18} />
-          Some sources could not be loaded: {warnings.join(', ')}.
-        </div>
-      )}
+      <div
+        className={warnings.length > 0 ? 'clinical-inbox-warning' : 'sr-only'}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {warnings.length > 0 && (
+          <>
+            <AlertTriangle size={18} />
+            Some sources could not be loaded: {warnings.join(', ')}.
+          </>
+        )}
+      </div>
 
       <section className="clinical-inbox-shell">
         <aside className="clinical-inbox-list-panel" aria-label="Clinical inbox work list">

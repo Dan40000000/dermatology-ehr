@@ -123,6 +123,45 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
 
     if (lesionCount === 0) return null;
 
+    const markerLabel = `${regionCode}: ${lesionCount} lesion${lesionCount === 1 ? '' : 's'}${alertCount ? `, ${alertCount} active alert${alertCount === 1 ? '' : 's'}` : ''}`;
+    const markerSx = {
+      position: 'absolute',
+      left: `${region.x}%`,
+      top: `${region.y}%`,
+      width: `${region.width}%`,
+      height: `${region.height}%`,
+      bgcolor: getRegionColor(regionCode),
+      border: hoveredRegion === regionCode ? '2px solid #1976d2' : '1px solid rgba(0,0,0,0.2)',
+      borderRadius: 1,
+      cursor: regionLesions.length === 1 ? 'pointer' : 'default',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'all 0.2s',
+      '&:hover': regionLesions.length === 1
+        ? {
+            transform: 'scale(1.05)',
+            zIndex: 10,
+          }
+        : undefined,
+    } as const;
+    const markerContent = (
+      <Badge
+        badgeContent={alertCount > 0 ? <WarningIcon sx={{ fontSize: 12 }} /> : null}
+        color="warning"
+      >
+        <Chip
+          label={lesionCount}
+          size="small"
+          sx={{
+            bgcolor: 'background.paper',
+            minWidth: 24,
+            height: 24,
+          }}
+        />
+      </Badge>
+    );
+
     return (
       <Tooltip
         key={regionCode}
@@ -151,51 +190,29 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
         }
         arrow
       >
-        <ButtonBase
-          type="button"
-          aria-label={`${regionCode}: ${lesionCount} lesion${lesionCount === 1 ? '' : 's'}${alertCount ? `, ${alertCount} active alert${alertCount === 1 ? '' : 's'}` : ''}`}
-          onClick={() => {
-            if (regionLesions.length === 1) {
-              onSelectLesion(regionLesions[0]!);
-            }
-          }}
-          onMouseEnter={() => setHoveredRegion(regionCode)}
-          onMouseLeave={() => setHoveredRegion(null)}
-          sx={{
-            position: 'absolute',
-            left: `${region.x}%`,
-            top: `${region.y}%`,
-            width: `${region.width}%`,
-            height: `${region.height}%`,
-            bgcolor: getRegionColor(regionCode),
-            border: hoveredRegion === regionCode ? '2px solid #1976d2' : '1px solid rgba(0,0,0,0.2)',
-            borderRadius: 1,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            transition: 'all 0.2s',
-            '&:hover': {
-              transform: 'scale(1.05)',
-              zIndex: 10
-            }
-          }}
-        >
-          <Badge
-            badgeContent={alertCount > 0 ? <WarningIcon sx={{ fontSize: 12 }} /> : null}
-            color="warning"
+        {regionLesions.length === 1 ? (
+          <ButtonBase
+            type="button"
+            aria-label={markerLabel}
+            onClick={() => onSelectLesion(regionLesions[0]!)}
+            onMouseEnter={() => setHoveredRegion(regionCode)}
+            onMouseLeave={() => setHoveredRegion(null)}
+            sx={markerSx}
           >
-            <Chip
-              label={lesionCount}
-              size="small"
-              sx={{
-                bgcolor: 'background.paper',
-                minWidth: 24,
-                height: 24
-              }}
-            />
-          </Badge>
-        </ButtonBase>
+            {markerContent}
+          </ButtonBase>
+        ) : (
+          <Box
+            component="span"
+            role="img"
+            aria-label={markerLabel}
+            onMouseEnter={() => setHoveredRegion(regionCode)}
+            onMouseLeave={() => setHoveredRegion(null)}
+            sx={markerSx}
+          >
+            {markerContent}
+          </Box>
+        )}
       </Tooltip>
     );
   };

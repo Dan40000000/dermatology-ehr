@@ -2388,8 +2388,8 @@ export function ClaimsPage() {
                 </div>
               </div>
 
-              <div className="status-actions">
-                <label>Update Status:</label>
+              <fieldset className="status-actions">
+                <legend>Update Status</legend>
                 <div className="status-buttons">
                   {(selectedClaim.claim.status === 'coding_review' || selectedClaim.claim.status === 'draft') && (
                     <button
@@ -2425,7 +2425,7 @@ export function ClaimsPage() {
                       );
                     })}
                 </div>
-              </div>
+              </fieldset>
             </div>
 
             <div className="claim-info-section">
@@ -2604,8 +2604,11 @@ export function ClaimsPage() {
                 <label htmlFor="payer-payment-amount">Payer Payment Amount *</label>
                 <input
                   id="payer-payment-amount"
+                  name="paymentAmount"
                   type="number"
                   step="0.01"
+                  required
+                  aria-required="true"
                   value={paymentAmount}
                   onChange={(event) => setPaymentAmount(event.target.value)}
                   placeholder="0.00"
@@ -2616,7 +2619,10 @@ export function ClaimsPage() {
                 <label htmlFor="payer-payment-date">Payment Date *</label>
                 <input
                   id="payer-payment-date"
+                  name="paymentDate"
                   type="date"
+                  required
+                  aria-required="true"
                   value={paymentDate}
                   onChange={(event) => setPaymentDate(event.target.value)}
                 />

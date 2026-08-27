@@ -474,6 +474,12 @@ export function PatientsPage() {
         </span>
       </h2>
 
+      <div id="patients-results-status" className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {loading
+          ? 'Loading patient search results.'
+          : `Showing ${paginatedPatients.length} of ${filteredPatients.length} patient${filteredPatients.length === 1 ? '' : 's'}, page ${totalPages > 0 ? currentPage : 1} of ${Math.max(totalPages, 1)}.`}
+      </div>
+
       {/* Data Table - Like ModMed */}
       {loading ? (
         <div style={{ padding: '1rem' }}>
@@ -555,10 +561,11 @@ export function PatientsPage() {
 
       {/* Pagination Controls */}
       {!loading && totalPages > 1 && (
-        <div className="ema-pagination">
+        <nav className="ema-pagination" aria-label="Patient search result pages">
           <button
             type="button"
             className="ema-pagination-btn"
+            aria-label="Previous patient search results page"
             onClick={() => handlePageChange(currentPage - 1)}
             disabled={currentPage === 1}
           >
@@ -603,12 +610,13 @@ export function PatientsPage() {
           <button
             type="button"
             className="ema-pagination-btn"
+            aria-label="Next patient search results page"
             onClick={() => handlePageChange(currentPage + 1)}
             disabled={currentPage === totalPages}
           >
             Next
           </button>
-        </div>
+        </nav>
       )}
     </div>
   );

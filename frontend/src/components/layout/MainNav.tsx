@@ -796,51 +796,57 @@ export function MobileNav() {
         />
       )}
 
-      <nav
+      <div
         ref={drawerRef}
         id="mobile-nav-drawer"
         className={`mobile-nav-drawer${isOpen ? ' is-open' : ''}`}
-        aria-label="Mobile navigation"
+        role="dialog"
+        aria-modal={isOpen ? 'true' : undefined}
+        aria-labelledby="mobile-nav-drawer-title"
         aria-hidden={!isOpen}
       >
-        {isOpen && <>
-        <div className="mobile-nav-drawer-header">
-          <span className="mobile-nav-title">Navigation</span>
-          <button type="button" className="mobile-nav-close" onClick={() => setIsOpen(false)} aria-label="Close navigation menu">×</button>
-        </div>
-        <div className="mobile-nav-links">
-          {visibleItems.map((item) => (
-            <div key={item.path} className="mobile-nav-item">
-              <NavLink
-                to={item.path}
-                className={`mobile-nav-link${isActive(item) ? ' active' : ''}`}
-                aria-current={isActive(item) ? 'page' : undefined}
-                onClick={() => setIsOpen(false)}
-              >
-                {item.label}
-              </NavLink>
-              {item.dropdown && (
-                <details className="mobile-nav-submenu">
-                  <summary>More {item.label} options</summary>
-                  <div className="mobile-nav-submenu-items">
-                    {item.dropdown.map((dropdownItem) => (
-                      <NavLink
-                        key={dropdownItem.path}
-                        to={dropdownItem.path}
-                        className="mobile-nav-submenu-link"
-                        onClick={() => setIsOpen(false)}
-                      >
-                        {dropdownItem.label}
-                      </NavLink>
-                    ))}
-                  </div>
-                </details>
-              )}
+        <nav aria-label="Mobile navigation" aria-hidden={!isOpen}>
+          <div className="mobile-nav-drawer-header">
+            <span id="mobile-nav-drawer-title" className="mobile-nav-title">Navigation</span>
+            {isOpen && (
+              <button type="button" className="mobile-nav-close" onClick={() => setIsOpen(false)} aria-label="Close navigation menu">×</button>
+            )}
+          </div>
+          {isOpen && (
+            <div className="mobile-nav-links">
+              {visibleItems.map((item) => (
+                <div key={item.path} className="mobile-nav-item">
+                  <NavLink
+                    to={item.path}
+                    className={`mobile-nav-link${isActive(item) ? ' active' : ''}`}
+                    aria-current={isActive(item) ? 'page' : undefined}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    {item.label}
+                  </NavLink>
+                  {item.dropdown && (
+                    <details className="mobile-nav-submenu">
+                      <summary>More {item.label} options</summary>
+                      <div className="mobile-nav-submenu-items">
+                        {item.dropdown.map((dropdownItem) => (
+                          <NavLink
+                            key={dropdownItem.path}
+                            to={dropdownItem.path}
+                            className="mobile-nav-submenu-link"
+                            onClick={() => setIsOpen(false)}
+                          >
+                            {dropdownItem.label}
+                          </NavLink>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        </>}
-      </nav>
+          )}
+        </nav>
+      </div>
     </div>
   );
 }

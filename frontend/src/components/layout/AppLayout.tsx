@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { MainNav, MobileNav } from './MainNav';
@@ -17,6 +17,8 @@ export function AppLayout() {
   const accessControl = useAccessControl();
   const location = useLocation();
   const [patients, setPatients] = useState<Patient[]>([]);
+  const mainContentRef = useRef<HTMLElement | null>(null);
+  const previousPathRef = useRef(location.pathname);
 
   const loadPatients = useCallback(async () => {
     if (!session) return;
@@ -37,6 +39,31 @@ export function AppLayout() {
   useEffect(() => {
     loadPatients();
   }, [loadPatients]);
+
+  // Announce route changes by moving focus to the new page heading (or main
+  // landmark). Skip the initial render so login and modal focus management can
+  // establish focus without being overridden by the app shell.
+  useEffect(() => {
+    if (previousPathRef.current === location.pathname) return;
+    previousPathRef.current = location.pathname;
+
+    const timeoutId = window.setTimeout(() => {
+      const main = mainContentRef.current;
+      if (!main) return;
+
+      // A route transition can be initiated from a dialog. Let the dialog's
+      // own focus trap finish before the shell attempts to focus the page.
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && activeElement.closest('[role="dialog"]')) return;
+
+      const heading = main.querySelector<HTMLElement>('[data-page-heading], h1, h2');
+      const focusTarget = heading || main;
+      if (!focusTarget.hasAttribute('tabindex')) focusTarget.setAttribute('tabindex', '-1');
+      focusTarget.focus({ preventScroll: true });
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [location.pathname]);
 
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
@@ -69,7 +96,14 @@ export function AppLayout() {
         <MobileNav />
         <DemoIntegrationBanner />
 
-        <main id="main-content" className="content-card" role="main" aria-label="Main content">
+        <main
+          ref={mainContentRef}
+          id="main-content"
+          className="content-card"
+          role="main"
+          aria-label="Main content"
+          tabIndex={-1}
+        >
           <Outlet />
         </main>
 

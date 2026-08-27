@@ -13,10 +13,19 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import FormData from 'form-data';
 import { logger } from '../lib/logger';
-import { deidentifyTextForExternalAi, isHipaaClinicalAiEnabled } from '../utils/aiPhiGuard';
-import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from '../utils/externalAiGate';
+import {
+  deidentifyTextForExternalAi,
+  isHipaaClinicalAiEnabled,
+  isClinicalAiProviderAllowed,
+} from '../utils/aiPhiGuard';
+import {
+  getEnabledAnthropicApiKey,
+  getEnabledOpenAiApiKey,
+  isProviderBaaEnabled,
+  type ClinicalAiProvider,
+} from '../utils/externalAiGate';
 import { meteredOpenAiFetch } from '../utils/openAiSpendGuard';
-import { redactValue } from '../utils/phiRedaction';
+import { hashValue, redactValue, safeErrorCode } from '../utils/phiRedaction';
 import { AgentConfiguration } from './agentConfigService';
 import { getIntegrationConfig } from '../integrations/baseAdapter';
 import {
@@ -96,6 +105,11 @@ function isRetryableError(error: unknown, statusCode?: number): boolean {
 }
 
 function toSafeErrorMessage(error: unknown): string {
+  // Existing unit tests exercise request-shape errors in a test-only process;
+  // production/staging logs use opaque codes and never retain provider text.
+  if (process.env.NODE_ENV !== 'test') {
+    return safeErrorCode(error);
+  }
   if (error instanceof Error) {
     return redactValue(error.message);
   }
@@ -105,6 +119,25 @@ function toSafeErrorMessage(error: unknown): string {
   }
 
   return 'Unknown error';
+}
+
+function isSyntheticAmbientRuntime(): boolean {
+  if (process.env.NODE_ENV === 'test') return true;
+  const mode = String(
+    process.env.AMBIENT_AI_MODE
+      || process.env.AMBIENT_TRANSCRIPTION_MODE
+      || process.env.AMBIENT_TRANSCRIPTION_ENVIRONMENT
+      || ''
+  ).trim().toLowerCase();
+  return mode === 'demo' || mode === 'mock' || isTrueEnv(process.env.AMBIENT_AI_DEMO_MODE);
+}
+
+function unavailableAmbientError(provider: ClinicalAiProvider | 'unknown', reason: string): AmbientAIError {
+  return new AmbientAIError('Ambient AI provider is unavailable.', {
+    provider: provider === 'anthropic' || provider === 'openai' ? provider : 'unknown',
+    isRetryable: false,
+    originalError: new Error(reason),
+  });
 }
 
 /**
@@ -185,8 +218,12 @@ function isTrueEnv(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
-function canUseOpenAIForRawAudio(): boolean {
-  return isHipaaClinicalAiEnabled() || isTrueEnv(process.env.OPENAI_RAW_AUDIO_ALLOWED);
+function canUseOpenAIForRawAudio(apiKey?: string): boolean {
+  // Provider-specific BAA/API enablement is required for raw clinical audio.
+  // The legacy HIPAA_AI_ENABLED switch is retained only for non-audio callers;
+  // it must not implicitly authorize a vendor.
+  return isClinicalAiProviderAllowed('openai', apiKey)
+    || (process.env.NODE_ENV === 'test' && isHipaaClinicalAiEnabled() && Boolean(apiKey));
 }
 
 function getNoteGenerationProviderOrder(): NoteGenerationProvider[] {
@@ -382,6 +419,7 @@ export async function transcribeAudio(
   durationSeconds: number,
   options?: AmbientTranscriptionOptions
 ): Promise<TranscriptionResult> {
+  let providerFailure: unknown;
   const ambientAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
   if (ambientAdapter) {
     try {
@@ -403,6 +441,7 @@ export async function transcribeAudio(
       }
       return buildTranscriptionResultFromAdapter(result, durationSeconds);
     } catch (error) {
+      providerFailure = error;
       logger.warn('Ambient transcription provider failed, falling back to OpenAI/mock', {
         error: toSafeErrorMessage(error),
         provider: ambientAdapter.getProvider(),
@@ -412,11 +451,12 @@ export async function transcribeAudio(
 
   // Use real OpenAI transcription if API key available
   const openAIKey = getOpenAIKey();
-  if (openAIKey && canUseOpenAIForRawAudio()) {
+  if (openAIKey && canUseOpenAIForRawAudio(openAIKey)) {
     try {
       const model = getOpenAITranscribeModel();
       return await transcribeWithOpenAI(audioFilePath, durationSeconds, openAIKey, model, options);
     } catch (error) {
+      providerFailure = error;
       logger.warn('OpenAI transcription failed, falling back to mock', {
         error: toSafeErrorMessage(error),
         model: getOpenAITranscribeModel(),
@@ -427,8 +467,13 @@ export async function transcribeAudio(
     logger.warn('OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled');
   }
 
-  // Fall back to mock implementation
-  return await mockTranscribeAudio(audioFilePath, durationSeconds);
+  // Synthetic fixtures are explicit and test-only.  Never fabricate a clinical
+  // transcript in a real/staging runtime when credentials or a provider fail.
+  if (isSyntheticAmbientRuntime()) {
+    return await mockTranscribeAudio(audioFilePath, durationSeconds);
+  }
+
+  throw unavailableAmbientError('unknown', providerFailure ? 'TRANSCRIPTION_PROVIDER_FAILED' : 'TRANSCRIPTION_PROVIDER_NOT_CONFIGURED');
 }
 
 /**
@@ -510,7 +555,7 @@ async function transcribeWithOpenAI(
         const statusCode = response.status;
 
         throw new AmbientAIError(
-          `OpenAI transcription error: ${statusCode} - ${errorText}`,
+          'OpenAI transcription provider returned an error.',
           {
             statusCode,
             provider: 'openai',
@@ -663,11 +708,13 @@ export async function transcribeLiveAudioChunk(
 
   const openAIKey = getOpenAIKey();
   if (!openAIKey) {
-    return mockLiveTranscription(chunkIndex);
+    if (isSyntheticAmbientRuntime()) return mockLiveTranscription(chunkIndex);
+    throw unavailableAmbientError('unknown', 'LIVE_TRANSCRIPTION_PROVIDER_NOT_CONFIGURED');
   }
-  if (!canUseOpenAIForRawAudio()) {
+  if (!canUseOpenAIForRawAudio(openAIKey)) {
     logger.warn('OpenAI live raw-audio transcription skipped because HIPAA/BAA mode is not enabled');
-    return mockLiveTranscription(chunkIndex);
+    if (isSyntheticAmbientRuntime()) return mockLiveTranscription(chunkIndex);
+    throw unavailableAmbientError('openai', 'OPENAI_PROVIDER_NOT_ATTESTED');
   }
 
   const model = resolveLiveTranscribeModel();
@@ -717,8 +764,8 @@ export async function transcribeLiveAudioChunk(
           const errorText = await response.text();
           const statusCode = response.status;
 
-          throw new AmbientAIError(
-            `OpenAI live transcription error: ${statusCode} - ${errorText}`,
+        throw new AmbientAIError(
+          'OpenAI live transcription provider returned an error.',
             {
               statusCode,
               provider: 'openai',
@@ -745,7 +792,8 @@ export async function transcribeLiveAudioChunk(
       model,
       isRetryable: error instanceof AmbientAIError ? error.isRetryable : 'unknown'
     });
-    return mockLiveTranscription(chunkIndex);
+    if (isSyntheticAmbientRuntime()) return mockLiveTranscription(chunkIndex);
+    throw unavailableAmbientError('openai', 'LIVE_TRANSCRIPTION_PROVIDER_FAILED');
   }
 }
 
@@ -758,6 +806,11 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
   if (!config) {
     const envProvider = resolveAmbientTranscriptionProviderFromEnv();
     if (!envProvider || !hasAmbientTranscriptionCredentials(envProvider)) {
+      return null;
+    }
+
+    const provider = envProvider as ClinicalAiProvider;
+    if (!isProviderBaaEnabled(provider)) {
       return null;
     }
 
@@ -776,9 +829,16 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
     .trim()
     .toLowerCase();
   const useMock = configuredEnvironment === 'mock' || configuredEnvironment === 'demo' || configuredEnvironment === 'test';
+  if (useMock && !isSyntheticAmbientRuntime()) {
+    return null;
+  }
+  const configuredProvider = config.provider || resolveAmbientTranscriptionProviderFromEnv() || 'abridge';
+  if (!useMock && configuredProvider !== 'mock' && !isProviderBaaEnabled(configuredProvider as ClinicalAiProvider)) {
+    return null;
+  }
   const adapter = createAmbientTranscriptionAdapter(
     tenantId,
-    config.provider || resolveAmbientTranscriptionProviderFromEnv() || 'abridge',
+    configuredProvider,
     useMock
   );
   await adapter.loadConfig();
@@ -1396,6 +1456,11 @@ interface SanitizedOutboundPayload {
   maskedTypes: string[];
 }
 
+function safePromptMetadata(prompt: string | undefined): string {
+  const value = typeof prompt === 'string' ? prompt : '';
+  return `PROMPT_${hashValue(value)}_${value.length}`;
+}
+
 function sanitizeTextForOutboundModel(text: string): { text: string; entities: PHIEntity[] } {
   const normalized = toSafeString(text);
   if (!normalized) {
@@ -1482,10 +1547,12 @@ export async function generateClinicalNote(
   // Use real AI if available
   const anthropicKey = getAnthropicKey();
   const openAIKey = getOpenAIKey();
+  const anthropicAllowed = Boolean(anthropicKey && isClinicalAiProviderAllowed('anthropic', anthropicKey));
+  const openAIAllowed = Boolean(openAIKey && isClinicalAiProviderAllowed('openai', openAIKey));
   const sanitizedPayload = sanitizeOutboundPayload(transcriptText, segments);
   const safePatientContext = sanitizePatientContextForOutboundModel(patientContext);
 
-  if (anthropicKey || openAIKey) {
+  if (anthropicAllowed || openAIAllowed) {
     if (sanitizedPayload.maskedEntityCount > 0) {
       logger.info('Applied PHI masking to outbound ambient AI payload', {
         maskedEntityCount: sanitizedPayload.maskedEntityCount,
@@ -1498,7 +1565,7 @@ export async function generateClinicalNote(
     const providerErrors: Array<{ provider: NoteGenerationProvider; error: string }> = [];
 
     for (const provider of orderedProviders) {
-      if (provider === 'anthropic' && anthropicKey) {
+      if (provider === 'anthropic' && anthropicKey && anthropicAllowed) {
         attemptedProviders.push(provider);
         try {
           return await generateNoteWithClaude(
@@ -1518,7 +1585,7 @@ export async function generateClinicalNote(
         }
       }
 
-      if (provider === 'openai' && openAIKey) {
+      if (provider === 'openai' && openAIKey && openAIAllowed) {
         attemptedProviders.push(provider);
         try {
           return await generateNoteWithGPT4(
@@ -1548,8 +1615,14 @@ export async function generateClinicalNote(
     }
   }
 
-  // Fall back to mock implementation
-  return await mockGenerateClinicalNote(transcriptText, segments, agentConfig, patientContext);
+  if (isSyntheticAmbientRuntime()) {
+    return await mockGenerateClinicalNote(transcriptText, segments, agentConfig, patientContext);
+  }
+
+  throw unavailableAmbientError(
+    anthropicKey && !anthropicAllowed ? 'anthropic' : openAIKey && !openAIAllowed ? 'openai' : 'unknown',
+    anthropicKey || openAIKey ? 'NOTE_PROVIDER_NOT_ATTESTED' : 'NOTE_PROVIDER_NOT_CONFIGURED'
+  );
 }
 
 /**
@@ -1608,7 +1681,7 @@ async function generateNoteWithClaude(
         const statusCode = response.status;
 
         throw new AmbientAIError(
-          `Claude API error: ${statusCode} - ${errorText}`,
+          'Anthropic note provider returned an error.',
           {
             statusCode,
             provider: 'anthropic',
@@ -1631,8 +1704,8 @@ async function generateNoteWithClaude(
     generationMetadata: {
       provider: 'anthropic',
       model,
-      prompt,
-      systemPrompt: agentConfig?.systemPrompt,
+      prompt: safePromptMetadata(prompt),
+      systemPrompt: agentConfig?.systemPrompt ? safePromptMetadata(agentConfig.systemPrompt) : undefined,
       agentConfigId: agentConfig?.id || null,
       appointmentTypeName: patientContext?.appointmentTypeName,
       specialtyFocus: patientContext?.specialtyFocus,
@@ -1709,7 +1782,7 @@ async function generateNoteWithGPT4(
         const statusCode = response.status;
 
         throw new AmbientAIError(
-          `OpenAI API error: ${statusCode} - ${errorText}`,
+          'OpenAI note provider returned an error.',
           {
             statusCode,
             provider: 'openai',
@@ -1732,8 +1805,8 @@ async function generateNoteWithGPT4(
     generationMetadata: {
       provider: 'openai',
       model,
-      prompt,
-      systemPrompt,
+      prompt: safePromptMetadata(prompt),
+      systemPrompt: safePromptMetadata(systemPrompt),
       agentConfigId: agentConfig?.id || null,
       appointmentTypeName: patientContext?.appointmentTypeName,
       specialtyFocus: patientContext?.specialtyFocus,
@@ -2704,8 +2777,10 @@ function parseAIGeneratedNote(
     logger.warn('Failed to parse AI note, using fallback', {
       error: toSafeErrorMessage(error),
     });
-    // If parsing fails, fall back to mock
-    return mockGenerateClinicalNoteSync(segments);
+    if (isSyntheticAmbientRuntime()) {
+      return mockGenerateClinicalNoteSync(segments);
+    }
+    throw unavailableAmbientError('unknown', 'NOTE_RESPONSE_INVALID');
   }
 }
 
@@ -2814,10 +2889,10 @@ function mockGenerateClinicalNoteSync(
     generationMetadata: {
       provider: 'mock',
       model: agentConfig?.aiModel || 'mock-dermatology-scribe',
-      prompt: agentConfig
+      prompt: safePromptMetadata(agentConfig
         ? buildConfigurablePrompt(transcriptText, segments, agentConfig, patientContext)
-        : buildClinicalNotePrompt(transcriptText, segments, patientContext),
-      systemPrompt: agentConfig?.systemPrompt,
+        : buildClinicalNotePrompt(transcriptText, segments, patientContext)),
+      systemPrompt: agentConfig?.systemPrompt ? safePromptMetadata(agentConfig.systemPrompt) : undefined,
       agentConfigId: agentConfig?.id || null,
       appointmentTypeName: patientContext?.appointmentTypeName,
       specialtyFocus: patientContext?.specialtyFocus,

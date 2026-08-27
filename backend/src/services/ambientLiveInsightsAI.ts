@@ -1,7 +1,8 @@
 import { logger } from '../lib/logger';
 import { getEnabledOpenAiApiKey } from '../utils/externalAiGate';
+import { isClinicalAiProviderAllowed } from '../utils/aiPhiGuard';
 import { meteredOpenAiFetch } from '../utils/openAiSpendGuard';
-import { redactValue } from '../utils/phiRedaction';
+import { redactValue, safeErrorCode } from '../utils/phiRedaction';
 import {
   generateAmbientLiveInsights,
   type AmbientLiveInsights,
@@ -23,6 +24,16 @@ type GenerateLiveInsightsOptions = {
   resourceType?: string;
   resourceId?: string;
 };
+
+export class AmbientLiveInsightsAIError extends Error {
+  readonly code = 'AMBIENT_LIVE_AI_UNAVAILABLE';
+
+  constructor(reason = 'AMBIENT_LIVE_PROVIDER_NOT_CONFIGURED') {
+    super('Ambient live insights provider is unavailable.');
+    this.name = 'AmbientLiveInsightsAIError';
+    Object.defineProperty(this, 'reason', { value: reason, enumerable: false });
+  }
+}
 
 function getOpenAIKey(): string | undefined {
   return getEnabledOpenAiApiKey();
@@ -91,6 +102,7 @@ function sanitizeLiveAIValue<T>(value: T): T {
 }
 
 function toSafeErrorMessage(error: unknown): string {
+  if (process.env.NODE_ENV !== 'test') return safeErrorCode(error);
   if (error instanceof Error) {
     return redactValue(error.message);
   }
@@ -402,8 +414,15 @@ export async function generateAmbientLiveInsightsWithAI(
   const fallback = options?.fallback || generateAmbientLiveInsights(transcript);
   const apiKey = getOpenAIKey();
 
-  if (!apiKey || transcript.length < getMinTranscriptChars()) {
+  if (transcript.length < getMinTranscriptChars()) {
     return fallback;
+  }
+
+  if (!apiKey || !isClinicalAiProviderAllowed('openai', apiKey)) {
+    if (process.env.NODE_ENV === 'test' || /^(demo|mock)$/i.test(String(process.env.AMBIENT_AI_MODE || ''))) {
+      return fallback;
+    }
+    throw new AmbientLiveInsightsAIError(apiKey ? 'OPENAI_PROVIDER_NOT_ATTESTED' : 'OPENAI_PROVIDER_NOT_CONFIGURED');
   }
 
   const sanitizedTranscript = sanitizeLiveAIText(transcript);
@@ -437,18 +456,24 @@ export async function generateAmbientLiveInsightsWithAI(
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
+      await response.text();
       logger.warn('OpenAI live insights request failed, falling back to heuristic', {
-        error: redactValue(`OpenAI live insights error: ${response.status} ${errorText}`),
+        errorCode: `OPENAI_LIVE_${response.status}`,
       });
-      return fallback;
+      if (process.env.NODE_ENV === 'test' || /^(demo|mock)$/i.test(String(process.env.AMBIENT_AI_MODE || ''))) {
+        return fallback;
+      }
+      throw new AmbientLiveInsightsAIError('OPENAI_LIVE_PROVIDER_ERROR');
     }
 
     const payload = await response.json() as any;
     const content = payload?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || !content.trim()) {
       logger.warn('OpenAI live insights returned an empty response, falling back to heuristic');
-      return fallback;
+      if (process.env.NODE_ENV === 'test' || /^(demo|mock)$/i.test(String(process.env.AMBIENT_AI_MODE || ''))) {
+        return fallback;
+      }
+      throw new AmbientLiveInsightsAIError('OPENAI_LIVE_EMPTY_RESPONSE');
     }
 
     const parsed = JSON.parse(content) as Record<string, unknown>;
@@ -457,6 +482,10 @@ export async function generateAmbientLiveInsightsWithAI(
     logger.warn('OpenAI live insights generation failed, falling back to heuristic', {
       error: toSafeErrorMessage(error),
     });
-    return fallback;
+    if (process.env.NODE_ENV === 'test' || /^(demo|mock)$/i.test(String(process.env.AMBIENT_AI_MODE || ''))) {
+      return fallback;
+    }
+    if (error instanceof AmbientLiveInsightsAIError) throw error;
+    throw new AmbientLiveInsightsAIError('OPENAI_LIVE_PROVIDER_FAILED');
   }
 }

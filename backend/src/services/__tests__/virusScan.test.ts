@@ -1,6 +1,7 @@
 import net from 'net';
 import { env } from '../../config/env';
 import { scanBuffer } from '../virusScan';
+import { logger } from '../../lib/logger';
 
 type HandlerMap = Record<string, (...args: any[]) => void>;
 
@@ -51,7 +52,7 @@ describe('virusScan', () => {
   });
 
   it('falls back when ClamAV is unavailable', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
     env.clamavHost = undefined;
 
     await expect(scanBuffer(Buffer.from('data'))).resolves.toBe(true);

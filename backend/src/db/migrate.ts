@@ -16053,6 +16053,12 @@ Consider age-appropriate treatments and include family counseling points.',
     ALTER TABLE appointment_types ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE patients ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
+    -- Quarantine seeded workforce credentials before any fixture rows are
+    -- created.  These columns are introduced here as well as in the later
+    -- hardening migration so this active migration path never creates a
+    -- login-capable shared workforce account.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_reset BOOLEAN NOT NULL DEFAULT FALSE;
 
     UPDATE providers
     SET is_test_data = TRUE,
@@ -16108,7 +16114,9 @@ Consider age-appropriate treatments and include family counseling points.',
         full_name = credentials.full_name,
         role = credentials.role,
         password_hash = '$2b$12$gU3jZZKNPnWeUkufWCHCG.w6/jHq98Anh1tKB/THI4tPha1QmqwtK',
-        is_test_data = FALSE
+        is_test_data = TRUE,
+        is_active = FALSE,
+        force_password_reset = TRUE
     FROM (VALUES
       ('u-admin', 'admin@demo.practice', 'Admin User', 'admin'),
       ('u-owner', 'owner@demo.practice', 'Practice Owner', 'admin'),
@@ -16129,14 +16137,16 @@ Consider age-appropriate treatments and include family counseling points.',
         OR lower(target.email) = credentials.email
       );
 
-    INSERT INTO users (id, tenant_id, email, full_name, role, password_hash, is_test_data)
+    INSERT INTO users (id, tenant_id, email, full_name, role, password_hash, is_test_data, is_active, force_password_reset)
     SELECT credentials.id,
            'tenant-demo',
            credentials.email,
            credentials.full_name,
            credentials.role,
            '$2b$12$gU3jZZKNPnWeUkufWCHCG.w6/jHq98Anh1tKB/THI4tPha1QmqwtK',
-           FALSE
+           TRUE,
+           FALSE,
+           TRUE
     FROM (VALUES
       ('u-owner', 'owner@demo.practice', 'Practice Owner', 'admin'),
       ('u-ma', 'ma@demo.practice', 'Medical Assistant', 'ma'),
@@ -16253,6 +16263,135 @@ Consider age-appropriate treatments and include family counseling points.',
       'Dermatology DEMO Office: It is time to schedule your annual skin check. Please call us or reply to schedule. Reply STOP to opt out.'
     )
       AND tenant_id = 'tenant-demo';
+    `,
+  },
+  {
+    name: "228_security_hardening",
+    sql: `
+    -- Fail-closed workforce account lifecycle controls.  Seeded credentials
+    -- are retained only as quarantined synthetic fixtures and cannot log in.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS force_password_reset BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS role_version INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS deactivation_reason TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_users_tenant_active
+      ON users(tenant_id, is_active);
+
+    UPDATE users
+       SET is_test_data = TRUE,
+           is_active = FALSE,
+           force_password_reset = TRUE,
+           deactivated_at = COALESCE(deactivated_at, NOW()),
+           deactivation_reason = COALESCE(deactivation_reason, 'seeded_fixture_requires_controlled_reset')
+     WHERE tenant_id = 'tenant-demo'
+       AND id IN (
+         'u-admin', 'u-owner', 'u-provider', 'u-ma', 'u-front', 'u-billing',
+         'u-nurse', 'u-manager', 'u-scheduler', 'u-compliance', 'u-staff', 'u-hr'
+       );
+
+    ALTER TABLE audit_log
+      ADD COLUMN IF NOT EXISTS record_hash TEXT,
+      ADD COLUMN IF NOT EXISTS previous_hash TEXT;
+    CREATE INDEX IF NOT EXISTS idx_audit_log_hash ON audit_log(record_hash);
+
+    CREATE OR REPLACE FUNCTION calculate_audit_hash(
+      p_id TEXT,
+      p_tenant_id TEXT,
+      p_user_id TEXT,
+      p_action TEXT,
+      p_resource_type TEXT,
+      p_resource_id TEXT,
+      p_created_at TIMESTAMPTZ,
+      p_previous_hash TEXT
+    ) RETURNS TEXT AS $$
+    BEGIN
+      RETURN encode(
+        sha256(
+          (COALESCE(p_id, '') || '|' ||
+           COALESCE(p_tenant_id, '') || '|' ||
+           COALESCE(p_user_id, '') || '|' ||
+           COALESCE(p_action, '') || '|' ||
+           COALESCE(p_resource_type, '') || '|' ||
+           COALESCE(p_resource_id, '') || '|' ||
+           COALESCE(to_char(p_created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), '') || '|' ||
+           COALESCE(p_previous_hash, 'genesis'))::bytea
+        ),
+        'hex'
+      );
+    END;
+    $$ LANGUAGE plpgsql IMMUTABLE;
+
+    CREATE OR REPLACE FUNCTION set_audit_record_hash()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      -- The trigger is authoritative for direct SQL writers.  Locking and
+      -- overwriting caller-supplied values prevents a concurrent writer or a
+      -- privileged client from forking or bypassing the tenant hash chain.
+      PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id, 0));
+      SELECT record_hash
+        INTO NEW.previous_hash
+        FROM audit_log
+       WHERE tenant_id = NEW.tenant_id
+         AND record_hash IS NOT NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1;
+      NEW.record_hash := calculate_audit_hash(
+        NEW.id,
+        NEW.tenant_id,
+        NEW.user_id,
+        NEW.action,
+        NEW.resource_type,
+        NEW.resource_id,
+        COALESCE(NEW.created_at, NOW()),
+        NEW.previous_hash
+      );
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS audit_record_hash_trigger ON audit_log;
+    CREATE TRIGGER audit_record_hash_trigger
+      BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION set_audit_record_hash();
+
+    CREATE TABLE IF NOT EXISTS audit_integrity_checkpoints (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      table_name TEXT NOT NULL,
+      checkpoint_date DATE NOT NULL,
+      record_count BIGINT NOT NULL,
+      checksum TEXT NOT NULL,
+      first_record_id TEXT,
+      last_record_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      verified_at TIMESTAMPTZ,
+      verification_status TEXT,
+      UNIQUE (tenant_id, table_name, checkpoint_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_retention_policy (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      table_name TEXT NOT NULL,
+      retention_years INTEGER NOT NULL DEFAULT 6,
+      archive_after_years INTEGER NOT NULL DEFAULT 2,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tenant_id, table_name)
+    );
+
+    INSERT INTO audit_retention_policy (id, tenant_id, table_name, retention_years, archive_after_years)
+    VALUES (gen_random_uuid()::text, 'default', 'audit_log', 6, 2)
+    ON CONFLICT (tenant_id, table_name)
+    DO UPDATE SET retention_years = GREATEST(audit_retention_policy.retention_years, 6),
+                  updated_at = NOW();
     `,
   },
 

@@ -1,6 +1,7 @@
 import net from "net";
 import { env } from "../config/env";
 import { config } from "../config";
+import { logger } from "../lib/logger";
 
 async function scanWithClamav(buf: Buffer): Promise<boolean | null> {
   if (!env.clamavHost) return null;
@@ -37,7 +38,10 @@ async function scanWithClamav(buf: Buffer): Promise<boolean | null> {
 }
 
 export async function scanBuffer(buf: Buffer): Promise<boolean> {
-  const allowBypass = !config.hipaa.virusScanEnabled || config.isDevelopment || config.isTest;
+  const explicitDemo = ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.DEMO_MODE || process.env.VIRUS_SCAN_DEMO_BYPASS || '').trim().toLowerCase()
+  );
+  const allowBypass = config.isDevelopment || config.isTest || (explicitDemo && !config.isProductionLike);
 
   if (!buf || buf.length === 0) return true;
 
@@ -52,13 +56,11 @@ export async function scanBuffer(buf: Buffer): Promise<boolean> {
   }
 
   if (!allowBypass) {
-    // eslint-disable-next-line no-console
-    console.warn("⚠️  Virus scan failed (ClamAV unreachable).");
+    logger.error("Virus scan unavailable; upload rejected", { reason: 'CLAMAV_UNREACHABLE' });
     return false;
   }
 
   // Fallback: allow file but log that ClamAV was unavailable.
-  // eslint-disable-next-line no-console
-  console.warn("⚠️  Virus scan skipped (ClamAV unreachable).");
+  logger.warn("Virus scan skipped in synthetic runtime", { reason: 'CLAMAV_UNREACHABLE' });
   return true;
 }

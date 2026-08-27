@@ -31,6 +31,9 @@ describe('AmbientAI Service', () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_TRANSCRIBE_MODEL;
+    delete process.env.OPENAI_API_CALLS_ENABLED;
+    delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.ALLOW_EXTERNAL_AI_IN_TEST;
     delete process.env.OPENAI_NOTE_MODEL;
     delete process.env.HIPAA_AI_ENABLED;
     delete process.env.ANTHROPIC_NOTE_MODEL;
@@ -110,9 +113,11 @@ describe('AmbientAI Service', () => {
       );
     });
 
-    it('does not send raw audio to OpenAI unless HIPAA mode is enabled', async () => {
-      process.env.OPENAI_API_KEY = 'test-openai-key';
+    it('does not send raw audio to OpenAI without provider BAA attestation', async () => {
+      process.env.OPENAI_API_KEY = 'live-openai-key';
       process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
+      process.env.OPENAI_API_CALLS_ENABLED = 'true';
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
 
       const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
 

@@ -24,6 +24,7 @@ export interface TenantUser {
   roles?: Role[];
   fullName: string;
   forcePasswordReset?: boolean;
+  isActive?: boolean;
 }
 
 export interface AuthTokens {

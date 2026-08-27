@@ -83,10 +83,6 @@ export function additionalSecurityHeaders(req: Request, res: Response, next: Nex
   res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
   res.setHeader('X-Download-Options', 'noopen');
 
-  // HIPAA compliance headers
-  res.setHeader('X-HIPAA-Compliant', 'true');
-  res.setHeader('X-PHI-Protected', 'true');
-
   next();
 }
 

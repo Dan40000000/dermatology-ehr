@@ -1,14 +1,43 @@
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import config from '../config';
-import { redactPHI, redactError, isPHIField, redactValue } from '../utils/phiRedaction';
+import { logger } from './logger';
+import { redactPHI, redactError, isPHIField, redactValue, safeErrorCode } from '../utils/phiRedaction';
+
+function opaqueErrorCode(value: unknown): string {
+  // Keep this defensive fallback for lightweight test/mocked telemetry
+  // modules while production always uses the shared opaque-code helper.
+  if (typeof safeErrorCode === 'function') {
+    return safeErrorCode(value);
+  }
+  return 'ERR_TELEMETRY_REDACTED';
+}
+
+function redactTelemetryValue(value: any, key?: string, depth = 0): any {
+  if (depth > 8) return '[MAX_DEPTH_REACHED]';
+  const normalized = String(key || '').toLowerCase();
+  if (/^(?:error|err|exception|cause|reason|failure|stack|trace|throwable|originalerror|original_error)$/.test(normalized)
+    || normalized.endsWith('error') || normalized.endsWith('exception')) {
+    return opaqueErrorCode(value);
+  }
+  if (value instanceof Error) return opaqueErrorCode(value);
+  if (Array.isArray(value)) return value.map((item) => redactTelemetryValue(item, key, depth + 1));
+  if (value && typeof value === 'object') {
+    const result: Record<string, any> = {};
+    for (const [childKey, childValue] of Object.entries(value)) {
+      result[childKey] = redactTelemetryValue(childValue, childKey, depth + 1);
+    }
+    return result;
+  }
+  return redactValue(value);
+}
 
 /**
  * Initialize Sentry for error tracking and performance monitoring
  */
 export function initSentry(): void {
   if (!config.monitoring.sentryDsn) {
-    console.warn('Sentry DSN not configured - error tracking disabled');
+    logger.warn('Sentry disabled: DSN is not configured');
     return;
   }
 
@@ -66,7 +95,10 @@ export function initSentry(): void {
       if (event.exception?.values) {
         event.exception.values = event.exception.values.map(exception => {
           if (exception.value) {
-            exception.value = redactError(new Error(exception.value)).message;
+            // Preserve the existing PHI redaction contract for user-facing
+            // exception text while also preventing provider payloads from
+            // being copied verbatim into Sentry.
+            exception.value = redactError(new Error(String(exception.value))).message;
           }
           if (exception.stacktrace?.frames) {
             exception.stacktrace.frames = exception.stacktrace.frames.map(frame => {
@@ -77,9 +109,9 @@ export function initSentry(): void {
                   if (isPHIField(key)) {
                     redactedVars[key] = '[Redacted]';
                   } else if (typeof value === 'object') {
-                    redactedVars[key] = redactPHI(value);
+                    redactedVars[key] = redactTelemetryValue(redactPHI(value), key);
                   } else {
-                    redactedVars[key] = value;
+                    redactedVars[key] = redactTelemetryValue(value, key);
                   }
                 });
                 frame.vars = redactedVars;
@@ -130,6 +162,25 @@ export function initSentry(): void {
         event.message = String(redactValue(event.message));
       }
 
+      // Tags, transaction names, and span data are frequently populated from
+      // request/LLM providers and are not covered by request/body scrubbing.
+      // Scrub them before Sentry's transport fan-out as well.
+      if (event.tags) {
+        event.tags = redactTelemetryValue(event.tags);
+      }
+      if (event.transaction) {
+        event.transaction = String(redactValue(event.transaction));
+      }
+      if (event.spans) {
+        event.spans = event.spans.map((span: any) => ({
+          ...span,
+          description: span.description ? String(redactValue(span.description)) : span.description,
+          op: span.op ? String(redactValue(span.op)) : span.op,
+          data: span.data ? redactTelemetryValue(span.data) : span.data,
+          tags: span.tags ? redactTelemetryValue(span.tags) : span.tags,
+        }));
+      }
+
       return event;
     },
 
@@ -140,7 +191,7 @@ export function initSentry(): void {
     ],
   });
 
-  console.log('Sentry initialized:', {
+  logger.info('Sentry initialized', {
     environment: config.monitoring.sentryEnvironment,
     release: process.env.npm_package_version,
   });

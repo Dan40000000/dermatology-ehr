@@ -6,6 +6,8 @@
 import crypto from "crypto";
 import path from "path";
 import fs from "fs/promises";
+import { logger } from "../lib/logger";
+import { safeErrorCode } from "./phiRedaction";
 
 // Supported file types (whitelist for HIPAA compliance)
 export const SUPPORTED_MIME_TYPES = {
@@ -164,7 +166,10 @@ export async function deleteFileLocally(objectKey: string, uploadDir: string = "
     await fs.unlink(fullPath);
   } catch (error) {
     // Ignore if file doesn't exist
-    console.error(`Failed to delete file: ${fullPath}`, error);
+    logger.warn("Failed to delete uploaded file", {
+      objectKey,
+      errorCode: safeErrorCode(error),
+    });
   }
 }
 

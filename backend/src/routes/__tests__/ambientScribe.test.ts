@@ -343,6 +343,8 @@ describe('Ambient Scribe Routes - Recording Endpoints', () => {
       expect(res.status).toBe(200);
       expect(res.body.recordingId).toBe('recording-1');
       expect(res.body.status).toBe('completed');
+      expect(res.body.transcriptId).toBe('mock-uuid-1234');
+      expect(res.body.transcriptionStatus).toBe('processing');
       expect(auditMock).toHaveBeenCalled();
     });
 
@@ -488,14 +490,14 @@ describe('Ambient Scribe Routes - Recording Endpoints', () => {
       expect(auditMock).toHaveBeenCalled();
     });
 
-    it('should tolerate file deletion errors', async () => {
+    it('should fail closed when file deletion fails', async () => {
       unlinkMock.mockRejectedValueOnce(new Error('unlink failed'));
       queryMock
         .mockResolvedValueOnce({ rows: [{ file_path: '/path/to/file.webm' }], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // delete query
       const res = await request(app).delete('/api/ambient/recordings/recording-1');
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Failed to delete recording');
+      expect(queryMock).toHaveBeenCalledTimes(1);
     });
 
     it('should handle database errors', async () => {
@@ -539,6 +541,32 @@ describe('Ambient Scribe Routes - Transcription Endpoints', () => {
       expect(res.body).toHaveProperty('transcriptId');
       expect(res.body.id).toBe(res.body.transcriptId);
       expect(res.body.status).toBe('processing');
+    });
+
+    it('returns an existing processing transcript instead of creating a duplicate', async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ file_path: '/path/to/file.webm', duration_seconds: 120 }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            encounter_id: 'encounter-1',
+            existing_transcript_id: 'transcript-existing',
+            existing_transcription_status: 'processing',
+          }],
+          rowCount: 1,
+        });
+
+      const res = await request(app).post('/api/ambient/recordings/recording-1/transcribe');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        id: 'transcript-existing',
+        transcriptId: 'transcript-existing',
+        status: 'processing',
+      });
+      expect(queryMock.mock.calls.some((call) => String(call[0]).includes('INSERT INTO ambient_transcripts'))).toBe(false);
     });
 
     it('should process transcription and auto-generate note', async () => {
@@ -1438,7 +1466,7 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(noteUpdateParams[16]).toBe('config-med-1');
       expect(noteUpdateParams[18]).toBe('claude-3-5-sonnet-20241022');
       expect(noteUpdateParams[19]).toBe('ambient-scribe-contextual-v1');
-      expect(noteUpdateParams[20]).toBe('Resolved prompt');
+      expect(noteUpdateParams[20]).toMatch(/^PROMPT_[a-f0-9]+_15$/);
     });
 
     it('should prefer medical dermatology over default cosmetic config for unspecialized visits', async () => {

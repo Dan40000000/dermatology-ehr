@@ -6,6 +6,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../lib/logger';
 import { loadEnv } from '../config/validate';
+import { redactPHI, safeErrorCode } from '../utils/phiRedaction';
+
+const SENSITIVE_ERROR_PATTERN = /(?:api[_ -]?key|authorization|bearer\s|token|password|secret|ssn|social\s*security|mrn|medical\s*record|patient\s*(?:name|id)|date\s*of\s*birth|dob|phone|email|address|provider\s*(?:error|response)|openai|anthropic|claude|sentry|stack\s*trace)/i;
+
+function isSafeToExposeErrorMessage(message: unknown): boolean {
+  return typeof message === 'string' && message.length <= 500 && !SENSITIVE_ERROR_PATTERN.test(message);
+}
 
 /**
  * Custom API Error class
@@ -80,14 +87,15 @@ interface ErrorResponse {
  * Format error for client response
  */
 function formatErrorResponse(error: ApiError, includeStack: boolean): ErrorResponse {
+  const exposeMessage = error.statusCode < 500 || isSafeToExposeErrorMessage(error.message);
   const response: ErrorResponse = {
-    error: error.message,
+    error: exposeMessage ? error.message : 'Internal server error',
     code: error.code,
-    details: error.details,
+    details: error.details === undefined ? undefined : redactPHI(error.details),
   };
 
   // Only include stack trace in development
-  if (includeStack && error.stack) {
+  if (includeStack && error.stack && exposeMessage) {
     response.stack = error.stack;
   }
 
@@ -121,11 +129,11 @@ function logError(error: ApiError, req: Request): void {
   };
 
   if (error.statusCode >= 500) {
-    logger.error('Server error', { error: error.message, stack: error.stack, ...context });
+    logger.error('Server error', { errorCode: safeErrorCode(error), ...context });
   } else if (error.statusCode === 401 || error.statusCode === 403) {
-    logger.warn('Authentication/Authorization error', { error: error.message, ...context });
+    logger.warn('Authentication/Authorization error', { errorCode: safeErrorCode(error), ...context });
   } else {
-    logger.info('Client error', { error: error.message, ...context });
+    logger.info('Client error', { errorCode: safeErrorCode(error), ...context });
   }
 }
 
@@ -144,7 +152,7 @@ export function errorHandler(
   const error = err instanceof ApiError
     ? err
     : new ApiError(
-        env.NODE_ENV === 'production'
+        env.NODE_ENV === 'production' || !isSafeToExposeErrorMessage(err.message)
           ? 'Internal server error'
           : err.message,
         500,

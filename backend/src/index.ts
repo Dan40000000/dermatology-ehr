@@ -6,6 +6,7 @@ import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env";
 import config from "./config";
 import { logger } from "./lib/logger";
+import { safeErrorCode } from "./utils/phiRedaction";
 import { swaggerSpec } from "./config/swagger";
 import { additionalSecurityHeaders, securityHeaders } from "./middleware/security";
 import { sanitizeInputs } from "./middleware/sanitization";
@@ -148,8 +149,7 @@ registerRoutes(app);
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error('Unhandled error', {
-    error: err.message,
-    stack: err.stack,
+    errorCode: safeErrorCode(err),
     path: req.path,
     method: req.method,
   });
@@ -157,7 +157,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   // Don't leak error details in production
   const message = config.isProductionLike
     ? 'Internal server error'
-    : err.message;
+    : (typeof err?.message === 'string' ? err.message : 'Internal server error');
 
   res.status(err.status || 500).json({ error: message });
 });
@@ -180,7 +180,7 @@ httpServer.listen(env.port, () => {
     logger.info('Waitlist hold expiration worker started');
   }).catch((error: any) => {
     logger.error('Failed to start waitlist hold expiration worker', {
-      error: error.message,
+      errorCode: safeErrorCode(error),
     });
   });
 
@@ -192,7 +192,7 @@ httpServer.listen(env.port, () => {
       logger.info('Job scheduler system initialized and running');
     }).catch((error: any) => {
       logger.error('Failed to initialize job scheduler', {
-        error: error.message,
+        errorCode: safeErrorCode(error),
       });
     });
   } else {

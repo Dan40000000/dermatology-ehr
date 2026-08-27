@@ -1,30 +1,38 @@
 import winston from 'winston';
 import path from 'path';
-import { redactPHI, redactValue } from '../utils/phiRedaction';
+import { sanitizeLogValue, safeErrorCode } from '../utils/phiRedaction';
+
+function sanitizeLoggerValue(value: unknown, key: string): unknown {
+  // Keep lightweight test/mocked phi-redaction modules from reintroducing raw
+  // error fields when this logger is imported in isolation.
+  if (typeof sanitizeLogValue === 'function') {
+    return sanitizeLogValue(value, key);
+  }
+  if (value instanceof Error && typeof safeErrorCode === 'function') {
+    return safeErrorCode(value);
+  }
+  if (/^(?:error|err|exception|cause|reason|failure|stack|trace)$/i.test(key)) {
+    return typeof safeErrorCode === 'function' ? safeErrorCode(value) : '[REDACTED]';
+  }
+  return value;
+}
 
 // PHI redaction format - applied before any other formatting
 const phiRedactionFormat = winston.format((info) => {
-  // Redact message if it contains PHI patterns
-  if (info.message && typeof info.message === 'string') {
-    info.message = redactValue(info.message);
+  // Sanitize every field before Winston fans the record out to file, console,
+  // or a transport supplied by an integration.  In particular, values under
+  // error/reason/exception/stack fields become opaque codes; retaining a
+  // provider's original message or stack is an easy PHI exfiltration path.
+  for (const key of Object.keys(info)) {
+    if (key === 'level' || key === 'timestamp') {
+      continue;
+    }
+    info[key] = sanitizeLoggerValue(info[key], key);
   }
 
-  // Redact metadata
-  const keysToCheck = Object.keys(info).filter(
-    key => !['level', 'timestamp', 'message', 'stack'].includes(key)
-  );
-
-  keysToCheck.forEach(key => {
-    if (info[key] && typeof info[key] === 'object') {
-      info[key] = redactPHI(info[key]);
-    } else if (info[key] && typeof info[key] === 'string') {
-      info[key] = redactValue(info[key]);
-    }
-  });
-
-  // Redact stack traces
-  if (info.stack && typeof info.stack === 'string') {
-    info.stack = redactValue(info.stack);
+  // Winston's errors format may expose the Error under the message property.
+  if (info.message instanceof Error) {
+    info.message = safeErrorCode(info.message);
   }
 
   return info;

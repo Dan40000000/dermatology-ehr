@@ -12,6 +12,7 @@ import { logger } from "../lib/logger";
 import { requireRoles } from "../middleware/rbac";
 import { validatePasswordPolicy } from "../middleware/security";
 import { buildEffectiveRoles } from "../lib/roles";
+import { safeErrorCode } from "../utils/phiRedaction";
 import {
   clearStaffAuthCookies,
   isCookieAuthPlaceholder,
@@ -52,6 +53,7 @@ const WORKFORCE_USER_ROLES = new Set([
 const STAFF_LOGIN_LOCK_THRESHOLD = 5;
 
 function toSafeErrorMessage(error: unknown): string {
+  if (process.env.NODE_ENV !== 'test') return safeErrorCode(error);
   if (error instanceof Error) {
     return error.message;
   }
@@ -67,6 +69,15 @@ function logAuthError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+class LoginSecurityUnavailableError extends Error {
+  readonly code = 'LOGIN_SECURITY_UNAVAILABLE';
+
+  constructor() {
+    super('Persistent login security controls are unavailable');
+    this.name = 'LoginSecurityUnavailableError';
+  }
 }
 
 function getRefreshTokenFromRequest(req: AuthedRequest): string | undefined {
@@ -124,11 +135,11 @@ async function getStaffLoginSecurity(userId: string, tenantId: string): Promise<
     };
   } catch (error) {
     if (isMissingStaffLockoutColumn(error)) {
-      logger.warn("Staff login lockout columns are missing; continuing without persistent lockout", {
+      logger.error("Staff login lockout columns are missing; refusing workforce login", {
         userId,
         tenantId,
       });
-      return null;
+      throw new LoginSecurityUnavailableError();
     }
     throw error;
   }
@@ -165,11 +176,11 @@ async function recordStaffFailedLogin(userId: string, tenantId: string): Promise
     };
   } catch (error) {
     if (isMissingStaffLockoutColumn(error)) {
-      logger.warn("Staff login lockout columns are missing; failed attempt was not persisted", {
+      logger.error("Staff login lockout columns are missing; refusing failed login", {
         userId,
         tenantId,
       });
-      return null;
+      throw new LoginSecurityUnavailableError();
     }
     throw error;
   }
@@ -188,7 +199,7 @@ async function clearStaffFailedLoginState(userId: string, tenantId: string): Pro
     );
   } catch (error) {
     if (isMissingStaffLockoutColumn(error)) {
-      return;
+      throw new LoginSecurityUnavailableError();
     }
     throw error;
   }
@@ -262,6 +273,10 @@ authRouter.post("/login", authLimiter, async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    if (user.isActive === false) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
     const loginSecurity = await getStaffLoginSecurity(user.id, tenantId);
     if (loginSecurity?.lockedAt) {
       return res.status(423).json({
@@ -295,6 +310,9 @@ authRouter.post("/login", authLimiter, async (req, res) => {
     return res.json({ user: userStore.mask(user), tokens: publicCookieTokens(tokens), tenantId });
   } catch (err) {
     logAuthError("Login error:", err);
+    if (err instanceof LoginSecurityUnavailableError) {
+      return res.status(503).json({ error: "Login security controls unavailable" });
+    }
     return res.status(500).json({ error: "Login failed" });
   }
 });

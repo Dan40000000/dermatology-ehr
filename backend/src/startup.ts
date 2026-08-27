@@ -1,19 +1,21 @@
 // Simple startup - run migrations for deploys, then start the server.
-console.log("=== Starting Server ===");
+import { logger } from './lib/logger';
+import { safeErrorCode } from './utils/phiRedaction';
 
-// Log environment for debugging
-console.log("NODE_ENV:", process.env.NODE_ENV);
-console.log("PORT:", process.env.PORT);
-console.log("DATABASE_URL exists:", !!process.env.DATABASE_URL);
+logger.info('Starting server', {
+  environment: process.env.NODE_ENV || 'unknown',
+  portConfigured: Boolean(process.env.PORT),
+  databaseConfigured: Boolean(process.env.DATABASE_URL),
+});
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  console.error('UNCAUGHT EXCEPTION:', error);
+  logger.error('Uncaught exception', { errorCode: safeErrorCode(error) });
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('UNHANDLED REJECTION at:', promise, 'reason:', reason);
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', { errorCode: safeErrorCode(reason) });
   process.exit(1);
 });
 
@@ -26,18 +28,18 @@ function shouldRunMigrationsOnStartup(): boolean {
 }
 
 async function start() {
-  console.log("Loading index.ts...");
+  logger.info('Loading application index');
   if (shouldRunMigrationsOnStartup()) {
-    console.log("Running startup database migrations...");
+    logger.info('Running startup database migrations');
     const { runMigrations } = require("./db/migrate");
     await runMigrations();
-    console.log("Startup database migrations complete");
+    logger.info('Startup database migrations complete');
   }
   require("./index");
-  console.log("Index loaded successfully");
+  logger.info('Application index loaded');
 }
 
 start().catch((error) => {
-  console.error("STARTUP ERROR:", error);
+  logger.error('Startup failed', { errorCode: safeErrorCode(error) });
   process.exit(1);
 });

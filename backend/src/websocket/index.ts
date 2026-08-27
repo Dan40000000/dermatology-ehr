@@ -2,6 +2,7 @@ import { Server as HTTPServer } from "http";
 import { Server, ServerOptions } from "socket.io";
 import { authenticateSocket, AuthenticatedSocket } from "./auth";
 import { logger } from "../lib/logger";
+import { safeErrorCode } from "../utils/phiRedaction";
 import { registerMessageHandlers } from "./handlers/messageHandlers";
 import { registerPresenceHandlers } from "./handlers/presenceHandlers";
 import { registerAmbientScribeHandlers } from "./handlers/ambientScribeHandlers";
@@ -86,7 +87,7 @@ export function initializeWebSocket(httpServer: HTTPServer): Server {
       logger.error("WebSocket error", {
         socketId: socket.id,
         userId: socket.user?.id,
-        error: error.message,
+        errorCode: safeErrorCode(error),
       });
     });
 

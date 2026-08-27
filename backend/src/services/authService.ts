@@ -132,7 +132,7 @@ export async function rotateRefreshToken(
     if (new Date(stored.expires_at).getTime() < Date.now()) return null;
 
     const user = await userStore.findById(decoded.sub as string);
-    if (!user || user.tenantId !== decoded.tenantId) return null;
+    if (!user || user.tenantId !== decoded.tenantId || user.isActive === false) return null;
 
     await revokeRefreshToken(token);
 

@@ -59,14 +59,11 @@ describe('sentry helpers', () => {
   });
 
   it('skips init when DSN is missing', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const { initSentry } = await loadSentry({ monitoring: { sentryDsn: '' } });
 
     initSentry();
 
     expect(sentryMock.init).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
   });
 
   it('returns null in beforeSend for test environment', async () => {

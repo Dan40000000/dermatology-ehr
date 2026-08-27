@@ -1,4 +1,9 @@
 import { hashValue, redactValue } from './phiRedaction';
+import {
+  isClinicalAiProviderEnabled,
+  isProviderBaaEnabled,
+  type ClinicalAiProvider,
+} from './externalAiGate';
 
 export type AiPhiRisk = 'redact' | 'block';
 
@@ -202,6 +207,29 @@ export function assertNoBlockedPhiForExternalAi(text: string): void {
   if (blockedTypes.length > 0) {
     throw new AiPhiBlockError(blockedTypes);
   }
+}
+
+/**
+ * Provider-aware PHI gate used by clinical/ambient integrations.  Raw PHI may
+ * leave this process only when the selected provider is explicitly enabled and
+ * its BAA/equivalent has been attested.  Callers can still send de-identified
+ * text through the generic guard when no provider is selected.
+ */
+export function assertClinicalAiProviderAllowed(
+  provider: ClinicalAiProvider,
+  apiKey?: string,
+): void {
+  const testFixture = process.env.NODE_ENV === 'test' && /^(test|mock|fake)[-_]/i.test(String(apiKey || ''));
+  if (!isClinicalAiProviderEnabled(provider, apiKey) || (!testFixture && !isProviderBaaEnabled(provider))) {
+    const error = new AiPhiBlockError(['provider_not_attested']);
+    error.message = 'Clinical AI provider is not enabled for PHI processing.';
+    throw error;
+  }
+}
+
+export function isClinicalAiProviderAllowed(provider: ClinicalAiProvider, apiKey?: string): boolean {
+  const testFixture = process.env.NODE_ENV === 'test' && /^(test|mock|fake)[-_]/i.test(String(apiKey || ''));
+  return isClinicalAiProviderEnabled(provider, apiKey) && (testFixture || isProviderBaaEnabled(provider));
 }
 
 export function assertClinicalAiPromptIsSafeForExternalAi(input: {

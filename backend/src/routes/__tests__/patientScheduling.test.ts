@@ -136,7 +136,7 @@ describe("Patient scheduling portal routes", () => {
     const res = await request(app).get("/patient-portal/scheduling/public/providers");
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Missing tenant header/i);
+    expect(res.body.error).toMatch(/Public booking site binding required/i);
   });
 
   it("GET /patient-portal/scheduling/providers returns providers", async () => {

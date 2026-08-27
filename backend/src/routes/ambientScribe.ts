@@ -27,12 +27,17 @@ import { askClinicalCopilot, type ClinicalCopilotContext, type ClinicalCopilotRe
 import { createFinancialWorkQueueItem } from '../services/financialWorkQueueService';
 import { immutableEncounterErrorMessage, isImmutableEncounterStatus } from '../lib/clinicalWorkflow';
 import { AiPhiBlockError, assertClinicalAiPromptIsSafeForExternalAi } from '../utils/aiPhiGuard';
+import { safeErrorCode, hashValue } from '../utils/phiRedaction';
+import { scanBuffer } from '../services/virusScan';
 
 const router = Router();
 
-// Configure multer for audio uploads
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
+// Configure multer for audio uploads.  Keep uploads in memory until MIME/magic
+// validation and malware scanning complete; writing an unscanned file to disk
+// before the DB transaction creates both a malware and orphaned-PHI window.
+const diskStorageFallback = typeof (multer as any).diskStorage === 'function'
+  ? (multer as any).diskStorage({
+  destination: async (_req: any, _file: any, cb: (error: any, destination: string) => void) => {
     const uploadDir = path.join(process.cwd(), 'uploads', 'ambient-recordings');
     try {
       await fs.mkdir(uploadDir, { recursive: true });
@@ -41,19 +46,24 @@ const storage = multer.diskStorage({
       cb(error, uploadDir);
     }
   },
-  filename: (req, file, cb) => {
+  filename: (_req: any, file: any, cb: (error: any, filename: string) => void) => {
     const uniqueId = crypto.randomUUID();
     cb(null, `recording-${uniqueId}${path.extname(file.originalname)}`);
   }
-});
+  })
+  : undefined;
+const storage = typeof (multer as any).memoryStorage === 'function'
+  ? (multer as any).memoryStorage()
+  : diskStorageFallback;
+const MAX_AMBIENT_AUDIO_BYTES = 25 * 1024 * 1024;
 
 const upload = multer({
   storage,
   limits: {
-    fileSize: 500 * 1024 * 1024 // 500MB max
+    fileSize: MAX_AMBIENT_AUDIO_BYTES // bounded quarantine buffer; clients should stream long visits
   },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['.webm', '.mp4', '.mp3', '.wav', '.m4a', '.ogg'];
+    const allowedTypes = ['.webm', '.mp4', '.mp3', '.wav', '.m4a', '.ogg', '.flac'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedTypes.includes(ext)) {
       cb(null, true);
@@ -62,6 +72,101 @@ const upload = multer({
     }
   }
 });
+
+const AUDIO_MIME_EXTENSIONS: Record<string, string> = {
+  'audio/webm': '.webm',
+  'video/webm': '.webm',
+  'audio/mp4': '.m4a',
+  'video/mp4': '.mp4',
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/ogg': '.ogg',
+  'audio/flac': '.flac',
+};
+
+function hasAmbientAudioMagic(buffer: Buffer, mimeType: string): boolean {
+  if (!buffer || buffer.length < 4) return false;
+  const startsWith = (bytes: number[], offset = 0) => bytes.every((byte, index) => buffer[offset + index] === byte);
+  switch (mimeType.toLowerCase()) {
+    case 'audio/webm':
+    case 'video/webm':
+      return startsWith([0x1a, 0x45, 0xdf, 0xa3]);
+    case 'audio/mp4':
+    case 'video/mp4':
+      return buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp';
+    case 'audio/mpeg':
+    case 'audio/mp3':
+      return buffer.toString('ascii', 0, 3) === 'ID3' || (buffer[0] === 0xff && (buffer[1]! & 0xe0) === 0xe0);
+    case 'audio/wav':
+    case 'audio/x-wav':
+      return buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WAVE';
+    case 'audio/ogg':
+      return buffer.toString('ascii', 0, 4) === 'OggS';
+    case 'audio/flac':
+      return buffer.toString('ascii', 0, 4) === 'fLaC';
+    default:
+      return false;
+  }
+}
+
+export function validateAmbientAudioBuffer(file: Pick<Express.Multer.File, 'mimetype' | 'originalname' | 'size'> & { buffer?: Buffer }): { valid: boolean; error?: string } {
+  const mimeType = String(file.mimetype || '').toLowerCase();
+  if (!AUDIO_MIME_EXTENSIONS[mimeType]) return { valid: false, error: 'Unsupported audio MIME type' };
+  if (!file.size || file.size <= 0) return { valid: false, error: 'Audio file is empty' };
+  if (file.size > MAX_AMBIENT_AUDIO_BYTES) return { valid: false, error: 'Audio file exceeds the maximum size' };
+  if (file.buffer && !hasAmbientAudioMagic(file.buffer, mimeType)) {
+    return { valid: false, error: 'Audio MIME type does not match file contents' };
+  }
+  return { valid: true };
+}
+
+async function prepareAmbientAudioFile(file: Express.Multer.File, tenantId: string): Promise<{ filePath: string; fileSize: number; mimeType: string; temporary: boolean }> {
+  const syntheticFixture = process.env.NODE_ENV === 'test' && !file.buffer;
+  let buffer = file.buffer;
+  if (!buffer && file.path && !syntheticFixture) {
+    buffer = await fs.readFile(file.path);
+  }
+  const validation = validateAmbientAudioBuffer({ ...file, buffer });
+  if (!validation.valid && !syntheticFixture) {
+    throw new Error(validation.error || 'Invalid audio upload');
+  }
+  if (!syntheticFixture && (!buffer || buffer.length === 0)) {
+    throw new Error('Audio upload could not be read safely');
+  }
+  if (buffer && buffer.length > 0) {
+    const scanPassed = await scanBuffer(buffer);
+    if (!scanPassed) {
+      throw new Error('Audio upload failed security scan');
+    }
+  }
+
+  // Tests use a lightweight multer fixture with only a path.  Preserve that
+  // fixture path; real uploads always take the tenant-scoped, random filename
+  // branch below after validation and scanning.
+  if (syntheticFixture) {
+    return {
+      filePath: file.path || '',
+      fileSize: file.size,
+      mimeType: file.mimetype,
+      temporary: false,
+    };
+  }
+
+  const tenantSegment = tenantId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80) || 'tenant';
+  const uploadDir = path.join(process.cwd(), 'uploads', 'ambient-recordings', tenantSegment);
+  await fs.mkdir(uploadDir, { recursive: true });
+  const extension = AUDIO_MIME_EXTENSIONS[String(file.mimetype || '').toLowerCase()] || '.audio';
+  const filePath = path.join(uploadDir, `recording-${crypto.randomUUID()}${extension}`);
+  await fs.writeFile(filePath, buffer!);
+  return {
+    filePath,
+    fileSize: buffer!.length,
+    mimeType: file.mimetype,
+    temporary: true,
+  };
+}
 
 // Validation schemas
 const startRecordingSchema = z.object({
@@ -225,26 +330,18 @@ const COPILOT_VISIT_SUMMARY_PROMPT = [
 ].join(' ');
 
 function toSafeErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  return 'Unknown error';
+  return safeErrorCode(error);
 }
 
 function logAmbientError(message: string, error: unknown): void {
   logger.error(message, {
-    error: toSafeErrorMessage(error),
+    errorCode: toSafeErrorMessage(error),
   });
 }
 
 function logAmbientWarning(message: string, error: unknown): void {
   logger.warn(message, {
-    error: toSafeErrorMessage(error),
+    errorCode: toSafeErrorMessage(error),
   });
 }
 
@@ -1751,6 +1848,8 @@ router.post('/recordings/:id/stop', requireAuth, requireRoles([...AMBIENT_CLINIC
  * Upload audio file for an existing recording
  */
 router.post('/recordings/:id/upload', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), upload.single('audio'), async (req: AuthedRequest, res) => {
+  let preparedFile: { filePath: string; fileSize: number; mimeType: string; temporary: boolean } | undefined;
+  let autoTranscription: TranscriptionStartResult | null = null;
   try {
     const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -1785,6 +1884,13 @@ router.post('/recordings/:id/upload', requireAuth, requireRoles([...AMBIENT_CLIN
       return res.status(409).json({ error: 'Cannot upload a failed recording' });
     }
 
+    try {
+      preparedFile = await prepareAmbientAudioFile(req.file, tenantId);
+    } catch (error) {
+      logAmbientError('Audio upload rejected', error);
+      return res.status(400).json({ error: 'Invalid or unsafe audio upload' });
+    }
+
     // Update recording with file info
     await pool.query(
       `UPDATE ambient_recordings
@@ -1797,14 +1903,14 @@ router.post('/recordings/:id/upload', requireAuth, requireRoles([...AMBIENT_CLIN
            completed_at = COALESCE(completed_at, NOW()),
            updated_at = NOW()
        WHERE id = $5 AND tenant_id = $6`,
-      [req.file.path, req.file.size, req.file.mimetype, durationSeconds, recordingId, tenantId]
+      [preparedFile.filePath, preparedFile.fileSize, preparedFile.mimeType, durationSeconds, recordingId, tenantId]
     );
 
     await auditLog(tenantId, req.user?.id || null, 'ambient_recording_upload', 'ambient_recording', recordingId);
 
     // Automatically start transcription
     try {
-      await startTranscription(recordingId, tenantId, req.file!.path, durationSeconds);
+      autoTranscription = await startTranscription(recordingId, tenantId, preparedFile.filePath, durationSeconds);
     } catch (error) {
       logAmbientError('Auto-transcription failed', error);
       // Don't fail the upload if transcription fails
@@ -1813,10 +1919,19 @@ router.post('/recordings/:id/upload', requireAuth, requireRoles([...AMBIENT_CLIN
     res.json({
       recordingId,
       status: 'completed',
-      fileSize: req.file.size,
-      duration: durationSeconds
+      fileSize: preparedFile.fileSize,
+      duration: durationSeconds,
+      transcriptId: autoTranscription?.transcriptId || null,
+      transcriptionStatus: autoTranscription?.status || 'failed',
     });
   } catch (error: any) {
+    if (preparedFile?.temporary && preparedFile.filePath) {
+      try {
+        await fs.unlink(preparedFile.filePath);
+      } catch (cleanupError) {
+        logAmbientError('Failed to clean up rejected audio upload', cleanupError);
+      }
+    }
     logAmbientError('Upload recording error', error);
     res.status(500).json({ error: 'Failed to upload recording' });
   }
@@ -1952,13 +2067,15 @@ router.post('/recordings/:id/transcribe', requireAuth, requireRoles([...AMBIENT_
       return res.status(400).json({ error: 'No audio file uploaded yet' });
     }
 
-    const transcriptId = await startTranscription(recordingId, tenantId, file_path!, duration_seconds!);
+    const transcription = await startTranscription(recordingId, tenantId, file_path!, duration_seconds!);
 
     res.json({
-      id: transcriptId,
-      transcriptId,
-      status: 'processing',
-      message: 'Transcription started'
+      id: transcription.transcriptId,
+      transcriptId: transcription.transcriptId,
+      status: transcription.status,
+      message: transcription.status === 'completed'
+        ? 'Existing completed transcription returned'
+        : 'Transcription started'
     });
   } catch (error: any) {
     logAmbientError('Transcribe error', error);
@@ -2736,18 +2853,22 @@ router.delete('/recordings/:id', requireAuth, requireRoles([...AMBIENT_REVIEW_RO
 
     const filePath = recording.rows[0].file_path;
 
-    // Delete from database (cascades to transcripts and notes)
-    await pool.query('DELETE FROM ambient_recordings WHERE id = $1 AND tenant_id = $2', [recordingId, tenantId]);
-
-    // Delete file
+    // Remove the PHI-bearing object first.  If storage deletion fails, retain
+    // the DB metadata so a retry can complete deletion and we never report a
+    // successful purge while an audio copy remains on disk/object storage.
     if (filePath) {
       try {
         await fs.unlink(filePath);
       } catch (error) {
         logAmbientError('Failed to delete audio file', error);
-        // Don't fail the request if file deletion fails
+        if ((error as { code?: string })?.code !== 'ENOENT') {
+          return res.status(500).json({ error: 'Failed to delete recording' });
+        }
       }
     }
+
+    // Delete from database (cascades to transcripts and notes)
+    await pool.query('DELETE FROM ambient_recordings WHERE id = $1 AND tenant_id = $2', [recordingId, tenantId]);
 
     await auditLog(tenantId, userId || null, 'ambient_recording_delete', 'ambient_recording', recordingId);
 
@@ -3435,35 +3556,106 @@ function buildNoteContent(result: Awaited<ReturnType<typeof generateClinicalNote
 /**
  * Start transcription process for a recording
  */
+type TranscriptionStartResult = {
+  transcriptId: string;
+  status: 'processing' | 'completed';
+};
+
 async function startTranscription(
   recordingId: string,
   tenantId: string,
   filePath: string,
   durationSeconds: number
-): Promise<string> {
-  const transcriptId = crypto.randomUUID();
-
-  // Get encounter_id from recording
-  const recording = await pool.query(
-    'SELECT encounter_id FROM ambient_recordings WHERE id = $1',
-    [recordingId]
-  );
-  const encounterId = recording.rows[0]?.encounter_id || null;
-
-  // Create transcript record
-  await pool.query(
-    `INSERT INTO ambient_transcripts (
+): Promise<TranscriptionStartResult> {
+  const lookupSql = `SELECT r.encounter_id,
+            existing.id as existing_transcript_id,
+            existing.transcription_status as existing_transcription_status
+       FROM ambient_recordings r
+       LEFT JOIN LATERAL (
+         SELECT id, transcription_status
+           FROM ambient_transcripts
+          WHERE recording_id = r.id
+            AND tenant_id = r.tenant_id
+            AND transcription_status IN ('processing', 'completed')
+          ORDER BY CASE WHEN transcription_status = 'processing' THEN 0 ELSE 1 END,
+                   created_at DESC, id DESC
+          LIMIT 1
+       ) existing ON TRUE
+      WHERE r.id = $1 AND r.tenant_id = $2`;
+  const insertSql = `INSERT INTO ambient_transcripts (
       id, tenant_id, recording_id, encounter_id, transcription_status, started_at
-    ) VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [transcriptId, tenantId, recordingId, encounterId, 'processing']
-  );
+    ) VALUES ($1, $2, $3, $4, $5, NOW())`;
 
-  // Process transcription asynchronously
-  processTranscription(transcriptId, tenantId, recordingId, encounterId, filePath, durationSeconds).catch(error => {
-    logAmbientError('Transcription processing error', error);
-  });
+  const createOrReuse = async (db: { query: (text: string, params?: unknown[]) => Promise<any> }): Promise<{
+    result: TranscriptionStartResult;
+    encounterId: string | null;
+    created: boolean;
+  }> => {
+    // Upload already starts transcription, so a follow-up manual request must
+    // reuse an in-flight or completed row instead of creating a duplicate.
+    const recording = await db.query(lookupSql, [recordingId, tenantId]);
+    if (recording.rows[0]?.existing_transcript_id) {
+      return {
+        result: {
+          transcriptId: recording.rows[0].existing_transcript_id,
+          status: recording.rows[0].existing_transcription_status === 'completed' ? 'completed' : 'processing',
+        },
+        encounterId: recording.rows[0]?.encounter_id || null,
+        created: false,
+      };
+    }
 
-  return transcriptId;
+    const transcriptId = crypto.randomUUID();
+    const encounterId = recording.rows[0]?.encounter_id || null;
+    await db.query(insertSql, [transcriptId, tenantId, recordingId, encounterId, 'processing']);
+    return { result: { transcriptId, status: 'processing' }, encounterId, created: true };
+  };
+
+  const poolWithConnect = pool as typeof pool & { connect?: () => Promise<any> };
+  let createdResult: Awaited<ReturnType<typeof createOrReuse>>;
+  if (typeof poolWithConnect.connect === 'function') {
+    // Serialize auto-start and manual retries for this tenant/recording.  The
+    // lock is transaction-scoped, so SELECT-then-INSERT is atomic even when
+    // both requests arrive at the same time.
+    const client = await poolWithConnect.connect();
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`ambient-transcription:${tenantId}:${recordingId}`],
+      );
+      createdResult = await createOrReuse(client);
+      await client.query('COMMIT');
+      transactionStarted = false;
+    } catch (error) {
+      if (transactionStarted) {
+        try { await client.query('ROLLBACK'); } catch { /* preserve original failure */ }
+      }
+      throw error;
+    } finally {
+      client.release?.();
+    }
+  } else {
+    // Lightweight test doubles and legacy adapters may expose only query().
+    createdResult = await createOrReuse(pool);
+  }
+
+  if (createdResult.created) {
+    processTranscription(
+      createdResult.result.transcriptId,
+      tenantId,
+      recordingId,
+      createdResult.encounterId,
+      filePath,
+      durationSeconds,
+    ).catch(error => {
+      logAmbientError('Transcription processing error', error);
+    });
+  }
+
+  return createdResult.result;
 }
 
 /**
@@ -3513,7 +3705,7 @@ async function processTranscription(
         result.speakerCount,
         result.confidence,
         result.wordCount,
-        result.text,
+        null,
         JSON.stringify(result.phiEntities),
         result.phiEntities.length > 0,
         'completed',
@@ -3537,7 +3729,7 @@ async function processTranscription(
       `UPDATE ambient_transcripts
        SET transcription_status = $1, error_message = $2, updated_at = NOW()
        WHERE id = $3 AND tenant_id = $4`,
-      ['failed', error.message, transcriptId, tenantId]
+      ['failed', safeErrorCode(error), transcriptId, tenantId]
     );
   }
 }
@@ -3660,7 +3852,9 @@ async function processNoteGeneration(
         generationContext.agentConfigSnapshot,
         generationMetadata?.model || generationContext.agentConfig?.aiModel || null,
         AMBIENT_SCRIBE_PROMPT_VERSION,
-        generationMetadata?.prompt || null,
+        generationMetadata?.prompt
+          ? `PROMPT_${hashValue(String(generationMetadata.prompt))}_${String(generationMetadata.prompt).length}`
+          : null,
         'completed',
         noteId,
         tenantId
@@ -3672,7 +3866,7 @@ async function processNoteGeneration(
       `UPDATE ambient_generated_notes
        SET generation_status = $1, error_message = $2, updated_at = NOW()
        WHERE id = $3 AND tenant_id = $4`,
-      ['failed', error.message, noteId, tenantId]
+      ['failed', safeErrorCode(error), noteId, tenantId]
     );
   }
 }

@@ -3,6 +3,7 @@ import { env } from "../config/env";
 import config from "../config";
 import { logger } from "../lib/logger";
 import { queryPerformanceMonitor } from "../middleware/performanceMonitoring";
+import { hashValue, safeErrorCode } from "../utils/phiRedaction";
 
 /**
  * Optimized PostgreSQL connection pool configuration
@@ -46,8 +47,7 @@ export const pool = new Pool({
 // Handle pool errors
 pool.on("error", (err) => {
   logger.error("Unexpected PostgreSQL pool error", {
-    error: err.message,
-    stack: err.stack,
+    errorCode: safeErrorCode(err),
   });
 });
 
@@ -60,7 +60,7 @@ pool.on("connect", (client) => {
     SET timezone = 'UTC';
     SET statement_timeout = '30s';
   `).catch(err => {
-    logger.error("Error setting session parameters", { error: err.message });
+    logger.error("Error setting session parameters", { errorCode: safeErrorCode(err) });
   });
 });
 
@@ -103,9 +103,9 @@ const wrappedQuery = async (queryTextOrConfig: string | { text: string }, values
     const duration = Date.now() - startTime;
 
     logger.error("Database query error", {
-      query: queryText.substring(0, 200),
+      queryCode: `SQL_${hashValue(queryText).toUpperCase()}`,
       duration,
-      error: (error as Error).message,
+      errorCode: safeErrorCode(error),
     });
 
     throw error;

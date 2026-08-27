@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import type { Appointment, Provider } from '../../types';
 
 interface MonthViewProps {
@@ -13,7 +13,6 @@ interface MonthViewProps {
 export function MonthView({
   currentDate,
   appointments,
-  providers,
   selectedAppointment,
   onAppointmentClick,
   onDayClick,
@@ -167,9 +166,19 @@ export function MonthView({
               className={`month-view-day ${!isCurrentMonth ? 'other-month' : ''} ${
                 today ? 'today' : ''
               } ${hoveredDate === dateKey ? 'hovered' : ''}`}
+              role={dayAppointments.length === 0 ? 'button' : undefined}
+              tabIndex={dayAppointments.length === 0 ? 0 : -1}
+              aria-current={dayAppointments.length === 0 && today ? 'date' : undefined}
+              aria-label={dayAppointments.length === 0 ? `${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}, no appointments` : undefined}
               onMouseEnter={() => setHoveredDate(dateKey)}
               onMouseLeave={() => setHoveredDate(null)}
               onClick={() => onDayClick(date)}
+              onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onDayClick(date);
+              }}
             >
               {/* Day number */}
               <div className="month-view-day-number">
@@ -189,6 +198,10 @@ export function MonthView({
                     className={`month-view-appointment ${
                       selectedAppointment?.id === appt.id ? 'selected' : ''
                     }`}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={selectedAppointment?.id === appt.id}
+                    aria-label={`${appt.patientName}, ${appt.appointmentTypeName}, ${new Date(appt.scheduledStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}, ${appt.status.replace(/_/g, ' ')}`}
                     style={{
                       backgroundColor: isHistoricalScheduledAppointment(appt) ? '#cbd5e1' : getStatusColor(appt.status),
                       borderLeft: `3px solid ${isHistoricalScheduledAppointment(appt) ? '#94a3b8' : getStatusColor(appt.status)}`,
@@ -196,6 +209,12 @@ export function MonthView({
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      onAppointmentClick(appt);
+                    }}
+                    onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      event.stopPropagation();
                       onAppointmentClick(appt);
                     }}
                     title={`${new Date(appt.scheduledStart).toLocaleTimeString('en-US', {

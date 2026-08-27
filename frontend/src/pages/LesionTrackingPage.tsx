@@ -259,10 +259,10 @@ const LesionTrackingPage: React.FC = () => {
     <Box sx={{ p: 3 }}>
       {/* Header */}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">Lesion Tracking</Typography>
+        <Typography variant="h4" component="h1">Lesion Tracking</Typography>
         <Box display="flex" gap={2}>
           <Tooltip title="Refresh">
-            <IconButton onClick={() => { fetchLesions(); fetchAlerts(); }}>
+            <IconButton aria-label="Refresh lesion tracking" onClick={() => { fetchLesions(); fetchAlerts(); }}>
               <RefreshIcon />
             </IconButton>
           </Tooltip>

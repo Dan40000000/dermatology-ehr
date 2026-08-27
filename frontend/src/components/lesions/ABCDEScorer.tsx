@@ -2,16 +2,15 @@ import React, { useState } from 'react';
 import {
   Box,
   Typography,
-  Slider,
   Paper,
   Grid,
   Button,
   TextField,
   Alert,
   Chip,
-  Divider,
   Card,
-  CardContent
+  CardContent,
+  ButtonBase,
 } from '@mui/material';
 import {
   Warning as WarningIcon,
@@ -182,9 +181,16 @@ const ABCDEScorer: React.FC<ABCDEScorerProps> = ({
           <Grid container spacing={1} sx={{ mt: 1 }}>
             {info.options.map((option) => (
               <Grid item xs={4} key={option.value}>
-                <Paper
-                  elevation={value === option.value ? 3 : 0}
+                <ButtonBase
+                  component="div"
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={value === option.value}
+                  aria-label={`${info.title}: ${option.label}. ${option.description}`}
                   sx={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
                     p: 1.5,
                     cursor: 'pointer',
                     border: value === option.value ? 2 : 1,
@@ -197,6 +203,11 @@ const ABCDEScorer: React.FC<ABCDEScorerProps> = ({
                     }
                   }}
                   onClick={() => setScores({ ...scores, [key]: option.value })}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    setScores({ ...scores, [key]: option.value });
+                  }}
                 >
                   <Box display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="body2" fontWeight="medium">
@@ -211,7 +222,7 @@ const ABCDEScorer: React.FC<ABCDEScorerProps> = ({
                   <Typography variant="caption" color="text.secondary">
                     {option.description}
                   </Typography>
-                </Paper>
+                </ButtonBase>
               </Grid>
             ))}
           </Grid>

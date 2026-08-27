@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
+import { useDialogFocusTrap } from '../../utils/focusTrap';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -24,30 +25,28 @@ export function ConfirmDialog({
   loading = false,
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const idPrefix = useId().replace(/:/g, '');
+  const titleId = `confirm-dialog-title-${idPrefix}`;
+  const messageId = `confirm-dialog-message-${idPrefix}`;
 
   useEffect(() => {
-    if (isOpen) {
-      // Focus the dialog when it opens
-      dialogRef.current?.focus();
+    if (!isOpen) return;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
 
-      // Prevent body scroll
-      document.body.style.overflow = 'hidden';
-
-      // Escape and backdrop clicks are non-dismissive. Users must explicitly
-      // confirm or cancel so accidental clicks do not discard work.
-      const handleEscape = (e: KeyboardEvent) => {
-        if (e.key === 'Escape' && !loading) {
-          e.preventDefault();
-        }
-      };
-      window.addEventListener('keydown', handleEscape);
-
-      return () => {
-        document.body.style.overflow = '';
-        window.removeEventListener('keydown', handleEscape);
-      };
-    }
-  }, [isOpen, onCancel, loading]);
+  // Confirmation dialogs remain explicit: Escape is intentionally not a
+  // destructive/cancel action. Focus is trapped and returned to the opener.
+  useDialogFocusTrap({
+    isOpen,
+    dialogRef,
+    onClose: onCancel,
+    closeOnEscape: !loading,
+    initialFocusRef: cancelButtonRef,
+  });
 
   if (!isOpen) return null;
 
@@ -71,24 +70,25 @@ export function ConfirmDialog({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
-        aria-describedby="confirm-dialog-message"
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
         tabIndex={-1}
       >
         <div className="confirm-dialog-icon">
           {variantIcons[variant]}
         </div>
 
-        <h2 id="confirm-dialog-title" className="confirm-dialog-title">
+        <h2 id={titleId} className="confirm-dialog-title">
           {title}
         </h2>
 
-        <p id="confirm-dialog-message" className="confirm-dialog-message">
+        <p id={messageId} className="confirm-dialog-message">
           {message}
         </p>
 
         <div className="confirm-dialog-actions">
           <button
+            ref={cancelButtonRef}
             onClick={onCancel}
             className="confirm-dialog-button cancel"
             disabled={loading}

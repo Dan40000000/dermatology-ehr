@@ -133,7 +133,7 @@ describe('ConfirmDialog Component', () => {
     }
   });
 
-  it('does not call onCancel when Escape is pressed', async () => {
+  it('calls onCancel when Escape is pressed', async () => {
     const handleCancel = vi.fn();
     const user = userEvent.setup();
 
@@ -148,7 +148,7 @@ describe('ConfirmDialog Component', () => {
     );
 
     await user.keyboard('{Escape}');
-    expect(handleCancel).not.toHaveBeenCalled();
+    expect(handleCancel).toHaveBeenCalledTimes(1);
   });
 
   it('does not call onCancel when dialog content clicked', async () => {
@@ -169,7 +169,7 @@ describe('ConfirmDialog Component', () => {
     expect(handleCancel).not.toHaveBeenCalled();
   });
 
-  it('does not call onCancel when Escape key pressed', async () => {
+  it('calls onCancel when Escape key pressed', async () => {
     const handleCancel = vi.fn();
     const user = userEvent.setup();
 
@@ -184,7 +184,7 @@ describe('ConfirmDialog Component', () => {
     );
 
     await user.keyboard('{Escape}');
-    expect(handleCancel).not.toHaveBeenCalled();
+    expect(handleCancel).toHaveBeenCalledTimes(1);
   });
 
   it('does not call onCancel on Escape when loading', async () => {
@@ -357,7 +357,11 @@ describe('ConfirmDialog Component', () => {
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
-    expect(dialog).toHaveAttribute('aria-labelledby', 'confirm-dialog-title');
-    expect(dialog).toHaveAttribute('aria-describedby', 'confirm-dialog-message');
+    const labelledBy = dialog.getAttribute('aria-labelledby');
+    const describedBy = dialog.getAttribute('aria-describedby');
+    expect(labelledBy).toMatch(/^confirm-dialog-title-/);
+    expect(describedBy).toMatch(/^confirm-dialog-message-/);
+    expect(document.getElementById(labelledBy || '')).toHaveTextContent('Confirm Action');
+    expect(document.getElementById(describedBy || '')).toHaveTextContent('Are you sure');
   });
 });

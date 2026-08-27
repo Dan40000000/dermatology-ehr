@@ -14,6 +14,7 @@ import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor';
 import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import { LiveScribeInsightsPanel, type AmbientLiveInsightsPayload } from './LiveScribeInsightsPanel';
+import { Modal } from './ui';
 import {
   startAmbientRecording,
   stopAmbientRecording,
@@ -617,10 +618,13 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
       </div>
 
       {/* Consent Prompt Modal */}
-      {showConsentPrompt && (
-        <div className="scribe-panel__modal-overlay">
-          <div className="scribe-panel__modal">
-            <h3 className="scribe-panel__modal-title">Confirm patient consent</h3>
+      <Modal
+        isOpen={showConsentPrompt}
+        onClose={() => setShowConsentPrompt(false)}
+        title="Confirm patient consent"
+        closeOnEscape
+      >
+            <div className="scribe-panel__modal">
             <p className="scribe-panel__modal-text">
               Confirm consent has been obtained before starting the AI scribe recording.
             </p>
@@ -653,15 +657,21 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
                 Start Recording
               </button>
             </div>
-          </div>
-        </div>
-      )}
+            </div>
+      </Modal>
 
       {/* Continue Prompt Modal */}
-      {showContinuePrompt && (
-        <div className="scribe-panel__modal-overlay">
+      <Modal
+        isOpen={showContinuePrompt}
+        onClose={() => {
+          setShowContinuePrompt(false);
+          setPromptReason(null);
+          silenceMonitorRef.current?.resetTimer();
+        }}
+        title="Continue recording?"
+        closeOnEscape
+      >
           <div className="scribe-panel__modal">
-            <h3 className="scribe-panel__modal-title">Continue recording?</h3>
             <p className="scribe-panel__modal-text">
               {promptReason === 'duration'
                 ? 'You have been recording for 30 minutes. Do you want to keep recording?'
@@ -690,8 +700,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
     </>
   );
 });

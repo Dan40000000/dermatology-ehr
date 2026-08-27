@@ -2433,7 +2433,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
           flexWrap: 'wrap',
         }}
       >
-        <span>Schedule - {dateLabel}</span>
+        <h1 id="schedule-heading" style={{ margin: 0, fontSize: 'inherit', fontWeight: 'inherit' }}>Schedule - {dateLabel}</h1>
         <label
           style={{
             display: 'inline-flex',
@@ -2750,21 +2750,22 @@ const handleUndoNoShow = async (appt: Appointment) => {
       </div>
 
       {/* Appointments Table */}
-      <div className="ema-section-header">Appointments List</div>
+      <h2 className="ema-section-header">Appointments List</h2>
 
       <table className="ema-table">
+        <caption className="sr-only">Appointments for {dateLabel}</caption>
         <thead>
           <tr>
-            <th style={{ width: '40px' }}>
+            <th scope="col" style={{ width: '40px' }}>
               <span className="sr-only">Selection</span>
             </th>
-            <th>Time</th>
-            <th>Patient</th>
-            <th>Provider</th>
-            <th>Type</th>
-            <th>Location</th>
-            <th>Status</th>
-            <th>Actions</th>
+            <th scope="col">Time</th>
+            <th scope="col">Patient</th>
+            <th scope="col">Provider</th>
+            <th scope="col">Type</th>
+            <th scope="col">Location</th>
+            <th scope="col">Status</th>
+            <th scope="col">Actions</th>
           </tr>
         </thead>
         <tbody>

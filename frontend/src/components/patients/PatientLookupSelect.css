@@ -103,7 +103,8 @@
 }
 
 .patient-lookup__result:hover,
-.patient-lookup__result.is-selected {
+.patient-lookup__result.is-selected,
+.patient-lookup__result.is-active {
   background: #dbeafe;
 }
 

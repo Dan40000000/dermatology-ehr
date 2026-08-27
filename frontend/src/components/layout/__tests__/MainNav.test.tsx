@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { act } from 'react';
-import { MainNav } from '../MainNav';
+import { MainNav, MobileNav } from '../MainNav';
 
 let mockRole = 'admin';
 const mockSession = { tenantId: 'demo-tenant', accessToken: 'test-token' };
@@ -138,5 +138,29 @@ describe('MainNav role-based visibility', () => {
     renderNav();
     expect(screen.queryByText('Mail')).not.toBeInTheDocument();
     expect(apiMocks.fetchUnreadCount).not.toHaveBeenCalled();
+  });
+
+  it('opens the mobile drawer, traps focus, and returns focus to the toggle on Escape', async () => {
+    mockRole = 'admin';
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <MobileNav />
+      </MemoryRouter>,
+    );
+
+    const toggle = screen.getByRole('button', { name: 'Open navigation menu' });
+    toggle.focus();
+    fireEvent.click(toggle);
+    await act(async () => { vi.runAllTimers(); });
+    const drawer = screen.getByRole('navigation', { name: 'Mobile navigation' });
+    expect(drawer).toHaveAttribute('aria-hidden', 'false');
+    const closeButtons = screen.getAllByRole('button', { name: 'Close navigation menu' });
+    expect(closeButtons[closeButtons.length - 1]).toHaveFocus();
+
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    await act(async () => { vi.runAllTimers(); });
+    expect(screen.getByRole('button', { name: 'Open navigation menu' })).toHaveFocus();
+    expect(drawer).toHaveAttribute('aria-hidden', 'true');
+    expect(drawer.querySelectorAll('a,button,summary')).toHaveLength(0);
   });
 });

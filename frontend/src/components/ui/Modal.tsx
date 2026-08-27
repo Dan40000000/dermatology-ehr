@@ -1,5 +1,6 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useDialogFocusTrap } from '../../utils/focusTrap';
 
 interface ModalProps {
   isOpen: boolean;
@@ -9,6 +10,8 @@ interface ModalProps {
   size?: 'sm' | 'md' | 'lg' | 'full';
   showClose?: boolean;
   footer?: ReactNode;
+  /** Allow Escape to dismiss only for overlays where cancelling is safe. */
+  closeOnEscape?: boolean;
 }
 
 export function Modal({
@@ -19,18 +22,12 @@ export function Modal({
   size = 'md',
   showClose = true,
   footer,
+  closeOnEscape = true,
 }: ModalProps) {
-  // Escape and backdrop clicks are intentionally non-dismissive so in-progress form
-  // work is not lost accidentally. Use explicit Close/Cancel actions instead.
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        e.preventDefault();
-      }
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const generatedId = useId();
+  const titleId = `modal-title-${generatedId.replace(/:/g, '')}`;
+  useDialogFocusTrap({ isOpen, dialogRef, onClose, closeOnEscape });
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -42,19 +39,6 @@ export function Modal({
     return () => {
       document.body.style.overflow = '';
     };
-  }, [isOpen]);
-
-  // Focus management
-  useEffect(() => {
-    if (isOpen) {
-      const focusableElements = document.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
-      const firstElement = focusableElements[0] as HTMLElement;
-      if (firstElement) {
-        firstElement.focus();
-      }
-    }
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -70,16 +54,18 @@ export function Modal({
   return createPortal(
     <div className="modal-overlay" role="presentation">
       <div
+        ref={dialogRef}
         className={`modal ${sizeClasses[size]}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={title ? 'modal-title' : undefined}
+        aria-labelledby={title ? titleId : undefined}
+        tabIndex={-1}
       >
         {(title || showClose) && (
           <div className="modal-header">
             {title && (
-              <h2 id="modal-title" className="modal-title">
+                <h2 id={titleId} className="modal-title">
                 {title}
               </h2>
             )}

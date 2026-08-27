@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, type KeyboardEvent } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -1041,6 +1041,7 @@ export function PatientDetailPage() {
   if (loading) {
     return (
       <div className="patient-detail-page">
+        <h1 className="sr-only">Patient Chart</h1>
         <Skeleton variant="card" height={140} />
         <div style={{ marginTop: '1rem' }}>
           <Skeleton variant="card" height={40} />
@@ -1053,6 +1054,7 @@ export function PatientDetailPage() {
   if (!patient) {
     return (
       <div className="patient-detail-page">
+        <h1 className="sr-only">Patient Not Found</h1>
         <div style={{
           background: '#ffffff',
           border: '1px solid #e5e7eb',
@@ -1095,8 +1097,25 @@ export function PatientDetailPage() {
     { id: 'timeline', label: 'Timeline', icon: '', count: encounters.length + appointments.length + documents.length + photos.length + referrals.length },
   ].filter((tab) => canViewClinicalPatientData || !CLINICAL_PATIENT_TABS.has(tab.id));
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? tabs.length - 1
+        : event.key === 'ArrowRight'
+          ? (index + 1) % tabs.length
+          : (index - 1 + tabs.length) % tabs.length;
+    const nextTab = tabs[nextIndex];
+    if (!nextTab) return;
+    setActiveTab(nextTab.id);
+    window.setTimeout(() => document.getElementById(`patient-tab-${nextTab.id}`)?.focus(), 0);
+  };
+
   return (
     <div className="patient-detail-page">
+      <h1 className="sr-only">Patient Chart: {patient.lastName}, {patient.firstName}</h1>
       {/* Patient Banner */}
       <PatientBanner
         patient={patient}
@@ -1143,7 +1162,7 @@ export function PatientDetailPage() {
           <span className="icon"></span>
           Face Sheet
         </button>
-        <button type="button" className="ema-action-btn">
+        <button type="button" className="ema-action-btn" onClick={() => setActiveTab('rx-history')}>
           <span className="icon"></span>
           Prescriptions
         </button>
@@ -1287,9 +1306,9 @@ export function PatientDetailPage() {
       </Modal>
 
       {/* Section Header */}
-      <div className="ema-section-header">
+      <h2 className="ema-section-header">
         Patient Chart - {patient.lastName}, {patient.firstName}
-      </div>
+      </h2>
 
       {/* Tabs - EMA Style */}
       <div style={{
@@ -1301,12 +1320,18 @@ export function PatientDetailPage() {
         whiteSpace: 'nowrap',
         WebkitOverflowScrolling: 'touch',
         scrollbarWidth: 'thin',
-      }}>
-        {tabs.map((tab) => (
+      }} role="tablist" aria-label="Patient chart sections">
+        {tabs.map((tab, index) => (
           <button
             key={tab.id}
+            id={`patient-tab-${tab.id}`}
             type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls={`patient-tabpanel-${tab.id}`}
+            tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
             style={{
               padding: '0.75rem 1.5rem',
               background: activeTab === tab.id ? '#ffffff' : 'transparent',
@@ -1342,7 +1367,13 @@ export function PatientDetailPage() {
       </div>
 
       {/* Tab Content */}
-      <div style={{ background: '#ffffff', padding: '1.5rem' }}>
+      <div
+        id={`patient-tabpanel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`patient-tab-${activeTab}`}
+        tabIndex={0}
+        style={{ background: '#ffffff', padding: '1.5rem' }}
+      >
         {activeTab === 'overview' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
             {/* Body Diagram Section - Enhanced Anatomical View */}
@@ -1463,7 +1494,15 @@ export function PatientDetailPage() {
                     {encounters.slice(0, 3).map((enc) => (
                       <div
                         key={enc.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open encounter from ${new Date(enc.createdAt).toLocaleDateString()}`}
                         onClick={() => handleViewEncounter(enc.id)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return;
+                          event.preventDefault();
+                          handleViewEncounter(enc.id);
+                        }}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -1620,14 +1659,15 @@ export function PatientDetailPage() {
               </div>
             ) : (
               <table className="ema-table">
+                <caption className="sr-only">Patient encounters</caption>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Chief Complaint</th>
-                    <th>Provider</th>
-                    <th>Status</th>
-                    <th>Assessment/Plan</th>
-                    <th>Actions</th>
+                    <th scope="col">Date</th>
+                    <th scope="col">Chief Complaint</th>
+                    <th scope="col">Provider</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Assessment/Plan</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2507,16 +2547,17 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
         </div>
       ) : (
         <table className="ema-table">
+          <caption className="sr-only">Patient orders</caption>
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Details</th>
-              <th>Result</th>
-              <th>Flag</th>
-              <th>Provider</th>
+              <th scope="col">Date</th>
+              <th scope="col">Type</th>
+              <th scope="col">Status</th>
+              <th scope="col">Priority</th>
+              <th scope="col">Details</th>
+              <th scope="col">Result</th>
+              <th scope="col">Flag</th>
+              <th scope="col">Provider</th>
             </tr>
           </thead>
           <tbody>
@@ -2607,14 +2648,15 @@ function ReferralsTab({
         </div>
       ) : (
         <table className="ema-table">
+          <caption className="sr-only">Patient referrals</caption>
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Direction</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Provider / Organization</th>
-              <th>Reason</th>
+              <th scope="col">Date</th>
+              <th scope="col">Direction</th>
+              <th scope="col">Status</th>
+              <th scope="col">Priority</th>
+              <th scope="col">Provider / Organization</th>
+              <th scope="col">Reason</th>
             </tr>
           </thead>
           <tbody>
@@ -3386,13 +3428,14 @@ function DocumentsTab({
         </div>
       ) : (
         <table className="ema-table">
+          <caption className="sr-only">Patient documents</caption>
           <thead>
             <tr>
-              <th>Title</th>
-              <th>Category</th>
-              <th>Date Uploaded</th>
-              <th>Uploaded By</th>
-              <th>Actions</th>
+              <th scope="col">Title</th>
+              <th scope="col">Category</th>
+              <th scope="col">Date Uploaded</th>
+              <th scope="col">Uploaded By</th>
+              <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -3499,7 +3542,15 @@ function PhotosTab({
           {photos.map((photo) => (
             <div
               key={photo.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`View clinical photo from ${photo.bodyLocation || 'unknown location'}, ${new Date(photo.createdAt).toLocaleDateString()}`}
               onClick={() => onView(photo)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onView(photo);
+              }}
               style={{
                 background: '#fff',
                 border: '1px solid #e5e7eb',
@@ -3518,7 +3569,7 @@ function PhotosTab({
               <div style={{ aspectRatio: '1', overflow: 'hidden', background: '#f3f4f6' }}>
                 <img
                   src={getPhotoUrl(photo)}
-                  alt={photo.description || 'Patient photo'}
+                  alt={photo.description || `Clinical photo of ${photo.bodyLocation || 'patient lesion'}`}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               </div>

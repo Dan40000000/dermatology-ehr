@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, type KeyboardEvent } from 'react';
 import type { Appointment, Provider, Availability } from '../../types';
 import { MonthView } from './MonthView';
 
@@ -514,6 +514,17 @@ export function Calendar({
     action();
   };
 
+  const handleKeyboardActivation = (event: KeyboardEvent<HTMLElement>, action: () => void) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    action();
+  };
+
+  const formatSlotLabel = (day: Date, hour: number, minute: number, detail: string) =>
+    `${day.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}, ${formatTime(hour, minute)}${detail ? `, ${detail}` : ''}`;
+
   const renderInlineActions = (appointment: Appointment, alignLeft: boolean) => {
     if (selectedAppointment?.id !== appointment.id) return null;
 
@@ -810,6 +821,11 @@ export function Calendar({
                     className={`calendar-slot ${isAvailable ? 'available' : 'unavailable'} ${
                       slotAppointments.length > 0 || timeBlock ? 'has-appointment' : ''
                     } ${minute === 0 ? 'hour-mark' : ''}`}
+                    role={slotAppointments.length === 0 && !timeBlock ? 'button' : undefined}
+                    tabIndex={slotAppointments.length === 0 && !timeBlock && isAvailable ? 0 : -1}
+                    aria-label={slotAppointments.length === 0 && !timeBlock
+                      ? formatSlotLabel(day, hour, minute, isAvailable ? 'Available' : 'Unavailable')
+                      : undefined}
                     onClick={() => {
                       if (slotAppointments.length > 0) {
                         onAppointmentClick(slotAppointments[0]!);
@@ -821,6 +837,15 @@ export function Calendar({
                         onSlotClick(provider.id, day, hour, minute);
                       }
                     }}
+                    onKeyDown={(event) => handleKeyboardActivation(event, () => {
+                      if (slotAppointments.length > 0) {
+                        onAppointmentClick(slotAppointments[0]!);
+                      } else if (timeBlock) {
+                        onTimeBlockClick?.(timeBlock.id);
+                      } else if (isAvailable) {
+                        onSlotClick(provider.id, day, hour, minute);
+                      }
+                    })}
                     style={{
                       cursor: slotAppointments.length > 0 || timeBlock || isAvailable ? 'pointer' : 'default',
                     }}
@@ -828,8 +853,12 @@ export function Calendar({
                     {isFirstBlock && timeBlock && slotAppointments.length === 0 && (
                       <div
                         className="calendar-time-block"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Time block ${timeBlock.title}, ${formatTime(hour, minute)}`}
                         onMouseEnter={(e) => handleTimeBlockMouseEnter(timeBlock, e)}
                         onMouseLeave={handleTimeBlockMouseLeave}
+                        onKeyDown={(event) => handleKeyboardActivation(event, () => onTimeBlockClick?.(timeBlock.id))}
                         style={{
                           backgroundColor: getTimeBlockColor(timeBlock.blockType).bg,
                           height: `${blockSlots * 100}%`,
@@ -877,10 +906,15 @@ export function Calendar({
                           className={`calendar-appointment ${
                             selectedAppointment?.id === appointment.id ? 'selected' : ''
                           }`}
+                          role={selectedAppointment?.id === appointment.id ? undefined : 'button'}
+                          tabIndex={selectedAppointment?.id === appointment.id ? -1 : 0}
+                          aria-pressed={selectedAppointment?.id === appointment.id ? undefined : false}
+                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${new Date(appointment.scheduledStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}, ${appointment.status.replace(/_/g, ' ')}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             onAppointmentClick(appointment);
                           }}
+                          onKeyDown={(event) => handleKeyboardActivation(event, () => onAppointmentClick(appointment))}
                           style={{
                             backgroundColor: getAppointmentDisplayColor(appointment),
                             height: `${slots * 100}%`,
@@ -965,6 +999,11 @@ export function Calendar({
                     className={`calendar-slot ${anyProviderAvailable ? 'available' : 'unavailable'} ${
                       allSlotAppointments.length > 0 ? 'has-appointment' : ''
                     } ${minute === 0 ? 'hour-mark' : ''}`}
+                    role={allSlotAppointments.length === 0 ? 'button' : undefined}
+                    tabIndex={allSlotAppointments.length === 0 && anyProviderAvailable ? 0 : -1}
+                    aria-label={allSlotAppointments.length === 0
+                      ? formatSlotLabel(day, hour, minute, anyProviderAvailable ? 'Available' : 'Unavailable')
+                      : undefined}
                     onClick={() => {
                       if (allSlotAppointments.length > 0) {
                         onAppointmentClick(allSlotAppointments[0]!);
@@ -978,8 +1017,16 @@ export function Calendar({
                         }
                       }
                     }}
+                    onKeyDown={(event) => handleKeyboardActivation(event, () => {
+                      if (allSlotAppointments.length > 0) {
+                        onAppointmentClick(allSlotAppointments[0]!);
+                      } else if (anyProviderAvailable && Array.isArray(providers)) {
+                        const availableProvider = providers.find((p) => isProviderAvailable(p.id, day, hour, minute));
+                        if (availableProvider) onSlotClick(availableProvider.id, day, hour, minute);
+                      }
+                    })}
                     style={{
-                      cursor: appointment || anyProviderAvailable ? 'pointer' : 'default',
+                      cursor: allSlotAppointments.length > 0 || anyProviderAvailable ? 'pointer' : 'default',
                     }}
                   >
                     {startingAppointments.map((appointment) => {
@@ -994,10 +1041,15 @@ export function Calendar({
                           className={`calendar-appointment ${
                             selectedAppointment?.id === appointment.id ? 'selected' : ''
                           }`}
+                          role={selectedAppointment?.id === appointment.id ? undefined : 'button'}
+                          tabIndex={selectedAppointment?.id === appointment.id ? -1 : 0}
+                          aria-pressed={selectedAppointment?.id === appointment.id ? undefined : false}
+                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${new Date(appointment.scheduledStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}, ${appointment.status.replace(/_/g, ' ')}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             onAppointmentClick(appointment);
                           }}
+                          onKeyDown={(event) => handleKeyboardActivation(event, () => onAppointmentClick(appointment))}
                           style={{
                             backgroundColor: getAppointmentDisplayColor(appointment),
                             height: `${slots * 100}%`,

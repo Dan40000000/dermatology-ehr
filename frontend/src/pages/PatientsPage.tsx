@@ -180,6 +180,20 @@ export function PatientsPage() {
     return sortOrder === 'asc' ? '' : '';
   };
 
+  const renderSortableHeader = (field: SortField, label: string) => (
+    <th scope="col" aria-sort={sortField === field ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button
+        type="button"
+        className="ema-table-sort-button"
+        onClick={() => handleSort(field)}
+        aria-label={`Sort by ${label}${sortField === field ? `, currently ${sortOrder === 'asc' ? 'ascending' : 'descending'}` : ''}`}
+      >
+        <span>{label}</span>
+        <span className="sort-icon" aria-hidden="true">{getSortIcon(field)}</span>
+      </button>
+    </th>
+  );
+
   const formatDOB = (dob: string | undefined) => {
     if (!dob) return '—';
     const label = formatDateOnly(dob);
@@ -199,9 +213,10 @@ export function PatientsPage() {
       minHeight: '100vh',
       padding: '1.5rem'
     }}>
+      <h1 className="sr-only">Patients</h1>
       {/* Action Buttons Row - Like ModMed */}
       <div className="ema-action-bar" style={{
-        background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)',
+        background: 'linear-gradient(90deg, #1e40af 0%, #1e3a8a 100%)',
         padding: '1rem 1.5rem',
         borderRadius: '12px',
         marginBottom: '1.5rem',
@@ -317,8 +332,8 @@ export function PatientsPage() {
       </div>
 
       {/* Patient Search Section Header */}
-      <div className="ema-section-header" style={{
-        background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)',
+      <h2 className="ema-section-header" style={{
+        background: 'linear-gradient(90deg, #1e40af 0%, #1e3a8a 100%)',
         color: '#ffffff',
         padding: '1rem 1.5rem',
         borderRadius: '10px',
@@ -332,7 +347,7 @@ export function PatientsPage() {
       }}>
         <span style={{ fontSize: '1.5rem' }}>🔍</span>
         Patient Search
-      </div>
+      </h2>
 
       {/* Filter Panel - Like ModMed */}
       <div className="ema-filter-panel" style={{
@@ -345,10 +360,11 @@ export function PatientsPage() {
       }}>
         <div className="ema-filter-row">
           <div className="ema-filter-group">
-            <label className="ema-filter-label">Search Patients By</label>
+            <label className="ema-filter-label" htmlFor="patient-search-by">Search Patients By</label>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <select
                 className="ema-filter-select"
+                id="patient-search-by"
                 value={searchBy}
                 onChange={(e) => setSearchBy(e.target.value as any)}
                 aria-label="Search patients by"
@@ -396,7 +412,7 @@ export function PatientsPage() {
           </div>
 
           <div className="ema-filter-group">
-            <label className="ema-filter-label">Patient Status</label>
+            <span className="ema-filter-label" id="patient-status-label">Patient Status</span>
             <div className="ema-radio-group">
               <label className="ema-radio">
                 <input
@@ -404,6 +420,7 @@ export function PatientsPage() {
                   name="patientStatus"
                   checked={patientStatus === 'active'}
                   onChange={() => setPatientStatus('active')}
+                  aria-labelledby="patient-status-label"
                 />
                 Active
               </label>
@@ -413,6 +430,7 @@ export function PatientsPage() {
                   name="patientStatus"
                   checked={patientStatus === 'inactive'}
                   onChange={() => setPatientStatus('inactive')}
+                  aria-labelledby="patient-status-label"
                 />
                 Inactive
               </label>
@@ -421,15 +439,24 @@ export function PatientsPage() {
         </div>
 
         <div style={{ marginTop: '1rem' }}>
-          <button type="button" className="ema-filter-btn">
+          <button
+            type="button"
+            className="ema-filter-btn"
+            onClick={() => {
+              setDebouncedSearch(searchQuery);
+              setDebouncedFirstName(firstNameQuery);
+              setDebouncedLastName(lastNameQuery);
+              setCurrentPage(1);
+            }}
+          >
             Search
           </button>
         </div>
       </div>
 
       {/* Patient Search Results Section Header */}
-      <div className="ema-section-header" style={{
-        background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)',
+      <h2 className="ema-section-header" style={{
+        background: 'linear-gradient(90deg, #1e40af 0%, #1e3a8a 100%)',
         color: '#ffffff',
         padding: '1rem 1.5rem',
         borderRadius: '10px',
@@ -447,7 +474,7 @@ export function PatientsPage() {
           ({filteredPatients.length} patient{filteredPatients.length !== 1 ? 's' : ''})
           {totalPages > 1 && ` - Page ${currentPage} of ${totalPages}`}
         </span>
-      </div>
+      </h2>
 
       {/* Data Table - Like ModMed */}
       {loading ? (
@@ -458,32 +485,19 @@ export function PatientsPage() {
         </div>
       ) : (
         <table className="ema-table">
+          <caption className="sr-only">Patient search results</caption>
           <thead>
             <tr>
-              <th onClick={() => handleSort('lastName')}>
-                Last Name <span className="sort-icon">{getSortIcon('lastName')}</span>
-              </th>
-              <th onClick={() => handleSort('firstName')}>
-                First Name <span className="sort-icon">{getSortIcon('firstName')}</span>
-              </th>
-              <th>Preferred Name</th>
-              <th onClick={() => handleSort('mrn')}>
-                MRN <span className="sort-icon">{getSortIcon('mrn')}</span>
-              </th>
-              <th>PMS ID</th>
-              <th onClick={() => handleSort('dateOfBirth')}>
-                DOB <span className="sort-icon">{getSortIcon('dateOfBirth')}</span>
-              </th>
-              <th onClick={() => handleSort('phone')}>
-                Phone <span className="sort-icon">{getSortIcon('phone')}</span>
-              </th>
-              <th onClick={() => handleSort('email')}>
-                Email <span className="sort-icon">{getSortIcon('email')}</span>
-              </th>
-              <th>Status</th>
-              <th onClick={() => handleSort('lastVisit')}>
-                Last Visit <span className="sort-icon">{getSortIcon('lastVisit')}</span>
-              </th>
+              {renderSortableHeader('lastName', 'Last Name')}
+              {renderSortableHeader('firstName', 'First Name')}
+              <th scope="col">Preferred Name</th>
+              {renderSortableHeader('mrn', 'MRN')}
+              <th scope="col">PMS ID</th>
+              {renderSortableHeader('dateOfBirth', 'DOB')}
+              {renderSortableHeader('phone', 'Phone')}
+              {renderSortableHeader('email', 'Email')}
+              <th scope="col">Status</th>
+              {renderSortableHeader('lastVisit', 'Last Visit')}
             </tr>
           </thead>
           <tbody>
@@ -579,6 +593,8 @@ export function PatientsPage() {
                   type="button"
                   className={`ema-pagination-btn ${page === currentPage ? 'active' : ''}`}
                   onClick={() => handlePageChange(page)}
+                  aria-current={page === currentPage ? 'page' : undefined}
+                  aria-label={`Page ${page}${page === currentPage ? ', current page' : ''}`}
                 >
                   {page}
                 </button>

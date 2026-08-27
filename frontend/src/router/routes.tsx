@@ -85,6 +85,7 @@ const NoteTemplatesPage = lazy(() => import('../pages/NoteTemplatesPage').then(m
 const AuditLogPage = lazy(() => import('../pages/AuditLogPage').then(m => ({ default: m.AuditLogPage })));
 const ReportsPage = lazy(() => import('../pages/ReportsPage'));
 const BodyDiagramPage = lazy(() => import('../pages/BodyDiagramPage').then(m => ({ default: m.BodyDiagramPage })));
+const LesionTrackingPage = lazy(() => import('../pages/LesionTrackingPage'));
 const AmbientScribePage = lazy(() => import('../pages/AmbientScribePage'));
 const ClinicalCopilotPage = lazy(() => import('../pages/ClinicalCopilotPage'));
 const PostVisitCodingReviewPage = lazy(() => import('../pages/PostVisitCodingReviewPage').then(m => ({ default: m.PostVisitCodingReviewPage })));
@@ -306,6 +307,7 @@ export const routes: RouteObject[] = [
       { path: 'documents', element: lazyWithSuspense(DocumentsPage) },
       { path: 'photos', element: lazyWithSuspense(PhotosPage) },
       { path: 'body-diagram', element: lazyWithSuspense(BodyDiagramPage) },
+      { path: 'lesion-tracking', element: lazyWithSuspense(LesionTrackingPage) },
       { path: 'handouts', element: lazyWithSuspense(HandoutsPage) },
 
       // Operations

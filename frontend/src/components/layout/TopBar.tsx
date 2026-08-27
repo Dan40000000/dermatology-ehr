@@ -383,9 +383,9 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
     <>
       <header className="ema-header" role="banner">
         <div className="ema-header-left">
-          <h1 className="ema-brand">
+          <div className="ema-brand" aria-label="Dermatology Demo Office">
             Dermatology DEMO<br />Office
-          </h1>
+          </div>
         </div>
 
         <div className="ema-header-center">

@@ -7,12 +7,9 @@ import {
   Badge,
   Chip,
   Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   ToggleButton,
-  ToggleButtonGroup
+  ToggleButtonGroup,
+  ButtonBase
 } from '@mui/material';
 import {
   Warning as WarningIcon,
@@ -154,7 +151,11 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
         }
         arrow
       >
-        <Box
+        <ButtonBase
+          component="div"
+          role="button"
+          tabIndex={0}
+          aria-label={`${regionCode}: ${lesionCount} lesion${lesionCount === 1 ? '' : 's'}${alertCount ? `, ${alertCount} active alert${alertCount === 1 ? '' : 's'}` : ''}`}
           onClick={() => {
             if (regionLesions.length === 1) {
               onSelectLesion(regionLesions[0]!);
@@ -196,7 +197,7 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
               }}
             />
           </Badge>
-        </Box>
+        </ButtonBase>
       </Tooltip>
     );
   };
@@ -277,10 +278,19 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                     {regionCode} ({regionLesions.length})
                   </Typography>
                   {regionLesions.map(lesion => (
-                    <Paper
+                    <ButtonBase
                       key={lesion.id}
-                      variant="outlined"
+                      component="div"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${lesion.bodyLocationDescription}, suspicion level ${lesion.suspicionLevel}, ${lesion.status}`}
                       sx={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        border: '1px solid',
+                        borderColor: lesion.suspicionLevel >= 4 ? 'error.main' :
+                                    lesion.suspicionLevel >= 3 ? 'warning.main' : 'success.main',
                         p: 1.5,
                         mb: 1,
                         cursor: 'pointer',
@@ -293,8 +303,8 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                       }}
                       onClick={() => onSelectLesion(lesion)}
                     >
-                      <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Box>
+                      <Box component="span" display="flex" justifyContent="space-between" alignItems="center">
+                        <Box component="span">
                           <Typography variant="body2" fontWeight="medium">
                             {lesion.bodyLocationDescription}
                           </Typography>
@@ -302,14 +312,14 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                             Level {lesion.suspicionLevel} - {lesion.status}
                           </Typography>
                         </Box>
-                        <Box display="flex" alignItems="center" gap={1}>
+                        <Box component="span" display="flex" alignItems="center" gap={1}>
                           {alerts.some(a => a.lesionId === lesion.id) && (
                             <WarningIcon color="warning" fontSize="small" />
                           )}
                           <ViewIcon color="action" fontSize="small" />
                         </Box>
                       </Box>
-                    </Paper>
+                    </ButtonBase>
                   ))}
                 </Box>
               ))}

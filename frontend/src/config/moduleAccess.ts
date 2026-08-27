@@ -320,6 +320,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/documents', module: 'documents' },
   { path: '/photos', module: 'photos' },
   { path: '/body-diagram', module: 'body_diagram' },
+  { path: '/lesion-tracking', module: 'body_diagram' },
   { path: '/handouts', module: 'handouts' },
   { path: '/mail', module: 'mail' },
   { path: '/direct', module: 'direct' },

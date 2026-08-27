@@ -1381,7 +1381,7 @@ fhirRouter.get("/metadata", async (req, res) => {
 // ==================== LEGACY ENDPOINTS (for backward compatibility) ====================
 
 // Keep existing simple bundle endpoint for demos
-fhirRouter.get("/Bundle/summary", requireFHIRAuth, async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Bundle/summary", requireFHIRAuth, requireFHIRScope("Bundle", "read"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
     const [patientRes, providerRes, encounterRes, appointmentRes, vitalsRes] = await Promise.all([

@@ -139,6 +139,15 @@ describe('AmbientTranscriptionAdapter providers', () => {
     expect(mockedFetch).not.toHaveBeenCalled();
   });
 
+  it('rejects an explicit mock provider configured for live transport', () => {
+    expect(() => new AmbientTranscriptionAdapter({
+      tenantId: 'tenant-demo',
+      useMock: false,
+      provider: 'mock',
+    })).toThrow('cannot run in live mode');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
   it('uploads live audio chunks to the official Wispr multipart endpoint', async () => {
     const adapter = createWisprAdapter();
 

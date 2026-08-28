@@ -581,6 +581,9 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
   constructor(options: AdapterOptions & { provider?: string }) {
     super(options);
     const provider = normalizeProvider(options.provider);
+    if (provider === 'mock' && !this.useMock) {
+      throw new Error('Mock ambient transcription provider cannot run in live mode.');
+    }
     this.provider = provider === 'mock' ? 'abridge' : provider;
   }
 

@@ -4,7 +4,7 @@ import FormData from "form-data";
 import fs from "fs";
 import path from "path";
 import { logger } from "../lib/logger";
-import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
+import { isClinicalAiProviderAllowed } from "../utils/aiPhiGuard";
 import { getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 import { meteredOpenAiFetch } from "../utils/openAiSpendGuard";
 
@@ -52,12 +52,15 @@ function logVoiceTranscriptionError(message: string, error: unknown): void {
   });
 }
 
-function isTrueEnv(value: string | undefined): boolean {
-  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+function canUseOpenAIForRawAudio(apiKey?: string): boolean {
+  return isClinicalAiProviderAllowed("openai", apiKey);
 }
 
-function canUseOpenAIForRawAudio(): boolean {
-  return isHipaaClinicalAiEnabled() || isTrueEnv(process.env.OPENAI_RAW_AUDIO_ALLOWED);
+function isSyntheticVoiceRuntime(): boolean {
+  if (process.env.NODE_ENV === "test") return true;
+  if (process.env.NODE_ENV === "production") return false;
+  const mode = String(process.env.VOICE_TRANSCRIPTION_MODE || "").trim().toLowerCase();
+  return mode === "mock" || mode === "demo";
 }
 
 export class VoiceTranscriptionService {
@@ -75,11 +78,14 @@ export class VoiceTranscriptionService {
       const transcriptionId = crypto.randomUUID();
 
       // Check if API key is available
-      if (!this.openaiApiKey || !canUseOpenAIForRawAudio()) {
+      if (!this.openaiApiKey || !canUseOpenAIForRawAudio(this.openaiApiKey)) {
         if (this.openaiApiKey) {
           logger.warn("OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled");
         }
-        return await this.createMockTranscription(request, transcriptionId);
+        if (isSyntheticVoiceRuntime()) {
+          return await this.createMockTranscription(request, transcriptionId);
+        }
+        throw new Error("Voice transcription provider is unavailable");
       }
 
       // Transcribe using OpenAI transcription API

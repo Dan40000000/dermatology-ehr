@@ -833,6 +833,9 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
     return null;
   }
   const configuredProvider = config.provider || resolveAmbientTranscriptionProviderFromEnv() || 'abridge';
+  if (configuredProvider === 'mock' && !useMock) {
+    return null;
+  }
   if (!useMock && configuredProvider !== 'mock' && !isClinicalAiProviderCallsEnabled(configuredProvider as ClinicalAiProvider)) {
     return null;
   }

@@ -45,6 +45,7 @@ describe('AmbientAI Service', () => {
     delete process.env.HIPAA_AI_ENABLED;
     delete process.env.ANTHROPIC_NOTE_MODEL;
     delete process.env.AMBIENT_NOTE_PROVIDER_PRIORITY;
+    delete process.env.ABRIDGE_API_KEY;
     delete process.env.ABRIDGE_API_CALLS_ENABLED;
     delete process.env.ABRIDGE_BAA_ENABLED;
     delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
@@ -149,6 +150,33 @@ describe('AmbientAI Service', () => {
         tenantId: 'tenant-123',
         integrationType: 'ambient_transcription',
         provider: 'abridge',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
+    it('does not reinterpret an explicit database mock provider as a live provider', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-mock',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'mock',
         config: { environment: 'production' },
         credentialsEncrypted: 'encrypted-db-credential',
         isActive: true,

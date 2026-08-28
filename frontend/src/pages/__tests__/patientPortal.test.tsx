@@ -615,7 +615,7 @@ describe('Patient portal pages', () => {
     renderWithRouter(<PortalBillingPage />, ['/portal/billing']);
 
     expect(await screen.findByRole('heading', { name: 'Insurance Coverage & Cost Estimates' })).toBeInTheDocument();
-    expect(screen.getByText('Blue Cross PPO')).toBeInTheDocument();
+    expect(await screen.findByText('Blue Cross PPO')).toBeInTheDocument();
     expect(screen.getByText('Test data · Stedi sandbox')).toBeInTheDocument();
     expect(screen.getAllByText('$71.40')).toHaveLength(2);
     expect(screen.getByText(/not a guarantee of coverage/i)).toBeInTheDocument();

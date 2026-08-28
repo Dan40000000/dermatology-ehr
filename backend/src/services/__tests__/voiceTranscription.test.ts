@@ -30,13 +30,20 @@ const unlinkSyncMock = fs.unlinkSync as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const originalApiKey = process.env.OPENAI_API_KEY;
+const originalNodeEnv = process.env.NODE_ENV;
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   existsSyncMock.mockReset();
   unlinkSyncMock.mockReset();
+  process.env.NODE_ENV = "test";
   delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_CALLS_ENABLED;
+  delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+  delete process.env.OPENAI_BAA_ENABLED;
+  delete process.env.HIPAA_AI_ENABLED;
+  delete process.env.OPENAI_RAW_AUDIO_ALLOWED;
   loggerMock.error.mockReset();
 });
 
@@ -45,6 +52,11 @@ afterAll(() => {
     process.env.OPENAI_API_KEY = originalApiKey;
   } else {
     delete process.env.OPENAI_API_KEY;
+  }
+  if (originalNodeEnv === undefined) {
+    delete process.env.NODE_ENV;
+  } else {
+    process.env.NODE_ENV = originalNodeEnv;
   }
 });
 
@@ -60,6 +72,27 @@ describe("VoiceTranscriptionService", () => {
 
     expect(result.text).toContain("Patient presents");
     expect(queryMock).toHaveBeenCalled();
+  });
+
+  it("blocks raw OpenAI audio without provider BAA attestation and does not fabricate production text", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.OPENAI_API_KEY = "live-openai-key";
+    process.env.OPENAI_API_CALLS_ENABLED = "true";
+    process.env.HIPAA_AI_ENABLED = "true";
+    process.env.OPENAI_RAW_AUDIO_ALLOWED = "true";
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn();
+    const service = new VoiceTranscriptionService();
+
+    await expect(service.transcribeAudio({
+      audioFile: "/tmp/patient-audio.wav",
+      tenantId: "tenant-1",
+      userId: "user-1",
+    })).rejects.toThrow("Failed to transcribe audio");
+
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+    global.fetch = originalFetch;
   });
 
   it("transcribeAudio logs safe errors when persistence fails", async () => {

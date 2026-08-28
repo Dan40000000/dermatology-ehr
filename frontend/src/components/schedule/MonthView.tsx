@@ -235,9 +235,17 @@ export function MonthView({
                   </div>
                 ))}
                 {dayAppointments.length > 3 && (
-                  <div className="month-view-more">
+                  <button
+                    type="button"
+                    className="month-view-more"
+                    aria-label={`Open ${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} to view ${dayAppointments.length - 3} more appointments`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDayClick(date);
+                    }}
+                  >
                     +{dayAppointments.length - 3} more
-                  </div>
+                  </button>
                 )}
               </div>
             </div>

@@ -4,6 +4,8 @@ import {
   formatDateInPracticeTimeZone,
   formatTimeInPracticeTimeZone,
   getDateKeyInPracticeTimeZone,
+  getPracticeDateKey,
+  getPracticeDateTime,
   getTimePartsInPracticeTimeZone,
 } from '../../utils/practiceDateTime';
 import { MonthView } from './MonthView';
@@ -43,6 +45,7 @@ interface CalendarProps {
   onAppointmentCancel?: (appointment: Appointment) => void;
   onAppointmentReschedule?: (appointment: Appointment) => void;
   practiceTimeZone?: string | null;
+  onDayClick?: (date: Date) => void;
 }
 
 interface AppointmentLayout {
@@ -65,6 +68,9 @@ function isTelehealthAppointment(appointment: Appointment | null | undefined): b
 
 function formatRecurrenceEndDate(value: string, practiceTimeZone?: string | null): string {
   const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (isDateOnly && getPracticeDateKey(value) !== value) {
+    return 'Unknown date';
+  }
   const date = new Date(isDateOnly ? `${value}T12:00:00.000Z` : value);
   if (Number.isNaN(date.getTime())) {
     return 'Unknown date';
@@ -166,6 +172,7 @@ export function Calendar({
   onAppointmentCancel,
   onAppointmentReschedule,
   practiceTimeZone,
+  onDayClick,
 }: CalendarProps) {
   const [hoveredTimeBlock, setHoveredTimeBlock] = useState<TimeBlock | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
@@ -293,30 +300,6 @@ export function Calendar({
     [appointmentsByDay]
   );
 
-  const timeBlocksByProviderDay = useMemo(() => {
-    const index = new Map<string, TimeBlock[]>();
-    if (!Array.isArray(timeBlocks)) {
-      return index;
-    }
-    for (const block of timeBlocks) {
-      if (!block || block.status !== 'active' || !block.providerId) {
-        continue;
-      }
-      const blockStart = new Date(block.startTime);
-      if (Number.isNaN(blockStart.getTime())) {
-        continue;
-      }
-      const key = `${block.providerId}|${getDateKeyInPracticeTimeZone(blockStart, practiceTimeZone)}`;
-      const existing = index.get(key);
-      if (existing) {
-        existing.push(block);
-      } else {
-        index.set(key, [block]);
-      }
-    }
-    return index;
-  }, [timeBlocks, practiceTimeZone]);
-
   // Helper: Check if provider is available at this time
   const isProviderAvailable = (providerId: string, date: Date, hour: number, minute: number) => {
     const dayOfWeek = date.getDay();
@@ -355,70 +338,65 @@ export function Calendar({
 
   // Helper: Get appointments for a specific slot (excludes cancelled appointments)
   const getAppointmentsForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
-    const dayAppointments = appointmentsByProviderDay.get(`${providerId}|${toDateKey(date)}`);
-    if (!dayAppointments || dayAppointments.length === 0) {
-      return [];
-    }
-    return dayAppointments.filter((appt) => {
+    const slotStart = getPracticeDateTime(
+      toDateKey(date),
+      `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+      practiceTimeZone
+    );
+    if (!slotStart) return [];
+    const slotStartMs = slotStart.getTime();
+    const slotEndMs = slotStartMs + 5 * 60_000;
+
+    return appointments.filter((appt) => {
+      if (appt?.providerId !== providerId || appt.status === 'cancelled') return false;
       if (!appt?.scheduledStart || !appt?.scheduledEnd) return false;
 
       const apptStart = new Date(appt.scheduledStart);
       const apptEnd = new Date(appt.scheduledEnd);
-      if (Number.isNaN(apptStart.getTime()) || Number.isNaN(apptEnd.getTime())) {
+      const apptStartMs = apptStart.getTime();
+      const apptEndMs = apptEnd.getTime();
+      if (!Number.isFinite(apptStartMs) || !Number.isFinite(apptEndMs) || apptEndMs <= apptStartMs) {
         return false;
       }
 
-      const slotTimeInMinutes = hour * 60 + minute;
-      const nextSlotTimeInMinutes = slotTimeInMinutes + 5;
-      const apptStartParts = getTimePartsInPracticeTimeZone(apptStart, practiceTimeZone);
-      const apptEndParts = getTimePartsInPracticeTimeZone(apptEnd, practiceTimeZone);
-      const apptStartInMinutes = apptStartParts.hour * 60 + apptStartParts.minute;
-      const apptEndInMinutes = getDateKeyInPracticeTimeZone(apptEnd, practiceTimeZone)
-        > getDateKeyInPracticeTimeZone(apptStart, practiceTimeZone)
-        ? 24 * 60
-        : apptEndParts.hour * 60 + apptEndParts.minute;
-
-      // Check if this slot overlaps with the appointment
-      // Slot covers [slotTime, slotTime+5), appointment covers [apptStart, apptEnd)
-      // They overlap if: slotTime < apptEnd AND nextSlotTime > apptStart
-      return slotTimeInMinutes < apptEndInMinutes && nextSlotTimeInMinutes > apptStartInMinutes;
+      return slotStartMs < apptEndMs && slotEndMs > apptStartMs;
     });
   };
 
   // Helper: Get time blocks for a specific slot
   const getTimeBlocksForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
-    const dayBlocks = timeBlocksByProviderDay.get(`${providerId}|${toDateKey(date)}`);
-    if (!dayBlocks || dayBlocks.length === 0) {
-      return [];
-    }
-    return dayBlocks.filter((block) => {
+    const slotStart = getPracticeDateTime(
+      toDateKey(date),
+      `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+      practiceTimeZone
+    );
+    if (!slotStart) return [];
+    const slotStartMs = slotStart.getTime();
+    const slotEndMs = slotStartMs + 5 * 60_000;
+
+    return timeBlocks.filter((block) => {
+      if (block?.providerId !== providerId || (block.status && block.status !== 'active')) return false;
       if (!block?.startTime || !block?.endTime) return false;
 
       const blockStart = new Date(block.startTime);
       const blockEnd = new Date(block.endTime);
-      if (Number.isNaN(blockStart.getTime()) || Number.isNaN(blockEnd.getTime())) {
+      const blockStartMs = blockStart.getTime();
+      const blockEndMs = blockEnd.getTime();
+      if (!Number.isFinite(blockStartMs) || !Number.isFinite(blockEndMs) || blockEndMs <= blockStartMs) {
         return false;
       }
 
-      const slotTimeInMinutes = hour * 60 + minute;
-      const blockStartParts = getTimePartsInPracticeTimeZone(blockStart, practiceTimeZone);
-      const blockEndParts = getTimePartsInPracticeTimeZone(blockEnd, practiceTimeZone);
-      const blockStartInMinutes = blockStartParts.hour * 60 + blockStartParts.minute;
-      const blockEndInMinutes = getDateKeyInPracticeTimeZone(blockEnd, practiceTimeZone)
-        > getDateKeyInPracticeTimeZone(blockStart, practiceTimeZone)
-        ? 24 * 60
-        : blockEndParts.hour * 60 + blockEndParts.minute;
-
-      // Check if this slot is within the time block range
-      return slotTimeInMinutes >= blockStartInMinutes && slotTimeInMinutes < blockEndInMinutes;
+      return slotStartMs < blockEndMs && slotEndMs > blockStartMs;
     });
   };
 
   // Helper: Check if this is the first slot of a time block
-  const isFirstTimeBlockSlot = (timeBlock: TimeBlock, hour: number, minute: number) => {
+  const isFirstTimeBlockSlot = (timeBlock: TimeBlock, date: Date, hour: number, minute: number) => {
     const blockStart = new Date(timeBlock.startTime);
     const blockStartParts = getTimePartsInPracticeTimeZone(blockStart, practiceTimeZone);
-    return blockStartParts.hour === hour && blockStartParts.minute === minute;
+    return getDateKeyInPracticeTimeZone(blockStart, practiceTimeZone) === toDateKey(date)
+      && blockStartParts.hour === hour
+      && blockStartParts.minute === minute;
   };
 
   // Helper: Get time block duration in slots
@@ -502,7 +480,7 @@ export function Calendar({
   // Helper: Check if this is the first slot of an appointment
   // Appointments may start at any minute, but slots are on 5-minute boundaries
   // So we need to check if this slot is the one that contains the appointment start
-  const isFirstSlot = (appointment: Appointment, hour: number, minute: number) => {
+  const isFirstSlot = (appointment: Appointment, date: Date, hour: number, minute: number) => {
     const apptStart = new Date(appointment.scheduledStart);
     const { hour: apptHour, minute: apptMinute } = getTimePartsInPracticeTimeZone(
       apptStart,
@@ -510,7 +488,9 @@ export function Calendar({
     );
     // Round appointment start minute down to nearest 5-minute slot
     const slotMinute = Math.floor(apptMinute / 5) * 5;
-    return apptHour === hour && slotMinute === minute;
+    return getDateKeyInPracticeTimeZone(apptStart, practiceTimeZone) === toDateKey(date)
+      && apptHour === hour
+      && slotMinute === minute;
   };
 
   // Helper: Get appointment duration in slots
@@ -727,11 +707,7 @@ export function Calendar({
 
   // Handle day click in month view - switch to day view for that date
   const handleDayClick = (date: Date) => {
-    // This will be handled by parent component (SchedulePage)
-    // For now, just select the first available provider and open new appointment
-    if (providers.length > 0) {
-      onSlotClick(providers[0].id, date, 9, 0); // Default to 9:00 AM
-    }
+    onDayClick?.(date);
   };
 
   // If month view, render MonthView component
@@ -828,11 +804,11 @@ export function Calendar({
               {timeSlots.map(({ hour, minute }) => {
                 const day = days[0]; // Single day in day view
                 const slotAppointments = getAppointmentsForSlot(provider.id, day, hour, minute);
-                const startingAppointments = slotAppointments.filter((appt) => isFirstSlot(appt, hour, minute));
+                const startingAppointments = slotAppointments.filter((appt) => isFirstSlot(appt, day, hour, minute));
                 const slotTimeBlocks = getTimeBlocksForSlot(provider.id, day, hour, minute);
                 const isAvailable = isProviderAvailable(provider.id, day, hour, minute);
                 const timeBlock = slotTimeBlocks[0];
-                const isFirstBlock = timeBlock && isFirstTimeBlockSlot(timeBlock, hour, minute);
+                const isFirstBlock = timeBlock && isFirstTimeBlockSlot(timeBlock, day, hour, minute);
                 const blockSlots = timeBlock ? getTimeBlockSlots(timeBlock) : 0;
 
                 return (
@@ -923,10 +899,10 @@ export function Calendar({
                           className={`calendar-appointment ${
                             selectedAppointment?.id === appointment.id ? 'selected' : ''
                           }`}
-                          role={selectedAppointment?.id === appointment.id ? undefined : 'button'}
-                          tabIndex={selectedAppointment?.id === appointment.id ? -1 : 0}
-                          aria-pressed={selectedAppointment?.id === appointment.id ? undefined : false}
-                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}, ${appointment.status.replace(/_/g, ' ')}`}
+                          role="button"
+                          tabIndex={0}
+                          aria-pressed={selectedAppointment?.id === appointment.id}
+                          aria-label={`${appointment.patientName}, ${appointment.appointmentTypeName}, ${formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}, ${appointment.status.replace(/_/g, ' ')}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             onAppointmentClick(appointment);
@@ -999,7 +975,7 @@ export function Calendar({
                   getAppointmentsForSlot(provider.id, day, hour, minute)
                 ) : [];
                 const startingAppointments = allSlotAppointments.filter((appointment) =>
-                  isFirstSlot(appointment, hour, minute)
+                  isFirstSlot(appointment, day, hour, minute)
                 );
 
                 // Check if any provider is available
@@ -1055,10 +1031,10 @@ export function Calendar({
                           className={`calendar-appointment ${
                             selectedAppointment?.id === appointment.id ? 'selected' : ''
                           }`}
-                          role={selectedAppointment?.id === appointment.id ? undefined : 'button'}
-                          tabIndex={selectedAppointment?.id === appointment.id ? -1 : 0}
-                          aria-pressed={selectedAppointment?.id === appointment.id ? undefined : false}
-                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}, ${appointment.status.replace(/_/g, ' ')}`}
+                          role="button"
+                          tabIndex={0}
+                          aria-pressed={selectedAppointment?.id === appointment.id}
+                          aria-label={`${appointment.patientName}, ${appointment.appointmentTypeName}, ${formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}, ${appointment.status.replace(/_/g, ' ')}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             onAppointmentClick(appointment);

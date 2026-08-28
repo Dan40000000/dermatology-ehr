@@ -606,6 +606,9 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
   }
 
   private assertExternalCallsEnabled(): void {
+    if (isAmbientTranscriptionProviderExplicitlyMock()) {
+      throw new Error('Ambient transcription is disabled by the explicit mock provider setting.');
+    }
     if (!isClinicalAiProviderCallsEnabled(this.provider as ClinicalAiProvider)) {
       throw new Error('Ambient transcription provider API calls are disabled or lack BAA attestation.');
     }

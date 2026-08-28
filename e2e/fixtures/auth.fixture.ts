@@ -50,6 +50,16 @@ async function installMockDataRoutes(page: Page) {
   const seededAppointmentEnd = new Date(
     seededAppointmentStart.getTime() + SEEDED_APPOINTMENT_TYPE.durationMinutes * 60 * 1000
   );
+  const seededBusinessDateParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(seededAppointmentStart);
+  const seededBusinessDateValues = Object.fromEntries(
+    seededBusinessDateParts.map((part) => [part.type, part.value])
+  );
+  const seededBusinessDate = `${seededBusinessDateValues.year}-${seededBusinessDateValues.month}-${seededBusinessDateValues.day}`;
 
   const appointmentState = {
     appointments: [
@@ -1088,6 +1098,20 @@ async function installMockDataRoutes(page: Page) {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ patient: SEEDED_PATIENT }),
+      });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/command-center/summary') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          businessDate: seededBusinessDate,
+          practiceTimeZone: 'America/New_York',
+          generatedAt: new Date().toISOString(),
+          dataHealth: { failedSources: [] },
+        }),
       });
       return;
     }

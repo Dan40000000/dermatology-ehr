@@ -139,6 +139,24 @@ describe('AmbientTranscriptionAdapter providers', () => {
     expect(mockedFetch).not.toHaveBeenCalled();
   });
 
+  it('blocks a directly constructed live adapter when the deployment provider is explicitly mock', async () => {
+    process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+    process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+    process.env.ABRIDGE_BAA_ENABLED = 'true';
+    process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+
+    const adapter = new AmbientTranscriptionAdapter({
+      tenantId: 'tenant-demo',
+      useMock: false,
+      provider: 'abridge',
+    });
+
+    await expect(
+      adapter.transcribeBuffer(Buffer.from('patient audio'), 'audio/webm')
+    ).rejects.toThrow('disabled by the explicit mock provider setting');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
   it('rejects an explicit mock provider configured for live transport', () => {
     expect(() => new AmbientTranscriptionAdapter({
       tenantId: 'tenant-demo',

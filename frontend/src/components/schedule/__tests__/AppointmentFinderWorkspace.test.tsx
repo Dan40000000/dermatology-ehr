@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppointmentFinderWorkspace } from '../AppointmentFinderWorkspace';
+import { getDateKeyInPracticeTimeZone, getPracticeDateTime } from '../../../utils/practiceDateTime';
 
 const patient = {
   id: 'patient-mason',
@@ -48,13 +49,22 @@ const appointmentTypes = [
 ];
 
 const appointmentDateTime = (dayOffset: number, hour: number, minute = 0) => {
-  const date = new Date();
+  const todayKey = getDateKeyInPracticeTimeZone(new Date(), 'America/Denver');
+  const date = new Date(`${todayKey}T12:00:00`);
   date.setDate(date.getDate() + dayOffset);
-  date.setHours(hour, minute, 0, 0);
-  return date.toISOString();
+  const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return getPracticeDateTime(
+    dateKey,
+    `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+    'America/Denver'
+  )!.toISOString();
 };
 
 describe('AppointmentFinderWorkspace', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('searches next available after patient and provider selection without requiring a manual visit-type click', async () => {
     const onUseSlot = vi.fn();
     const onShowSuccess = vi.fn();
@@ -126,6 +136,109 @@ describe('AppointmentFinderWorkspace', () => {
     const resultDateLabels = screen.getAllByText(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), /);
     expect(resultDateLabels.length).toBeGreaterThan(0);
     expect(resultDateLabels.every((label) => label.textContent?.startsWith('Tue,'))).toBe(true);
+  });
+
+  it('groups booked times and returns openings in the practice time zone', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-04-27T15:00:00.000Z'));
+    const onUseSlot = vi.fn();
+
+    render(
+      <AppointmentFinderWorkspace
+        patients={[]}
+        providers={[provider] as any}
+        locations={[location] as any}
+        appointmentTypes={appointmentTypes as any}
+        appointments={[
+          {
+            id: 'appt-la-nine',
+            tenantId: 'tenant-demo',
+            patientId: 'patient-mason',
+            providerId: 'provider-skin',
+            locationId: 'loc-main',
+            appointmentTypeId: 'type-consult',
+            scheduledStart: '2026-04-27T16:00:00.000Z',
+            scheduledEnd: '2026-04-27T16:30:00.000Z',
+            status: 'scheduled',
+            createdAt: '2026-01-01',
+          },
+        ] as any}
+        timeBlocks={[]}
+        availability={[
+          {
+            id: 'avail-la',
+            tenantId: 'tenant-demo',
+            providerId: 'provider-skin',
+            dayOfWeek: 1,
+            startTime: '09:00',
+            endTime: '10:00',
+            createdAt: '2026-01-01',
+          },
+        ] as any}
+        practiceTimeZone="America/Los_Angeles"
+        onUseSlot={onUseSlot}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Search openings/i }));
+    fireEvent.click((await screen.findAllByRole('button', { name: /Use this slot/i }))[0]);
+
+    expect(onUseSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ date: '2026-04-27', time: '09:30' })
+    );
+  });
+
+  it('does not offer a repeated-hour slot over an appointment spanning DST fall-back', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-31T18:00:00.000Z'));
+    const onUseSlot = vi.fn();
+
+    render(
+      <AppointmentFinderWorkspace
+        patients={[]}
+        providers={[provider] as any}
+        locations={[location] as any}
+        appointmentTypes={[appointmentTypes[1]] as any}
+        appointments={[
+          {
+            id: 'appt-fallback',
+            tenantId: 'tenant-demo',
+            patientId: 'patient-mason',
+            providerId: 'provider-skin',
+            locationId: 'loc-main',
+            appointmentTypeId: 'type-consult',
+            scheduledStart: '2026-11-01T07:30:00.000Z',
+            scheduledEnd: '2026-11-01T08:30:00.000Z',
+            status: 'scheduled',
+            createdAt: '2026-01-01',
+          },
+        ] as any}
+        timeBlocks={[]}
+        availability={[
+          {
+            id: 'avail-fallback',
+            tenantId: 'tenant-demo',
+            providerId: 'provider-skin',
+            dayOfWeek: 0,
+            startTime: '01:30',
+            endTime: '02:00',
+            createdAt: '2026-01-01',
+          },
+        ] as any}
+        practiceTimeZone="America/Denver"
+        onUseSlot={onUseSlot}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Specific time/i }));
+    fireEvent.change(screen.getByLabelText(/Preferred time/i), { target: { value: '01:30' } });
+    fireEvent.change(screen.getByLabelText(/Preferred date/i), { target: { value: '2026-11-01' } });
+    fireEvent.click(screen.getByRole('button', { name: /Search openings/i }));
+    fireEvent.click((await screen.findAllByRole('button', { name: /Use this slot/i }))[0]);
+
+    expect(onUseSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ date: '2026-11-08', time: '01:30' })
+    );
   });
 
   it('shows current and future appointments for a selected patient, including today no-shows', () => {

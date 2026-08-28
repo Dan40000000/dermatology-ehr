@@ -59,17 +59,18 @@ vi.mock('../../api', () => apiMocks);
 vi.mock('../../api/financials', () => financialApiMocks);
 
 import { HomePage } from '../HomePage';
-import { getDateKeyInPracticeTimeZone } from '../../utils/practiceDateTime';
+import {
+  addDaysToDateKey,
+  getDateKeyInPracticeTimeZone,
+  getPracticeDateTime,
+} from '../../utils/practiceDateTime';
 
 const buildFixtures = () => {
-  const now = new Date(`${getDateKeyInPracticeTimeZone()}T12:00:00`);
-  const todayMorning = new Date(now);
-  todayMorning.setHours(9, 0, 0, 0);
-  const todayAfternoon = new Date(now);
-  todayAfternoon.setHours(14, 0, 0, 0);
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  yesterday.setHours(11, 0, 0, 0);
+  const todayKey = getDateKeyInPracticeTimeZone(new Date(), 'America/Denver');
+  const yesterdayKey = addDaysToDateKey(todayKey, -1) || todayKey;
+  const todayMorning = getPracticeDateTime(todayKey, '09:00', 'America/Denver')!;
+  const todayAfternoon = getPracticeDateTime(todayKey, '14:00', 'America/Denver')!;
+  const yesterday = getPracticeDateTime(yesterdayKey, '11:00', 'America/Denver')!;
 
   return {
     encounters: [
@@ -226,6 +227,17 @@ describe('HomePage', () => {
     vi.clearAllMocks();
   });
 
+  it('announces command center loading and completion state', async () => {
+    const { container } = render(<HomePage />);
+    const page = container.querySelector('.home-page');
+
+    expect(page).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading practice command center.');
+
+    await waitFor(() => expect(page).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByRole('status')).toHaveTextContent('Practice command center updated.');
+  });
+
   it('loads top overview/snapshot and routes to operational pages', async () => {
     localStorage.setItem('sched:location', 'loc-2');
     localStorage.setItem('sched:viewMode', 'day');
@@ -377,6 +389,12 @@ describe('HomePage', () => {
   it('uses the server practice time zone for the business day and appointment labels', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-04-27T00:00:00.000Z'));
+    authMocks.session = {
+      tenantId: 'tenant-1',
+      accessToken: 'token-1',
+      user: { id: 'admin-1', role: 'admin', roles: ['admin'] },
+    };
+    authMocks.user = { id: 'admin-1', role: 'admin', roles: ['admin'] };
     apiMocks.fetchCommandCenterSummary.mockResolvedValue({
       businessDate: '2026-04-26',
       practiceTimeZone: 'America/Los_Angeles',
@@ -393,12 +411,22 @@ describe('HomePage', () => {
       appointmentTypeName: 'Follow Up',
       locationId: 'loc-1',
       locationName: 'Main Clinic',
-      status: 'scheduled',
+      status: 'completed',
       scheduledStart: '2026-04-27T00:30:00.000Z',
       scheduledEnd: '2026-04-27T01:00:00.000Z',
     };
     apiMocks.fetchAppointments.mockResolvedValue({ appointments: [practiceDayAppointment] });
     apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments: [practiceDayAppointment] });
+    financialApiMocks.fetchClaims.mockResolvedValue({
+      claims: [
+        {
+          id: 'claim-practice-date-only',
+          status: 'draft',
+          serviceDate: '2026-04-26',
+          balanceCents: 0,
+        },
+      ],
+    });
 
     render(<HomePage />);
 
@@ -406,6 +434,7 @@ describe('HomePage', () => {
     expect(screen.getByLabelText('Business date')).toHaveValue('2026-04-26');
     expect(await screen.findByText('Pacific Patient')).toBeInTheDocument();
     expect(screen.getByText('5:30 PM')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Claims to create\/review.*0/i })).toBeInTheDocument();
   }, 20000);
 
   it('renders command action queues and routes each work item to its owning page', async () => {

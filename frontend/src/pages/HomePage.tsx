@@ -72,13 +72,16 @@ import {
 import { getModuleForPath, type CommandCenterSectionKey, type ModuleKey } from '../config/moduleAccess';
 import { getEffectiveRoles } from '../utils/roles';
 import {
+  addDaysToDateKey,
   DEFAULT_PRACTICE_TIME_ZONE,
   formatDateInPracticeTimeZone,
   formatTimeInPracticeTimeZone,
+  getCivilDayDifference,
   getConfiguredClinicBusinessDate,
   getDateKeyInPracticeTimeZone,
+  getPracticeDateKey,
+  getPracticeDateTime,
   getTimePartsInPracticeTimeZone,
-  ISO_DATE_PATTERN,
   setClinicBusinessDate,
 } from '../utils/practiceDateTime';
 import { isOpenLabPathOrder } from '../utils/labPathOrders';
@@ -281,9 +284,7 @@ const isStaleScheduledAppointment = (appointment: any, nowMs: number): boolean =
 
 const isOnPracticeDay = (value: string | undefined, dayKey: string, practiceTimeZone?: string | null): boolean => {
   if (!value) return false;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return false;
-  return getDateKeyInPracticeTimeZone(date, practiceTimeZone) === dayKey;
+  return getPracticeDateKey(value, practiceTimeZone) === dayKey;
 };
 
 const isWithinCalendarWindow = (value: string | undefined, practiceTimeZone?: string | null): boolean => {
@@ -518,18 +519,26 @@ const isClaimInQueue = (claim: any): boolean =>
 const getClaimBalanceCents = (claim: any): number =>
   numberOrZero(claim.balanceCents ?? claim.balance_cents);
 
-const getClaimAgeDays = (claim: any): number => {
+const getClaimAgeDays = (
+  claim: any,
+  businessDate: string,
+  practiceTimeZone?: string | null
+): number => {
   const reference = claim.serviceDate || claim.service_date || claim.createdAt || claim.created_at;
   if (!reference) return 0;
-  const parsed = new Date(reference).getTime();
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.max(0, Math.floor((Date.now() - parsed) / 86400000));
+  const referenceDateKey = getPracticeDateKey(reference, practiceTimeZone);
+  if (!referenceDateKey) return 0;
+  return Math.max(0, getCivilDayDifference(referenceDateKey, businessDate) ?? 0);
 };
 
-const isClaimAtRisk = (claim: any): boolean =>
+const isClaimAtRisk = (
+  claim: any,
+  businessDate: string,
+  practiceTimeZone?: string | null
+): boolean =>
   ['denied', 'rejected', 'appealed'].includes(normalizeStatus(claim.status)) ||
   normalizeStatus(claim.scrubStatus) === 'failed' ||
-  (getClaimBalanceCents(claim) > 0 && getClaimAgeDays(claim) > 300);
+  (getClaimBalanceCents(claim) > 0 && getClaimAgeDays(claim, businessDate, practiceTimeZone) > 300);
 
 const getCommandCenterFinancials = (collectionsTrend: any, paymentsSummary: any) => {
   const trendSummary = collectionsTrend?.summary || null;
@@ -1111,7 +1120,10 @@ export function HomePage() {
       };
       const officialClaimsStats = {
         claimsInQueue: summaryNumber(claims.filter(isClaimInQueue).length, summaryClaims?.claimsInQueue),
-        claimsDeniedRejected: summaryNumber(claims.filter(isClaimAtRisk).length, summaryClaims?.claimsDeniedRejected),
+        claimsDeniedRejected: summaryNumber(
+          claims.filter((claim: any) => isClaimAtRisk(claim, todayStr, effectivePracticeTimeZone)).length,
+          summaryClaims?.claimsDeniedRejected
+        ),
       };
       const visitsNeedingClaimReview = Math.max(0, officialScheduleStats.completedCount - claimsCreatedToday);
       const revenueCollectionGapCents = Math.max(0, officialFinancialStats.revenueTodayCents - officialFinancialStats.netCollectionsCents);
@@ -1386,7 +1398,7 @@ export function HomePage() {
 
   const handleBusinessDateChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextDate = event.target.value;
-    if (!ISO_DATE_PATTERN.test(nextDate)) return;
+    if (getPracticeDateKey(nextDate) !== nextDate) return;
 
     setClinicBusinessDate(nextDate);
     setBusinessDate(nextDate);
@@ -1395,6 +1407,11 @@ export function HomePage() {
   const loadAppointmentFinderData = useCallback(
     async ({ force = false }: { force?: boolean } = {}) => {
       if (!session) return;
+
+      if (!practiceTimeZone) {
+        showError('Practice time zone is still loading. Try again in a moment.');
+        return;
+      }
 
       if (!canUseAppointmentFinder) {
         showError('This role does not have access to scheduling.');
@@ -1405,15 +1422,14 @@ export function HomePage() {
 
       setFinderLoading(true);
       try {
-        const startDate = startOfDay(new Date());
-        startDate.setDate(startDate.getDate() - 1);
-        const endDate = endOfDay(new Date());
-        endDate.setDate(endDate.getDate() + HOME_FINDER_LOOKAHEAD_DAYS);
+        const finderBusinessDate = businessDate || getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone);
+        const startDateKey = addDaysToDateKey(finderBusinessDate, -1) || finderBusinessDate;
+        const endDateKey = addDaysToDateKey(finderBusinessDate, HOME_FINDER_LOOKAHEAD_DAYS) || finderBusinessDate;
 
         const [apptRes, patRes, provRes, locRes, typeRes, availRes, timeBlocksRes] = await Promise.all([
           fetchAppointments(session.tenantId, session.accessToken, {
-            startDate: toLocalIsoDate(startDate),
-            endDate: toLocalIsoDate(endDate),
+            startDate: startDateKey,
+            endDate: endDateKey,
           }),
           fetchPatients(session.tenantId, session.accessToken),
           fetchProviders(session.tenantId, session.accessToken),
@@ -1421,8 +1437,8 @@ export function HomePage() {
           fetchAppointmentTypes(session.tenantId, session.accessToken),
           fetchAvailability(session.tenantId, session.accessToken),
           fetchTimeBlocks(session.tenantId, session.accessToken, {
-            startDate: toLocalIsoDate(startDate),
-            endDate: toLocalIsoDate(endDate),
+            startDate: startDateKey,
+            endDate: endDateKey,
           }).catch(() => []),
         ]);
 
@@ -1440,7 +1456,7 @@ export function HomePage() {
         setFinderLoading(false);
       }
     },
-    [canUseAppointmentFinder, finderLoaded, session, showError]
+    [businessDate, canUseAppointmentFinder, finderLoaded, practiceTimeZone, session, showError]
   );
 
   const openAppointmentFinder = useCallback(() => {
@@ -1448,10 +1464,14 @@ export function HomePage() {
       showError('This role does not have access to scheduling.');
       return;
     }
+    if (!practiceTimeZone) {
+      showError('Practice time zone is still loading. Try again in a moment.');
+      return;
+    }
 
     setShowAppointmentFinder(true);
     void loadAppointmentFinderData();
-  }, [canUseAppointmentFinder, loadAppointmentFinderData, showError]);
+  }, [canUseAppointmentFinder, loadAppointmentFinderData, practiceTimeZone, showError]);
 
   const handleUseFinderSlot = useCallback(
     (selection: AppointmentFinderSelection) => {
@@ -1503,26 +1523,34 @@ export function HomePage() {
         return;
       }
 
-      const appointmentDay = startOfDay(appointmentStart);
+      const appointmentDayKey = getPracticeDateKey(appointmentStart, practiceTimeZone);
+      if (!appointmentDayKey) {
+        showError('Appointment date is invalid');
+        return;
+      }
       localStorage.setItem('sched:viewMode', 'day');
       localStorage.setItem('sched:provider', appointment.providerId || 'all');
       localStorage.setItem('sched:type', appointment.appointmentTypeId || 'all');
       localStorage.setItem('sched:location', appointment.locationId || 'all');
 
       setShowAppointmentFinder(false);
-      navigate(`/schedule?view=day&date=${toLocalIsoDate(appointmentDay)}&appointmentId=${encodeURIComponent(appointment.id)}`);
+      navigate(`/schedule?view=day&date=${appointmentDayKey}&appointmentId=${encodeURIComponent(appointment.id)}`);
     },
-    [navigate, showError]
+    [navigate, practiceTimeZone, showError]
   );
 
   const handleCreateFinderAppointment = useCallback(
     async (formData: AppointmentFormData) => {
       if (!session) return;
 
-      const startDate = new Date(`${formData.date}T${formData.time}:00`);
+      const startDate = getPracticeDateTime(formData.date, formData.time, practiceTimeZone);
+      if (!startDate) {
+        showError('Invalid or unavailable clinic date and time');
+        throw new Error('Invalid or unavailable clinic date and time');
+      }
       const endDate = new Date(startDate.getTime() + formData.duration * 60000);
 
-      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      if (Number.isNaN(endDate.getTime())) {
         showError('Invalid date or time');
         throw new Error('Invalid date or time');
       }
@@ -1548,7 +1576,7 @@ export function HomePage() {
         throw err;
       }
     },
-    [finderLocations, loadStats, session, showError, showSuccess]
+    [finderLocations, loadStats, practiceTimeZone, session, showError, showSuccess]
   );
 
   useEffect(() => {
@@ -1853,7 +1881,10 @@ export function HomePage() {
   );
 
   return (
-    <div className="home-page command-center-page">
+    <div className="home-page command-center-page" aria-busy={loading}>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {loading ? 'Loading practice command center.' : 'Practice command center updated.'}
+      </div>
       <header className="command-center-hero">
         <div className="command-center-hero__copy">
           <div className="command-center-kicker">{dayScopeLabel} Overview</div>
@@ -2391,6 +2422,7 @@ export function HomePage() {
               appointments={finderAppointments}
               timeBlocks={finderTimeBlocks}
               availability={finderAvailability}
+              practiceTimeZone={practiceTimeZone}
               defaultLocationId={overviewLocationFilter === 'all' ? undefined : overviewLocationFilter}
               onUseSlot={handleUseFinderSlot}
               onOpenExistingAppointment={handleOpenExistingFinderAppointment}
@@ -2416,6 +2448,7 @@ export function HomePage() {
         availability={finderAvailability}
         appointments={finderAppointments}
         timeBlocks={finderTimeBlocks}
+        practiceTimeZone={practiceTimeZone}
         initialData={finderAppointmentInitialData}
       />
 

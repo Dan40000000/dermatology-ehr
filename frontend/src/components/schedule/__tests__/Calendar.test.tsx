@@ -70,4 +70,89 @@ describe('Calendar', () => {
     expect(screen.getByText('Jamie Patient')).toBeInTheDocument();
     expect(screen.getAllByText('Overlap')).toHaveLength(2);
   });
+
+  it('groups and labels near-midnight appointments in the practice time zone', () => {
+    render(
+      <Calendar
+        currentDate={new Date(2026, 3, 26, 12, 0, 0, 0)}
+        viewMode="day"
+        practiceTimeZone="America/Los_Angeles"
+        appointments={[
+          buildAppointment(
+            'appt-midnight',
+            'Pacific Patient',
+            '2026-04-27T00:30:00.000Z',
+            '2026-04-27T01:00:00.000Z',
+          ),
+        ]}
+        providers={[provider]}
+        availability={[]}
+        timeBlocks={[]}
+        selectedAppointment={null}
+        onAppointmentClick={vi.fn()}
+        onSlotClick={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Pacific Patient')).toBeInTheDocument();
+    expect(screen.getAllByText('5:30 PM').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /Pacific Patient.*5:30 PM/i })).toBeInTheDocument();
+  });
+
+  it('groups near-midnight appointments on the correct practice day in month view', () => {
+    render(
+      <Calendar
+        currentDate={new Date(2026, 3, 26, 12, 0, 0, 0)}
+        viewMode="month"
+        practiceTimeZone="America/Los_Angeles"
+        appointments={[
+          buildAppointment(
+            'appt-month-midnight',
+            'Month Pacific Patient',
+            '2026-04-27T00:30:00.000Z',
+            '2026-04-27T01:00:00.000Z',
+          ),
+        ]}
+        providers={[provider]}
+        availability={[]}
+        timeBlocks={[]}
+        selectedAppointment={null}
+        onAppointmentClick={vi.fn()}
+        onSlotClick={vi.fn()}
+      />
+    );
+
+    const practiceDay = screen.getByRole('group', {
+      name: /Sunday, April 26, 2026, 1 appointment/i,
+    });
+    expect(practiceDay).toHaveTextContent('Month Pacific Patient');
+    expect(practiceDay).toHaveTextContent('5:30 PM');
+  });
+
+  it('ignores malformed appointment timestamps without crashing the month view', () => {
+    render(
+      <Calendar
+        currentDate={new Date(2026, 3, 26, 12, 0, 0, 0)}
+        viewMode="month"
+        practiceTimeZone="America/Los_Angeles"
+        appointments={[
+          buildAppointment(
+            'appt-invalid-time',
+            'Invalid Time Patient',
+            'not-a-timestamp',
+            'also-not-a-timestamp',
+          ),
+        ]}
+        providers={[provider]}
+        availability={[]}
+        timeBlocks={[]}
+        selectedAppointment={null}
+        onAppointmentClick={vi.fn()}
+        onSlotClick={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('April 2026')).toBeInTheDocument();
+    expect(screen.queryByText('Invalid Time Patient')).not.toBeInTheDocument();
+  });
 });

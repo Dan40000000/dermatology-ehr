@@ -1,4 +1,4 @@
-const DEFAULT_PRACTICE_TIME_ZONE = 'America/Denver';
+export const DEFAULT_PRACTICE_TIME_ZONE = 'America/Denver';
 export const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function resolvePracticeTimeZone(timeZone?: string | null): string {
@@ -68,8 +68,8 @@ export function setClinicBusinessDate(dateKey: string): boolean {
   }
 }
 
-export function getDayOffsetFromClinicToday(dateKey: string): number {
-  const baseDateKey = getDateKeyInPracticeTimeZone(new Date());
+export function getDayOffsetFromClinicToday(dateKey: string, timeZone?: string | null): number {
+  const baseDateKey = getDateKeyInPracticeTimeZone(new Date(), timeZone);
   const target = new Date(`${dateKey}T12:00:00`);
   const base = new Date(`${baseDateKey}T12:00:00`);
   const diffMs = target.getTime() - base.getTime();
@@ -121,11 +121,23 @@ export function formatDateTimeInPracticeTimeZone(
 }
 
 export function getHourInPracticeTimeZone(value: string | Date, timeZone?: string | null): number {
+  return getTimePartsInPracticeTimeZone(value, timeZone).hour;
+}
+
+export function getTimePartsInPracticeTimeZone(
+  value: string | Date,
+  timeZone?: string | null
+): { hour: number; minute: number } {
   const date = value instanceof Date ? value : new Date(value);
   const parts = getFormatter(timeZone, {
     hour: '2-digit',
+    minute: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date);
   const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? Number.NaN);
-  return Number.isNaN(hour) ? 0 : hour;
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? Number.NaN);
+  return {
+    hour: Number.isNaN(hour) ? 0 : hour,
+    minute: Number.isNaN(minute) ? 0 : minute,
+  };
 }

@@ -239,6 +239,36 @@ describe('AmbientAI Service', () => {
       adapterFactory.mockRestore();
     });
 
+    it('treats explicit environment mock as a global kill switch over an active database provider', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-live-under-kill-switch',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'abridge',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
     it('should fallback to mock when OpenAI transcription fails', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
       process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';

@@ -12,6 +12,7 @@ const toastMocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   fetchAppointments: vi.fn(),
+  fetchCommandCenterSummary: vi.fn(),
   fetchFrontDeskSchedule: vi.fn(),
   fetchPriorAuths: vi.fn(),
   fetchProviders: vi.fn(),
@@ -110,6 +111,7 @@ vi.mock('../../components/schedule/Calendar', () => ({
     providers,
     timeBlocks,
     showWeekends,
+    practiceTimeZone,
     onAppointmentClick,
     onSlotClick,
     onTimeBlockClick,
@@ -118,6 +120,7 @@ vi.mock('../../components/schedule/Calendar', () => ({
     <div data-testid="calendar">
       <div data-testid="calendar-appointments">{appointments?.length ?? 0}</div>
       <div data-testid="calendar-providers">{providers?.length ?? 0}</div>
+      <div data-testid="calendar-practice-time-zone">{practiceTimeZone || ''}</div>
       <div data-testid="calendar-timeblocks">{timeBlocks?.length ?? 0}</div>
       <div data-testid="calendar-show-weekends">{showWeekends ? 'yes' : 'no'}</div>
       <button type="button" onClick={() => appointments?.[0] && onAppointmentClick?.(appointments[0])}>
@@ -360,6 +363,11 @@ describe('SchedulePage', () => {
     rescheduleProviderId.value = 'provider-2';
     const fixtures = buildFixtures();
     apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue({
+      businessDate: getDateKeyInPracticeTimeZone(),
+      practiceTimeZone: 'America/Denver',
+      generatedAt: '2026-04-27T00:00:00.000Z',
+    });
     apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments: [] });
     apiMocks.fetchPriorAuths.mockResolvedValue({ data: [] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: fixtures.providers });
@@ -436,6 +444,19 @@ describe('SchedulePage', () => {
       expect.objectContaining({ date: '2026-08-27' }),
     );
     expect(screen.getByLabelText('Schedule date')).toHaveValue('2026-08-27');
+  });
+
+  it('propagates the server practice time zone into the calendar', async () => {
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue({
+      businessDate: getDateKeyInPracticeTimeZone(new Date(), 'Pacific/Honolulu'),
+      practiceTimeZone: 'Pacific/Honolulu',
+      generatedAt: new Date().toISOString(),
+    });
+
+    render(<SchedulePage />);
+
+    expect(await screen.findByTestId('calendar-practice-time-zone')).toHaveTextContent('Pacific/Honolulu');
+    expect(apiMocks.fetchCommandCenterSummary).toHaveBeenCalledWith('tenant-1', 'token-1');
   });
 
   it('loads schedule data, filters the calendar, and uses the finder', async () => {

@@ -374,6 +374,40 @@ describe('HomePage', () => {
     expect(within(claimsCard).getByText(/6 active, 2 urgent, 2 backlog/i)).toBeInTheDocument();
   }, 20000);
 
+  it('uses the server practice time zone for the business day and appointment labels', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-04-27T00:00:00.000Z'));
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue({
+      businessDate: '2026-04-26',
+      practiceTimeZone: 'America/Los_Angeles',
+      generatedAt: '2026-04-27T00:00:00.000Z',
+      dataHealth: { failedSources: [] },
+    });
+    const practiceDayAppointment = {
+      id: 'appt-practice-zone',
+      patientId: 'patient-practice-zone',
+      patientName: 'Pacific Patient',
+      providerId: 'provider-1',
+      providerName: 'Dr. Pacific',
+      appointmentTypeId: 'type-1',
+      appointmentTypeName: 'Follow Up',
+      locationId: 'loc-1',
+      locationName: 'Main Clinic',
+      status: 'scheduled',
+      scheduledStart: '2026-04-27T00:30:00.000Z',
+      scheduledEnd: '2026-04-27T01:00:00.000Z',
+    };
+    apiMocks.fetchAppointments.mockResolvedValue({ appointments: [practiceDayAppointment] });
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments: [practiceDayAppointment] });
+
+    render(<HomePage />);
+
+    await waitFor(() => expect(apiMocks.fetchAppointments).toHaveBeenCalled());
+    expect(screen.getByLabelText('Business date')).toHaveValue('2026-04-26');
+    expect(await screen.findByText('Pacific Patient')).toBeInTheDocument();
+    expect(screen.getByText('5:30 PM')).toBeInTheDocument();
+  }, 20000);
+
   it('renders command action queues and routes each work item to its owning page', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-08-28T00:30:00.000Z'));

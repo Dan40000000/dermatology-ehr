@@ -1,5 +1,10 @@
 import { useMemo, useState, useEffect, type KeyboardEvent } from 'react';
 import type { Appointment, Provider, Availability } from '../../types';
+import {
+  formatTimeInPracticeTimeZone,
+  getDateKeyInPracticeTimeZone,
+  getTimePartsInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
 import { MonthView } from './MonthView';
 
 interface TimeBlock {
@@ -36,6 +41,7 @@ interface CalendarProps {
   onAppointmentUndoNoShow?: (appointment: Appointment) => void;
   onAppointmentCancel?: (appointment: Appointment) => void;
   onAppointmentReschedule?: (appointment: Appointment) => void;
+  practiceTimeZone?: string | null;
 }
 
 interface AppointmentLayout {
@@ -145,6 +151,7 @@ export function Calendar({
   onAppointmentUndoNoShow,
   onAppointmentCancel,
   onAppointmentReschedule,
+  practiceTimeZone,
 }: CalendarProps) {
   const [hoveredTimeBlock, setHoveredTimeBlock] = useState<TimeBlock | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
@@ -227,7 +234,7 @@ export function Calendar({
       if (Number.isNaN(apptStart.getTime())) {
         continue;
       }
-      const key = `${appt.providerId}|${toDateKey(apptStart)}`;
+      const key = `${appt.providerId}|${getDateKeyInPracticeTimeZone(apptStart, practiceTimeZone)}`;
       const existing = index.get(key);
       if (existing) {
         existing.push(appt);
@@ -236,7 +243,7 @@ export function Calendar({
       }
     }
     return index;
-  }, [appointments]);
+  }, [appointments, practiceTimeZone]);
 
   const appointmentsByDay = useMemo(() => {
     const index = new Map<string, Appointment[]>();
@@ -251,7 +258,7 @@ export function Calendar({
       if (Number.isNaN(apptStart.getTime())) {
         continue;
       }
-      const key = toDateKey(apptStart);
+      const key = getDateKeyInPracticeTimeZone(apptStart, practiceTimeZone);
       const existing = index.get(key);
       if (existing) {
         existing.push(appt);
@@ -260,7 +267,7 @@ export function Calendar({
       }
     }
     return index;
-  }, [appointments]);
+  }, [appointments, practiceTimeZone]);
 
   const dayViewAppointmentLayouts = useMemo(
     () => buildAppointmentLayoutIndex(appointmentsByProviderDay),
@@ -285,7 +292,7 @@ export function Calendar({
       if (Number.isNaN(blockStart.getTime())) {
         continue;
       }
-      const key = `${block.providerId}|${toDateKey(blockStart)}`;
+      const key = `${block.providerId}|${getDateKeyInPracticeTimeZone(blockStart, practiceTimeZone)}`;
       const existing = index.get(key);
       if (existing) {
         existing.push(block);
@@ -294,7 +301,7 @@ export function Calendar({
       }
     }
     return index;
-  }, [timeBlocks]);
+  }, [timeBlocks, practiceTimeZone]);
 
   // Helper: Check if provider is available at this time
   const isProviderAvailable = (providerId: string, date: Date, hour: number, minute: number) => {
@@ -349,8 +356,13 @@ export function Calendar({
 
       const slotTimeInMinutes = hour * 60 + minute;
       const nextSlotTimeInMinutes = slotTimeInMinutes + 5;
-      const apptStartInMinutes = apptStart.getHours() * 60 + apptStart.getMinutes();
-      const apptEndInMinutes = apptEnd.getHours() * 60 + apptEnd.getMinutes();
+      const apptStartParts = getTimePartsInPracticeTimeZone(apptStart, practiceTimeZone);
+      const apptEndParts = getTimePartsInPracticeTimeZone(apptEnd, practiceTimeZone);
+      const apptStartInMinutes = apptStartParts.hour * 60 + apptStartParts.minute;
+      const apptEndInMinutes = getDateKeyInPracticeTimeZone(apptEnd, practiceTimeZone)
+        > getDateKeyInPracticeTimeZone(apptStart, practiceTimeZone)
+        ? 24 * 60
+        : apptEndParts.hour * 60 + apptEndParts.minute;
 
       // Check if this slot overlaps with the appointment
       // Slot covers [slotTime, slotTime+5), appointment covers [apptStart, apptEnd)
@@ -375,8 +387,13 @@ export function Calendar({
       }
 
       const slotTimeInMinutes = hour * 60 + minute;
-      const blockStartInMinutes = blockStart.getHours() * 60 + blockStart.getMinutes();
-      const blockEndInMinutes = blockEnd.getHours() * 60 + blockEnd.getMinutes();
+      const blockStartParts = getTimePartsInPracticeTimeZone(blockStart, practiceTimeZone);
+      const blockEndParts = getTimePartsInPracticeTimeZone(blockEnd, practiceTimeZone);
+      const blockStartInMinutes = blockStartParts.hour * 60 + blockStartParts.minute;
+      const blockEndInMinutes = getDateKeyInPracticeTimeZone(blockEnd, practiceTimeZone)
+        > getDateKeyInPracticeTimeZone(blockStart, practiceTimeZone)
+        ? 24 * 60
+        : blockEndParts.hour * 60 + blockEndParts.minute;
 
       // Check if this slot is within the time block range
       return slotTimeInMinutes >= blockStartInMinutes && slotTimeInMinutes < blockEndInMinutes;
@@ -386,7 +403,8 @@ export function Calendar({
   // Helper: Check if this is the first slot of a time block
   const isFirstTimeBlockSlot = (timeBlock: TimeBlock, hour: number, minute: number) => {
     const blockStart = new Date(timeBlock.startTime);
-    return blockStart.getHours() === hour && blockStart.getMinutes() === minute;
+    const blockStartParts = getTimePartsInPracticeTimeZone(blockStart, practiceTimeZone);
+    return blockStartParts.hour === hour && blockStartParts.minute === minute;
   };
 
   // Helper: Get time block duration in slots
@@ -472,8 +490,10 @@ export function Calendar({
   // So we need to check if this slot is the one that contains the appointment start
   const isFirstSlot = (appointment: Appointment, hour: number, minute: number) => {
     const apptStart = new Date(appointment.scheduledStart);
-    const apptHour = apptStart.getHours();
-    const apptMinute = apptStart.getMinutes();
+    const { hour: apptHour, minute: apptMinute } = getTimePartsInPracticeTimeZone(
+      apptStart,
+      practiceTimeZone
+    );
     // Round appointment start minute down to nearest 5-minute slot
     const slotMinute = Math.floor(apptMinute / 5) * 5;
     return apptHour === hour && slotMinute === minute;
@@ -656,26 +676,16 @@ export function Calendar({
 
   // Helper: Check if today is visible in the current view
   const isTodayVisible = useMemo(() => {
-    const today = new Date();
-    return days.some(day =>
-      day.getDate() === today.getDate() &&
-      day.getMonth() === today.getMonth() &&
-      day.getFullYear() === today.getFullYear()
-    );
-  }, [days]);
-
-  const todayStartMs = useMemo(() => {
-    const today = new Date(currentTime);
-    today.setHours(0, 0, 0, 0);
-    return today.getTime();
-  }, [currentTime]);
+    const todayKey = getDateKeyInPracticeTimeZone(currentTime, practiceTimeZone);
+    return days.some((day) => toDateKey(day) === todayKey);
+  }, [currentTime, days, practiceTimeZone]);
 
   const isHistoricalScheduledAppointment = (appointment: Appointment) => {
     if (appointment.status !== 'scheduled') return false;
     const appointmentDate = new Date(appointment.scheduledStart);
     if (Number.isNaN(appointmentDate.getTime())) return false;
-    appointmentDate.setHours(0, 0, 0, 0);
-    return appointmentDate.getTime() < todayStartMs;
+    return getDateKeyInPracticeTimeZone(appointmentDate, practiceTimeZone)
+      < getDateKeyInPracticeTimeZone(currentTime, practiceTimeZone);
   };
 
   const getAppointmentDisplayColor = (appointment: Appointment) => (
@@ -686,8 +696,7 @@ export function Calendar({
 
   // Helper: Calculate current time line position as percentage
   const getCurrentTimePosition = () => {
-    const hour = currentTime.getHours();
-    const minute = currentTime.getMinutes();
+    const { hour, minute } = getTimePartsInPracticeTimeZone(currentTime, practiceTimeZone);
     const totalMinutesFromStart = (hour - CALENDAR_START_HOUR) * 60 + minute;
     const totalCalendarMinutes = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * 60;
 
@@ -698,12 +707,8 @@ export function Calendar({
 
   // Helper: Get index of today in the days array (for week view)
   const getTodayColumnIndex = () => {
-    const today = new Date();
-    return days.findIndex(day =>
-      day.getDate() === today.getDate() &&
-      day.getMonth() === today.getMonth() &&
-      day.getFullYear() === today.getFullYear()
-    );
+    const todayKey = getDateKeyInPracticeTimeZone(currentTime, practiceTimeZone);
+    return days.findIndex((day) => toDateKey(day) === todayKey);
   };
 
   // Handle day click in month view - switch to day view for that date
@@ -723,6 +728,7 @@ export function Calendar({
         appointments={appointments}
         providers={providers}
         selectedAppointment={selectedAppointment}
+        practiceTimeZone={practiceTimeZone}
         onAppointmentClick={onAppointmentClick}
         onDayClick={handleDayClick}
       />
@@ -877,10 +883,7 @@ export function Calendar({
                       >
                         <div style={{ fontWeight: 600, fontSize: '0.7rem' }}>{timeBlock.title}</div>
                         <div style={{ fontSize: '0.65rem', opacity: 0.85, marginTop: '2px' }}>
-                          {new Date(timeBlock.startTime).toLocaleTimeString('en-US', {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}
+                          {formatTimeInPracticeTimeZone(timeBlock.startTime, practiceTimeZone)}
                         </div>
                         {timeBlock.isRecurring && (
                           <div style={{
@@ -909,7 +912,7 @@ export function Calendar({
                           role={selectedAppointment?.id === appointment.id ? undefined : 'button'}
                           tabIndex={selectedAppointment?.id === appointment.id ? -1 : 0}
                           aria-pressed={selectedAppointment?.id === appointment.id ? undefined : false}
-                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${new Date(appointment.scheduledStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}, ${appointment.status.replace(/_/g, ' ')}`}
+                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}, ${appointment.status.replace(/_/g, ' ')}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             onAppointmentClick(appointment);
@@ -949,10 +952,7 @@ export function Calendar({
                             </div>
                           )}
                           <div className="appointment-time">
-                            {new Date(appointment.scheduledStart).toLocaleTimeString('en-US', {
-                              hour: 'numeric',
-                              minute: '2-digit',
-                            })}
+                            {formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}
                           </div>
                           <div className="appointment-patient">{appointment.patientName}</div>
                           <div className="appointment-type" style={isTelehealthAppointment(appointment) ? { color: '#1e3a8a', fontWeight: 600 } : undefined}>
@@ -1044,7 +1044,7 @@ export function Calendar({
                           role={selectedAppointment?.id === appointment.id ? undefined : 'button'}
                           tabIndex={selectedAppointment?.id === appointment.id ? -1 : 0}
                           aria-pressed={selectedAppointment?.id === appointment.id ? undefined : false}
-                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${new Date(appointment.scheduledStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}, ${appointment.status.replace(/_/g, ' ')}`}
+                          aria-label={selectedAppointment?.id === appointment.id ? undefined : `${appointment.patientName}, ${appointment.appointmentTypeName}, ${formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}, ${appointment.status.replace(/_/g, ' ')}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             onAppointmentClick(appointment);
@@ -1084,10 +1084,7 @@ export function Calendar({
                             </div>
                           )}
                           <div className="appointment-time">
-                            {new Date(appointment.scheduledStart).toLocaleTimeString('en-US', {
-                              hour: 'numeric',
-                              minute: '2-digit',
-                            })}
+                            {formatTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}
                           </div>
                           <div className="appointment-patient">{appointment.patientName}</div>
                           <div className="appointment-type" style={isTelehealthAppointment(appointment) ? { color: '#1e3a8a', fontWeight: 600 } : undefined}>
@@ -1138,15 +1135,9 @@ export function Calendar({
             <div className="tooltip-row">
               <span className="tooltip-label">Time:</span>
               <span className="tooltip-value">
-                {new Date(hoveredTimeBlock.startTime).toLocaleTimeString('en-US', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
+                {formatTimeInPracticeTimeZone(hoveredTimeBlock.startTime, practiceTimeZone)}
                 {' - '}
-                {new Date(hoveredTimeBlock.endTime).toLocaleTimeString('en-US', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
+                {formatTimeInPracticeTimeZone(hoveredTimeBlock.endTime, practiceTimeZone)}
               </span>
             </div>
             {hoveredTimeBlock.description && (

@@ -825,6 +825,10 @@ export async function transcribeLiveAudioChunk(
 }
 
 async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
+  if (isAmbientTranscriptionProviderExplicitlyMock()) {
+    return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
+  }
+
   if (!tenantId) {
     return hasExplicitAmbientProviderSelection()
       ? AMBIENT_PROVIDER_FALLBACK_BLOCKED
@@ -833,9 +837,6 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
 
   const config = await getIntegrationConfig(tenantId, 'ambient_transcription');
   if (!config) {
-    if (isAmbientTranscriptionProviderExplicitlyMock()) {
-      return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
-    }
     const envProvider = resolveAmbientTranscriptionProviderFromEnv();
     if (!envProvider || !hasAmbientTranscriptionCredentials(envProvider)) {
       return hasExplicitAmbientProviderSelection()

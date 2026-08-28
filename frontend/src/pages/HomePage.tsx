@@ -72,8 +72,12 @@ import {
 import { getModuleForPath, type CommandCenterSectionKey, type ModuleKey } from '../config/moduleAccess';
 import { getEffectiveRoles } from '../utils/roles';
 import {
-  getClinicBusinessDate,
+  DEFAULT_PRACTICE_TIME_ZONE,
+  formatDateInPracticeTimeZone,
+  formatTimeInPracticeTimeZone,
+  getConfiguredClinicBusinessDate,
   getDateKeyInPracticeTimeZone,
+  getTimePartsInPracticeTimeZone,
   ISO_DATE_PATTERN,
   setClinicBusinessDate,
 } from '../utils/practiceDateTime';
@@ -236,8 +240,6 @@ const toLocalIsoDate = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-const getCommandBusinessDate = (): string => getClinicBusinessDate();
-
 const dateFromIsoDate = (dateKey: string): Date => new Date(`${dateKey}T12:00:00`);
 
 const isTaskPending = (status: string | undefined): boolean => {
@@ -277,18 +279,18 @@ const isStaleScheduledAppointment = (appointment: any, nowMs: number): boolean =
   return scheduledMs + STALE_SCHEDULED_GRACE_MS < nowMs;
 };
 
-const isOnLocalDay = (value: string | undefined, dayKey: string): boolean => {
+const isOnPracticeDay = (value: string | undefined, dayKey: string, practiceTimeZone?: string | null): boolean => {
   if (!value) return false;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return false;
-  return toLocalIsoDate(date) === dayKey;
+  return getDateKeyInPracticeTimeZone(date, practiceTimeZone) === dayKey;
 };
 
-const isWithinCalendarWindow = (value: string | undefined): boolean => {
+const isWithinCalendarWindow = (value: string | undefined, practiceTimeZone?: string | null): boolean => {
   if (!value) return false;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return false;
-  const hour = date.getHours();
+  const { hour } = getTimePartsInPracticeTimeZone(date, practiceTimeZone);
   return hour >= CALENDAR_WINDOW_START_HOUR && hour < CALENDAR_WINDOW_END_HOUR;
 };
 
@@ -353,11 +355,11 @@ const currencyFromCents = (cents: number): string =>
     maximumFractionDigits: 0,
   }).format(numberOrZero(cents) / 100);
 
-const formatAppointmentTime = (value: string | undefined): string => {
+const formatAppointmentTime = (value: string | undefined, practiceTimeZone?: string | null): string => {
   if (!value) return 'Unscheduled';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Unscheduled';
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return formatTimeInPracticeTimeZone(date, practiceTimeZone);
 };
 
 const normalizeStatus = (value: unknown): string => String(value || '').trim().toLowerCase();
@@ -652,7 +654,9 @@ export function HomePage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
 
-  const [businessDate, setBusinessDate] = useState(() => getCommandBusinessDate());
+  const [businessDate, setBusinessDate] = useState(() => getConfiguredClinicBusinessDate() || '');
+  const [practiceTimeZone, setPracticeTimeZone] = useState<string | null>(null);
+  const [currentPracticeBusinessDate, setCurrentPracticeBusinessDate] = useState<string | null>(null);
   const [overviewLocationFilter, setOverviewLocationFilter] = useState('all');
   const [overviewLocationOptions, setOverviewLocationOptions] = useState<LocationScopeOption[]>([]);
   const [stats, setStats] = useState<HomeStats>(INITIAL_STATS);
@@ -749,6 +753,22 @@ export function HomePage() {
 
     setLoading(true);
     try {
+      let effectivePracticeTimeZone = practiceTimeZone;
+      let effectiveBusinessDate = businessDate;
+      if (!practiceTimeZone || !businessDate) {
+        const currentSummary = await fetchCommandCenterSummary(session.tenantId, session.accessToken);
+        const currentTimeZone = currentSummary?.practiceTimeZone || DEFAULT_PRACTICE_TIME_ZONE;
+        const currentBusinessDate = currentSummary?.businessDate
+          || getDateKeyInPracticeTimeZone(new Date(), currentTimeZone);
+        effectivePracticeTimeZone = currentTimeZone;
+        effectiveBusinessDate = businessDate || currentBusinessDate;
+        setPracticeTimeZone(currentTimeZone);
+        setCurrentPracticeBusinessDate(currentBusinessDate);
+        if (!businessDate) {
+          setBusinessDate(currentBusinessDate);
+        }
+      }
+
       const failedSources: string[] = [];
       const safeLoad = async <T,>(label: string, request: Promise<T>, fallback: T): Promise<T> => {
         try {
@@ -758,7 +778,7 @@ export function HomePage() {
           return fallback;
         }
       };
-      const todayStr = businessDate;
+      const todayStr = effectiveBusinessDate;
       const scheduleContext = loadStoredScheduleContext();
       const todayDate = startOfDay(dateFromIsoDate(todayStr));
       const scheduleDate = startOfDay(dateFromIsoDate(todayStr));
@@ -860,6 +880,11 @@ export function HomePage() {
           : Promise.resolve(null),
       ]);
 
+      const responsePracticeTimeZone = commandSummaryRes?.practiceTimeZone || null;
+      effectivePracticeTimeZone = responsePracticeTimeZone || effectivePracticeTimeZone;
+      if (responsePracticeTimeZone && responsePracticeTimeZone !== practiceTimeZone) {
+        setPracticeTimeZone(responsePracticeTimeZone);
+      }
       const appointments = appointmentsRes.appointments || [];
       const frontDeskAppointments = extractArray(frontDeskRes, ['appointments']);
       const encountersData = (encountersRes.encounters || []) as Encounter[];
@@ -921,7 +946,7 @@ export function HomePage() {
           if (!appointment.scheduledStart) return false;
           const scheduledStart = new Date(appointment.scheduledStart);
           return !Number.isNaN(scheduledStart.getTime())
-            && getDateKeyInPracticeTimeZone(scheduledStart) === todayStr;
+            && getDateKeyInPracticeTimeZone(scheduledStart, effectivePracticeTimeZone) === todayStr;
         })
         .filter((appointment: any) => matchesStoredScheduleFilters(appointment, scheduleContext));
       const nowMs = Date.now();
@@ -961,7 +986,7 @@ export function HomePage() {
       ).length;
 
       const overviewAppointments = scopedAppointments.filter((appointment: any) =>
-        isWithinCalendarWindow(appointment.scheduledStart)
+        isWithinCalendarWindow(appointment.scheduledStart, effectivePracticeTimeZone)
       );
 
       const waitingCount = overviewAppointments.filter((a: any) => isCheckedIn(a.status)).length;
@@ -1000,10 +1025,10 @@ export function HomePage() {
       const pendingLabOrders = orders.filter(isOpenLabPathOrder).length;
 
       const unsignedNotesToday = encountersData.filter((encounter: Encounter) => {
-        return isOnLocalDay(encounter.updatedAt || encounter.createdAt, todayStr) && isEncounterOpen(encounter.status);
+        return isOnPracticeDay(encounter.updatedAt || encounter.createdAt, todayStr, effectivePracticeTimeZone) && isEncounterOpen(encounter.status);
       }).length;
       const notesWrittenToday = encountersData.filter((encounter: Encounter) => {
-        return isOnLocalDay(encounter.updatedAt || encounter.createdAt, todayStr);
+        return isOnPracticeDay(encounter.updatedAt || encounter.createdAt, todayStr, effectivePracticeTimeZone);
       }).length;
 
       const myNotesNeedingWork = encountersData.filter((encounter: Encounter) => {
@@ -1012,15 +1037,16 @@ export function HomePage() {
 
       const teamNotesNeedingWork = encountersData.filter((encounter: Encounter) => isEncounterOpen(encounter.status)).length;
 
-      const scheduleViewStartMs = scheduleRange.start.getTime();
-      const scheduleViewEndMs = scheduleRange.end.getTime();
+      const scheduleViewStartDateKey = toLocalIsoDate(scheduleRange.start);
+      const scheduleViewEndDateKey = toLocalIsoDate(scheduleRange.end);
       const scheduleViewAppointments = scheduleSourceAppointments.filter((a: any) => {
         if (!isAppointmentIncludedInOverview(a.status)) return false;
         if (!matchesStoredScheduleFilters(a, scheduleContext)) return false;
 
-        const appointmentStart = new Date(a.scheduledStart).getTime();
-        if (Number.isNaN(appointmentStart)) return false;
-        return appointmentStart >= scheduleViewStartMs && appointmentStart <= scheduleViewEndMs;
+        const appointmentStart = new Date(a.scheduledStart);
+        if (Number.isNaN(appointmentStart.getTime())) return false;
+        const appointmentDateKey = getDateKeyInPracticeTimeZone(appointmentStart, effectivePracticeTimeZone);
+        return appointmentDateKey >= scheduleViewStartDateKey && appointmentDateKey <= scheduleViewEndDateKey;
       });
 
       const scheduleHasFilters =
@@ -1046,7 +1072,11 @@ export function HomePage() {
         ['checked_in', 'in_room', 'with_provider', 'checkout'].includes(normalizeStatus(appointment.status))
       ).length;
       const claimsCreatedToday = claims.filter((claim: any) =>
-        isOnLocalDay(claim.createdAt || claim.created_at || claim.submittedAt || claim.submitted_at || claim.serviceDate || claim.service_date, todayStr)
+        isOnPracticeDay(
+          claim.createdAt || claim.created_at || claim.submittedAt || claim.submitted_at || claim.serviceDate || claim.service_date,
+          todayStr,
+          effectivePracticeTimeZone
+        )
       ).length;
       const summarySchedule = commandSummaryRes?.schedule || null;
       const summaryClaims = commandSummaryRes?.claims || null;
@@ -1300,12 +1330,12 @@ export function HomePage() {
         checkoutCount: officialScheduleStats.checkoutCount,
         scheduleViewCount: scheduleViewAppointments.length,
         scheduleViewMode: scheduleContext.viewMode,
-        scheduleDateLabel: todayDate.toLocaleDateString('en-US', {
+        scheduleDateLabel: formatDateInPracticeTimeZone(`${todayStr}T12:00:00Z`, 'UTC', {
           weekday: 'short',
           month: 'short',
           day: 'numeric',
         }),
-        scheduleViewDateLabel: scheduleDate.toLocaleDateString('en-US', {
+        scheduleViewDateLabel: formatDateInPracticeTimeZone(`${toLocalIsoDate(scheduleDate)}T12:00:00Z`, 'UTC', {
           weekday: 'short',
           month: 'short',
           day: 'numeric',
@@ -1352,7 +1382,7 @@ export function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [businessDate, canAccessAnyModule, canViewCommandSection, overviewLocationFilter, session, showError]);
+  }, [businessDate, canAccessAnyModule, canViewCommandSection, overviewLocationFilter, practiceTimeZone, session, showError]);
 
   const handleBusinessDateChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextDate = event.target.value;
@@ -1548,7 +1578,9 @@ export function HomePage() {
   const commandBacklogCount = showHeaderBillingBacklog ? stats.billingWorkQueueCount : 0;
   const operationalCompletionRate =
     stats.appointmentsCount > 0 ? Math.round((stats.completedCount / stats.appointmentsCount) * 100) : 0;
-  const isCurrentBusinessDate = businessDate === getDateKeyInPracticeTimeZone(new Date());
+  const isCurrentBusinessDate = businessDate === (
+    currentPracticeBusinessDate || getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone)
+  );
   const dayScopeLabel = isCurrentBusinessDate ? "Today's" : 'Selected day';
   const dayScopeLower = isCurrentBusinessDate ? 'today' : 'selected day';
   const withBusinessDateRoute = (route: string): string => {
@@ -1827,7 +1859,7 @@ export function HomePage() {
           <div className="command-center-kicker">{dayScopeLabel} Overview</div>
           <h1>Practice Command Center</h1>
           <div className="command-center-hero__meta">
-            <span>{stats.scheduleDateLabel || new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+            <span>{stats.scheduleDateLabel || formatDateInPracticeTimeZone(new Date(), practiceTimeZone, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
             <span>{operationalCompletionRate}% complete</span>
             <span>{commandUrgentCount} urgent today</span>
             {showHeaderBillingBacklog && <span>{commandBacklogCount} billing backlog</span>}
@@ -2098,7 +2130,7 @@ export function HomePage() {
                       className="command-list-row"
                       onClick={() => navigate(appointment.patientId ? `/patients/${appointment.patientId}` : '/schedule')}
                     >
-                      <span className="command-list-row__time">{formatAppointmentTime(appointment.scheduledStart)}</span>
+                      <span className="command-list-row__time">{formatAppointmentTime(appointment.scheduledStart, practiceTimeZone)}</span>
                       <span>
                         <strong>{appointment.patientName}</strong>
                         <small>{appointment.appointmentTypeName} with {appointment.providerName}</small>
@@ -2122,7 +2154,7 @@ export function HomePage() {
                       className="command-list-row command-list-row--warning"
                       onClick={() => navigate(appointment.patientId ? `/patients/${appointment.patientId}` : '/front-desk')}
                     >
-                      <span className="command-list-row__time">{formatAppointmentTime(appointment.scheduledStart)}</span>
+                      <span className="command-list-row__time">{formatAppointmentTime(appointment.scheduledStart, practiceTimeZone)}</span>
                       <span>
                         <strong>{appointment.patientName}</strong>
                         <small>{appointment.riskFlags.join(', ')}</small>

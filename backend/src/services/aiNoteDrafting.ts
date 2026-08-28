@@ -1,10 +1,10 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
-import { deidentifyTextForExternalAi } from "../utils/aiPhiGuard";
+import { deidentifyTextForExternalAi, isClinicalAiProviderAllowed } from "../utils/aiPhiGuard";
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 import { meteredOpenAiFetch, OpenAiSpendGuardError } from "../utils/openAiSpendGuard";
-import { redactValue } from "../utils/phiRedaction";
+import { redactValue, safeErrorCode } from "../utils/phiRedaction";
 
 /**
  * AI Note Drafting Service
@@ -36,6 +36,9 @@ interface NoteDraft {
 }
 
 function toSafeErrorMessage(error: unknown): string {
+  if (process.env.NODE_ENV !== "test") {
+    return safeErrorCode(error);
+  }
   if (error instanceof Error) {
     return String(redactValue(error.message));
   }
@@ -100,6 +103,19 @@ function logAINoteDraftingError(message: string, error: unknown): void {
   });
 }
 
+function isSyntheticAiRuntime(): boolean {
+  const nodeEnv = String(process.env.NODE_ENV || "development").trim().toLowerCase();
+  if (nodeEnv === "production") {
+    return false;
+  }
+  if (nodeEnv === "test" || nodeEnv === "development" || nodeEnv === "demo") {
+    return true;
+  }
+
+  const mode = String(process.env.CLINICAL_AI_MODE || process.env.AI_MODE || "").trim().toLowerCase();
+  return mode === "mock" || mode === "demo";
+}
+
 export class AINoteDraftingService {
   private openaiApiKey: string | undefined;
   private anthropicApiKey: string | undefined;
@@ -144,7 +160,14 @@ export class AINoteDraftingService {
       );
 
       // Generate draft using AI
-      if (this.openaiApiKey) {
+      const openAiAllowed = Boolean(
+        this.openaiApiKey && isClinicalAiProviderAllowed("openai", this.openaiApiKey)
+      );
+      const anthropicAllowed = Boolean(
+        this.anthropicApiKey && isClinicalAiProviderAllowed("anthropic", this.anthropicApiKey)
+      );
+
+      if (openAiAllowed) {
         return await this.generateWithOpenAI(
           request,
           tenantId,
@@ -153,7 +176,7 @@ export class AINoteDraftingService {
           template,
           priorNotes
         );
-      } else if (this.anthropicApiKey) {
+      } else if (anthropicAllowed) {
         return await this.generateWithAnthropic(
           request,
           patientContext,
@@ -161,10 +184,11 @@ export class AINoteDraftingService {
           template,
           priorNotes
         );
-      } else {
-        // Return mock draft for development
+      } else if (isSyntheticAiRuntime()) {
         return this.getMockDraft(request, template);
       }
+
+      throw new Error("AI note drafting provider is unavailable");
     } catch (error) {
       logAINoteDraftingError("Note draft generation error", error);
       if (error instanceof Error) {
@@ -593,6 +617,10 @@ Age/Sex: ${age}/${sex}
       return [];
     }
 
+    if (!isSyntheticAiRuntime()) {
+      return [];
+    }
+
     const providerId = encounterResult.rows[0].provider_id;
 
     // Get common phrases from provider's past notes in this section
@@ -606,8 +634,7 @@ Age/Sex: ${age}/${sex}
       [providerId, tenantId]
     );
 
-    // In production, use ML to extract and rank relevant phrases
-    // For now, return common dermatology phrases based on section
+    // Synthetic suggestions are limited to test/development/demo runtimes.
     return this.getCommonPhrases(section);
   }
 

@@ -22,6 +22,23 @@ global.fetch = jest.fn();
 
 const queryMock = pool.query as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
+const originalAiEnvironment = {
+  nodeEnv: process.env.NODE_ENV,
+  openAiApiKey: process.env.OPENAI_API_KEY,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  openAiCallsEnabled: process.env.OPENAI_API_CALLS_ENABLED,
+  openAiBaaEnabled: process.env.OPENAI_BAA_ENABLED,
+  clinicalAiMode: process.env.CLINICAL_AI_MODE,
+  aiMode: process.env.AI_MODE,
+};
+
+function restoreEnvironmentValue(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 describe('AINoteDraftingService', () => {
   let service: AINoteDraftingService;
@@ -33,8 +50,23 @@ describe('AINoteDraftingService', () => {
     jest.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_CALLS_ENABLED;
+    delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.CLINICAL_AI_MODE;
+    delete process.env.AI_MODE;
     loggerMock.error.mockReset();
+    (global.fetch as jest.Mock).mockReset();
     service = new AINoteDraftingService();
+  });
+
+  afterEach(() => {
+    restoreEnvironmentValue('NODE_ENV', originalAiEnvironment.nodeEnv);
+    restoreEnvironmentValue('OPENAI_API_KEY', originalAiEnvironment.openAiApiKey);
+    restoreEnvironmentValue('ANTHROPIC_API_KEY', originalAiEnvironment.anthropicApiKey);
+    restoreEnvironmentValue('OPENAI_API_CALLS_ENABLED', originalAiEnvironment.openAiCallsEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_ENABLED', originalAiEnvironment.openAiBaaEnabled);
+    restoreEnvironmentValue('CLINICAL_AI_MODE', originalAiEnvironment.clinicalAiMode);
+    restoreEnvironmentValue('AI_MODE', originalAiEnvironment.aiMode);
   });
 
   describe('generateNoteDraft', () => {
@@ -71,6 +103,20 @@ describe('AINoteDraftingService', () => {
       expect(result).toHaveProperty('confidenceScore');
       expect(result).toHaveProperty('suggestions');
       expect(Array.isArray(result.suggestions)).toBe(true);
+    });
+
+    it('should fail closed in production when no provider is configured', async () => {
+      process.env.NODE_ENV = 'production';
+      queryMock
+        .mockResolvedValueOnce({ rows: [{}] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+      service = new AINoteDraftingService();
+
+      await expect(service.generateNoteDraft(request, tenantId)).rejects.toThrow(
+        'Failed to generate note draft'
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('should use OpenAI when API key is available', async () => {
@@ -257,6 +303,28 @@ describe('AINoteDraftingService', () => {
       await expect(service.generateNoteDraft(request, tenantId)).rejects.toThrow(
         'OpenAI API error: Bad Request'
       );
+    });
+
+    it('should fail closed in production when the provider request fails', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.OPENAI_API_KEY = 'sk-production-test-key';
+      process.env.OPENAI_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_BAA_ENABLED = 'true';
+      service = new AINoteDraftingService();
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [{}] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        statusText: 'Bad Gateway',
+      });
+
+      await expect(service.generateNoteDraft(request, tenantId)).rejects.toThrow(
+        'OpenAI API error: Bad Gateway'
+      );
+      expect(global.fetch).toHaveBeenCalled();
     });
 
     it('should handle invalid OpenAI response', async () => {

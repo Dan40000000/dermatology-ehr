@@ -5,13 +5,35 @@ describe('clinicalCopilot', () => {
   const originalOpenAI = process.env.OPENAI_API_KEY;
   const originalAnthropic = process.env.ANTHROPIC_API_KEY;
   const originalHipaaAiEnabled = process.env.HIPAA_AI_ENABLED;
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalOpenAiCallsEnabled = process.env.OPENAI_API_CALLS_ENABLED;
+  const originalOpenAiBaaEnabled = process.env.OPENAI_BAA_ENABLED;
+  const originalClinicalAiMode = process.env.CLINICAL_AI_MODE;
+  const originalAiMode = process.env.AI_MODE;
   const originalFetch = global.fetch;
 
   beforeEach(() => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.HIPAA_AI_ENABLED;
+    delete process.env.OPENAI_API_CALLS_ENABLED;
+    delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.CLINICAL_AI_MODE;
+    delete process.env.AI_MODE;
     global.fetch = originalFetch;
+  });
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalOpenAiCallsEnabled === undefined) delete process.env.OPENAI_API_CALLS_ENABLED;
+    else process.env.OPENAI_API_CALLS_ENABLED = originalOpenAiCallsEnabled;
+    if (originalOpenAiBaaEnabled === undefined) delete process.env.OPENAI_BAA_ENABLED;
+    else process.env.OPENAI_BAA_ENABLED = originalOpenAiBaaEnabled;
+    if (originalClinicalAiMode === undefined) delete process.env.CLINICAL_AI_MODE;
+    else process.env.CLINICAL_AI_MODE = originalClinicalAiMode;
+    if (originalAiMode === undefined) delete process.env.AI_MODE;
+    else process.env.AI_MODE = originalAiMode;
   });
 
   afterAll(() => {
@@ -73,6 +95,34 @@ describe('clinicalCopilot', () => {
     expect(result.suggestedCodes.some((item) => item.code === '99213')).toBe(true);
     expect(result.chartEvidence.length).toBeGreaterThan(0);
     expect(result.followUpTasks[0]).toMatch(/Follow up/i);
+  });
+
+  it('fails closed in production when no provider is configured', async () => {
+    process.env.NODE_ENV = 'production';
+
+    await expect(askClinicalCopilot({
+      question: 'Summarize this encounter.',
+      context: {},
+    })).rejects.toThrow('Clinical copilot provider is unavailable');
+  });
+
+  it('fails closed in production when the provider request fails', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.OPENAI_API_KEY = 'sk-production-test-key';
+    process.env.OPENAI_API_CALLS_ENABLED = 'true';
+    process.env.OPENAI_BAA_ENABLED = 'true';
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'provider unavailable',
+    });
+    global.fetch = fetchMock as any;
+
+    await expect(askClinicalCopilot({
+      question: 'Summarize this encounter.',
+      context: {},
+    })).rejects.toThrow('Clinical copilot provider is unavailable');
+    expect(fetchMock).toHaveBeenCalled();
   });
 
   it('blocks direct patient identifiers before a live AI call', async () => {

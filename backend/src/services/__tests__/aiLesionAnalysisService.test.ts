@@ -1,5 +1,5 @@
 import { pool } from '../../db/pool';
-import { aiLesionAnalysisService } from '../aiLesionAnalysisService';
+import { AILesionAnalysisService, aiLesionAnalysisService } from '../aiLesionAnalysisService';
 import { logger } from '../../lib/logger';
 
 jest.mock('../../db/pool', () => ({
@@ -19,6 +19,24 @@ jest.mock('../../lib/logger', () => ({
 
 const queryMock = pool.query as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
+const originalAiEnvironment = {
+  nodeEnv: process.env.NODE_ENV,
+  openAiApiKey: process.env.OPENAI_API_KEY,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  hipaaAiEnabled: process.env.HIPAA_AI_ENABLED,
+  openAiCallsEnabled: process.env.OPENAI_API_CALLS_ENABLED,
+  openAiBaaEnabled: process.env.OPENAI_BAA_ENABLED,
+  clinicalAiMode: process.env.CLINICAL_AI_MODE,
+  aiMode: process.env.AI_MODE,
+};
+
+function restoreEnvironmentValue(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 global.fetch = jest.fn();
 
@@ -29,10 +47,65 @@ describe('aiLesionAnalysisService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     queryMock.mockReset();
+    (global.fetch as jest.Mock).mockReset();
     loggerMock.error.mockReset();
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.HIPAA_AI_ENABLED;
+    delete process.env.OPENAI_API_CALLS_ENABLED;
+    delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.CLINICAL_AI_MODE;
+    delete process.env.AI_MODE;
+  });
+
+  afterEach(() => {
+    restoreEnvironmentValue('NODE_ENV', originalAiEnvironment.nodeEnv);
+    restoreEnvironmentValue('OPENAI_API_KEY', originalAiEnvironment.openAiApiKey);
+    restoreEnvironmentValue('ANTHROPIC_API_KEY', originalAiEnvironment.anthropicApiKey);
+    restoreEnvironmentValue('HIPAA_AI_ENABLED', originalAiEnvironment.hipaaAiEnabled);
+    restoreEnvironmentValue('OPENAI_API_CALLS_ENABLED', originalAiEnvironment.openAiCallsEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_ENABLED', originalAiEnvironment.openAiBaaEnabled);
+    restoreEnvironmentValue('CLINICAL_AI_MODE', originalAiEnvironment.clinicalAiMode);
+    restoreEnvironmentValue('AI_MODE', originalAiEnvironment.aiMode);
   });
 
   describe('analyzeImage', () => {
+    it('should fail closed in production when no provider is configured', async () => {
+      process.env.NODE_ENV = 'production';
+      const productionService = new AILesionAnalysisService();
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ id: 'image-1', url: 'https://example.com/lesion.jpg', patient_id: 'patient-1', encounter_id: null }],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await expect(
+        productionService.analyzeImage('image-1', tenantId, userId)
+      ).rejects.toThrow('Failed to analyze lesion image');
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(queryMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should fail closed in production when the provider request fails', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.OPENAI_API_KEY = 'sk-production-test-key';
+      process.env.OPENAI_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_BAA_ENABLED = 'true';
+      const productionService = new AILesionAnalysisService();
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ id: 'image-1', url: 'https://example.com/lesion.jpg', patient_id: 'patient-1', encounter_id: null }],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('provider down'));
+
+      await expect(
+        productionService.analyzeImage('image-1', tenantId, userId)
+      ).rejects.toThrow('Failed to analyze lesion image');
+      expect(global.fetch).toHaveBeenCalled();
+      expect(queryMock).toHaveBeenCalledTimes(2);
+    });
+
     it('logs Error instances and throws a generic failure', async () => {
       queryMock.mockRejectedValueOnce(new Error('db down'));
 

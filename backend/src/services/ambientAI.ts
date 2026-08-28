@@ -133,6 +133,10 @@ function isSyntheticAmbientRuntime(): boolean {
   return mode === 'demo' || mode === 'mock' || isTrueEnv(process.env.AMBIENT_AI_DEMO_MODE);
 }
 
+function hasExplicitAmbientProviderSelection(): boolean {
+  return String(process.env.AMBIENT_TRANSCRIPTION_PROVIDER || '').trim().length > 0;
+}
+
 function unavailableAmbientError(provider: ClinicalAiProvider | 'unknown', reason: string): AmbientAIError {
   return new AmbientAIError('Ambient AI provider is unavailable.', {
     provider: provider === 'anthropic' || provider === 'openai' ? provider : 'unknown',
@@ -452,10 +456,14 @@ export async function transcribeAudio(
       return buildTranscriptionResultFromAdapter(result, durationSeconds);
     } catch (error) {
       providerFailure = error;
-      logger.warn('Ambient transcription provider failed, falling back to OpenAI/mock', {
+      logger.warn('Ambient transcription provider failed closed', {
         error: toSafeErrorMessage(error),
         provider: ambientAdapter.getProvider(),
       });
+      if (isSyntheticAmbientRuntime()) {
+        return await mockTranscribeAudio(audioFilePath, durationSeconds);
+      }
+      throw unavailableAmbientError('unknown', 'SELECTED_TRANSCRIPTION_PROVIDER_FAILED');
     }
   }
 
@@ -701,9 +709,11 @@ export async function transcribeLiveAudioChunk(
   const ambientAdapter = ambientAdapterResolution;
   if (ambientAdapter) {
     if (!ambientAdapter.supportsLiveChunks()) {
-      logger.info('Ambient live transcription provider does not support live chunks, falling back to OpenAI/mock', {
+      logger.info('Ambient live transcription provider does not support live chunks', {
         provider: ambientAdapter.getProvider(),
       });
+      if (isSyntheticAmbientRuntime()) return mockLiveTranscription(chunkIndex);
+      throw unavailableAmbientError('unknown', 'SELECTED_PROVIDER_LIVE_TRANSCRIPTION_UNSUPPORTED');
     } else {
       try {
         const result = await ambientAdapter.transcribeBuffer(audioBuffer, mimeType);
@@ -713,10 +723,12 @@ export async function transcribeLiveAudioChunk(
           source: result.source === 'mock' ? 'mock' : 'live',
         };
       } catch (error) {
-        logger.warn('Ambient live transcription provider failed, falling back to OpenAI/mock', {
+        logger.warn('Ambient live transcription provider failed closed', {
           error: toSafeErrorMessage(error),
           provider: ambientAdapter.getProvider(),
         });
+        if (isSyntheticAmbientRuntime()) return mockLiveTranscription(chunkIndex);
+        throw unavailableAmbientError('unknown', 'SELECTED_LIVE_TRANSCRIPTION_PROVIDER_FAILED');
       }
     }
   }
@@ -814,7 +826,7 @@ export async function transcribeLiveAudioChunk(
 
 async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
   if (!tenantId) {
-    return isAmbientTranscriptionProviderExplicitlyMock()
+    return hasExplicitAmbientProviderSelection()
       ? AMBIENT_PROVIDER_FALLBACK_BLOCKED
       : null;
   }
@@ -826,12 +838,14 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
     }
     const envProvider = resolveAmbientTranscriptionProviderFromEnv();
     if (!envProvider || !hasAmbientTranscriptionCredentials(envProvider)) {
-      return null;
+      return hasExplicitAmbientProviderSelection()
+        ? AMBIENT_PROVIDER_FALLBACK_BLOCKED
+        : null;
     }
 
     const provider = envProvider as ClinicalAiProvider;
     if (!isClinicalAiProviderCallsEnabled(provider)) {
-      return null;
+      return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
     }
 
     return createAmbientTranscriptionAdapter(
@@ -842,7 +856,7 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
   }
 
   if (!config.isActive) {
-    return null;
+    return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
   }
 
   const configuredEnvironment = String(config.config?.environment || config.config?.mode || '')
@@ -857,7 +871,7 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
     return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
   }
   if (!useMock && configuredProvider !== 'mock' && !isClinicalAiProviderCallsEnabled(configuredProvider as ClinicalAiProvider)) {
-    return null;
+    return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
   }
   const adapter = createAmbientTranscriptionAdapter(
     tenantId,

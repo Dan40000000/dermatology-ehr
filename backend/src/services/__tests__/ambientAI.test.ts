@@ -146,6 +146,8 @@ describe('AmbientAI Service', () => {
       process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
       process.env.ABRIDGE_BAA_ENABLED = 'true';
       process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       (getIntegrationConfig as jest.Mock).mockResolvedValue({
         id: 'ambient-config-1',
         tenantId: 'tenant-123',
@@ -156,6 +158,26 @@ describe('AmbientAI Service', () => {
         isActive: true,
         syncFrequencyMinutes: 60,
       });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
+    it('does not cross vendors when an explicit environment provider is disabled', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'abridge';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'false';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
 
       const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
@@ -285,6 +307,37 @@ describe('AmbientAI Service', () => {
   });
 
   describe('transcribeLiveAudioChunk', () => {
+    it('does not cross vendors when a database-selected provider is disabled', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.ABRIDGE_BAA_ENABLED = 'false';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-disabled-live',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'abridge',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeLiveAudioChunk(
+        Buffer.from('synthetic-audio'),
+        'audio/webm',
+        0,
+        { tenantId: 'tenant-123' }
+      );
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.source).toBe('mock');
+      adapterFactory.mockRestore();
+    });
+
     it('does not fall through from an explicit database mock provider to live OpenAI', async () => {
       process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
       process.env.OPENAI_API_KEY = 'live-openai-key';

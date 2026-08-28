@@ -49,6 +49,7 @@ describe('AmbientAI Service', () => {
     delete process.env.ABRIDGE_API_CALLS_ENABLED;
     delete process.env.ABRIDGE_BAA_ENABLED;
     delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+    delete process.env.AMBIENT_TRANSCRIPTION_PROVIDER;
     (getIntegrationConfig as jest.Mock).mockReset();
     (getIntegrationConfig as jest.Mock).mockResolvedValue(null);
     process.env.AMBIENT_AI_MOCK_DELAY_MS = '0';
@@ -172,6 +173,8 @@ describe('AmbientAI Service', () => {
       process.env.ABRIDGE_API_KEY = 'live-abridge-key';
       process.env.ABRIDGE_BAA_ENABLED = 'true';
       process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       (getIntegrationConfig as jest.Mock).mockResolvedValue({
         id: 'ambient-config-mock',
         tenantId: 'tenant-123',
@@ -182,6 +185,26 @@ describe('AmbientAI Service', () => {
         isActive: true,
         syncFrequencyMinutes: 60,
       });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
+    it('does not reinterpret an explicit environment mock provider as live when credentials exist', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
       const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
 
       const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
@@ -258,6 +281,60 @@ describe('AmbientAI Service', () => {
 
       const lastSegment = result.segments[result.segments.length - 1];
       expect(lastSegment.end).toBeLessThanOrEqual(100 + 50);
+    });
+  });
+
+  describe('transcribeLiveAudioChunk', () => {
+    it('does not fall through from an explicit database mock provider to live OpenAI', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-mock-live',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'mock',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeLiveAudioChunk(
+        Buffer.from('synthetic-audio'),
+        'audio/webm',
+        0,
+        { tenantId: 'tenant-123' }
+      );
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.source).toBe('mock');
+      adapterFactory.mockRestore();
+    });
+
+    it('does not fall through from an explicit environment mock provider to live credentials', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeLiveAudioChunk(
+        Buffer.from('synthetic-audio'),
+        'audio/webm',
+        0,
+        { tenantId: 'tenant-123' }
+      );
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.source).toBe('mock');
+      adapterFactory.mockRestore();
     });
   });
 

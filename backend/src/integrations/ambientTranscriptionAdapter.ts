@@ -261,9 +261,10 @@ function hasAwsHealthScribeEnvConfig(): boolean {
 }
 
 export function resolveAmbientTranscriptionProviderFromEnv(): Exclude<AmbientTranscriptionProvider, 'mock'> | null {
-  const explicit = normalizeProvider(process.env.AMBIENT_TRANSCRIPTION_PROVIDER);
-  if (explicit !== 'mock') {
-    return explicit;
+  const explicitValue = String(process.env.AMBIENT_TRANSCRIPTION_PROVIDER || '').trim();
+  if (explicitValue) {
+    const explicit = normalizeProvider(explicitValue);
+    return explicit === 'mock' ? null : explicit;
   }
 
   if (hasAmbientTranscriptionCredentials('abridge')) {
@@ -280,6 +281,11 @@ export function resolveAmbientTranscriptionProviderFromEnv(): Exclude<AmbientTra
   }
 
   return null;
+}
+
+export function isAmbientTranscriptionProviderExplicitlyMock(): boolean {
+  const explicitValue = String(process.env.AMBIENT_TRANSCRIPTION_PROVIDER || '').trim();
+  return explicitValue.length > 0 && normalizeProvider(explicitValue) === 'mock';
 }
 
 export function hasAmbientTranscriptionCredentials(

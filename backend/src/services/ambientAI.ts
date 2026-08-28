@@ -31,6 +31,7 @@ import { getIntegrationConfig } from '../integrations/baseAdapter';
 import {
   createAmbientTranscriptionAdapter,
   hasAmbientTranscriptionCredentials,
+  isAmbientTranscriptionProviderExplicitlyMock,
   resolveAmbientTranscriptionProviderFromEnv,
   type AmbientTranscriptionResult,
 } from '../integrations/ambientTranscriptionAdapter';
@@ -411,6 +412,8 @@ export type ClinicalNoteGenerationResult =
     generationMetadata: ClinicalNoteGenerationMetadata;
   };
 
+const AMBIENT_PROVIDER_FALLBACK_BLOCKED = Symbol('ambient-provider-fallback-blocked');
+
 /**
  * Transcribe audio using the configured ambient provider, with OpenAI/mock fallback
  */
@@ -420,7 +423,14 @@ export async function transcribeAudio(
   options?: AmbientTranscriptionOptions
 ): Promise<TranscriptionResult> {
   let providerFailure: unknown;
-  const ambientAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  const ambientAdapterResolution = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  if (ambientAdapterResolution === AMBIENT_PROVIDER_FALLBACK_BLOCKED) {
+    if (isSyntheticAmbientRuntime()) {
+      return await mockTranscribeAudio(audioFilePath, durationSeconds);
+    }
+    throw unavailableAmbientError('unknown', 'AMBIENT_PROVIDER_EXPLICITLY_DISABLED');
+  }
+  const ambientAdapter = ambientAdapterResolution;
   if (ambientAdapter) {
     try {
       const startedAt = Date.now();
@@ -683,7 +693,12 @@ export async function transcribeLiveAudioChunk(
   chunkIndex: number,
   options?: AmbientTranscriptionOptions
 ): Promise<LiveTranscriptionResult> {
-  const ambientAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  const ambientAdapterResolution = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  if (ambientAdapterResolution === AMBIENT_PROVIDER_FALLBACK_BLOCKED) {
+    if (isSyntheticAmbientRuntime()) return mockLiveTranscription(chunkIndex);
+    throw unavailableAmbientError('unknown', 'AMBIENT_PROVIDER_EXPLICITLY_DISABLED');
+  }
+  const ambientAdapter = ambientAdapterResolution;
   if (ambientAdapter) {
     if (!ambientAdapter.supportsLiveChunks()) {
       logger.info('Ambient live transcription provider does not support live chunks, falling back to OpenAI/mock', {
@@ -799,11 +814,16 @@ export async function transcribeLiveAudioChunk(
 
 async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
   if (!tenantId) {
-    return null;
+    return isAmbientTranscriptionProviderExplicitlyMock()
+      ? AMBIENT_PROVIDER_FALLBACK_BLOCKED
+      : null;
   }
 
   const config = await getIntegrationConfig(tenantId, 'ambient_transcription');
   if (!config) {
+    if (isAmbientTranscriptionProviderExplicitlyMock()) {
+      return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
+    }
     const envProvider = resolveAmbientTranscriptionProviderFromEnv();
     if (!envProvider || !hasAmbientTranscriptionCredentials(envProvider)) {
       return null;
@@ -830,11 +850,11 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
     .toLowerCase();
   const useMock = configuredEnvironment === 'mock' || configuredEnvironment === 'demo' || configuredEnvironment === 'test';
   if (useMock && !isSyntheticAmbientRuntime()) {
-    return null;
+    return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
   }
   const configuredProvider = config.provider || resolveAmbientTranscriptionProviderFromEnv() || 'abridge';
   if (configuredProvider === 'mock' && !useMock) {
-    return null;
+    return AMBIENT_PROVIDER_FALLBACK_BLOCKED;
   }
   if (!useMock && configuredProvider !== 'mock' && !isClinicalAiProviderCallsEnabled(configuredProvider as ClinicalAiProvider)) {
     return null;

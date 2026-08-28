@@ -588,6 +588,10 @@ describe('AmbientTranscriptionAdapter providers', () => {
     delete process.env.AWS_HEALTHSCRIBE_DATA_ACCESS_ROLE_ARN;
     process.env.WISPR_FLOW_API_KEY = 'wispr-key';
     expect(resolveAmbientTranscriptionProviderFromEnv()).toBe('wispr_flow');
+
+    process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+    process.env.ABRIDGE_API_KEY = 'abridge-key';
+    expect(resolveAmbientTranscriptionProviderFromEnv()).toBeNull();
   });
 
   it('detects whether provider credentials exist in the environment', () => {

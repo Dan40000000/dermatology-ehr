@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, type KeyboardEvent } from 'react';
 import type { Appointment, Provider, Availability } from '../../types';
 import {
+  formatDateInPracticeTimeZone,
   formatTimeInPracticeTimeZone,
   getDateKeyInPracticeTimeZone,
   getTimePartsInPracticeTimeZone,
@@ -60,6 +61,19 @@ function isTelehealthAppointment(appointment: Appointment | null | undefined): b
   if (!appointment) return false;
   const combined = `${appointment.appointmentTypeName || ''} ${appointment.locationName || ''}`.toLowerCase();
   return /telehealth|virtual|video/.test(combined);
+}
+
+function formatRecurrenceEndDate(value: string, practiceTimeZone?: string | null): string {
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(isDateOnly ? `${value}T12:00:00.000Z` : value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown date';
+  }
+  return formatDateInPracticeTimeZone(date, isDateOnly ? 'UTC' : practiceTimeZone, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function buildAppointmentLayoutIndex(bucketMap: Map<string, Appointment[]>): Map<string, AppointmentLayout> {
@@ -1156,11 +1170,7 @@ export function Calendar({
                   <div className="tooltip-row">
                     <span className="tooltip-label">Until:</span>
                     <span className="tooltip-value">
-                      {new Date(hoveredTimeBlock.recurrenceEndDate).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}
+                      {formatRecurrenceEndDate(hoveredTimeBlock.recurrenceEndDate, practiceTimeZone)}
                     </span>
                   </div>
                 )}

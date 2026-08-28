@@ -506,8 +506,12 @@ describe('SchedulePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Today' }));
     fireEvent.click(screen.getByRole('button', { name: /Next/ }));
 
+    expect(screen.getByRole('button', { name: 'Day' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Week' })).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(screen.getByRole('button', { name: 'Week' }));
+    expect(screen.getByRole('button', { name: 'Week' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+    expect(screen.getByRole('button', { name: 'Day' })).toHaveAttribute('aria-pressed', 'true');
 
     fireEvent.click(screen.getByRole('button', { name: /Appointment Finder/i }));
     const finderModal = await screen.findByTestId('modal-smart-appointment-finder');

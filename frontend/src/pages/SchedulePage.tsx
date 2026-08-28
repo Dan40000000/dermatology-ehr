@@ -2620,6 +2620,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'day' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'day'}
                 onClick={() => updateViewMode('day')}
               >
                 Day
@@ -2627,6 +2628,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'week' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'week'}
                 onClick={() => updateViewMode('week')}
               >
                 Week
@@ -2634,6 +2636,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'month' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'month'}
                 onClick={() => updateViewMode('month')}
               >
                 Month

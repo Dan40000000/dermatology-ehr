@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Calendar } from '../Calendar';
 import type { Appointment, Provider } from '../../../types';
@@ -154,5 +154,38 @@ describe('Calendar', () => {
 
     expect(screen.getByText('April 2026')).toBeInTheDocument();
     expect(screen.queryByText('Invalid Time Patient')).not.toBeInTheDocument();
+  });
+
+  it('keeps a date-only recurrence end date on the intended calendar day', () => {
+    render(
+      <Calendar
+        currentDate={new Date(2026, 3, 27, 12, 0, 0, 0)}
+        viewMode="day"
+        practiceTimeZone="America/Los_Angeles"
+        appointments={[]}
+        providers={[provider]}
+        availability={[]}
+        timeBlocks={[
+          {
+            id: 'block-recurring',
+            providerId: provider.id,
+            title: 'Recurring block',
+            blockType: 'other',
+            startTime: '2026-04-27T16:00:00.000Z',
+            endTime: '2026-04-27T16:30:00.000Z',
+            status: 'active',
+            isRecurring: true,
+            recurrencePattern: 'weekly',
+            recurrenceEndDate: '2026-08-27',
+          },
+        ]}
+        selectedAppointment={null}
+        onAppointmentClick={vi.fn()}
+        onSlotClick={vi.fn()}
+      />
+    );
+
+    fireEvent.mouseEnter(screen.getByRole('button', { name: /Time block Recurring block/i }));
+    expect(screen.getByText('Aug 27, 2026')).toBeInTheDocument();
   });
 });

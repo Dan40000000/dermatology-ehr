@@ -13,6 +13,7 @@ jobs:
     environment: production
     env:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      BACKUP_RETENTION_DAYS: 90
     services:
       postgres:
         image: postgres:16
@@ -40,9 +41,11 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           BACKUP_BUCKET: ${{ secrets.BACKUP_BUCKET }}
           BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          BACKUP_KMS_KEY_ID: ${{ secrets.BACKUP_KMS_KEY_ID }}
         run: |
+          set -euo pipefail
           missing=()
-          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION DATABASE_URL BACKUP_BUCKET BACKUP_ENCRYPTION_KEY; do
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION DATABASE_URL BACKUP_BUCKET BACKUP_ENCRYPTION_KEY BACKUP_KMS_KEY_ID; do
             if [ -z "${!name:-}" ]; then
               missing+=("$name")
             fi
@@ -50,6 +53,11 @@ jobs:
 
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Production backup configuration is incomplete. Missing GitHub environment secret(s): ${missing[*]}"
+            exit 1
+          fi
+
+          if ! [[ "${BACKUP_RETENTION_DAYS:-}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::BACKUP_RETENTION_DAYS must be configured as a positive integer"
             exit 1
           fi
 
@@ -73,7 +81,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           BACKUP_BUCKET: ${{ secrets.BACKUP_BUCKET }}
           BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
-          BACKUP_RETENTION_DAYS: 90
+          BACKUP_KMS_KEY_ID: ${{ secrets.BACKUP_KMS_KEY_ID }}
           BACKUP_KEEP_LOCAL: true
 
       - name: Verify backup

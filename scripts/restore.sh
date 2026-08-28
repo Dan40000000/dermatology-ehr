@@ -92,10 +92,10 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
 
   DECRYPTED_FILE="${BACKUP_FILE%.enc}"
 
-  openssl enc -aes-256-cbc -d \
+  openssl enc -aes-256-cbc -d -pbkdf2 \
     -in "$BACKUP_FILE" \
     -out "$DECRYPTED_FILE" \
-    -k "$BACKUP_ENCRYPTION_KEY"
+    -pass env:BACKUP_ENCRYPTION_KEY
 
   if [ $? -eq 0 ]; then
     echo "✓ Backup decrypted successfully"

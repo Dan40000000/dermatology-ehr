@@ -102,4 +102,22 @@ if env \
 fi
 grep -q "Refusing to restore into non-verification database" "$TEST_ROOT/restore-refusal.log"
 
+printf '%s\n' \
+  '#!/bin/bash' \
+  'set -euo pipefail' \
+  'if [[ "$*" == *"current_database()"* ]]; then echo restore_verify; exit 0; fi' \
+  'if [[ "$*" == *"COUNT(*) FROM information_schema.tables"* ]]; then echo 4; exit 0; fi' \
+  'cat >/dev/null' \
+  > "$FAKE_BIN/psql"
+chmod +x "$FAKE_BIN/psql"
+
+printf '%s\n' yes | env \
+  PATH="$FAKE_BIN:$PATH" \
+  DATABASE_URL=postgresql://restore-test.invalid/derm_restore_verify \
+  BACKUP_ENCRYPTION_KEY=backup-test-key \
+  bash "$REPO_ROOT/scripts/restore.sh" "$ENCRYPTED_BACKUP" \
+  >"$TEST_ROOT/restore-script.log" 2>&1
+grep -q "Backup decrypted successfully" "$TEST_ROOT/restore-script.log"
+grep -q "Restore complete!" "$TEST_ROOT/restore-script.log"
+
 echo "Backup script regression checks passed"

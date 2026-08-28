@@ -929,7 +929,7 @@ describe('TextMessagesPage', () => {
       expect(apiMocks.fetchSMSSettings).toHaveBeenCalledWith('tenant-1', 'token-1'),
     );
 
-    const reminderHours = screen.getByLabelText('Reminder Lead Time (Hours)') as HTMLInputElement;
+    const reminderHours = await screen.findByLabelText('Reminder Lead Time (Hours)') as HTMLInputElement;
     fireEvent.change(reminderHours, { target: { value: '48' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Messaging Settings' }));

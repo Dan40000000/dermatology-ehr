@@ -9,6 +9,7 @@ This folder is the working evidence binder for staging/production HIPAA readines
 - `evidence/access-review-log.md`: Access recertification records and approvals.
 - `evidence/incident-response-tabletop.md`: Incident tabletop drills and outcomes.
 - `evidence/operating-checklist.md`: Daily/weekly/monthly HIPAA operating controls and go-live gates.
+- `patient-data-agreement-matrix.md`: Customer/vendor agreement map and explicit live-PHI activation blockers.
 
 ## Usage
 

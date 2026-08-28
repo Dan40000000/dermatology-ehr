@@ -64,7 +64,7 @@ if [ -n "${BACKUP_ENCRYPTION_KEY:-}" ]; then
     -pbkdf2 \
     -in "$BACKUP_DIR/$BACKUP_FILE_GZ" \
     -out "$BACKUP_DIR/$BACKUP_FILE_ENCRYPTED" \
-    -k "$BACKUP_ENCRYPTION_KEY"
+    -pass env:BACKUP_ENCRYPTION_KEY
 
   echo "✓ Backup encrypted successfully"
   rm "$BACKUP_DIR/$BACKUP_FILE_GZ"

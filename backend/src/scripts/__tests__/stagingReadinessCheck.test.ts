@@ -105,4 +105,32 @@ describe('stagingReadinessCheck', () => {
     expect(vendorCheck?.detail).toMatch(/OWNER_REPORTED_ACTIVE|REVIEW_NEEDED/);
     expect(vendorCheck?.detail).toContain('artifact_link is missing or a placeholder');
   });
+
+  it('accepts a positive policy-defined backup retention window without claiming HIPAA mandates six years of backups', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        BACKUP_RETENTION_DAYS: '90',
+      },
+      { skipDb: true }
+    );
+
+    const retentionCheck = report.checks.find((item) => item.id === 'backup:retention');
+    expect(retentionCheck?.status).toBe('pass');
+    expect(retentionCheck?.detail).toContain('BACKUP_RETENTION_DAYS=90');
+    expect(retentionCheck?.detail).not.toContain('2190');
+  });
+
+  it('blocks production-like readiness when no backup retention window is configured', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+      },
+      { skipDb: true }
+    );
+
+    const retentionCheck = report.checks.find((item) => item.id === 'backup:retention');
+    expect(retentionCheck?.status).toBe('fail');
+    expect(retentionCheck?.remediation).toContain('medical-record law');
+  });
 });

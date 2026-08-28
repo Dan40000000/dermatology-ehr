@@ -1,6 +1,6 @@
 # HIPAA Operating Checklist
 
-Last technical release review: 2026-08-26
+Last technical release review: 2026-08-27
 Last practice-owner attestation recorded: 2026-05-24
 Owner: Practice administrator and compliance officer
 Scope: Dermatology EHR staging and production operations
@@ -31,18 +31,20 @@ This checklist is the operating control list for a practice using the system wit
 - Run accessibility smoke checks for login, patient portal, booking, intake, schedule, patients, Command Center, and coding review.
 - Review incident response contacts, breach triage owner, and escalation path.
 - Verify restore drill evidence or backup integrity checks are current.
-- Review vendor BAA inventory for AWS, voice/ambient transcription, SMS, clearinghouse/eligibility, payment processor, email, error monitoring, and any AI provider used with PHI.
+- Review vendor BAA inventory for Railway, AWS, voice/ambient transcription, SMS, clearinghouse/eligibility, fax, e-prescribing/prior authorization, payment processor, email, error monitoring, and any AI provider used with PHI.
 
 ## Vendor Status Snapshot
 
 | Vendor / capability | Operating status | Evidence needed before live PHI |
 | --- | --- | --- |
+| Railway application/database hosting | Code deployment target identified | Signed BAA covering the exact production project, services, logs, volumes, and database |
 | AWS storage and hosting | Configured as HIPAA-capable infrastructure | Signed BAA, encryption, backup, logging, access review |
 | Voice / ambient transcription | Configured for healthcare workflow | Signed BAA and live-region configuration evidence |
 | SMS texting | Credentials configured; approval status checked separately | 10DLC/toll-free approval evidence, opt-in language, privacy/terms pages |
 | Stedi eligibility / clearinghouse | Test integration configured | Production enrollment, payer trading partner approvals, claim/ERA test evidence |
 | Stripe payments | Customer-owned account connection pattern | Connected account onboarding evidence and no stored bank credentials |
 | OpenAI or AI assistant provider | Guardrails added for non-BAA mode | BAA or non-PHI operating policy, warning logs, user training |
+| Phaxio fax | Integration implemented but not approved for live PHI | Signed BAA and HIPAA account/configuration evidence |
 | eRx | Deferred until vendor/client onboarding | eRx vendor contract, identity proofing, EPCS controls if controlled substances |
 
 ## Go-Live Sign-Off Gates
@@ -54,6 +56,7 @@ This checklist is the operating control list for a practice using the system wit
 - SMS cannot be used for patient care until consent capture, STOP/HELP handling, delivery logging, privacy policy, terms, and carrier approval evidence are in place.
 - Accessibility issue register has no open patient-facing critical blocker.
 - Incident response owner, data export process, backup process, and audit-log retention are assigned.
+- Backup retention matches an approved data-retention/disaster-recovery policy; do not infer that HIPAA's six-year compliance-document retention rule mandates six years of every database backup.
 
 ## 2026-05-24 Review Notes
 

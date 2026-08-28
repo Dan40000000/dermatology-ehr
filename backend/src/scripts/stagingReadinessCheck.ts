@@ -632,14 +632,19 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
   );
 
   checks.push(
-    backupRetentionDays >= 2190
-      ? check('backup:retention', 'pass', 'Backup retention window', `BACKUP_RETENTION_DAYS=${backupRetentionDays} (>= 2190 target).`)
+    backupRetentionDays > 0
+      ? check(
+          'backup:retention',
+          'pass',
+          'Backup retention window',
+          `BACKUP_RETENTION_DAYS=${backupRetentionDays}. Confirm this value matches the approved data-retention and disaster-recovery policy.`
+        )
       : check(
           'backup:retention',
           productionLike ? 'fail' : 'warn',
           'Backup retention window',
-          `BACKUP_RETENTION_DAYS=${backupRetentionDays} (< 2190 target).`,
-          'Configure immutable backup retention for at least six years (2190 days).'
+          'BACKUP_RETENTION_DAYS is missing or not a positive number.',
+          'Set a positive retention window approved through the risk analysis, applicable medical-record law, customer contracts, and disaster-recovery policy. HIPAA\'s six-year rule applies to required compliance documentation, not automatically to every database backup.'
         )
   );
 

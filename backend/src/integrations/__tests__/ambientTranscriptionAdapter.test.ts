@@ -48,6 +48,12 @@ describe('AmbientTranscriptionAdapter providers', () => {
   });
 
   beforeEach(() => {
+    process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+    process.env.EXTERNAL_AI_API_CALLS_ENABLED = 'true';
+    process.env.ABRIDGE_BAA_ENABLED = 'true';
+    process.env.WISPR_FLOW_BAA_ENABLED = 'true';
+    process.env.NABLA_BAA_ENABLED = 'true';
+    process.env.AWS_HEALTHSCRIBE_BAA_ENABLED = 'true';
     delete process.env.AMBIENT_TRANSCRIPTION_PROVIDER;
     delete process.env.ABRIDGE_API_KEY;
     delete process.env.ABRIDGE_ACCESS_TOKEN;
@@ -84,6 +90,15 @@ describe('AmbientTranscriptionAdapter providers', () => {
     } as Response);
   });
 
+  afterAll(() => {
+    delete process.env.ALLOW_EXTERNAL_AI_IN_TEST;
+    delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+    delete process.env.ABRIDGE_BAA_ENABLED;
+    delete process.env.WISPR_FLOW_BAA_ENABLED;
+    delete process.env.NABLA_BAA_ENABLED;
+    delete process.env.AWS_HEALTHSCRIBE_BAA_ENABLED;
+  });
+
   function createWisprAdapter(): AmbientTranscriptionAdapter {
     const adapter = new AmbientTranscriptionAdapter({
       tenantId: 'tenant-demo',
@@ -113,6 +128,16 @@ describe('AmbientTranscriptionAdapter providers', () => {
 
     return adapter;
   }
+
+  it('blocks raw audio before transport when provider API calls are disabled', async () => {
+    delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+    const adapter = createWisprAdapter();
+
+    await expect(
+      adapter.transcribeBuffer(Buffer.from('patient audio'), 'audio/webm')
+    ).rejects.toThrow('API calls are disabled');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
 
   it('uploads live audio chunks to the official Wispr multipart endpoint', async () => {
     const adapter = createWisprAdapter();

@@ -1,6 +1,7 @@
 import {
   getEnabledAnthropicApiKey,
   getEnabledOpenAiApiKey,
+  isClinicalAiProviderCallsEnabled,
   isAnthropicApiCallsEnabled,
   isOpenAiApiCallsEnabled,
 } from '../externalAiGate';
@@ -16,6 +17,8 @@ describe('externalAiGate', () => {
     delete process.env.ANTHROPIC_API_CALLS_ENABLED;
     delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
     delete process.env.ALLOW_EXTERNAL_AI_IN_TEST;
+    delete process.env.ABRIDGE_API_CALLS_ENABLED;
+    delete process.env.ABRIDGE_BAA_ENABLED;
   });
 
   afterAll(() => {
@@ -72,5 +75,19 @@ describe('externalAiGate', () => {
     process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
 
     expect(getEnabledOpenAiApiKey()).toBe('sk-real-looking-key');
+  });
+
+  it('requires both API-call enablement and BAA attestation for database-backed providers', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ABRIDGE_BAA_ENABLED = 'true';
+    process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+
+    expect(isClinicalAiProviderCallsEnabled('abridge')).toBe(false);
+
+    process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+    expect(isClinicalAiProviderCallsEnabled('abridge')).toBe(true);
+
+    delete process.env.ABRIDGE_BAA_ENABLED;
+    expect(isClinicalAiProviderCallsEnabled('abridge')).toBe(false);
   });
 });

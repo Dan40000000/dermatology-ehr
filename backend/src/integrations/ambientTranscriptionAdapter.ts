@@ -12,6 +12,10 @@ import {
 import FormData from 'form-data';
 import jwt from 'jsonwebtoken';
 import { BaseAdapter, AdapterOptions } from './baseAdapter';
+import {
+  isClinicalAiProviderCallsEnabled,
+  type ClinicalAiProvider,
+} from '../utils/externalAiGate';
 
 export type AmbientTranscriptionProvider =
   | 'wispr_flow'
@@ -592,6 +596,12 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
     return this.getProviderDefaults().supportsLiveChunks;
   }
 
+  private assertExternalCallsEnabled(): void {
+    if (!isClinicalAiProviderCallsEnabled(this.provider as ClinicalAiProvider)) {
+      throw new Error('Ambient transcription provider API calls are disabled or lack BAA attestation.');
+    }
+  }
+
   async testConnection(): Promise<{ success: boolean; message: string }> {
     if (this.useMock) {
       return {
@@ -601,6 +611,7 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
     }
 
     try {
+      this.assertExternalCallsEnabled();
       const durationMs = this.provider === 'aws_healthscribe' ? 750 : 250;
       await this.transcribeAudioBuffer(createSilentWavBuffer(16000, durationMs), {
         filename: `${this.provider}-connection-test.wav`,
@@ -625,6 +636,7 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
       return this.buildMockResult('recording');
     }
 
+    this.assertExternalCallsEnabled();
     const audioBuffer = await fs.readFile(audioFilePath);
     const filename = path.basename(audioFilePath) || 'recording.wav';
     return this.transcribeAudioBuffer(audioBuffer, {
@@ -639,6 +651,7 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
       return this.buildMockResult('live');
     }
 
+    this.assertExternalCallsEnabled();
     if (!this.supportsLiveChunks()) {
       throw new Error(`${this.getProviderLabel()} live chunk transcription is not supported in this app. Use recorded encounter processing instead.`);
     }

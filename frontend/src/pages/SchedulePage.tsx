@@ -114,6 +114,17 @@ function toInputDateValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function dateFromDateKey(dateKey: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, (month || 1) - 1, day || 1, 12, 0, 0, 0);
+}
+
+function getScheduleDate(dayOffset: number): Date {
+  const clinicToday = dateFromDateKey(getDateKeyInPracticeTimeZone());
+  clinicToday.setDate(clinicToday.getDate() + dayOffset);
+  return clinicToday;
+}
+
 function getViewRange(
   currentDate: Date,
   viewMode: ScheduleViewMode,
@@ -575,10 +586,7 @@ export function SchedulePage() {
   }, [setSearchParams]);
 
   const currentDate = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + dayOffset);
-    date.setHours(0, 0, 0, 0);
-    return date;
+    return getScheduleDate(dayOffset);
   }, [dayOffset]);
 
   const clearScheduleDateParam = useCallback(() => {
@@ -591,10 +599,7 @@ export function SchedulePage() {
   }, [setSearchParams]);
 
   const setScheduleDate = useCallback((date: Date) => {
-    const today = startOfDay(new Date());
-    const target = startOfDay(date);
-    const diffDays = Math.round((target.getTime() - today.getTime()) / DAY_MS);
-    setDayOffset(diffDays);
+    setDayOffset(getDayOffsetFromClinicToday(toInputDateValue(date)));
     clearScheduleDateParam();
   }, [clearScheduleDateParam]);
 
@@ -772,9 +777,7 @@ export function SchedulePage() {
     setLoading(true);
     try {
       // Calculate date range based on view mode
-      const selectedDate = new Date();
-      selectedDate.setDate(selectedDate.getDate() + dayOffset);
-      selectedDate.setHours(0, 0, 0, 0);
+      const selectedDate = getScheduleDate(dayOffset);
 
       // Determine start and end dates based on view mode
       let startDate: Date;
@@ -796,7 +799,7 @@ export function SchedulePage() {
         endDate.setDate(endDate.getDate() + 60);
       }
 
-      const formatDate = (d: Date) => d.toISOString().split('T')[0];
+      const formatDate = (d: Date) => toInputDateValue(d);
 
       const canLoadPriorAuths =
         !session.user

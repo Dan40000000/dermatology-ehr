@@ -59,9 +59,10 @@ vi.mock('../../api', () => apiMocks);
 vi.mock('../../api/financials', () => financialApiMocks);
 
 import { HomePage } from '../HomePage';
+import { getDateKeyInPracticeTimeZone } from '../../utils/practiceDateTime';
 
 const buildFixtures = () => {
-  const now = new Date();
+  const now = new Date(`${getDateKeyInPracticeTimeZone()}T12:00:00`);
   const todayMorning = new Date(now);
   todayMorning.setHours(9, 0, 0, 0);
   const todayAfternoon = new Date(now);
@@ -220,6 +221,7 @@ describe('HomePage', () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.clearAllMocks();
   });
@@ -373,6 +375,8 @@ describe('HomePage', () => {
   }, 20000);
 
   it('renders command action queues and routes each work item to its owning page', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-28T00:30:00.000Z'));
     authMocks.session = {
       tenantId: 'tenant-1',
       accessToken: 'token-1',

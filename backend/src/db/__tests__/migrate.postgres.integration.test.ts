@@ -67,13 +67,54 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     }
   });
 
-  it('runs every migration from an empty database, including migration 223', async () => {
+  it('runs every migration from an empty database, including interoperability hardening', async () => {
     const applied = await applicationPool!.query<{ name: string }>(
       'SELECT name FROM migrations ORDER BY applied_at, name',
     );
 
     expect(applied.rows.length).toBeGreaterThan(1);
     expect(applied.rows.map((row) => row.name)).toContain('223_insurance_estimate_program');
+    expect(applied.rows.map((row) => row.name)).toContain('229_fhir_hl7_interoperability_schema');
+  });
+
+  it('creates the production FHIR OAuth and HL7 queue schema', async () => {
+    const columns = await applicationPool!.query<{
+      table_name: string;
+      column_name: string;
+      is_nullable: string;
+    }>(
+      `SELECT table_name, column_name, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('fhir_oauth_tokens', 'hl7_messages')`,
+    );
+
+    const fhirColumns = new Set(
+      columns.rows.filter((row) => row.table_name === 'fhir_oauth_tokens').map((row) => row.column_name),
+    );
+    const hl7Columns = new Set(
+      columns.rows.filter((row) => row.table_name === 'hl7_messages').map((row) => row.column_name),
+    );
+    expect([...fhirColumns]).toEqual(expect.arrayContaining([
+      'tenant_id', 'client_id', 'access_token', 'scope', 'patient_id', 'user_id', 'expires_at', 'last_used_at',
+    ]));
+    expect([...hl7Columns]).toEqual(expect.arrayContaining([
+      'tenant_id', 'message_type', 'message_control_id', 'raw_message', 'parsed_data', 'status', 'retry_count',
+    ]));
+    expect(
+      columns.rows.find((row) => row.table_name === 'hl7_messages' && row.column_name === 'message_control_id'),
+    ).toMatchObject({ is_nullable: 'NO' });
+
+    const indexes = await applicationPool!.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename IN ('fhir_oauth_tokens', 'hl7_messages')`,
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual(expect.arrayContaining([
+      'idx_fhir_tokens_patient',
+      'idx_hl7_messages_tenant_status',
+      'idx_hl7_messages_retry',
+    ]));
   });
 
   it('enforces insurance rate constraints and supports real inserts and updates', async () => {

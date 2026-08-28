@@ -16394,6 +16394,132 @@ Consider age-appropriate treatments and include family counseling points.',
                   updated_at = NOW();
     `,
   },
+  {
+    name: "229_fhir_hl7_interoperability_schema",
+    sql: `
+    -- The deployed application runs this embedded migration list. Keep the
+    -- FHIR OAuth and HL7 queue schema here instead of relying on standalone
+    -- SQL files that are not copied into the production image.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS fhir_oauth_tokens (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      client_id TEXT NOT NULL,
+      client_secret TEXT NOT NULL,
+      access_token TEXT NOT NULL UNIQUE,
+      refresh_token TEXT,
+      scope TEXT,
+      patient_id TEXT,
+      user_id TEXT,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      client_name TEXT,
+      redirect_uris TEXT,
+      last_used_at TIMESTAMPTZ
+    );
+
+    ALTER TABLE fhir_oauth_tokens
+      ADD COLUMN IF NOT EXISTS patient_id TEXT,
+      ADD COLUMN IF NOT EXISTS user_id TEXT,
+      ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_tenant ON fhir_oauth_tokens(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_access ON fhir_oauth_tokens(access_token);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_client ON fhir_oauth_tokens(client_id);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_expires ON fhir_oauth_tokens(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_patient ON fhir_oauth_tokens(patient_id);
+
+    CREATE OR REPLACE FUNCTION update_fhir_oauth_tokens_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = CURRENT_TIMESTAMP;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_update_fhir_oauth_tokens_updated_at ON fhir_oauth_tokens;
+    CREATE TRIGGER trigger_update_fhir_oauth_tokens_updated_at
+      BEFORE UPDATE ON fhir_oauth_tokens
+      FOR EACH ROW EXECUTE FUNCTION update_fhir_oauth_tokens_updated_at();
+
+    DELETE FROM fhir_oauth_tokens
+     WHERE client_id ILIKE '%demo%'
+        OR client_name ILIKE '%demo%';
+
+    CREATE TABLE IF NOT EXISTS hl7_messages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      message_type TEXT NOT NULL,
+      message_control_id TEXT NOT NULL,
+      sending_application TEXT,
+      sending_facility TEXT,
+      receiving_application TEXT,
+      receiving_facility TEXT,
+      raw_message TEXT NOT NULL,
+      parsed_data JSONB,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error_message TEXT,
+      processed_at TIMESTAMPTZ,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      next_retry_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT hl7_messages_status_check
+        CHECK (status IN ('pending', 'processing', 'processed', 'failed'))
+    );
+
+    ALTER TABLE hl7_messages
+      ADD COLUMN IF NOT EXISTS message_control_id TEXT,
+      ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 3;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM hl7_messages WHERE message_control_id IS NULL) THEN
+        ALTER TABLE hl7_messages ALTER COLUMN message_control_id SET NOT NULL;
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'hl7_messages_status_check'
+      ) THEN
+        ALTER TABLE hl7_messages
+          ADD CONSTRAINT hl7_messages_status_check
+          CHECK (status IN ('pending', 'processing', 'processed', 'failed'));
+      END IF;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_tenant ON hl7_messages(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_status ON hl7_messages(status);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_type ON hl7_messages(message_type);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_control_id ON hl7_messages(message_control_id);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_created ON hl7_messages(created_at);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_tenant_status ON hl7_messages(tenant_id, status);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_retry
+      ON hl7_messages(status, next_retry_at)
+      WHERE status = 'pending' AND next_retry_at IS NOT NULL;
+
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS external_id TEXT;
+    ALTER TABLE appointments
+      ADD COLUMN IF NOT EXISTS external_id TEXT,
+      ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+    ALTER TABLE providers ADD COLUMN IF NOT EXISTS external_id TEXT;
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS external_id TEXT;
+    ALTER TABLE documents
+      ADD COLUMN IF NOT EXISTS metadata JSONB,
+      ADD COLUMN IF NOT EXISTS content JSONB;
+
+    CREATE INDEX IF NOT EXISTS idx_patients_external_id
+      ON patients(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_appointments_external_id
+      ON appointments(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_providers_external_id
+      ON providers(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_locations_external_id
+      ON locations(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    `,
+  },
 
 ];
 

@@ -12,6 +12,7 @@ import {
   parseHL7DateTime,
 } from "./hl7Parser";
 import { createAuditLog } from "./audit";
+import { hashValue, safeErrorCode } from "../utils/phiRedaction";
 
 /**
  * HL7 v2.x Message Processor
@@ -23,6 +24,10 @@ export interface ProcessingResult {
   ackMessage: string;
   error?: string;
   resourceId?: string;
+}
+
+function auditMessageControlId(messageControlId: string | undefined): string | undefined {
+  return messageControlId ? `hl7-${hashValue(messageControlId)}` : undefined;
 }
 
 /**
@@ -75,7 +80,7 @@ export async function processHL7Message(message: HL7Message, tenantId: string, u
       userId: userId || null,
       action: `HL7_${message.messageType.replace("^", "_")}`,
       resourceType: "hl7_message",
-      resourceId: message.messageControlId,
+      resourceId: auditMessageControlId(message.messageControlId),
       metadata: {
         messageType: message.messageType,
         sendingApplication: message.sendingApplication,
@@ -102,11 +107,11 @@ export async function processHL7Message(message: HL7Message, tenantId: string, u
       userId: userId || null,
       action: `HL7_${message.messageType.replace("^", "_")}_FAILED`,
       resourceType: "hl7_message",
-      resourceId: message.messageControlId,
+      resourceId: auditMessageControlId(message.messageControlId),
       metadata: {
         messageType: message.messageType,
         sendingApplication: message.sendingApplication,
-        error: error instanceof Error ? error.message : String(error),
+        errorCode: safeErrorCode(error),
       },
       severity: "error",
       status: "failure",
@@ -115,7 +120,7 @@ export async function processHL7Message(message: HL7Message, tenantId: string, u
     return {
       success: false,
       ackMessage: generateACK(message, "AE"), // Application Error
-      error: error instanceof Error ? error.message : String(error),
+      error: `HL7 processing failed (${safeErrorCode(error)})`,
     };
   } finally {
     client.release();

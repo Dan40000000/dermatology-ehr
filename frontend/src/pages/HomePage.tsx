@@ -482,13 +482,6 @@ const extractArray = (payload: any, keys: string[]): any[] => {
   return [];
 };
 
-const isWithinDateRange = (value: string | undefined, start: Date, end: Date): boolean => {
-  if (!value) return false;
-  const dateMs = new Date(value).getTime();
-  if (Number.isNaN(dateMs)) return false;
-  return dateMs >= start.getTime() && dateMs <= end.getTime();
-};
-
 const isTelehealthAppointment = (appointment: any): boolean => {
   const combined = `${appointment.appointmentTypeName || appointment.typeName || ''} ${appointment.locationName || ''}`.toLowerCase();
   return combined.includes('telehealth') || combined.includes('video') || combined.includes('virtual');
@@ -768,7 +761,6 @@ export function HomePage() {
       const todayStr = businessDate;
       const scheduleContext = loadStoredScheduleContext();
       const todayDate = startOfDay(dateFromIsoDate(todayStr));
-      const todayRange = getScheduleViewRange(todayDate, 'day');
       const scheduleDate = startOfDay(dateFromIsoDate(todayStr));
       scheduleDate.setDate(scheduleDate.getDate() + scheduleContext.dayOffset);
       const scheduleRange = getScheduleViewRange(scheduleDate, scheduleContext.viewMode, scheduleContext.showWeekends);
@@ -925,7 +917,12 @@ export function HomePage() {
       );
 
       const todayScheduleAllAppointments = scheduleSourceAppointments
-        .filter((appointment: any) => isWithinDateRange(appointment.scheduledStart, todayRange.start, todayRange.end))
+        .filter((appointment: any) => {
+          if (!appointment.scheduledStart) return false;
+          const scheduledStart = new Date(appointment.scheduledStart);
+          return !Number.isNaN(scheduledStart.getTime())
+            && getDateKeyInPracticeTimeZone(scheduledStart) === todayStr;
+        })
         .filter((appointment: any) => matchesStoredScheduleFilters(appointment, scheduleContext));
       const nowMs = Date.now();
       const dashboardAppointments = todayScheduleAllAppointments.filter((appointment: any) =>

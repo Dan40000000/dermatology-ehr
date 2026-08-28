@@ -170,13 +170,18 @@ describe("hl7Processor", () => {
     const result = await hl7Processor.processHL7Message(message, tenantId);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Unsupported message type");
+    expect(result.error).toMatch(/^HL7 processing failed \(ERR_[A-F0-9]{16}\)$/);
     expect(createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "HL7_ZZZ_Z99_FAILED",
+        resourceId: expect.stringMatching(/^hl7-[a-f0-9]{16}$/),
+        metadata: expect.objectContaining({
+          errorCode: expect.stringMatching(/^ERR_[A-F0-9]{16}$/),
+        }),
         status: "failure",
       })
     );
+    expect(JSON.stringify((createAuditLog as jest.Mock).mock.calls[0]?.[0])).not.toContain("CTRL-99");
   });
 
   it("retries failed messages using stored parsed data", async () => {

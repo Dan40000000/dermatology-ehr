@@ -21,7 +21,7 @@ import {
 import {
   getEnabledAnthropicApiKey,
   getEnabledOpenAiApiKey,
-  isProviderBaaEnabled,
+  isClinicalAiProviderCallsEnabled,
   type ClinicalAiProvider,
 } from '../utils/externalAiGate';
 import { meteredOpenAiFetch } from '../utils/openAiSpendGuard';
@@ -810,7 +810,7 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
     }
 
     const provider = envProvider as ClinicalAiProvider;
-    if (!isProviderBaaEnabled(provider)) {
+    if (!isClinicalAiProviderCallsEnabled(provider)) {
       return null;
     }
 
@@ -833,7 +833,7 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
     return null;
   }
   const configuredProvider = config.provider || resolveAmbientTranscriptionProviderFromEnv() || 'abridge';
-  if (!useMock && configuredProvider !== 'mock' && !isProviderBaaEnabled(configuredProvider as ClinicalAiProvider)) {
+  if (!useMock && configuredProvider !== 'mock' && !isClinicalAiProviderCallsEnabled(configuredProvider as ClinicalAiProvider)) {
     return null;
   }
   const adapter = createAmbientTranscriptionAdapter(

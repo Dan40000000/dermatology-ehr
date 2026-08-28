@@ -56,6 +56,24 @@ export function isProviderBaaEnabled(provider: ClinicalAiProvider): boolean {
 }
 
 /**
+ * Credential-independent provider gate for integrations whose credentials are
+ * stored in the database rather than environment variables. A signed BAA and
+ * an explicit provider/global API-call switch are both required.
+ */
+export function isClinicalAiProviderCallsEnabled(provider: ClinicalAiProvider): boolean {
+  if (!areExternalAiCallsAllowedInThisRuntime()) {
+    return false;
+  }
+
+  const prefix = PROVIDER_ENV_PREFIX[provider];
+  const callsEnabled = isTrueEnv(process.env[`${prefix}_API_CALLS_ENABLED`])
+    || isTrueEnv(process.env[`${prefix}_AI_ENABLED`])
+    || isTrueEnv(process.env.EXTERNAL_AI_API_CALLS_ENABLED);
+
+  return callsEnabled && isProviderBaaEnabled(provider);
+}
+
+/**
  * Provider-specific clinical AI gate.  A global HIPAA_AI_ENABLED switch is
  * deliberately not sufficient: each vendor must have its own BAA/equivalent
  * evidence and API-call enablement.  Test-only fake keys remain available so
@@ -72,12 +90,7 @@ export function isClinicalAiProviderEnabled(
     return false;
   }
 
-  const prefix = PROVIDER_ENV_PREFIX[provider];
-  const callsEnabled = isTrueEnv(process.env[`${prefix}_API_CALLS_ENABLED`])
-    || isTrueEnv(process.env[`${prefix}_AI_ENABLED`])
-    || isTrueEnv(process.env.EXTERNAL_AI_API_CALLS_ENABLED);
-
-  return callsEnabled && isProviderBaaEnabled(provider);
+  return isClinicalAiProviderCallsEnabled(provider);
 }
 
 export function getProviderAiGateReason(provider: ClinicalAiProvider, apiKey?: string): string {

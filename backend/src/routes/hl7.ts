@@ -11,25 +11,18 @@ import {
 } from "../services/hl7Queue";
 import { createAuditLog } from "../services/audit";
 import { logger } from "../lib/logger";
+import { hashValue, safeErrorCode } from "../utils/phiRedaction";
 
 export const hl7Router = Router();
 
-function toSafeErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  return "Unknown error";
-}
-
 function logHl7Error(message: string, error: unknown): void {
   logger.error(message, {
-    error: toSafeErrorMessage(error),
+    errorCode: safeErrorCode(error),
   });
+}
+
+function hashControlId(messageControlId: string | undefined): string | undefined {
+  return messageControlId ? `hl7-${hashValue(messageControlId)}` : undefined;
 }
 
 function getTenantId(req: AuthedRequest): string | undefined {
@@ -89,8 +82,8 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
         action: "HL7_PARSE_ERROR",
         resourceType: "hl7_message",
         metadata: {
-          error: error instanceof Error ? error.message : String(error),
-          rawMessage: rawMessage.substring(0, 500), // Log first 500 chars
+          errorCode: safeErrorCode(error),
+          messageLength: Buffer.byteLength(rawMessage, "utf8"),
         },
         severity: "error",
         status: "failure",
@@ -98,7 +91,7 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
 
       return res.status(400).json({
         error: "Invalid HL7 message format",
-        details: error instanceof Error ? error.message : String(error),
+        errorCode: safeErrorCode(error),
       });
     }
 
@@ -109,7 +102,7 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
         userId: req.user?.id || null,
         action: "HL7_VALIDATION_ERROR",
         resourceType: "hl7_message",
-        resourceId: parsed.messageControlId,
+        resourceId: hashControlId(parsed.messageControlId),
         metadata: {
           errors: validation.errors,
           messageType: parsed.messageType,
@@ -139,7 +132,7 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
       resourceId: messageId,
       metadata: {
         messageType: parsed.messageType,
-        messageControlId: parsed.messageControlId,
+        messageControlIdHash: hashControlId(parsed.messageControlId),
         sendingApplication: parsed.sendingApplication,
         sendingFacility: parsed.sendingFacility,
       },
@@ -224,7 +217,7 @@ hl7Router.post("/inbound/sync", requireAuth, async (req: AuthedRequest, res: Res
         userId: req.user?.id || null,
         action: "HL7_MESSAGE_PROCESSED_SYNC",
         resourceType: "hl7_message",
-        resourceId: parsed.messageControlId,
+        resourceId: hashControlId(parsed.messageControlId),
         metadata: {
           messageType: parsed.messageType,
           resourceId: result.resourceId,

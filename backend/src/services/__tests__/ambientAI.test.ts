@@ -1,5 +1,7 @@
 import { logger } from '../../lib/logger';
 import * as ambientAI from '../ambientAI';
+import { getIntegrationConfig } from '../../integrations/baseAdapter';
+import * as ambientAdapterModule from '../../integrations/ambientTranscriptionAdapter';
 import fs from 'fs/promises';
 
 jest.mock('../../lib/logger', () => ({
@@ -9,6 +11,11 @@ jest.mock('../../lib/logger', () => ({
     error: jest.fn(),
     debug: jest.fn(),
   },
+}));
+
+jest.mock('../../integrations/baseAdapter', () => ({
+  ...jest.requireActual('../../integrations/baseAdapter'),
+  getIntegrationConfig: jest.fn(),
 }));
 
 jest.mock('fs/promises');
@@ -38,6 +45,11 @@ describe('AmbientAI Service', () => {
     delete process.env.HIPAA_AI_ENABLED;
     delete process.env.ANTHROPIC_NOTE_MODEL;
     delete process.env.AMBIENT_NOTE_PROVIDER_PRIORITY;
+    delete process.env.ABRIDGE_API_CALLS_ENABLED;
+    delete process.env.ABRIDGE_BAA_ENABLED;
+    delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+    (getIntegrationConfig as jest.Mock).mockReset();
+    (getIntegrationConfig as jest.Mock).mockResolvedValue(null);
     process.env.AMBIENT_AI_MOCK_DELAY_MS = '0';
   });
 
@@ -126,6 +138,32 @@ describe('AmbientAI Service', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         'OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled'
       );
+    });
+
+    it('does not create a live database-configured adapter while provider API calls are disabled', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-1',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'abridge',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
     });
 
     it('should fallback to mock when OpenAI transcription fails', async () => {

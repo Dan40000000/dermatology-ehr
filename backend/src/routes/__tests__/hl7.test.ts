@@ -152,20 +152,30 @@ describe("HL7 Routes", () => {
       });
       generateACKMock.mockReturnValue("NACK message");
 
+      const malformedPatientMessage = "PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL||19800515|M";
       const res = await request(app)
         .post("/api/hl7/inbound")
-        .send({ message: "invalid" });
+        .send({ message: malformedPatientMessage });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Invalid HL7 message format");
-      expect(res.body.details).toBe("Invalid HL7 format");
+      expect(res.body.errorCode).toMatch(/^ERR_[A-F0-9]{16}$/);
       expect(createAuditLogMock).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "HL7_PARSE_ERROR",
+          metadata: expect.objectContaining({
+            errorCode: expect.stringMatching(/^ERR_[A-F0-9]{16}$/),
+            messageLength: Buffer.byteLength(malformedPatientMessage, "utf8"),
+          }),
           severity: "error",
           status: "failure",
         })
       );
+      const auditPayload = createAuditLogMock.mock.calls[0]?.[0];
+      expect(auditPayload.metadata).not.toHaveProperty("rawMessage");
+      expect(JSON.stringify(auditPayload)).not.toContain("PAT12345");
+      expect(JSON.stringify(auditPayload)).not.toContain("DOE^JOHN");
+      expect(JSON.stringify(auditPayload)).not.toContain("19800515");
     });
 
     it("should return 400 when validation fails", async () => {
@@ -433,7 +443,9 @@ describe("HL7 Routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Internal server error");
-      expect(loggerMock.error).toHaveBeenCalledWith("Error listing HL7 messages", { error: "DB error" });
+      expect(loggerMock.error).toHaveBeenCalledWith("Error listing HL7 messages", {
+        errorCode: expect.stringMatching(/^ERR_[A-F0-9]{16}$/),
+      });
     });
 
     it("should mask non-Error values when listing HL7 messages fails", async () => {
@@ -442,7 +454,9 @@ describe("HL7 Routes", () => {
       const res = await request(app).get("/api/hl7/messages");
 
       expect(res.status).toBe(500);
-      expect(loggerMock.error).toHaveBeenCalledWith("Error listing HL7 messages", { error: "Unknown error" });
+      expect(loggerMock.error).toHaveBeenCalledWith("Error listing HL7 messages", {
+        errorCode: expect.stringMatching(/^ERR_[A-F0-9]{16}$/),
+      });
     });
   });
 

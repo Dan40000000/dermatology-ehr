@@ -212,6 +212,7 @@ async function withRetry<T>(
 // Environment configuration
 const getOpenAIKey = () => getEnabledOpenAiApiKey();
 const getAnthropicKey = () => getEnabledAnthropicApiKey();
+const hasConfiguredOpenAIKey = () => Boolean(String(process.env.OPENAI_API_KEY || '').trim());
 const getOpenAITranscribeModel = () =>
   process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
 const getOpenAINoteModel = () => process.env.OPENAI_NOTE_MODEL || 'gpt-4o-mini';
@@ -481,7 +482,7 @@ export async function transcribeAudio(
       });
       // Fall through to mock implementation
     }
-  } else if (openAIKey) {
+  } else if (openAIKey || hasConfiguredOpenAIKey()) {
     logger.warn('OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled');
   }
 

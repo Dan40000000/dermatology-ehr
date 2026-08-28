@@ -135,10 +135,18 @@ export function isAnthropicApiCallsEnabled(apiKey = process.env.ANTHROPIC_API_KE
 
 export function getEnabledOpenAiApiKey(): string | undefined {
   const apiKey = process.env.OPENAI_API_KEY;
-  return apiKey && isOpenAiApiCallsEnabled(apiKey) ? apiKey : undefined;
+  return apiKey
+    && isOpenAiApiCallsEnabled(apiKey)
+    && (isClearlyFakeTestKey(apiKey) || isProviderBaaEnabled('openai'))
+    ? apiKey
+    : undefined;
 }
 
 export function getEnabledAnthropicApiKey(): string | undefined {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  return apiKey && isAnthropicApiCallsEnabled(apiKey) ? apiKey : undefined;
+  return apiKey
+    && isAnthropicApiCallsEnabled(apiKey)
+    && (isClearlyFakeTestKey(apiKey) || isProviderBaaEnabled('anthropic'))
+    ? apiKey
+    : undefined;
 }

@@ -390,6 +390,8 @@ jobs:
           AUDIT_LOG_RETENTION_DAYS: '2190'
           BACKUP_ENABLED: 'true'
           BACKUP_BUCKET: example-backup-bucket
+          BACKUP_ENCRYPTION_ENABLED: 'true'
+          BACKUP_RETENTION_DAYS: '90'
           VIRUS_SCAN_ENABLED: 'true'
 
   # Build applications

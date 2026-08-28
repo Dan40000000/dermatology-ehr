@@ -627,7 +627,7 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
           productionLike ? 'fail' : 'warn',
           'Backup encryption enabled',
           'No backup encryption or KMS evidence is configured.',
-          'Set BACKUP_ENCRYPTION_ENABLED=true and provide a managed BACKUP_KMS_KEY_ID.'
+          'Set BACKUP_ENCRYPTION_ENABLED=true for AWS-managed KMS encryption or provide a customer-managed BACKUP_KMS_KEY_ID.'
         )
   );
 

@@ -87,6 +87,11 @@ if [ -n "${BACKUP_BUCKET:-}" ] && command -v aws &> /dev/null; then
       --sse aws:kms
       --sse-kms-key-id "$BACKUP_KMS_KEY_ID"
     )
+  elif [[ "${BACKUP_ENCRYPTION_ENABLED:-}" =~ ^(true|TRUE|True|1|yes|YES|Yes)$ ]]; then
+    # Omitting a key ID intentionally selects the AWS-managed S3 KMS key (aws/s3).
+    S3_ENCRYPTION_ARGS=(
+      --sse aws:kms
+    )
   else
     S3_ENCRYPTION_ARGS=(
       --sse AES256

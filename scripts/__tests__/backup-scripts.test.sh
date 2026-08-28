@@ -24,7 +24,8 @@ trap cleanup EXIT
 
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN" "$TEST_ROOT/failure" "$TEST_ROOT/success" "$TEST_ROOT/success-encrypted" \
-  "$TEST_ROOT/success-s3" "$TEST_ROOT/success-s3-kms" "$TEST_ROOT/restore-tmp"
+  "$TEST_ROOT/success-s3" "$TEST_ROOT/success-s3-aws-managed-kms" \
+  "$TEST_ROOT/success-s3-kms" "$TEST_ROOT/restore-tmp"
 
 printf '%s\n' \
   '#!/bin/bash' \
@@ -109,6 +110,24 @@ grep -Fxq -- "AES256" "$TEST_ROOT/non-kms-aws-args.log"
 if grep -Fxq -- "aws:kms" "$TEST_ROOT/non-kms-aws-args.log" || \
   grep -Fxq -- "--sse-kms-key-id" "$TEST_ROOT/non-kms-aws-args.log"; then
   echo "backup.sh used KMS arguments without a KMS key ID" >&2
+  exit 1
+fi
+
+env \
+  PATH="$FAKE_BIN:$PATH" \
+  PG_DUMP_MODE=success \
+  DATABASE_URL=postgresql://backup-test.invalid/db \
+  BACKUP_DIR="$TEST_ROOT/success-s3-aws-managed-kms" \
+  BACKUP_BUCKET=backup-test-bucket \
+  BACKUP_ENCRYPTION_ENABLED=true \
+  BACKUP_KEEP_LOCAL=true \
+  AWS_ARGS_LOG="$TEST_ROOT/aws-managed-kms-aws-args.log" \
+  bash "$REPO_ROOT/scripts/backup.sh" >"$TEST_ROOT/success-s3-aws-managed-kms.log" 2>&1
+grep -Fxq -- "--sse" "$TEST_ROOT/aws-managed-kms-aws-args.log"
+grep -Fxq -- "aws:kms" "$TEST_ROOT/aws-managed-kms-aws-args.log"
+if grep -Fxq -- "--sse-kms-key-id" "$TEST_ROOT/aws-managed-kms-aws-args.log" || \
+  grep -Fxq -- "AES256" "$TEST_ROOT/aws-managed-kms-aws-args.log"; then
+  echo "backup.sh did not use the AWS-managed S3 KMS key cleanly" >&2
   exit 1
 fi
 

@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { Readable } from 'stream';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import {
   TranscribeClient,
   StartMedicalScribeJobCommand,
@@ -12,10 +12,12 @@ import {
 import FormData from 'form-data';
 import jwt from 'jsonwebtoken';
 import { BaseAdapter, AdapterOptions } from './baseAdapter';
+import { logger } from '../lib/logger';
 import {
   isClinicalAiProviderCallsEnabled,
   type ClinicalAiProvider,
 } from '../utils/externalAiGate';
+import { safeErrorCode } from '../utils/phiRedaction';
 
 export type AmbientTranscriptionProvider =
   | 'wispr_flow'
@@ -1219,6 +1221,25 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
     return response.json() as Promise<Record<string, any>>;
   }
 
+  private async deleteAwsHealthScribeObject(
+    s3Client: S3Client,
+    target: { bucket: string; key: string; kind: 'input_audio' | 'transcript' | 'clinical_document' }
+  ): Promise<void> {
+    try {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: target.bucket,
+        Key: target.key,
+      }));
+    } catch (error) {
+      logger.warn('AWS HealthScribe object cleanup failed', {
+        provider: this.provider,
+        objectKind: target.kind,
+        correlationId: this.correlationId,
+        errorCode: safeErrorCode(error),
+      });
+    }
+  }
+
   private async transcribeWithAwsHealthScribe(
     audioBuffer: Buffer,
     options: { filename: string; contentType: string; language?: string }
@@ -1226,110 +1247,130 @@ export class AmbientTranscriptionAdapter extends BaseAdapter {
     const runtime = this.getAwsRuntime(this.getCredentials());
     const s3Client = this.createAwsS3Client(runtime);
     const transcribeClient = this.createAwsTranscribeClient(runtime);
-    const mediaFileKey = `${runtime.inputPrefix.replace(/^\/+|\/+$/g, '')}/${crypto.randomUUID()}-${options.filename}`;
+    const requestedExtension = path.extname(options.filename).toLowerCase();
+    const safeExtension = /^\.[a-z0-9]{1,10}$/.test(requestedExtension) ? requestedExtension : '';
+    const mediaFileKey = `${runtime.inputPrefix.replace(/^\/+|\/+$/g, '')}/${crypto.randomUUID()}${safeExtension}`;
     const mediaFileUri = `s3://${runtime.inputBucket}/${mediaFileKey}`;
-    const jobName = sanitizeJobName(`ambient-${this.tenantId}-${Date.now()}-${path.parse(options.filename).name}`);
+    const jobName = sanitizeJobName(`ambient-${Date.now()}-${crypto.randomUUID()}`);
     const startedAt = Date.now();
+    const cleanupTargets: Array<{
+      bucket: string;
+      key: string;
+      kind: 'input_audio' | 'transcript' | 'clinical_document';
+    }> = [{ bucket: runtime.inputBucket, key: mediaFileKey, kind: 'input_audio' }];
 
-    await s3Client.send(new PutObjectCommand({
-      Bucket: runtime.inputBucket,
-      Key: mediaFileKey,
-      Body: audioBuffer,
-      ContentType: options.contentType,
-    }));
-
-    await transcribeClient.send(new StartMedicalScribeJobCommand({
-      MedicalScribeJobName: jobName,
-      Media: {
-        MediaFileUri: mediaFileUri,
-      },
-      OutputBucketName: runtime.outputBucket,
-      DataAccessRoleArn: runtime.dataAccessRoleArn,
-      Settings: {
-        ShowSpeakerLabels: this.getConfigBoolean(['showSpeakerLabels', 'show_speaker_labels'], true),
-        MaxSpeakerLabels: this.getConfigNumber(['maxSpeakerLabels', 'max_speaker_labels'], [], 2),
-        ClinicalNoteGenerationSettings: {
-          NoteTemplate: runtime.noteTemplate,
-        },
-      },
-      ...(runtime.outputEncryptionKmsKeyId ? { OutputEncryptionKMSKeyId: runtime.outputEncryptionKmsKeyId } : {}),
-    }));
-
-    while (Date.now() - startedAt < runtime.timeoutMs) {
-      const jobResponse = await transcribeClient.send(new GetMedicalScribeJobCommand({
-        MedicalScribeJobName: jobName,
+    try {
+      await s3Client.send(new PutObjectCommand({
+        Bucket: runtime.inputBucket,
+        Key: mediaFileKey,
+        Body: audioBuffer,
+        ContentType: options.contentType,
       }));
-      const job = jobResponse.MedicalScribeJob;
-      const status = job?.MedicalScribeJobStatus;
 
-      if (status === 'COMPLETED') {
-        const transcriptUri = job?.MedicalScribeOutput?.TranscriptFileUri;
-        if (!transcriptUri) {
-          throw new Error('AWS HealthScribe completed without a transcript URI');
+      await transcribeClient.send(new StartMedicalScribeJobCommand({
+        MedicalScribeJobName: jobName,
+        Media: {
+          MediaFileUri: mediaFileUri,
+        },
+        OutputBucketName: runtime.outputBucket,
+        DataAccessRoleArn: runtime.dataAccessRoleArn,
+        Settings: {
+          ShowSpeakerLabels: this.getConfigBoolean(['showSpeakerLabels', 'show_speaker_labels'], true),
+          MaxSpeakerLabels: this.getConfigNumber(['maxSpeakerLabels', 'max_speaker_labels'], [], 2),
+          ClinicalNoteGenerationSettings: {
+            NoteTemplate: runtime.noteTemplate,
+          },
+        },
+        ...(runtime.outputEncryptionKmsKeyId ? { OutputEncryptionKMSKeyId: runtime.outputEncryptionKmsKeyId } : {}),
+      }));
+
+      while (Date.now() - startedAt < runtime.timeoutMs) {
+        const jobResponse = await transcribeClient.send(new GetMedicalScribeJobCommand({
+          MedicalScribeJobName: jobName,
+        }));
+        const job = jobResponse.MedicalScribeJob;
+        const status = job?.MedicalScribeJobStatus;
+
+        if (status === 'COMPLETED') {
+          const transcriptUri = job?.MedicalScribeOutput?.TranscriptFileUri;
+          const clinicalDocumentUri = job?.MedicalScribeOutput?.ClinicalDocumentUri;
+          const clinicalDocumentRef = clinicalDocumentUri
+            ? parseS3Uri(clinicalDocumentUri) || parseS3HttpUri(clinicalDocumentUri)
+            : null;
+          if (!transcriptUri) {
+            if (clinicalDocumentRef) {
+              cleanupTargets.push({ ...clinicalDocumentRef, kind: 'clinical_document' });
+            }
+            throw new Error('AWS HealthScribe completed without a transcript URI');
+          }
+
+          const transcriptRef = parseS3Uri(transcriptUri) || parseS3HttpUri(transcriptUri);
+          if (transcriptRef) {
+            cleanupTargets.push({ ...transcriptRef, kind: 'transcript' });
+          }
+          if (clinicalDocumentRef) {
+            cleanupTargets.push({ ...clinicalDocumentRef, kind: 'clinical_document' });
+          }
+
+          const payload = await this.readJsonFromUri(transcriptUri, runtime, s3Client);
+          const confidence = getNumberFromPaths(payload, this.getResponseConfidencePaths()) ?? 0.85;
+          const preliminaryText = getStringFromPaths(payload, this.getResponseTextPaths()) || '';
+          const segments = this.extractSegments(payload, preliminaryText, confidence);
+          const text = preliminaryText || this.composeTextFromSegments(segments);
+          const durationMs = Date.now() - startedAt;
+
+          await this.logIntegration({
+            direction: 'outbound',
+            endpoint: `aws://${runtime.region}/medicalscribejobs/${jobName}`,
+            method: 'PUT',
+            request: {
+              provider: this.provider,
+              noteTemplate: runtime.noteTemplate,
+            },
+            response: {
+              provider: this.provider,
+              jobName,
+              transcriptLength: text.length,
+            },
+            status: 'success',
+            statusCode: 200,
+            durationMs,
+          });
+
+          return {
+            text,
+            language: getStringFromPaths(payload, this.getResponseLanguagePaths()) || options.language || this.getLanguage() || 'en-US',
+            confidence,
+            segments,
+            source: 'aws_healthscribe',
+          };
         }
 
-        const payload = await this.readJsonFromUri(transcriptUri, runtime, s3Client);
-        const confidence = getNumberFromPaths(payload, this.getResponseConfidencePaths()) ?? 0.85;
-        const preliminaryText = getStringFromPaths(payload, this.getResponseTextPaths()) || '';
-        const segments = this.extractSegments(payload, preliminaryText, confidence);
-        const text = preliminaryText || this.composeTextFromSegments(segments);
-        const durationMs = Date.now() - startedAt;
+        if (status === 'FAILED') {
+          const durationMs = Date.now() - startedAt;
+          const failureReason = job?.FailureReason || 'Unknown AWS HealthScribe failure';
+          await this.logIntegration({
+            direction: 'outbound',
+            endpoint: `aws://${runtime.region}/medicalscribejobs/${jobName}`,
+            method: 'PUT',
+            request: {
+              provider: this.provider,
+            },
+            status: 'error',
+            statusCode: 500,
+            errorMessage: failureReason,
+            durationMs,
+          });
+          throw new Error(`AWS HealthScribe transcription failed: ${failureReason}`);
+        }
 
-        await this.logIntegration({
-          direction: 'outbound',
-          endpoint: `aws://${runtime.region}/medicalscribejobs/${jobName}`,
-          method: 'PUT',
-          request: {
-            provider: this.provider,
-            mediaFileUri,
-            outputBucket: runtime.outputBucket,
-            noteTemplate: runtime.noteTemplate,
-          },
-          response: {
-            provider: this.provider,
-            jobName,
-            transcriptLength: text.length,
-            transcriptUri,
-            clinicalDocumentUri: job?.MedicalScribeOutput?.ClinicalDocumentUri,
-          },
-          status: 'success',
-          statusCode: 200,
-          durationMs,
-        });
-
-        return {
-          text,
-          language: getStringFromPaths(payload, this.getResponseLanguagePaths()) || options.language || this.getLanguage() || 'en-US',
-          confidence,
-          segments,
-          source: 'aws_healthscribe',
-        };
+        await sleep(runtime.pollIntervalMs);
       }
 
-      if (status === 'FAILED') {
-        const durationMs = Date.now() - startedAt;
-        const failureReason = job?.FailureReason || 'Unknown AWS HealthScribe failure';
-        await this.logIntegration({
-          direction: 'outbound',
-          endpoint: `aws://${runtime.region}/medicalscribejobs/${jobName}`,
-          method: 'PUT',
-          request: {
-            provider: this.provider,
-            mediaFileUri,
-            outputBucket: runtime.outputBucket,
-          },
-          status: 'error',
-          statusCode: 500,
-          errorMessage: failureReason,
-          durationMs,
-        });
-        throw new Error(`AWS HealthScribe transcription failed: ${failureReason}`);
-      }
-
-      await sleep(runtime.pollIntervalMs);
+      throw new Error(`AWS HealthScribe transcription timed out after ${runtime.timeoutMs}ms`);
+    } finally {
+      await Promise.all(cleanupTargets.map((target) => this.deleteAwsHealthScribeObject(s3Client, target)));
     }
-
-    throw new Error(`AWS HealthScribe transcription timed out after ${runtime.timeoutMs}ms`);
   }
 
   private async transcribeMultipart(

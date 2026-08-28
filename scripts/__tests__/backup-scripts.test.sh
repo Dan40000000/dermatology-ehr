@@ -24,7 +24,7 @@ trap cleanup EXIT
 
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN" "$TEST_ROOT/failure" "$TEST_ROOT/success" "$TEST_ROOT/success-encrypted" \
-  "$TEST_ROOT/success-s3" "$TEST_ROOT/success-s3-kms"
+  "$TEST_ROOT/success-s3" "$TEST_ROOT/success-s3-kms" "$TEST_ROOT/restore-tmp"
 
 printf '%s\n' \
   '#!/bin/bash' \
@@ -150,19 +150,45 @@ grep -q "Refusing to restore into non-verification database" "$TEST_ROOT/restore
 printf '%s\n' \
   '#!/bin/bash' \
   'set -euo pipefail' \
+  'if [ -n "${PSQL_ARGS_LOG:-}" ]; then printf "%s\n" "$*" >> "$PSQL_ARGS_LOG"; fi' \
   'if [[ "$*" == *"current_database()"* ]]; then echo restore_verify; exit 0; fi' \
   'if [[ "$*" == *"COUNT(*) FROM information_schema.tables"* ]]; then echo 4; exit 0; fi' \
   'cat >/dev/null' \
   > "$FAKE_BIN/psql"
 chmod +x "$FAKE_BIN/psql"
 
+RESTORE_DATABASE_URL=postgresql://restore-test.invalid/derm_restore_verify
+RESTORE_PSQL_ARGS_LOG="$TEST_ROOT/restore-psql-args.log"
 printf '%s\n' yes | env \
   PATH="$FAKE_BIN:$PATH" \
-  DATABASE_URL=postgresql://restore-test.invalid/derm_restore_verify \
+  DATABASE_URL="$RESTORE_DATABASE_URL" \
   BACKUP_ENCRYPTION_KEY=backup-test-key \
+  PSQL_ARGS_LOG="$RESTORE_PSQL_ARGS_LOG" \
+  TMPDIR="$TEST_ROOT/restore-tmp" \
   bash "$REPO_ROOT/scripts/restore.sh" "$ENCRYPTED_BACKUP" \
   >"$TEST_ROOT/restore-script.log" 2>&1
 grep -q "Backup decrypted successfully" "$TEST_ROOT/restore-script.log"
 grep -q "Restore complete!" "$TEST_ROOT/restore-script.log"
+if grep -Fq -- "$RESTORE_DATABASE_URL" "$TEST_ROOT/restore-script.log"; then
+  echo "restore.sh logged DATABASE_URL" >&2
+  exit 1
+fi
+if ! grep -Fq -- "-v ON_ERROR_STOP=1" "$RESTORE_PSQL_ARGS_LOG"; then
+  echo "restore.sh omitted ON_ERROR_STOP=1" >&2
+  exit 1
+fi
+if ! awk 'index($0, "-f ") && index($0, "-v ON_ERROR_STOP=1") { found = 1 } END { exit(found ? 0 : 1) }' \
+  "$RESTORE_PSQL_ARGS_LOG"; then
+  echo "restore.sh restore command omitted ON_ERROR_STOP=1" >&2
+  exit 1
+fi
+if [ -e "${ENCRYPTED_BACKUP%.enc}" ]; then
+  echo "restore.sh wrote decrypted backup beside the input" >&2
+  exit 1
+fi
+if [ -n "$(find "$TEST_ROOT/restore-tmp" -mindepth 1 -maxdepth 1 -name 'derm-restore.*' -print -quit)" ]; then
+  echo "restore.sh left its temporary workspace behind" >&2
+  exit 1
+fi
 
 echo "Backup script regression checks passed"

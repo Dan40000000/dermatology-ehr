@@ -92,7 +92,7 @@ describe('stagingReadinessCheck', () => {
     expect(report.checks.find((item) => item.id === 'env:mode')?.status).toBe('warn');
   });
 
-  it('blocks production-like readiness when PHI vendor BAA evidence is owner-reported or missing', async () => {
+  it('blocks production-like readiness while PHI vendor BAAs remain review-needed', async () => {
     const report = await generateReadinessReport(
       {
         NODE_ENV: 'production',
@@ -102,8 +102,8 @@ describe('stagingReadinessCheck', () => {
 
     const vendorCheck = report.checks.find((item) => item.id === 'vendor:baa-inventory');
     expect(vendorCheck?.status).toBe('fail');
-    expect(vendorCheck?.detail).toMatch(/OWNER_REPORTED_ACTIVE|REVIEW_NEEDED/);
-    expect(vendorCheck?.detail).toContain('artifact_link is missing or a placeholder');
+    expect(vendorCheck?.detail).toContain('Railway: status=REVIEW_NEEDED');
+    expect(vendorCheck?.detail).toContain('OpenAI: status=REVIEW_NEEDED');
   });
 
   it('accepts a positive policy-defined backup retention window without claiming HIPAA mandates six years of backups', async () => {

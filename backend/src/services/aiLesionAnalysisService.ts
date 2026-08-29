@@ -771,6 +771,7 @@ export class AILesionAnalysisService {
         },
         body: JSON.stringify({
           model,
+          store: false,
           messages: [
             { role: "system", content: systemPrompt },
             {

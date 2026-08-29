@@ -210,6 +210,37 @@ function getEndpoint(input: Parameters<typeof fetch>[0]): string | undefined {
   }
 }
 
+function enforceOpenAiDataMinimization(
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit,
+): RequestInit {
+  const endpoint = getEndpoint(input);
+  if (endpoint !== "/v1/chat/completions" && endpoint !== "/v1/responses") {
+    return init;
+  }
+
+  if (typeof init.body !== "string") {
+    return init;
+  }
+
+  try {
+    const payload = JSON.parse(init.body) as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return init;
+    }
+
+    return {
+      ...init,
+      body: JSON.stringify({
+        ...(payload as Record<string, unknown>),
+        store: false,
+      }),
+    };
+  } catch {
+    return init;
+  }
+}
+
 export async function meteredOpenAiFetch(
   input: Parameters<typeof fetch>[0],
   init: RequestInit,
@@ -219,7 +250,7 @@ export async function meteredOpenAiFetch(
   recordAllowed(options);
 
   const startedAt = Date.now();
-  const response = await fetch(input, init);
+  const response = await fetch(input, enforceOpenAiDataMinimization(input, init));
   const durationMs = Date.now() - startedAt;
   const headers = response.headers as Headers | undefined;
   const requestId = typeof headers?.get === "function" ? headers.get("x-request-id") || undefined : undefined;

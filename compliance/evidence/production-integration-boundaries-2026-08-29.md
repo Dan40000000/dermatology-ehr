@@ -20,7 +20,7 @@ No secret values are recorded in this artifact. The production variable-name inv
 ## Enabled or potentially enabled boundaries that still require evidence
 
 - OpenAI API-call flags are enabled while live ambient transcription/insights flags and `OPENAI_BAA_ENABLED` are disabled/unset. A BAA request was sent on 2026-08-29, but the executed BAA, Modified Retention provisioning, and eligible-endpoint evidence remain required before PHI use.
-- Railway hosts the API and PostgreSQL database and therefore remains BAA-gated before hosted PHI.
+- Railway hosts only the synthetic-data pilot. The platform owner designated the BAA-covered AWS account as the future live-PHI environment. Railway is not approved for real patient data; changing that scope would require an executed Railway BAA and a fresh assessment before PHI use.
 
 ## Synthetic-success control
 

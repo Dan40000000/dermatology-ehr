@@ -1793,6 +1793,7 @@ async function generateNoteWithGPT4(
         },
         body: JSON.stringify({
           model: model,
+          store: false,
           messages: [
             {
               role: 'system',

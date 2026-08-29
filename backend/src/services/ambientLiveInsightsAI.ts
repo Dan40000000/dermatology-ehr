@@ -438,6 +438,7 @@ export async function generateAmbientLiveInsightsWithAI(
       },
       body: JSON.stringify({
         model,
+        store: false,
         temperature: 0.1,
         max_tokens: 1400,
         response_format: { type: 'json_object' },

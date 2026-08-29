@@ -351,6 +351,7 @@ async function askOpenAI(input: AskClinicalCopilotInput): Promise<ClinicalCopilo
     },
     body: JSON.stringify({
       model,
+      store: false,
       temperature: 0.2,
       max_tokens: 1800,
       response_format: { type: 'json_object' },

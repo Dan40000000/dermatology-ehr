@@ -37,7 +37,7 @@ This checklist is the operating control list for a practice using the system wit
 
 | Vendor / capability | Operating status | Evidence needed before live PHI |
 | --- | --- | --- |
-| Railway application/database hosting | Code deployment target identified | Signed BAA covering the exact production project, services, logs, volumes, and database |
+| Railway synthetic-only pilot | Test deployment target; real patient data prohibited | Monthly confirmation that only synthetic data is present; execute a Railway BAA and reassess before any scope change to PHI |
 | AWS storage and hosting | Configured as HIPAA-capable infrastructure | Signed BAA, encryption, backup, logging, access review |
 | Voice / ambient transcription | Configured for healthcare workflow | Signed BAA and live-region configuration evidence |
 | SMS texting | Credentials configured; approval status checked separately | 10DLC/toll-free approval evidence, opt-in language, privacy/terms pages |

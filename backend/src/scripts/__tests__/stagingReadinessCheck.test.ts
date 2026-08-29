@@ -102,8 +102,8 @@ describe('stagingReadinessCheck', () => {
 
     const vendorCheck = report.checks.find((item) => item.id === 'vendor:baa-inventory');
     expect(vendorCheck?.status).toBe('fail');
-    expect(vendorCheck?.detail).toContain('Railway: status=REVIEW_NEEDED');
     expect(vendorCheck?.detail).toContain('OpenAI: status=REVIEW_NEEDED');
+    expect(vendorCheck?.detail).not.toContain('Railway: status=REVIEW_NEEDED');
   });
 
   it('accepts a positive policy-defined backup retention window without claiming HIPAA mandates six years of backups', async () => {

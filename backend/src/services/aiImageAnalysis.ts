@@ -208,6 +208,7 @@ export class AIImageAnalysisService {
         },
         body: JSON.stringify({
           model,
+          store: false,
           messages: [
             {
               role: "system",

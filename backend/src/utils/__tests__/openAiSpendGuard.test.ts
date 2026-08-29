@@ -117,4 +117,29 @@ describe("openAiSpendGuard", () => {
       resourceId: "enc-1",
     }));
   });
+
+  it("forces non-persistence for OpenAI chat and Responses JSON requests", async () => {
+    process.env.OPENAI_MAX_REQUESTS_PER_HOUR = "20";
+
+    await meteredOpenAiFetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({ model: "gpt-4o-mini", store: true, messages: [] }),
+    }, {
+      feature: "clinical_copilot",
+      model: "gpt-4o-mini",
+    });
+
+    await meteredOpenAiFetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ model: "gpt-4o-mini", input: "synthetic test" }),
+    }, {
+      feature: "ai_note_drafting",
+      model: "gpt-4o-mini",
+    });
+
+    const firstInit = (global.fetch as jest.Mock).mock.calls[0]?.[1] as RequestInit;
+    const secondInit = (global.fetch as jest.Mock).mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(String(firstInit.body))).toMatchObject({ store: false });
+    expect(JSON.parse(String(secondInit.body))).toMatchObject({ store: false });
+  });
 });

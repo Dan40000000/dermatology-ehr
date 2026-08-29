@@ -300,6 +300,7 @@ export class AINoteDraftingService {
       },
       body: JSON.stringify({
         model,
+        store: false,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },

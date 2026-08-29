@@ -5,6 +5,7 @@ import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientP
 import crypto from "crypto";
 import { logger } from "../lib/logger";
 import { amountToCents, postPortalPaymentToLedger } from "../services/paymentLedgerService";
+import { assertSyntheticVendorMockAllowed } from "../services/vendorMockGuard";
 
 export const portalBillingRouter = Router();
 
@@ -573,6 +574,12 @@ portalBillingRouter.post(
       const { patientId, tenantId } = req.patient!;
       const data = addPaymentMethodSchema.parse(req.body);
 
+      try {
+        assertSyntheticVendorMockAllowed("Patient portal payment method tokenization");
+      } catch {
+        return res.status(503).json({ error: "Live payment processing is not configured" });
+      }
+
       if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PORTAL_RAW_CARD_ENTRY !== 'true') {
         return res.status(400).json({
           error: "Direct payment method entry is disabled. Use a tokenized payment vendor.",
@@ -728,6 +735,12 @@ portalBillingRouter.post(
     try {
       const { patientId, tenantId } = req.patient!;
       const data = makePaymentSchema.parse(req.body);
+
+      try {
+        assertSyntheticVendorMockAllowed("Patient portal payment processing");
+      } catch {
+        return res.status(503).json({ error: "Live payment processing is not configured" });
+      }
 
       let paymentMethodId = data.paymentMethodId;
       let paymentToken: string;

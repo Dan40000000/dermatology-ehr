@@ -31,6 +31,8 @@ const INTEGRATION_MOCK_FLAGS = [
   'USE_MOCK_SMS',
   'USE_MOCK_TWILIO',
   'USE_MOCK_NOTIFICATIONS',
+  'ALLOW_VENDOR_MOCK_FALLBACKS',
+  'CRM_STRIPE_MOCK_CHECKOUT',
 ];
 
 const HEALTHCARE_WORKFLOW_PROVIDERS = [
@@ -113,14 +115,13 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): SmokeCheck[] {
         )
       : check(
           'mocks:integration',
-          productionLike ? 'warn' : 'warn',
+          productionLike ? 'fail' : 'warn',
           'Integration mock flags',
           `Mock flags enabled: ${enabledMockFlags.join(', ')}.`,
           'Disable mock integration flags before non-mock staging/production signoff.'
         )
   );
 
-  const allowVendorMockFallbacks = parseBool(env.ALLOW_VENDOR_MOCK_FALLBACKS);
   for (const providerConfig of HEALTHCARE_WORKFLOW_PROVIDERS) {
     const provider = (env[providerConfig.envName] || 'mock').trim().toLowerCase();
     if (!(providerConfig.allowed as readonly string[]).includes(provider)) {
@@ -138,13 +139,13 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): SmokeCheck[] {
 
     const nonMockProvider = provider !== 'mock';
     checks.push(
-      nonMockProvider && productionLike && !allowVendorMockFallbacks
+      nonMockProvider && productionLike
         ? check(
             providerConfig.id,
             'fail',
             `${providerConfig.workflow} provider`,
             `${providerConfig.envName}=${provider}, but only mock scaffolding is implemented locally.`,
-            'Use mock for demos until real vendor credentials/adapters are active, or explicitly set ALLOW_VENDOR_MOCK_FALLBACKS=true.'
+            'Configure and validate the live vendor adapter before using this workflow.'
           )
         : check(
             providerConfig.id,

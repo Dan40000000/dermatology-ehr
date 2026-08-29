@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import Stripe from "stripe";
+import { assertSyntheticVendorMockAllowed } from "../services/vendorMockGuard";
 import { env } from "../config/env";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
@@ -826,6 +827,7 @@ router.post("/client/invoices/:id/checkout", requireCrmAuth, async (req: CrmAuth
   });
 
   if (shouldUseMockCrmCheckout()) {
+    assertSyntheticVendorMockAllowed("CRM Stripe checkout");
     const mockUrl = appendCheckoutParams(successUrl, {
       mock: "true",
       checkoutSessionId: `cs_mock_crm_${invoice.id}`,

@@ -1,7 +1,14 @@
 import { MockPriorAuthAdapter, getPriorAuthAdapter } from "../priorAuthAdapter";
 
+const originalEnv = process.env;
+
 describe("priorAuthAdapter", () => {
   beforeEach(() => {
+    process.env = { ...originalEnv, NODE_ENV: "test" };
+    delete process.env.DEPLOYMENT_ENV;
+    delete process.env.APP_ENV;
+    delete process.env.RAILWAY_ENVIRONMENT;
+    delete process.env.ALLOW_VENDOR_MOCK_FALLBACKS;
     jest.useFakeTimers();
   });
 
@@ -10,10 +17,35 @@ describe("priorAuthAdapter", () => {
     jest.restoreAllMocks();
   });
 
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
   it("getPriorAuthAdapter returns mock adapter", () => {
     const adapter = getPriorAuthAdapter();
     expect(adapter).toBeInstanceOf(MockPriorAuthAdapter);
   });
+
+  it("blocks factory and direct mock adapter operations in production", async () => {
+    process.env.NODE_ENV = "production";
+
+    expect(() => getPriorAuthAdapter()).toThrow(/mock adapter is disabled in production/i);
+
+    const adapter = new MockPriorAuthAdapter();
+    await expect(
+      adapter.submit({
+        id: "pa-prod",
+        tenantId: "tenant-1",
+        patientId: "patient-1",
+        payer: "Test Payer",
+        memberId: "mem-1",
+      })
+    ).rejects.toThrow(/mock adapter is disabled in production/i);
+    await expect(adapter.checkStatus("pa-prod")).rejects.toThrow(
+      /mock adapter is disabled in production/i
+    );
+  });
+
 
   it("submit returns approved response", async () => {
     const randomSpy = jest.spyOn(Math, "random");

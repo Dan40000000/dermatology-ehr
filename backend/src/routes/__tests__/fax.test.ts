@@ -25,10 +25,19 @@ app.use(express.json());
 app.use("/fax", faxRouter);
 
 const queryMock = pool.query as jest.Mock;
+const originalEnv = process.env;
 
 beforeEach(() => {
+  process.env = { ...originalEnv, NODE_ENV: "test" };
+  delete process.env.DEPLOYMENT_ENV;
+  delete process.env.APP_ENV;
+  delete process.env.RAILWAY_ENVIRONMENT;
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+});
+
+afterAll(() => {
+  process.env = originalEnv;
 });
 
 describe("Fax routes", () => {
@@ -70,6 +79,20 @@ describe("Fax routes", () => {
 
     randomSpy.mockRestore();
     jest.useRealTimers();
+  });
+
+  it("POST /fax/send fails closed in production before recording a transmission", async () => {
+    process.env.NODE_ENV = "production";
+
+    const res = await request(app).post("/fax/send").send({
+      recipientNumber: "+15555551212",
+      subject: "Test Fax",
+      pages: 1,
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/not configured/i);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("GET /fax/:id returns 404", async () => {

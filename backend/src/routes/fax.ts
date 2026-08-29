@@ -6,6 +6,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
 import { env } from "../config/env";
+import { assertSyntheticVendorMockAllowed } from "../services/vendorMockGuard";
 
 export const faxRouter = Router();
 faxRouter.use(requireAuth, requireModuleAccess("fax"));
@@ -229,6 +230,12 @@ faxRouter.get("/outbox", requireAuth, async (req: AuthedRequest, res) => {
 faxRouter.post("/send", requireAuth, requireRoles(["admin", "provider", "ma"]), async (req: AuthedRequest, res) => {
   const parsed = sendFaxSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  try {
+    assertSyntheticVendorMockAllowed("Fax transmission");
+  } catch {
+    return res.status(503).json({ error: "Live fax transmission is not configured" });
+  }
 
   const id = crypto.randomUUID();
   const tenantId = req.user!.tenantId;

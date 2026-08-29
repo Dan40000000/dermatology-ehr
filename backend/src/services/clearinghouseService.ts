@@ -9,6 +9,7 @@ import crypto from "crypto";
 import { pool } from "../db/pool";
 import { auditLog } from "./audit";
 import { logger } from "../lib/logger";
+import { assertSyntheticVendorMockAllowed } from "./vendorMockGuard";
 
 // ============================================================================
 // TYPES
@@ -470,6 +471,8 @@ export async function submitClaim(
   clearinghouseId: string,
   userId: string
 ): Promise<ClaimSubmission> {
+  assertSyntheticVendorMockAllowed("Clearinghouse claim submission");
+
   // Get clearinghouse config
   const configResult = await pool.query(
     `SELECT id, name, type, api_endpoint, submission_method, sender_id, receiver_id
@@ -610,6 +613,8 @@ export async function checkClaimStatus(
   lastUpdated: Date;
   history: Array<{ status: string; date: Date; notes?: string }>;
 }> {
+  assertSyntheticVendorMockAllowed("Clearinghouse claim status");
+
   // Get latest submission
   const submissionResult = await pool.query(
     `SELECT cs.*, cc.name as clearinghouse_name, cc.type as clearinghouse_type

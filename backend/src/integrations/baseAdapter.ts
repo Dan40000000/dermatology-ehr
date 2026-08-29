@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { safeErrorCode, sanitizeLogValue } from '../utils/phiRedaction';
+import { assertSyntheticVendorMockAllowed } from '../services/vendorMockGuard';
 
 // ============================================================================
 // Types
@@ -131,6 +132,9 @@ export abstract class BaseAdapter {
     this.tenantId = options.tenantId;
     this.config = options.config || null;
     this.useMock = options.useMock ?? (process.env.NODE_ENV !== 'production');
+    if (this.useMock) {
+      assertSyntheticVendorMockAllowed('External integration');
+    }
     this.correlationId = crypto.randomUUID();
   }
 

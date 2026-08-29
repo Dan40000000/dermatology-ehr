@@ -146,6 +146,7 @@ export const envSchema = z.object({
   STRIPE_SECRET_KEY: stringOptional,
   STRIPE_PUBLISHABLE_KEY: stringOptional,
   STRIPE_WEBHOOK_SECRET: stringOptional,
+  CRM_STRIPE_MOCK_CHECKOUT: booleanDefault(false),
   STEDI_API_KEY: stringOptional,
   STEDI_API_BASE_URL: stringDefault("https://healthcare.us.stedi.com/2024-04-01"),
   STEDI_ELIGIBILITY_PATH: stringDefault("/change/medicalnetwork/eligibility/v3"),
@@ -176,6 +177,7 @@ export const envSchema = z.object({
   ELIGIBILITY_PROVIDER: z.enum(["stedi", "surescripts", "mock"]).default("mock"),
   PRESCRIBING_PROVIDER: z.enum(["dosespot", "surescripts", "mock"]).default("mock"),
   PRIOR_AUTH_PROVIDER: z.enum(["covermymeds", "surescripts", "mock"]).default("mock"),
+  ALLOW_VENDOR_MOCK_FALLBACKS: booleanDefault(false),
 
   OPENAI_API_KEY: stringOptional,
   OPENAI_API_CALLS_ENABLED: booleanDefault(false),

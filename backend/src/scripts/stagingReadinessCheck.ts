@@ -33,6 +33,8 @@ const MOCK_FLAG_KEYS = [
   'USE_MOCK_SLACK',
   'USE_MOCK_TEAMS',
   'USE_MOCK_CLAMAV',
+  'ALLOW_VENDOR_MOCK_FALLBACKS',
+  'CRM_STRIPE_MOCK_CHECKOUT',
 ];
 
 function parseBool(value: string | undefined, fallback = false): boolean {

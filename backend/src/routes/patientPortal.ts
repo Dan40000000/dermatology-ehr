@@ -13,6 +13,7 @@ import { logger } from "../lib/logger";
 import { getEmailService } from "../lib/container";
 import { createTwilioService } from "../services/twilioService";
 import { formatPhoneDisplay, formatPhoneE164 } from "../utils/phone";
+import { assertSyntheticVendorMockAllowed } from "../services/vendorMockGuard";
 import {
   COOKIE_AUTH_TOKEN_PLACEHOLDER,
   clearPatientPortalSessionCookie,
@@ -304,6 +305,10 @@ async function sendPatientPortalPasswordResetSms(
     !isSmsLiveSendEnabled() ||
     !settings?.twilio_account_sid ||
     !settings?.twilio_auth_token;
+
+  if (useMockSms) {
+    assertSyntheticVendorMockAllowed("Patient portal password-reset SMS");
+  }
 
   const sendResult = useMockSms
     ? {

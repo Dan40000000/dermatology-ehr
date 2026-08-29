@@ -133,4 +133,18 @@ describe('stagingReadinessCheck', () => {
     expect(retentionCheck?.status).toBe('fail');
     expect(retentionCheck?.remediation).toContain('medical-record law');
   });
+
+  it('blocks the legacy vendor mock override in production-like readiness', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        ALLOW_VENDOR_MOCK_FALLBACKS: 'true',
+      },
+      { skipDb: true }
+    );
+
+    const mockCheck = report.checks.find((item) => item.id === 'runtime:mocks');
+    expect(mockCheck?.status).toBe('fail');
+    expect(mockCheck?.detail).toContain('ALLOW_VENDOR_MOCK_FALLBACKS');
+  });
 });

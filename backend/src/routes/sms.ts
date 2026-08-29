@@ -29,6 +29,7 @@ import * as crypto from 'crypto';
 import { getSMSPracticeBranding, buildSMSHelpText, buildSMSOptInConfirmationText, buildSMSOptOutConfirmationText } from '../services/smsConsentText';
 import { getSMSConsentState, revokeSMSConsent, upsertSMSOptOut } from '../services/smsConsentState';
 import { assertSmsContentSafe, SmsPrivacyBlockError } from '../utils/smsPrivacyGuard';
+import { assertSyntheticVendorMockAllowed } from '../services/vendorMockGuard';
 
 const router = Router();
 const textMessagesModuleAccess = requireModuleAccess('text_messages');
@@ -98,6 +99,8 @@ function calculateSmsSegments(body: string): number {
 }
 
 function buildMockSmsResult(body: string) {
+  assertSyntheticVendorMockAllowed('SMS messaging');
+
   return {
     sid: `mock_sms_${crypto.randomUUID()}`,
     status: 'sent',

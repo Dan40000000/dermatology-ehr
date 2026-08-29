@@ -4,6 +4,8 @@
  * For MVP: Using mock implementation that returns canned statuses.
  */
 
+import { assertSyntheticVendorMockAllowed } from "./vendorMockGuard";
+
 export interface PriorAuthRequest {
   id: string;
   tenantId: string;
@@ -65,6 +67,8 @@ export class MockPriorAuthAdapter implements PriorAuthAdapter {
   }
 
   async submit(request: PriorAuthRequest): Promise<PriorAuthSubmitResponse> {
+    assertSyntheticVendorMockAllowed("Prior authorization submission");
+
     await this.simulateDelay(500, 1500);
 
     const random = Math.random();
@@ -139,6 +143,8 @@ export class MockPriorAuthAdapter implements PriorAuthAdapter {
   }
 
   async checkStatus(requestId: string, externalReferenceId?: string): Promise<PriorAuthStatusResponse> {
+    assertSyntheticVendorMockAllowed("Prior authorization status");
+
     await this.simulateDelay(200, 800);
 
     const hash = this.hashString(requestId);
@@ -170,5 +176,6 @@ export class MockPriorAuthAdapter implements PriorAuthAdapter {
 export function getPriorAuthAdapter(_payer?: string): PriorAuthAdapter {
   // For MVP: Always returns MockPriorAuthAdapter
   // Production: Return adapter based on payer configuration
+  assertSyntheticVendorMockAllowed("Prior authorization");
   return new MockPriorAuthAdapter();
 }

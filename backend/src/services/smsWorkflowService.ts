@@ -20,6 +20,7 @@ import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '.
 import { getPracticeTimeZone } from '../lib/practiceTimeZone';
 import type { PoolClient } from 'pg';
 import crypto from 'crypto';
+import { assertSyntheticVendorMockAllowed } from './vendorMockGuard';
 
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
 const SMS_APPOINTMENT_TIME_ZONE = getPracticeTimeZone();
@@ -392,6 +393,9 @@ export class SMSWorkflowService {
 
       // 6. Send via Twilio (or test-mode mock)
       const fromNumber = config.twilioPhoneNumber || DEFAULT_TEST_SMS_FROM;
+      if (config.isTestMode) {
+        assertSyntheticVendorMockAllowed('SMS workflow notification');
+      }
       const result = config.isTestMode
         ? {
             sid: `mock_sms_${crypto.randomUUID()}`,

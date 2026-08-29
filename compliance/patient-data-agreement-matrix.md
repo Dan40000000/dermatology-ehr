@@ -1,6 +1,6 @@
 # Patient Data Agreement Matrix
 
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-29
 
 Status: **NOT APPROVED FOR LIVE PHI**
 
@@ -13,12 +13,12 @@ This is an engineering and compliance-readiness checklist, not legal advice. The
 | Each customer practice or other covered entity using the hosted EHR | Executed Business Associate Agreement (BAA) between the practice and Perry Software, plus the services agreement and permitted-use instructions | Missing evidence; do not activate a PHI tenant |
 | Railway application hosting and managed PostgreSQL | Railway BAA covering the exact production account, project, services, logs, volumes, and database | Missing evidence; no hosted PHI |
 | AWS storage, backup, KMS, email, and voice services | AWS BAA accepted for the production account; each enabled service must be on AWS's HIPAA-eligible services list and configured within the shared-responsibility controls | AWS BAA active for account `213598696247`; S3, KMS, and AWS Transcribe including HealthScribe eligibility verified. Least-privilege GitHub OIDC backup access and a successful production backup/restore drill are evidenced in `compliance/evidence/aws-cloud-controls-2026-08-28.md`. Application cleanup deployment, privileged-access MFA, and logging remain shared-responsibility controls. |
-| Twilio SMS | Twilio BAA and use of only HIPAA-eligible products in the covered account/project | Missing evidence; keep patient SMS disabled |
-| Stedi eligibility, claims, ERA/EFT, or clearinghouse traffic | Stedi BAA, production account approval, payer enrollment, and applicable trading-partner agreements | Missing evidence; keep live transactions disabled |
-| OpenAI API receiving clinical text, images, audio, or identifiers | OpenAI BAA, Modified Retention approval, and eligible API endpoint/configuration evidence | Missing evidence; keep PHI-capable AI features disabled or use rigorously de-identified data only |
+| Twilio SMS | Twilio BAA and use of only HIPAA-eligible products in the covered account/project | Release target blocks shared SMS/voice egress while `TWILIO_BAA_ENABLED` is unset. Missing BAA evidence; do not attest or activate. |
+| Stedi eligibility, claims, ERA/EFT, or clearinghouse traffic | Stedi BAA, production account approval, payer enrollment, and applicable trading-partner agreements | Production has only a sandbox integration and `test_` key. Release target blocks sandbox traffic and requires `STEDI_BAA_ENABLED` for any live key. Missing BAA/production/enrollment evidence; do not attest or activate. |
+| OpenAI API receiving clinical text, images, audio, or identifiers | OpenAI BAA, Modified Retention approval, and eligible API endpoint/configuration evidence | Request sent 2026-08-29 for the exact API organization; agreement and provisioning remain pending. `OPENAI_BAA_ENABLED` is unset, so PHI-capable egress remains blocked. |
 | Sentry or another error-monitoring vendor | BAA if the service can receive PHI; otherwise an approved, tested, and monitored no-PHI telemetry boundary | Disabled: production has no `SENTRY_DSN`, so Sentry does not initialize. Reassess and obtain the appropriate agreement/control approval before enabling telemetry. |
 | Phaxio fax | Phaxio BAA and documented HIPAA account settings, 2FA, HTTPS webhooks, and storage choice | Disabled and unconfigured; production mock fax paths fail closed. Complete the agreement and account controls before activation. |
-| Transactional email provider | BAA if message bodies, attachments, routing, or metadata may contain PHI; otherwise an approved content-free portal-notification policy | Missing provider and evidence |
+| Transactional email provider | BAA if message bodies, attachments, routing, or metadata may contain PHI; otherwise an approved content-free portal-notification policy | Release target blocks the shared email adapter while `EMAIL_VENDOR_BAA_ENABLED` is unset. Missing exact-provider BAA evidence; do not attest or activate. |
 | E-prescribing and prior-authorization vendors | Vendor services agreement/BAA as applicable, production certification, identity proofing, and EPCS controls if controlled substances are enabled | Disabled and unconfigured; production synthetic paths fail closed. Complete vendor onboarding before activation. |
 
 The EHR operator must also maintain written subcontractor assurances and flow equivalent privacy/security obligations to any subcontractor that creates, receives, maintains, or transmits ePHI.

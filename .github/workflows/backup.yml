@@ -19,9 +19,10 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       BACKUP_RETENTION_DAYS: 90
       BACKUP_ENCRYPTION_ENABLED: 'true'
+      POSTGRES_CLIENT_MAJOR: '18'
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: restore_verifier
           POSTGRES_PASSWORD: restore_verifier_password
@@ -73,9 +74,21 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Install PostgreSQL client
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y ca-certificates curl
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y "postgresql-client-${POSTGRES_CLIENT_MAJOR}"
+          echo "/usr/lib/postgresql/${POSTGRES_CLIENT_MAJOR}/bin" >> "$GITHUB_PATH"
+          "/usr/lib/postgresql/${POSTGRES_CLIENT_MAJOR}/bin/pg_dump" --version
 
       - name: Run backup script
         run: |

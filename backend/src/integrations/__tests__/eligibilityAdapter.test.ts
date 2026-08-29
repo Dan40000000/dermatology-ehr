@@ -253,6 +253,44 @@ describe('EligibilityAdapter Stedi eligibility', () => {
     ]);
   });
 
+  it('blocks Stedi sandbox mode before any production egress', async () => {
+    const previousDeploymentEnv = process.env.DEPLOYMENT_ENV;
+    process.env.DEPLOYMENT_ENV = 'production';
+
+    try {
+      const adapter = createStediAdapter();
+
+      await expect(adapter.testConnection()).resolves.toEqual(expect.objectContaining({
+        success: false,
+        message: expect.stringContaining('Stedi eligibility sandbox adapter is disabled in production'),
+      }));
+      await expect(adapter.checkEligibility({
+        patientId: 'patient-1',
+        payerId: 'AHS',
+        memberId: 'member-1',
+        patientFirstName: 'James',
+        patientLastName: 'Ward',
+        patientDob: '1980-02-03',
+      })).resolves.toEqual(expect.objectContaining({
+        success: false,
+        status: 'error',
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'error',
+            message: expect.stringContaining('Stedi eligibility sandbox adapter is disabled in production'),
+          }),
+        ]),
+      }));
+      expect(mockedFetch).not.toHaveBeenCalled();
+    } finally {
+      if (previousDeploymentEnv === undefined) {
+        delete process.env.DEPLOYMENT_ENV;
+      } else {
+        process.env.DEPLOYMENT_ENV = previousDeploymentEnv;
+      }
+    }
+  });
+
   it('maps Stedi benefits into the app eligibility response shape', async () => {
     const adapter = createStediAdapter();
 

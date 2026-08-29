@@ -130,6 +130,7 @@ export const envSchema = z.object({
   ENABLE_DOCUMENT_EXPORT: booleanDefault(false),
   ENABLE_EMAIL_DELIVERY: booleanDefault(false),
   EMAIL_NOTIFICATION_ONLY: booleanDefault(true),
+  EMAIL_VENDOR_BAA_ENABLED: booleanDefault(false),
 
   CORS_ORIGIN: stringOptional,
   CORS_CREDENTIALS: booleanDefault(false),
@@ -142,6 +143,7 @@ export const envSchema = z.object({
   TWILIO_AUTH_TOKEN: stringOptional,
   TWILIO_PHONE_NUMBER: stringOptional,
   TWILIO_MESSAGING_SERVICE_SID: stringOptional,
+  TWILIO_BAA_ENABLED: booleanDefault(false),
 
   STRIPE_SECRET_KEY: stringOptional,
   STRIPE_PUBLISHABLE_KEY: stringOptional,
@@ -150,6 +152,7 @@ export const envSchema = z.object({
   STEDI_API_KEY: stringOptional,
   STEDI_API_BASE_URL: stringDefault("https://healthcare.us.stedi.com/2024-04-01"),
   STEDI_ELIGIBILITY_PATH: stringDefault("/change/medicalnetwork/eligibility/v3"),
+  STEDI_BAA_ENABLED: booleanDefault(false),
   PHAXIO_API_KEY: stringOptional,
   PHAXIO_API_SECRET: stringOptional,
   PHAXIO_FROM_NUMBER: stringOptional,

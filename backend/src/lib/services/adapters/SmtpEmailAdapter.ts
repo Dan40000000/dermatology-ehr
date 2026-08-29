@@ -16,6 +16,7 @@ import {
   GetAccountSendingEnabledCommand,
 } from "@aws-sdk/client-ses";
 import nodemailer, { Transporter } from "nodemailer";
+import { assertVendorBaaEnabled } from "../../../services/vendorMockGuard";
 
 export interface SmtpConfig {
   host: string;
@@ -73,6 +74,8 @@ export class SmtpEmailAdapter implements IEmailService {
   }
 
   async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
+    assertVendorBaaEnabled("Email delivery", "EMAIL_VENDOR_BAA_ENABLED");
+
     const to = Array.isArray(params.to) ? params.to : [params.to];
     const fallbackMessageId = `<${Date.now()}-${Math.random().toString(36).substring(2)}@dermatologyehr.local>`;
 

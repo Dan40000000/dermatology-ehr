@@ -1,4 +1,4 @@
-import { assertSyntheticVendorMockAllowed } from '../vendorMockGuard';
+import { assertSyntheticVendorMockAllowed, assertVendorBaaEnabled } from '../vendorMockGuard';
 
 const originalEnv = process.env;
 
@@ -26,5 +26,17 @@ describe('vendorMockGuard', () => {
     expect(() => assertSyntheticVendorMockAllowed('Test workflow')).toThrow(
       /mock adapter is disabled in production/i
     );
+  });
+
+  it('requires an explicit vendor BAA attestation in production', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.TEST_VENDOR_BAA_ENABLED;
+
+    expect(() => assertVendorBaaEnabled('Test vendor', 'TEST_VENDOR_BAA_ENABLED')).toThrow(
+      /effective vendor BAA/i
+    );
+
+    process.env.TEST_VENDOR_BAA_ENABLED = 'true';
+    expect(() => assertVendorBaaEnabled('Test vendor', 'TEST_VENDOR_BAA_ENABLED')).not.toThrow();
   });
 });

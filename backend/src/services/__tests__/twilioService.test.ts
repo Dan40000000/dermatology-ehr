@@ -56,7 +56,12 @@ jest.mock('../../utils/phone', () => ({
 const validateMock = validateAndFormatPhone as jest.Mock;
 
 describe('TwilioService', () => {
+  const originalDeploymentEnv = process.env.DEPLOYMENT_ENV;
+  const originalTwilioBaaEnabled = process.env.TWILIO_BAA_ENABLED;
+
   beforeEach(() => {
+    delete process.env.DEPLOYMENT_ENV;
+    delete process.env.TWILIO_BAA_ENABLED;
     messagesCreateMock.mockReset();
     messagesFetchMock.mockReset();
     incomingListMock.mockReset();
@@ -66,6 +71,13 @@ describe('TwilioService', () => {
     validateMock.mockClear();
     (logger.info as jest.Mock).mockReset();
     (logger.error as jest.Mock).mockReset();
+  });
+
+  afterAll(() => {
+    if (originalDeploymentEnv === undefined) delete process.env.DEPLOYMENT_ENV;
+    else process.env.DEPLOYMENT_ENV = originalDeploymentEnv;
+    if (originalTwilioBaaEnabled === undefined) delete process.env.TWILIO_BAA_ENABLED;
+    else process.env.TWILIO_BAA_ENABLED = originalTwilioBaaEnabled;
   });
 
   it('requires credentials on construction', () => {
@@ -109,6 +121,18 @@ describe('TwilioService', () => {
       errorCode: undefined,
       errorMessage: undefined,
     });
+  });
+
+  it('blocks Twilio egress in production without a verified BAA attestation', async () => {
+    process.env.DEPLOYMENT_ENV = 'production';
+
+    const service = new TwilioService('sid', 'token');
+    await expect(service.sendSMS({
+      to: '5550001',
+      from: '5550002',
+      body: 'Hello there',
+    })).rejects.toThrow('TWILIO_BAA_ENABLED=true has not been set');
+    expect(messagesCreateMock).not.toHaveBeenCalled();
   });
 
   it('skips localhost status callbacks for SMS sends', async () => {

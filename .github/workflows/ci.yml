@@ -392,6 +392,7 @@ jobs:
           BACKUP_BUCKET: example-backup-bucket
           BACKUP_ENCRYPTION_ENABLED: 'true'
           BACKUP_RETENTION_DAYS: '90'
+          BACKUP_RESTORE_EVIDENCE_URL: https://github.com/Dan40000000/dermatology-ehr/actions/runs/33226411040
           VIRUS_SCAN_ENABLED: 'true'
 
   # Build applications

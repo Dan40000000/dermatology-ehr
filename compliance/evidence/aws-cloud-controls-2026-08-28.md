@@ -1,6 +1,6 @@
 # AWS BAA and Cloud-Control Evidence
 
-Verified: 2026-08-28
+Verified: 2026-08-29 UTC
 
 AWS account: `213598696247`
 
@@ -29,11 +29,21 @@ All three buckets have S3 Block Public Access enabled. Bucket versioning is disa
 - The one-day lifecycle rules are a backstop for process interruption or cleanup permission failure, not the primary retention mechanism.
 - The backup workflow creates an application-encrypted database dump, uploads it with SSE-KMS, retains it for 90 days, and restores it into a disposable PostgreSQL instance before a run is considered successful.
 
+## Verified production backup and restore drill
+
+- GitHub Actions workflow run: `33226411040` (`https://github.com/Dan40000000/dermatology-ehr/actions/runs/33226411040`).
+- Backup job: `99030931073` (`https://github.com/Dan40000000/dermatology-ehr/actions/runs/33226411040/job/99030931073`).
+- Exact source commit: `108c7249418064a23f512caac3c35847845e56e8` on `codex/emr-phi-readiness-hardening`.
+- The job ran from `2026-08-29T01:26:27Z` through `2026-08-29T01:33:04Z` and completed successfully.
+- GitHub assumed `arn:aws:iam::213598696247:role/dermatology-ehr-github-production-backup` through OIDC. Its trust policy restricts the subject to `repo:Dan40000000/dermatology-ehr:environment:production`, and its inline policy `dermatology-ehr-production-backup-s3` grants only list/location access to the dedicated bucket and object access under `backups/*`.
+- The protected GitHub `production` environment contains `AWS_BACKUP_ROLE_ARN`, `AWS_REGION`, `DATABASE_URL`, `BACKUP_BUCKET`, and `BACKUP_ENCRYPTION_KEY`; no secret values are stored in this evidence file. The application encryption key is separately escrowed in Apple Keychain.
+- The successful run created `backups/2026-08-29/derm_db_backup_20260829_012712.sql.gz.enc` (4,978,768 bytes), verified it in S3, and restored it into the workflow's disposable PostgreSQL 18 service.
+- An AWS `HeadObject` check returned `ServerSideEncryption: aws:kms`, KMS key ID `arn:aws:kms:us-east-1:213598696247:key/b21cbd69-0071-43bb-820f-2d0654f3fd40`, content length `4978768`, and last-modified time `2026-08-29T01:32:55Z`.
+- The first attempt, run `33226276592` / job `99030556729`, failed before producing a dump because its PostgreSQL 16 client refused a PostgreSQL 18 server. Commit `108c7249418064a23f512caac3c35847845e56e8` aligned the backup client and disposable restore service to PostgreSQL 18 before the successful rerun.
+- The platform owner states that no real patient data is currently present in production. This drill does not authorize live PHI.
+
 ## Remaining verification
 
-- Create a least-privilege GitHub OIDC role for the production backup workflow; do not issue a long-lived AWS access key.
-- Store the role ARN, Railway production database URL, and application backup-encryption passphrase as GitHub production-environment secrets.
-- Run the workflow successfully against the production database while it contains synthetic/no patient data, retain the GitHub run URL as restore evidence, and verify the uploaded object's SSE-KMS metadata.
 - Enable and verify MFA for privileged AWS access and establish CloudTrail/log review according to the security program.
 
 ## Public references

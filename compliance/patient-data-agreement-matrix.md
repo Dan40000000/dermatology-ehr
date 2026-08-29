@@ -16,10 +16,10 @@ This is an engineering and compliance-readiness checklist, not legal advice. The
 | Twilio SMS | Twilio BAA and use of only HIPAA-eligible products in the covered account/project | Missing evidence; keep patient SMS disabled |
 | Stedi eligibility, claims, ERA/EFT, or clearinghouse traffic | Stedi BAA, production account approval, payer enrollment, and applicable trading-partner agreements | Missing evidence; keep live transactions disabled |
 | OpenAI API receiving clinical text, images, audio, or identifiers | OpenAI BAA, Modified Retention approval, and eligible API endpoint/configuration evidence | Missing evidence; keep PHI-capable AI features disabled or use rigorously de-identified data only |
-| Sentry or another error-monitoring vendor | BAA if the service can receive PHI; otherwise an approved, tested, and monitored no-PHI telemetry boundary | Missing evidence; code redaction alone is not contractual evidence |
-| Phaxio fax | Phaxio BAA and documented HIPAA account settings, 2FA, HTTPS webhooks, and storage choice | Missing evidence; keep live fax disabled |
+| Sentry or another error-monitoring vendor | BAA if the service can receive PHI; otherwise an approved, tested, and monitored no-PHI telemetry boundary | Disabled: production has no `SENTRY_DSN`, so Sentry does not initialize. Reassess and obtain the appropriate agreement/control approval before enabling telemetry. |
+| Phaxio fax | Phaxio BAA and documented HIPAA account settings, 2FA, HTTPS webhooks, and storage choice | Disabled and unconfigured; production mock fax paths fail closed. Complete the agreement and account controls before activation. |
 | Transactional email provider | BAA if message bodies, attachments, routing, or metadata may contain PHI; otherwise an approved content-free portal-notification policy | Missing provider and evidence |
-| E-prescribing and prior-authorization vendors | Vendor services agreement/BAA as applicable, production certification, identity proofing, and EPCS controls if controlled substances are enabled | Missing active production vendor |
+| E-prescribing and prior-authorization vendors | Vendor services agreement/BAA as applicable, production certification, identity proofing, and EPCS controls if controlled substances are enabled | Disabled and unconfigured; production synthetic paths fail closed. Complete vendor onboarding before activation. |
 
 The EHR operator must also maintain written subcontractor assurances and flow equivalent privacy/security obligations to any subcontractor that creates, receives, maintains, or transmits ePHI.
 

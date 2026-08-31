@@ -56,6 +56,60 @@ function isTrueEnv(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
+function splitCsvEnv(value: string | undefined): string[] {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isProductionLikeRuntime(): boolean {
+  const nodeEnvironment = String(process.env.NODE_ENV || '').trim().toLowerCase();
+  if (nodeEnvironment === "test" && process.env.JEST_WORKER_ID) {
+    return false;
+  }
+
+  const explicitDeploymentEnvironments = [
+    process.env.DEPLOYMENT_ENV,
+    process.env.APP_ENV,
+    process.env.RAILWAY_ENVIRONMENT,
+  ].map((value) => String(value || '').trim().toLowerCase());
+  if (explicitDeploymentEnvironments.some(
+    (environment) => environment === "production" || environment === "staging",
+  )) {
+    return true;
+  }
+
+  return nodeEnvironment === "production" || nodeEnvironment === "staging";
+}
+
+function assertOpenAiPhiScopeAttested(
+  endpoint: string | undefined,
+  options: OpenAiSpendGuardOptions,
+): void {
+  if (!isProductionLikeRuntime()) {
+    return;
+  }
+
+  if (!isTrueEnv(process.env.OPENAI_BAA_ENABLED)) {
+    throw new OpenAiSpendGuardError("OpenAI BAA/Healthcare Addendum is not attested");
+  }
+
+  const approvedEndpoints = splitCsvEnv(process.env.OPENAI_BAA_APPROVED_ENDPOINTS);
+  if (!endpoint || !approvedEndpoints.includes(endpoint)) {
+    throw new OpenAiSpendGuardError("OpenAI endpoint is outside the attested BAA scope");
+  }
+
+  const approvedModels = splitCsvEnv(process.env.OPENAI_BAA_APPROVED_MODELS);
+  if (!options.model || !approvedModels.includes(options.model)) {
+    throw new OpenAiSpendGuardError("OpenAI model is outside the attested BAA scope");
+  }
+
+  if (endpoint === "/v1/audio/transcriptions" && !isTrueEnv(process.env.OPENAI_RAW_AUDIO_ALLOWED)) {
+    throw new OpenAiSpendGuardError("OpenAI raw-audio processing is not separately attested");
+  }
+}
+
 function envNumber(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -103,10 +157,12 @@ function sumAudioSeconds(since: number): number {
     .reduce((sum, record) => sum + record.audioSeconds, 0);
 }
 
-function assertAllowed(options: OpenAiSpendGuardOptions): void {
+function assertAllowed(options: OpenAiSpendGuardOptions, endpoint?: string): void {
   if (!isOpenAiApiCallsEnabled()) {
     throw new OpenAiSpendGuardError("OpenAI calls are disabled by OPENAI_API_CALLS_ENABLED");
   }
+
+  assertOpenAiPhiScopeAttested(endpoint, options);
 
   if (isTrueEnv(process.env.OPENAI_SPEND_GUARD_DISABLED)) {
     return;
@@ -246,7 +302,8 @@ export async function meteredOpenAiFetch(
   init: RequestInit,
   options: OpenAiSpendGuardOptions,
 ): Promise<Response> {
-  assertAllowed(options);
+  const endpoint = getEndpoint(input);
+  assertAllowed(options, endpoint);
   recordAllowed(options);
 
   const startedAt = Date.now();
@@ -271,7 +328,7 @@ export async function meteredOpenAiFetch(
     userId: options.userId,
     feature: options.feature,
     model: options.model,
-    endpoint: getEndpoint(input),
+    endpoint,
     requestId,
     statusCode: response.status,
     ok: response.ok,

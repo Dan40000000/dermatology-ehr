@@ -26,6 +26,8 @@ const originalAiEnvironment = {
   hipaaAiEnabled: process.env.HIPAA_AI_ENABLED,
   openAiCallsEnabled: process.env.OPENAI_API_CALLS_ENABLED,
   openAiBaaEnabled: process.env.OPENAI_BAA_ENABLED,
+  openAiApprovedEndpoints: process.env.OPENAI_BAA_APPROVED_ENDPOINTS,
+  openAiApprovedModels: process.env.OPENAI_BAA_APPROVED_MODELS,
   clinicalAiMode: process.env.CLINICAL_AI_MODE,
   aiMode: process.env.AI_MODE,
 };
@@ -54,6 +56,8 @@ describe('aiLesionAnalysisService', () => {
     delete process.env.HIPAA_AI_ENABLED;
     delete process.env.OPENAI_API_CALLS_ENABLED;
     delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+    delete process.env.OPENAI_BAA_APPROVED_MODELS;
     delete process.env.CLINICAL_AI_MODE;
     delete process.env.AI_MODE;
   });
@@ -65,6 +69,8 @@ describe('aiLesionAnalysisService', () => {
     restoreEnvironmentValue('HIPAA_AI_ENABLED', originalAiEnvironment.hipaaAiEnabled);
     restoreEnvironmentValue('OPENAI_API_CALLS_ENABLED', originalAiEnvironment.openAiCallsEnabled);
     restoreEnvironmentValue('OPENAI_BAA_ENABLED', originalAiEnvironment.openAiBaaEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_ENDPOINTS', originalAiEnvironment.openAiApprovedEndpoints);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_MODELS', originalAiEnvironment.openAiApprovedModels);
     restoreEnvironmentValue('CLINICAL_AI_MODE', originalAiEnvironment.clinicalAiMode);
     restoreEnvironmentValue('AI_MODE', originalAiEnvironment.aiMode);
   });
@@ -91,6 +97,8 @@ describe('aiLesionAnalysisService', () => {
       process.env.OPENAI_API_KEY = 'sk-production-test-key';
       process.env.OPENAI_API_CALLS_ENABLED = 'true';
       process.env.OPENAI_BAA_ENABLED = 'true';
+      process.env.OPENAI_BAA_APPROVED_ENDPOINTS = '/v1/chat/completions';
+      process.env.OPENAI_BAA_APPROVED_MODELS = 'gpt-4o-mini';
       const productionService = new AILesionAnalysisService();
       queryMock
         .mockResolvedValueOnce({

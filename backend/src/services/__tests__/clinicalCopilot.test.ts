@@ -8,6 +8,8 @@ describe('clinicalCopilot', () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalOpenAiCallsEnabled = process.env.OPENAI_API_CALLS_ENABLED;
   const originalOpenAiBaaEnabled = process.env.OPENAI_BAA_ENABLED;
+  const originalOpenAiApprovedEndpoints = process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+  const originalOpenAiApprovedModels = process.env.OPENAI_BAA_APPROVED_MODELS;
   const originalClinicalAiMode = process.env.CLINICAL_AI_MODE;
   const originalAiMode = process.env.AI_MODE;
   const originalFetch = global.fetch;
@@ -18,6 +20,8 @@ describe('clinicalCopilot', () => {
     delete process.env.HIPAA_AI_ENABLED;
     delete process.env.OPENAI_API_CALLS_ENABLED;
     delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+    delete process.env.OPENAI_BAA_APPROVED_MODELS;
     delete process.env.CLINICAL_AI_MODE;
     delete process.env.AI_MODE;
     global.fetch = originalFetch;
@@ -30,6 +34,10 @@ describe('clinicalCopilot', () => {
     else process.env.OPENAI_API_CALLS_ENABLED = originalOpenAiCallsEnabled;
     if (originalOpenAiBaaEnabled === undefined) delete process.env.OPENAI_BAA_ENABLED;
     else process.env.OPENAI_BAA_ENABLED = originalOpenAiBaaEnabled;
+    if (originalOpenAiApprovedEndpoints === undefined) delete process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+    else process.env.OPENAI_BAA_APPROVED_ENDPOINTS = originalOpenAiApprovedEndpoints;
+    if (originalOpenAiApprovedModels === undefined) delete process.env.OPENAI_BAA_APPROVED_MODELS;
+    else process.env.OPENAI_BAA_APPROVED_MODELS = originalOpenAiApprovedModels;
     if (originalClinicalAiMode === undefined) delete process.env.CLINICAL_AI_MODE;
     else process.env.CLINICAL_AI_MODE = originalClinicalAiMode;
     if (originalAiMode === undefined) delete process.env.AI_MODE;
@@ -111,6 +119,8 @@ describe('clinicalCopilot', () => {
     process.env.OPENAI_API_KEY = 'sk-production-test-key';
     process.env.OPENAI_API_CALLS_ENABLED = 'true';
     process.env.OPENAI_BAA_ENABLED = 'true';
+    process.env.OPENAI_BAA_APPROVED_ENDPOINTS = '/v1/chat/completions';
+    process.env.OPENAI_BAA_APPROVED_MODELS = 'gpt-4o-mini';
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,
       status: 503,

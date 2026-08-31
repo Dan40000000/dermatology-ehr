@@ -43,7 +43,7 @@ This checklist is the operating control list for a practice using the system wit
 | SMS texting | Credentials configured; approval status checked separately | 10DLC/toll-free approval evidence, opt-in language, privacy/terms pages |
 | Stedi eligibility / clearinghouse | Test integration configured | Production enrollment, payer trading partner approvals, claim/ERA test evidence |
 | Stripe payments | Customer-owned account connection pattern | Connected account onboarding evidence and no stored bank credentials |
-| OpenAI or AI assistant provider | Guardrails added for non-BAA mode | BAA or non-PHI operating policy, warning logs, user training |
+| OpenAI or AI assistant provider | PHI egress blocked because agreement is not executed; endpoint/model and raw-audio gates added | Executed Business Associate and Healthcare Addendum, exact organization provisioning, eligible endpoint/model evidence, warning logs, and user training |
 | Phaxio fax | Integration implemented but not approved for live PHI | Signed BAA and HIPAA account/configuration evidence |
 | eRx | Deferred until vendor/client onboarding | eRx vendor contract, identity proofing, EPCS controls if controlled substances |
 

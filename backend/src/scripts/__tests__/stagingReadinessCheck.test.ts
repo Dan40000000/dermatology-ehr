@@ -147,4 +147,35 @@ describe('stagingReadinessCheck', () => {
     expect(mockCheck?.status).toBe('fail');
     expect(mockCheck?.detail).toContain('ALLOW_VENDOR_MOCK_FALLBACKS');
   });
+
+  it('requires exact endpoint and model evidence when the OpenAI BAA gate is enabled', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        OPENAI_BAA_ENABLED: 'true',
+      },
+      { skipDb: true }
+    );
+
+    const scopeCheck = report.checks.find((item) => item.id === 'openai:baa-scope');
+    expect(scopeCheck?.status).toBe('fail');
+    expect(scopeCheck?.detail).toContain('OPENAI_BAA_APPROVED_ENDPOINTS');
+    expect(scopeCheck?.detail).toContain('OPENAI_BAA_APPROVED_MODELS');
+  });
+
+  it('blocks a raw-audio switch that is outside the attested OpenAI endpoint scope', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        OPENAI_BAA_ENABLED: 'true',
+        OPENAI_BAA_APPROVED_ENDPOINTS: '/v1/chat/completions',
+        OPENAI_BAA_APPROVED_MODELS: 'gpt-4o-mini',
+        OPENAI_RAW_AUDIO_ALLOWED: 'true',
+      },
+      { skipDb: true }
+    );
+
+    expect(report.checks.find((item) => item.id === 'openai:baa-scope')?.status).toBe('pass');
+    expect(report.checks.find((item) => item.id === 'openai:raw-audio-scope')?.status).toBe('fail');
+  });
 });

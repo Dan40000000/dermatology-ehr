@@ -1,12 +1,14 @@
 # OpenAI BAA And Stripe Activation
 
-Last updated: 2026-07-03
+Last updated: 2026-08-31
 
 ## OpenAI BAA request
 
 OpenAI's API BAA process starts by emailing `baa@openai.com`. ChatGPT/Codex HIPAA support is not a standalone Codex checkbox; it requires an eligible ChatGPT Enterprise, Healthcare, or Regulated Workspace. OpenAI states that Codex Local support for PHI-covered work must be enabled by the OpenAI account director.
 
 Do not process PHI through Codex, ChatGPT, browser connectors, file uploads, or data migration tools until the BAA is signed and the covered workspace/API configuration is confirmed.
+
+For this EHR's API integration, do not set `OPENAI_BAA_ENABLED=true` until the executed OpenAI Business Associate and Healthcare Addendum covers organization `org-j77W6L5lwWAkHLIDvKYySq9q` and OpenAI confirms the applicable data-control provisioning. Populate `OPENAI_BAA_APPROVED_ENDPOINTS` and `OPENAI_BAA_APPROVED_MODELS` from that evidence. Leave `OPENAI_RAW_AUDIO_ALLOWED=false`; AWS HealthScribe is the intended raw-audio provider.
 
 ### Email draft
 

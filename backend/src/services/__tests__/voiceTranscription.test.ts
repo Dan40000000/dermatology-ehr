@@ -42,6 +42,8 @@ beforeEach(() => {
   delete process.env.OPENAI_API_CALLS_ENABLED;
   delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
   delete process.env.OPENAI_BAA_ENABLED;
+  delete process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+  delete process.env.OPENAI_BAA_APPROVED_MODELS;
   delete process.env.HIPAA_AI_ENABLED;
   delete process.env.OPENAI_RAW_AUDIO_ALLOWED;
   loggerMock.error.mockReset();
@@ -80,6 +82,28 @@ describe("VoiceTranscriptionService", () => {
     process.env.OPENAI_API_CALLS_ENABLED = "true";
     process.env.HIPAA_AI_ENABLED = "true";
     process.env.OPENAI_RAW_AUDIO_ALLOWED = "true";
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn();
+    const service = new VoiceTranscriptionService();
+
+    await expect(service.transcribeAudio({
+      audioFile: "/tmp/patient-audio.wav",
+      tenantId: "tenant-1",
+      userId: "user-1",
+    })).rejects.toThrow("Failed to transcribe audio");
+
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+    global.fetch = originalFetch;
+  });
+
+  it("blocks raw OpenAI audio when the BAA is attested but audio scope is not", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.OPENAI_API_KEY = "live-openai-key";
+    process.env.OPENAI_API_CALLS_ENABLED = "true";
+    process.env.OPENAI_BAA_ENABLED = "true";
+    process.env.OPENAI_BAA_APPROVED_ENDPOINTS = "/v1/audio/transcriptions";
+    process.env.OPENAI_BAA_APPROVED_MODELS = "gpt-4o-transcribe";
     const originalFetch = global.fetch;
     global.fetch = jest.fn();
     const service = new VoiceTranscriptionService();

@@ -397,6 +397,10 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
   const backupDurable = storageProvider === 's3' && (env.BACKUP_BUCKET || env.AWS_S3_BUCKET || '').trim().length > 0;
   const restoreEvidence = (env.BACKUP_RESTORE_VERIFIED_AT || env.BACKUP_RESTORE_EVIDENCE_URL || '').trim();
   const virusScanEnabled = parseBool(env.VIRUS_SCAN_ENABLED);
+  const openAiBaaEnabled = parseBool(env.OPENAI_BAA_ENABLED);
+  const openAiApprovedEndpoints = splitOrigins(env.OPENAI_BAA_APPROVED_ENDPOINTS);
+  const openAiApprovedModels = splitOrigins(env.OPENAI_BAA_APPROVED_MODELS);
+  const openAiRawAudioAllowed = parseBool(env.OPENAI_RAW_AUDIO_ALLOWED);
 
   if (productionLike) {
     checks.push(
@@ -565,6 +569,59 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
           'Mock service flags disabled',
           `Enabled mock flags: ${mockFlagsEnabled.join(', ')}`,
           'Disable all mock flags before staging/prod deployment.'
+      )
+  );
+
+  if (openAiBaaEnabled) {
+    const missingScopeEvidence = [
+      openAiApprovedEndpoints.length === 0 ? 'OPENAI_BAA_APPROVED_ENDPOINTS' : '',
+      openAiApprovedModels.length === 0 ? 'OPENAI_BAA_APPROVED_MODELS' : '',
+    ].filter(Boolean);
+    checks.push(
+      missingScopeEvidence.length === 0
+        ? check(
+            'openai:baa-scope',
+            'pass',
+            'OpenAI BAA endpoint/model scope',
+            `Attested endpoints: ${openAiApprovedEndpoints.join(', ')}; models: ${openAiApprovedModels.join(', ')}.`
+          )
+        : check(
+            'openai:baa-scope',
+            productionLike ? 'fail' : 'warn',
+            'OpenAI BAA endpoint/model scope',
+            `OpenAI BAA is enabled without exact scope evidence: ${missingScopeEvidence.join(', ')}.`,
+            'Populate the endpoint and model allowlists only from the executed OpenAI BAA/Healthcare Addendum and organization provisioning evidence.'
+          )
+    );
+  } else {
+    checks.push(
+      check(
+        'openai:baa-scope',
+        'pass',
+        'OpenAI BAA endpoint/model scope',
+        'OpenAI BAA activation is disabled; PHI-capable OpenAI calls remain blocked.'
+      )
+    );
+  }
+
+  const rawAudioScopeIsValid = !openAiRawAudioAllowed
+    || (openAiBaaEnabled && openAiApprovedEndpoints.includes('/v1/audio/transcriptions'));
+  checks.push(
+    rawAudioScopeIsValid
+      ? check(
+          'openai:raw-audio-scope',
+          'pass',
+          'OpenAI raw-audio scope',
+          openAiRawAudioAllowed
+            ? 'Raw audio is separately enabled and /v1/audio/transcriptions is in the attested endpoint allowlist.'
+            : 'OpenAI raw-audio processing is disabled.'
+        )
+      : check(
+          'openai:raw-audio-scope',
+          productionLike ? 'fail' : 'warn',
+          'OpenAI raw-audio scope',
+          'OPENAI_RAW_AUDIO_ALLOWED is enabled without both BAA activation and an attested /v1/audio/transcriptions endpoint.',
+          'Keep OpenAI raw audio disabled when AWS HealthScribe is the approved scribe path, or add exact OpenAI audio endpoint evidence before activation.'
         )
   );
 

@@ -28,6 +28,8 @@ const originalAiEnvironment = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   openAiCallsEnabled: process.env.OPENAI_API_CALLS_ENABLED,
   openAiBaaEnabled: process.env.OPENAI_BAA_ENABLED,
+  openAiApprovedEndpoints: process.env.OPENAI_BAA_APPROVED_ENDPOINTS,
+  openAiApprovedModels: process.env.OPENAI_BAA_APPROVED_MODELS,
   clinicalAiMode: process.env.CLINICAL_AI_MODE,
   aiMode: process.env.AI_MODE,
 };
@@ -52,6 +54,8 @@ describe('AINoteDraftingService', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_API_CALLS_ENABLED;
     delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+    delete process.env.OPENAI_BAA_APPROVED_MODELS;
     delete process.env.CLINICAL_AI_MODE;
     delete process.env.AI_MODE;
     loggerMock.error.mockReset();
@@ -65,6 +69,8 @@ describe('AINoteDraftingService', () => {
     restoreEnvironmentValue('ANTHROPIC_API_KEY', originalAiEnvironment.anthropicApiKey);
     restoreEnvironmentValue('OPENAI_API_CALLS_ENABLED', originalAiEnvironment.openAiCallsEnabled);
     restoreEnvironmentValue('OPENAI_BAA_ENABLED', originalAiEnvironment.openAiBaaEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_ENDPOINTS', originalAiEnvironment.openAiApprovedEndpoints);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_MODELS', originalAiEnvironment.openAiApprovedModels);
     restoreEnvironmentValue('CLINICAL_AI_MODE', originalAiEnvironment.clinicalAiMode);
     restoreEnvironmentValue('AI_MODE', originalAiEnvironment.aiMode);
   });
@@ -310,6 +316,8 @@ describe('AINoteDraftingService', () => {
       process.env.OPENAI_API_KEY = 'sk-production-test-key';
       process.env.OPENAI_API_CALLS_ENABLED = 'true';
       process.env.OPENAI_BAA_ENABLED = 'true';
+      process.env.OPENAI_BAA_APPROVED_ENDPOINTS = '/v1/chat/completions';
+      process.env.OPENAI_BAA_APPROVED_MODELS = 'gpt-4o-mini';
       service = new AINoteDraftingService();
 
       queryMock

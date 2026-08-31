@@ -45,6 +45,7 @@ All three buckets have S3 Block Public Access enabled. Bucket versioning is disa
 ## Remaining verification
 
 - Enable and verify MFA for privileged AWS access and establish CloudTrail/log review according to the security program.
+- Independent re-verification attempted on 2026-08-31 reached the AWS sign-in screen because the prior console session had expired. No MFA or CloudTrail claim was changed or inferred; current console evidence still requires an authenticated privileged-access review.
 
 ## Public references
 

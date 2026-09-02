@@ -130,30 +130,31 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     const patientB = `${tenantB}-patient`;
     const providerA = `${tenantA}-provider`;
     const providerB = `${tenantB}-provider`;
-    await applicationPool!.query('BEGIN');
+    const client = await applicationPool!.connect();
     try {
-      await applicationPool!.query('INSERT INTO tenants (id, name) VALUES ($1, $2), ($3, $4)', [tenantA, 'Biopsy A', tenantB, 'Biopsy B']);
-      await applicationPool!.query(
+      await client.query('BEGIN');
+      await client.query('INSERT INTO tenants (id, name) VALUES ($1, $2), ($3, $4)', [tenantA, 'Biopsy A', tenantB, 'Biopsy B']);
+      await client.query(
         `INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
          VALUES ($1, $2, $3, $4, 'provider', 'test-hash')`,
         [userA, tenantA, `${userA}@example.test`, 'Biopsy Test User'],
       );
-      await applicationPool!.query(
+      await client.query(
         `INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
          VALUES ($1, $2, $3, $4, 'provider', 'test-hash')`,
         [`${tenantB}-user`, tenantB, `${tenantB}-user@example.test`, 'Biopsy Test User B'],
       );
-      await applicationPool!.query(
+      await client.query(
         `INSERT INTO patients (id, tenant_id, first_name, last_name)
          VALUES ($1, $2, 'Biopsy', 'Patient A'), ($3, $4, 'Biopsy', 'Patient B')`,
         [patientA, tenantA, patientB, tenantB],
       );
-      await applicationPool!.query(
+      await client.query(
         `INSERT INTO providers (id, tenant_id, user_id, full_name)
          VALUES ($1, $2, $3, 'Biopsy Provider A'), ($4, $5, $6, 'Biopsy Provider B')`,
         [providerA, tenantA, userA, providerB, tenantB, `${tenantB}-user`],
       );
-      const insert = (tenantId: string, patientId: string, providerId: string) => applicationPool!.query(
+      const insert = (tenantId: string, patientId: string, providerId: string) => client.query(
         `INSERT INTO biopsies (
            tenant_id, patient_id, specimen_id, specimen_type, body_location,
            ordering_provider_id, path_lab
@@ -161,12 +162,13 @@ describePostgres('PostgreSQL migrations (real database)', () => {
         [tenantId, patientId, providerId],
       );
       await insert(tenantA, patientA, providerA);
-      await applicationPool!.query('SAVEPOINT duplicate_specimen');
+      await client.query('SAVEPOINT duplicate_specimen');
       await expect(insert(tenantA, patientA, providerA)).rejects.toMatchObject({ code: '23505' });
-      await applicationPool!.query('ROLLBACK TO SAVEPOINT duplicate_specimen');
+      await client.query('ROLLBACK TO SAVEPOINT duplicate_specimen');
       await expect(insert(tenantB, patientB, providerB)).resolves.toMatchObject({ rowCount: 1 });
     } finally {
-      await applicationPool!.query('ROLLBACK');
+      await client.query('ROLLBACK');
+      client.release();
     }
   });
 

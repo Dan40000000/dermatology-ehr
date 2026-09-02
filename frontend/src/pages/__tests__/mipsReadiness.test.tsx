@@ -175,6 +175,26 @@ describe('MIPSReadinessPage', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/marked verified/i));
   });
 
+  it('lets a reviewer explicitly verify manual evidence and restores focus to the reviewed row', async () => {
+    renderPage(makeOverview(), [{
+      id: 'manual-completeness', category: 'quality', evidenceType: 'data_completeness',
+      sourceType: 'qpp_manual', sourceId: 'opaque-reference', observedAt: '2026-01-08T00:00:00Z',
+      status: 'candidate', origin: 'manual',
+      metadata: { completeCount: 80, eligibleCount: 100 },
+    }]);
+
+    await screen.findByRole('heading', { name: 'Manual evidence', level: 2 });
+    const reviewButton = screen.getByRole('button', { name: 'Verify manual evidence' });
+    const evidenceRow = reviewButton.closest('li');
+    fireEvent.click(reviewButton);
+
+    await waitFor(() => expect(apiMocks.reviewMipsEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: authMocks.headers }), 'manual-completeness', 'verified', null, 2026,
+    ));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/marked verified/i));
+    await waitFor(() => expect(document.activeElement).toBe(evidenceRow));
+  });
+
   it('reconciles connected workflows and announces the idempotent result', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Automation coverage', level: 2 });

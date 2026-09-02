@@ -454,7 +454,7 @@ export default function MIPSReadinessPage() {
   const profileSectionRef = useRef<HTMLElement>(null);
   const summarySectionRef = useRef<HTMLElement>(null);
   const evidenceSectionRef = useRef<HTMLElement>(null);
-  const automationEvidenceRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const evidenceItemRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const previewHeadingRef = useRef<HTMLHeadingElement>(null);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
 
@@ -877,7 +877,7 @@ export default function MIPSReadinessPage() {
       setAnnouncement(
         `Candidate evidence for measure ${item.measureId || item.category} marked ${status}. This remains workflow readiness, not an official submitted score.`,
       );
-      window.requestAnimationFrame(() => automationEvidenceRefs.current[item.id]?.focus());
+      window.requestAnimationFrame(() => evidenceItemRefs.current[item.id]?.focus());
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to review candidate evidence.';
       setAnnouncement(`Evidence review failed: ${message}`);
@@ -1140,7 +1140,7 @@ export default function MIPSReadinessPage() {
                 {automaticEvidence.map((item) => {
                   const destination = sourceDestination(item);
                   return (
-                    <li key={item.id} ref={(element) => { automationEvidenceRefs.current[item.id] = element; }} tabIndex={-1}>
+                    <li key={item.id} ref={(element) => { evidenceItemRefs.current[item.id] = element; }} tabIndex={-1}>
                       <div className="mips-evidence-list__top">
                         <div><strong>{item.measureId || categoryLabel(item.category)}</strong><span className="mips-origin-label">Automatic candidate</span></div>
                         <StatusBadge status={item.status} />
@@ -1224,7 +1224,7 @@ export default function MIPSReadinessPage() {
           </form>
 
           <div className="mips-evidence-list">
-            {manualEvidence.length ? <ul>{manualEvidence.map((item) => <li key={item.id}><div className="mips-evidence-list__top"><strong>{item.measureId || categoryLabel(item.category)}</strong><StatusBadge status={item.status} /></div><p>{EVIDENCE_TYPES.find((type) => type.value === item.evidenceType)?.label || item.evidenceType}</p><dl><div><dt>Source</dt><dd>{item.sourceType} · {item.sourceId}</dd></div><div><dt>Observed</dt><dd>{formatDate(item.observedAt)}</dd></div></dl>{Object.keys(item.metadata || {}).length > 0 && <details><summary>Structured values</summary><dl>{Object.entries(item.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}</li>)}</ul> : <p className="mips-empty-state">No manual evidence is recorded yet. Automatic candidates appear in the dedicated review section above.</p>}
+            {manualEvidence.length ? <ul>{manualEvidence.map((item) => <li key={item.id} ref={(element) => { evidenceItemRefs.current[item.id] = element; }} tabIndex={-1}><div className="mips-evidence-list__top"><strong>{item.measureId || categoryLabel(item.category)}</strong><StatusBadge status={item.status} /></div><p>{EVIDENCE_TYPES.find((type) => type.value === item.evidenceType)?.label || item.evidenceType}</p><dl><div><dt>Source</dt><dd>{item.sourceType} · {item.sourceId}</dd></div><div><dt>Observed</dt><dd>{formatDate(item.observedAt)}</dd></div></dl>{Object.keys(item.metadata || {}).length > 0 && <details><summary>Structured values</summary><dl>{Object.entries(item.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}<div className="mips-candidate-actions"><button type="button" className="mips-secondary-button" disabled={reviewingEvidenceId === item.id || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify manual evidence</button><button type="button" className="mips-secondary-button mips-secondary-button--danger" disabled={reviewingEvidenceId === item.id || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject manual evidence</button></div></li>)}</ul> : <p className="mips-empty-state">No manual evidence is recorded yet. Automatic candidates appear in the dedicated review section above.</p>}
           </div>
         </section>
 

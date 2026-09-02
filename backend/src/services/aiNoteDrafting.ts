@@ -329,11 +329,37 @@ export class AINoteDraftingService {
   private async getProviderWritingStyle(providerId: string, tenantId: string) {
     const result = await pool.query(
       `select
-        soap_note
-       from encounters
-       where provider_id = $1 and tenant_id = $2
-       and soap_note is not null
-       order by encounter_date desc
+        concat_ws(E'\\n\\n',
+          case when nullif(trim(e.chief_complaint), '') is not null
+            then 'Chief Complaint: ' || trim(e.chief_complaint) end,
+          case when nullif(trim(e.hpi), '') is not null
+            then 'HPI: ' || trim(e.hpi) end,
+          case when nullif(trim(e.ros), '') is not null
+            then 'ROS: ' || trim(e.ros) end,
+          case when nullif(trim(e.exam), '') is not null
+            then 'Exam: ' || trim(e.exam) end,
+          case when nullif(trim(e.assessment_plan), '') is not null
+            then 'Assessment and Plan: ' || trim(e.assessment_plan) end
+        ) as soap_note,
+        coalesce(e.updated_at, e.created_at) as encounter_date
+       from encounters e
+       join providers p
+         on p.id = e.provider_id
+        and p.tenant_id = e.tenant_id
+       join users u
+         on u.id = p.user_id
+        and u.tenant_id = p.tenant_id
+       where u.id = $1
+         and e.tenant_id = $2
+         and e.status in ('final', 'signed', 'locked', 'finalized', 'completed', 'closed')
+         and (
+           nullif(trim(e.chief_complaint), '') is not null
+           or nullif(trim(e.hpi), '') is not null
+           or nullif(trim(e.ros), '') is not null
+           or nullif(trim(e.exam), '') is not null
+           or nullif(trim(e.assessment_plan), '') is not null
+         )
+       order by coalesce(e.updated_at, e.created_at) desc
        limit 10`,
       [providerId, tenantId]
     );
@@ -350,24 +376,41 @@ export class AINoteDraftingService {
     tenantId: string
   ) {
     if (encounterIds.length === 0) {
-      // Get last 3 encounters if not specified
-      const result = await pool.query(
-        `select soap_note, encounter_date, chief_complaint
-         from encounters
-         where patient_id = $1 and tenant_id = $2
-         and soap_note is not null
-         order by encounter_date desc
-         limit 3`,
-        [patientId, tenantId]
-      );
-      return result.rows;
+      // Do not silently import recent chart history into a current-encounter
+      // draft. Callers must explicitly opt in to prior encounter IDs.
+      return [];
     }
 
     const result = await pool.query(
-      `select soap_note, encounter_date, chief_complaint
-       from encounters
-       where id = any($1) and tenant_id = $2`,
-      [encounterIds, tenantId]
+      `select
+        concat_ws(E'\\n\\n',
+          case when nullif(trim(e.chief_complaint), '') is not null
+            then 'Chief Complaint: ' || trim(e.chief_complaint) end,
+          case when nullif(trim(e.hpi), '') is not null
+            then 'HPI: ' || trim(e.hpi) end,
+          case when nullif(trim(e.ros), '') is not null
+            then 'ROS: ' || trim(e.ros) end,
+          case when nullif(trim(e.exam), '') is not null
+            then 'Exam: ' || trim(e.exam) end,
+          case when nullif(trim(e.assessment_plan), '') is not null
+            then 'Assessment and Plan: ' || trim(e.assessment_plan) end
+        ) as soap_note,
+        coalesce(e.updated_at, e.created_at) as encounter_date,
+        e.chief_complaint
+       from encounters e
+       where e.id = any($1)
+         and e.tenant_id = $2
+         and e.patient_id = $3
+         and e.status in ('final', 'signed', 'locked', 'finalized', 'completed', 'closed')
+         and (
+           nullif(trim(e.chief_complaint), '') is not null
+           or nullif(trim(e.hpi), '') is not null
+           or nullif(trim(e.ros), '') is not null
+           or nullif(trim(e.exam), '') is not null
+           or nullif(trim(e.assessment_plan), '') is not null
+         )
+       order by coalesce(e.updated_at, e.created_at) desc`,
+      [encounterIds, tenantId, patientId]
     );
     return result.rows;
   }
@@ -615,7 +658,6 @@ Age/Sex: ${age}/${sex}
           },
           parsed?.sectionReview,
           sourceInputs,
-          parsed?.confidenceScore,
         );
       }
 
@@ -655,14 +697,13 @@ Age/Sex: ${age}/${sex}
     if (examMatch && examMatch[1]) sections.exam = normalizeDocumentedContent(examMatch[1]);
     if (apMatch && apMatch[1]) sections.assessmentPlan = normalizeDocumentedContent(apMatch[1]);
 
-    return this.buildReviewedDraft(sections, undefined, sourceInputs, 0.5);
+    return this.buildReviewedDraft(sections, undefined, sourceInputs);
   }
 
   private buildReviewedDraft(
     sections: Record<QuickNoteSection, string>,
     rawSectionReview: unknown,
     sourceInputs: { chiefComplaint?: string; briefNotes?: string },
-    rawConfidenceScore: unknown,
   ): NoteDraft {
     const review: Partial<QuickNoteSectionReview> = {};
 
@@ -693,16 +734,16 @@ Age/Sex: ${age}/${sex}
     }
 
     const sectionReview = review as QuickNoteSectionReview;
-    const confidenceValues = QUICK_NOTE_SECTIONS
+    const documentedConfidenceValues = QUICK_NOTE_SECTIONS
+      .filter((section) => sectionReview[section].status === "drafted")
       .map((section) => sectionReview[section].confidence)
       .filter((value) => Number.isFinite(value));
-    const parsedConfidence = normalizeConfidence(rawConfidenceScore, 0.5);
 
     return {
       ...sections,
-      confidenceScore: confidenceValues.length > 0
-        ? Number((confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length).toFixed(4))
-        : parsedConfidence,
+      confidenceScore: documentedConfidenceValues.length > 0
+        ? Number((documentedConfidenceValues.reduce((sum, value) => sum + value, 0) / documentedConfidenceValues.length).toFixed(4))
+        : 0,
       suggestions: [],
       sectionReview,
     };

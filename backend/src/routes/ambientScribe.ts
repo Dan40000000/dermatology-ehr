@@ -254,7 +254,15 @@ function isStoredSectionDrafted(
     return true;
   }
   const review = noteContent.sectionReview?.[section];
-  return review?.status === 'drafted';
+  return review?.status === 'drafted'
+    && Array.isArray(review?.evidence)
+    && review.evidence.some((item: unknown) => {
+      if (!item || typeof item !== 'object') return false;
+      const evidence = item as Record<string, unknown>;
+      return (evidence.source === 'transcript' || evidence.source === 'visit_context')
+        && typeof evidence.excerpt === 'string'
+        && evidence.excerpt.trim().length > 0;
+    });
 }
 
 const clinicalCopilotHistoryItemSchema = z.object({

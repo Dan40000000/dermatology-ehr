@@ -50,6 +50,7 @@ describe('AINoteDraftingService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    queryMock.mockReset();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_API_CALLS_ENABLED;
@@ -296,6 +297,47 @@ describe('AINoteDraftingService', () => {
       expect(result.sectionReview.assessmentPlan.confidence).toBeLessThanOrEqual(0.5);
     });
 
+    it('averages confidence across documented sections only', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      service = new AINoteDraftingService();
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ first_name: 'Jane', last_name: 'Smith' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            chiefComplaint: 'Rash on arms',
+            hpi: '',
+            ros: '',
+            exam: '',
+            assessmentPlan: '',
+            sectionReview: {
+              chiefComplaint: {
+                status: 'drafted',
+                confidence: 0.8,
+                evidence: [{ source: 'chief_complaint', excerpt: 'Rash on arms' }],
+              },
+              hpi: { status: 'not_documented', confidence: 0, evidence: [] },
+              ros: { status: 'not_documented', confidence: 0, evidence: [] },
+              exam: { status: 'not_documented', confidence: 0, evidence: [] },
+              assessmentPlan: { status: 'not_documented', confidence: 0, evidence: [] },
+            },
+          }) } }],
+        }),
+      });
+
+      const result = await service.generateNoteDraft({
+        patientId,
+        providerId,
+        chiefComplaint: 'Rash on arms',
+      }, tenantId);
+
+      expect(result.confidenceScore).toBe(0.8);
+    });
+
     it('should include template when provided', async () => {
       const mockPatient = { first_name: 'John', last_name: 'Doe', date_of_birth: '1990-01-01', sex: 'M' };
       const mockTemplate = { chiefComplaint: 'Template CC', hpi: 'Template HPI' };
@@ -335,9 +377,29 @@ describe('AINoteDraftingService', () => {
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: mockPriorNotes });
 
-      const result = await service.generateNoteDraft(request, tenantId);
+      const result = await service.generateNoteDraft({
+        ...request,
+        priorEncounterIds: ['prior-encounter-123'],
+      }, tenantId);
 
       expect(result).toBeDefined();
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining('e.patient_id = $3'),
+        [['prior-encounter-123'], tenantId, patientId]
+      );
+    });
+
+    it('does not fetch recent encounter notes without explicit IDs', async () => {
+      const mockPatient = { first_name: 'John', last_name: 'Doe', date_of_birth: '1990-01-01', sex: 'M' };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [mockPatient] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.generateNoteDraft(request, tenantId);
+
+      expect(queryMock).toHaveBeenCalledTimes(2);
+      expect(queryMock.mock.calls[1][0]).toEqual(expect.stringContaining('join users u'));
     });
 
     it('should include provider writing style', async () => {
@@ -358,6 +420,11 @@ describe('AINoteDraftingService', () => {
         expect.stringContaining('from encounters'),
         [providerId, tenantId]
       );
+      const providerStyleQuery = queryMock.mock.calls[1][0] as string;
+      expect(providerStyleQuery).toContain('p.user_id');
+      expect(providerStyleQuery).toContain('coalesce(e.updated_at, e.created_at)');
+      expect(providerStyleQuery).not.toContain('e.soap_note');
+      expect(providerStyleQuery).not.toContain('e.encounter_date');
       expect(result).toBeDefined();
     });
 
@@ -464,6 +531,7 @@ Assessment and Plan: Contact dermatitis, prescribe topical steroid`;
         ...request,
         chiefComplaint: 'Jane Doe has itchy rash; phone 415-555-1234.',
         briefNotes: 'SSN 123-45-6789 and email jane.doe@example.com. Eczema flare.',
+        priorEncounterIds: ['prior-encounter-123'],
       };
       const mockPatient = {
         first_name: 'Jane',

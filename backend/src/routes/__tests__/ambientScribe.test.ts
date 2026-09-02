@@ -2062,7 +2062,11 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
         note_content: {
           sectionReview: {
             chiefComplaint: { status: 'drafted', confidence: 0.9, evidence: [] },
-            hpi: { status: 'drafted', confidence: 0.9, evidence: [] },
+            hpi: {
+              status: 'drafted',
+              confidence: 0.9,
+              evidence: [{ source: 'transcript', excerpt: 'New HPI' }],
+            },
             ros: { status: 'not_documented', confidence: 0, evidence: [] },
             physicalExam: { status: 'drafted', confidence: 0.4, evidence: [] },
             assessment: { status: 'drafted', confidence: 0.9, evidence: [] },
@@ -2120,6 +2124,37 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(replace.body.skippedSections).toEqual([]);
       expect(queryMock.mock.calls[2][1][1]).toBe('New HPI');
       expect(replace.body.mode).toBe('replace');
+    });
+
+    it('skips a nonempty drafted section without validated evidence', async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'note-1',
+            review_status: 'approved',
+            encounter_id: 'enc-1',
+            hpi: 'Unverified HPI',
+            note_content: {
+              sectionReview: {
+                hpi: { status: 'drafted', confidence: 0.4, evidence: [] },
+              },
+            },
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{ status: 'draft', hpi: '' }],
+          rowCount: 1,
+        });
+
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/apply-to-encounter')
+        .send({ sections: ['hpi'], applyStructuredActions: false });
+
+      expect(res.status).toBe(200);
+      expect(res.body.appliedSections).toEqual([]);
+      expect(res.body.skippedSections).toEqual(['hpi']);
+      expect(queryMock).toHaveBeenCalledTimes(2);
     });
 
     it('does not apply a section marked not_documented even when it has legacy text', async () => {

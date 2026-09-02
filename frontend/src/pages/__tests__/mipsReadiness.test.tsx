@@ -319,14 +319,14 @@ describe('MIPSReadinessPage', () => {
   it('focuses the related profile control from the work queue', async () => {
     renderPage(makeOverview({ workQueue: [{ id: 'work-176', category: 'quality', ruleId: 'quality:measure:176', measureId: '176', title: 'TB screening workflow', status: 'unknown', priority: 'medium', action: 'Collect evidence.' }] }));
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
-    fireEvent.click(screen.getByRole('button', { name: 'Review item: TB screening workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review item: TB screening workflow' }));
     expect(document.activeElement).toBe(screen.getByRole('checkbox', { name: /TB screening before biologic/i }));
   });
 
   it('maps PI and CHPL work items to their actual profile controls', async () => {
     renderPage(makeOverview({ workQueue: [{ id: 'work-chpl', category: 'pi', ruleId: 'pi:chpl-id', title: 'CHPL identifier', status: 'unknown', priority: 'medium', action: 'Add CHPL identifier.' }] }));
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
-    fireEvent.click(screen.getByRole('button', { name: 'Review item: CHPL identifier' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review item: CHPL identifier' }));
     expect(document.activeElement).toBe(screen.getByLabelText('CHPL identifier'));
   });
 

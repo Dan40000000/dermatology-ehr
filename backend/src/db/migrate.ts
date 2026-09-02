@@ -16611,7 +16611,7 @@ Consider age-appropriate treatments and include family counseling points.',
 
     ALTER TABLE mips_readiness_evidence
       ADD CONSTRAINT mips_readiness_evidence_status_check
-      CHECK (status IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable));
+      CHECK (status IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable'));
     `,
   },
   {

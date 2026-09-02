@@ -633,7 +633,8 @@
 .mips-automatic-evidence > h3 { margin-bottom: 0.75rem; }
 .mips-automatic-evidence > ul { display: grid; gap: 0.7rem; margin: 0; padding: 0; list-style: none; }
 .mips-automatic-evidence > ul > li { padding: 0.9rem; border: 1px solid var(--mips-line); border-radius: 0.55rem; background: #fbfdff; }
-.mips-automatic-evidence > ul > li:focus-visible { outline: 3px solid var(--mips-focus); outline-offset: 3px; }
+.mips-automatic-evidence > ul > li:focus-visible,
+.mips-evidence-list > ul > li:focus-visible { outline: 3px solid var(--mips-focus); outline-offset: 3px; }
 .mips-automatic-evidence dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; margin: 0.65rem 0; }
 .mips-automatic-evidence dt { color: var(--mips-ink-muted); font-size: 0.75rem; font-weight: 750; text-transform: uppercase; }
 .mips-automatic-evidence dd { margin: 0.14rem 0 0; overflow-wrap: anywhere; }

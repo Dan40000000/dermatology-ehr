@@ -402,6 +402,17 @@ function categoryLabel(category: MipsCategory): string {
   return category === 'pi' ? 'Promoting Interoperability' : category === 'ia' ? 'Improvement Activities' : category[0].toUpperCase() + category.slice(1);
 }
 
+function evidenceTypeLabel(evidenceType: string): string {
+  return EVIDENCE_TYPES.find((type) => type.value === evidenceType)?.label || evidenceType.replaceAll('_', ' ');
+}
+
+function evidenceReviewLabel(action: string, item: MipsEvidence): string {
+  const measureContext = item.measureId
+    ? `${categoryLabel(item.category)} measure ${item.measureId}`
+    : `${categoryLabel(item.category)} category`;
+  return `${action} — ${measureContext} — ${evidenceTypeLabel(item.evidenceType)} — source ${item.sourceId} — record ${item.id}`;
+}
+
 function formatDate(value: string | undefined): string {
   if (!value) return 'Not recorded';
   const parsed = new Date(value);
@@ -470,6 +481,7 @@ export default function MIPSReadinessPage() {
   const [creatingEvidence, setCreatingEvidence] = useState(false);
   const [syncingAutomation, setSyncingAutomation] = useState(false);
   const [reviewingEvidenceId, setReviewingEvidenceId] = useState<string | null>(null);
+  const reviewInFlightRef = useRef(false);
   const [previewing, setPreviewing] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [previewError, setPreviewError] = useState('');
@@ -869,6 +881,8 @@ export default function MIPSReadinessPage() {
   };
 
   const handleEvidenceReview = async (item: MipsEvidence, status: 'verified' | 'rejected') => {
+    if (reviewInFlightRef.current || reviewingEvidenceId !== null) return;
+    reviewInFlightRef.current = true;
     setReviewingEvidenceId(item.id);
     setAnnouncement(`${status === 'verified' ? 'Verifying' : 'Rejecting'} candidate evidence for measure ${item.measureId || item.category}.`);
     try {
@@ -883,6 +897,7 @@ export default function MIPSReadinessPage() {
       setAnnouncement(`Evidence review failed: ${message}`);
       setLoadError(message);
     } finally {
+      reviewInFlightRef.current = false;
       setReviewingEvidenceId(null);
     }
   };
@@ -1156,8 +1171,8 @@ export default function MIPSReadinessPage() {
                       {item.metadata?.limitationCode && <p className="mips-candidate-limitation">Review requirement: {String(item.metadata.limitationCode).replaceAll('_', ' ').toLowerCase()}.</p>}
                       <div className="mips-candidate-actions">
                         {destination && <Link className="mips-text-link" to={destination.to}>{destination.label}</Link>}
-                        <button type="button" className="mips-secondary-button" disabled={reviewingEvidenceId === item.id || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify candidate</button>
-                        <button type="button" className="mips-secondary-button mips-secondary-button--danger" disabled={reviewingEvidenceId === item.id || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject candidate</button>
+                        <button type="button" className="mips-secondary-button" aria-label={evidenceReviewLabel('Verify candidate', item)} disabled={reviewingEvidenceId !== null || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify candidate</button>
+                        <button type="button" className="mips-secondary-button mips-secondary-button--danger" aria-label={evidenceReviewLabel('Reject candidate', item)} disabled={reviewingEvidenceId !== null || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject candidate</button>
                       </div>
                     </li>
                   );
@@ -1224,7 +1239,7 @@ export default function MIPSReadinessPage() {
           </form>
 
           <div className="mips-evidence-list">
-            {manualEvidence.length ? <ul>{manualEvidence.map((item) => <li key={item.id} ref={(element) => { evidenceItemRefs.current[item.id] = element; }} tabIndex={-1}><div className="mips-evidence-list__top"><strong>{item.measureId || categoryLabel(item.category)}</strong><StatusBadge status={item.status} /></div><p>{EVIDENCE_TYPES.find((type) => type.value === item.evidenceType)?.label || item.evidenceType}</p><dl><div><dt>Source</dt><dd>{item.sourceType} · {item.sourceId}</dd></div><div><dt>Observed</dt><dd>{formatDate(item.observedAt)}</dd></div></dl>{Object.keys(item.metadata || {}).length > 0 && <details><summary>Structured values</summary><dl>{Object.entries(item.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}<div className="mips-candidate-actions"><button type="button" className="mips-secondary-button" disabled={reviewingEvidenceId === item.id || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify manual evidence</button><button type="button" className="mips-secondary-button mips-secondary-button--danger" disabled={reviewingEvidenceId === item.id || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject manual evidence</button></div></li>)}</ul> : <p className="mips-empty-state">No manual evidence is recorded yet. Automatic candidates appear in the dedicated review section above.</p>}
+            {manualEvidence.length ? <ul>{manualEvidence.map((item) => <li key={item.id} ref={(element) => { evidenceItemRefs.current[item.id] = element; }} tabIndex={-1}><div className="mips-evidence-list__top"><strong>{item.measureId || categoryLabel(item.category)}</strong><StatusBadge status={item.status} /></div><p>{evidenceTypeLabel(item.evidenceType)}</p><dl><div><dt>Source</dt><dd>{item.sourceType} · {item.sourceId}</dd></div><div><dt>Observed</dt><dd>{formatDate(item.observedAt)}</dd></div></dl>{Object.keys(item.metadata || {}).length > 0 && <details><summary>Structured values</summary><dl>{Object.entries(item.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}<div className="mips-candidate-actions"><button type="button" className="mips-secondary-button" aria-label={evidenceReviewLabel('Verify manual evidence', item)} disabled={reviewingEvidenceId !== null || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify manual evidence</button><button type="button" className="mips-secondary-button mips-secondary-button--danger" aria-label={evidenceReviewLabel('Reject manual evidence', item)} disabled={reviewingEvidenceId !== null || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject manual evidence</button></div></li>)}</ul> : <p className="mips-empty-state">No manual evidence is recorded yet. Automatic candidates appear in the dedicated review section above.</p>}
           </div>
         </section>
 

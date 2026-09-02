@@ -168,7 +168,7 @@ describe('MIPSReadinessPage', () => {
     expect(screen.getByText('mips-440-biopsy-v2026.1')).toBeInTheDocument();
     expect(screen.getByText(/delivery proxy/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open biopsy workflow' })).toHaveAttribute('href', '/biopsies');
-    fireEvent.click(screen.getByRole('button', { name: 'Verify candidate' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Verify candidate/ }));
     await waitFor(() => expect(apiMocks.reviewMipsEvidence).toHaveBeenCalledWith(
       expect.objectContaining({ headers: authMocks.headers }), 'auto-440', 'verified', 2, 2026,
     ));
@@ -184,7 +184,7 @@ describe('MIPSReadinessPage', () => {
     }]);
 
     await screen.findByRole('heading', { name: 'Manual evidence', level: 2 });
-    const reviewButton = screen.getByRole('button', { name: 'Verify manual evidence' });
+    const reviewButton = screen.getByRole('button', { name: /^Verify manual evidence/ });
     const evidenceRow = reviewButton.closest('li');
     fireEvent.click(reviewButton);
 
@@ -193,6 +193,47 @@ describe('MIPSReadinessPage', () => {
     ));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/marked verified/i));
     await waitFor(() => expect(document.activeElement).toBe(evidenceRow));
+  });
+
+  it('gives each evidence review control a unique contextual name and locks every row while a review is pending', async () => {
+    const reviewResponse = { year: 2026, evidence: {} };
+    let resolveReview: (value: typeof reviewResponse) => void = () => undefined;
+    apiMocks.reviewMipsEvidence.mockReturnValueOnce(new Promise<typeof reviewResponse>((resolve) => {
+      resolveReview = resolve;
+    }));
+    renderPage(makeOverview(), [
+      {
+        id: 'auto-440', category: 'quality', measureId: '440', evidenceType: 'pathology_turnaround',
+        sourceType: 'biopsy', sourceId: 'synthetic-biopsy-1', observedAt: '2026-01-08T00:00:00Z',
+        status: 'candidate', origin: 'automation', automationRuleId: 'mips-440-biopsy-v2026.1', metadata: {},
+      },
+      {
+        id: 'manual-410', category: 'quality', measureId: '410', evidenceType: 'manual_attestation',
+        sourceType: 'qpp_manual', sourceId: 'opaque-reference-2', observedAt: '2026-01-09T00:00:00Z',
+        status: 'candidate', origin: 'manual', metadata: {},
+      },
+    ]);
+
+    await screen.findByRole('heading', { name: 'Manual evidence', level: 2 });
+    const verifyButtons = screen.getAllByRole('button', { name: /^Verify/ });
+    const rejectButtons = screen.getAllByRole('button', { name: /^Reject/ });
+    expect(verifyButtons).toHaveLength(2);
+    expect(rejectButtons).toHaveLength(2);
+    expect(new Set(verifyButtons.map((button) => button.getAttribute('aria-label'))).size).toBe(2);
+    expect(new Set(rejectButtons.map((button) => button.getAttribute('aria-label'))).size).toBe(2);
+    expect(verifyButtons[0]).toHaveAccessibleName(/Verify candidate.*Quality measure 440.*Specimen receipt to pathology report.*synthetic-biopsy-1.*auto-440/);
+    expect(verifyButtons[1]).toHaveAccessibleName(/Verify manual evidence.*Quality measure 410.*Structured manual attestation.*opaque-reference-2.*manual-410/);
+
+    fireEvent.click(verifyButtons[0]);
+    await waitFor(() => expect(apiMocks.reviewMipsEvidence).toHaveBeenCalledTimes(1));
+    expect([...screen.getAllByRole('button', { name: /^Verify/ }), ...screen.getAllByRole('button', { name: /^Reject/ })].every((button) => button.hasAttribute('disabled'))).toBe(true);
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^Verify manual evidence/ })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /^Reject candidate/ })[0]);
+    expect(apiMocks.reviewMipsEvidence).toHaveBeenCalledTimes(1);
+
+    resolveReview(reviewResponse);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Verify/ }).every((button) => !button.hasAttribute('disabled'))).toBe(true));
   });
 
   it('reconciles connected workflows and announces the idempotent result', async () => {

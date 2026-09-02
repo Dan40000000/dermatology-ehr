@@ -2,6 +2,7 @@ import { BiopsyService } from "../biopsyService";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
 import { getTableColumns } from "../../db/schema";
+import type { QueryExecutor } from "../../lib/repository/types";
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -56,6 +57,18 @@ describe("BiopsyService", () => {
     expect(id).toBe("BX-20250102-001");
   });
 
+  it("generateSpecimenId uses the provided transaction executor", async () => {
+    const executor = { query: jest.fn().mockResolvedValue({ rows: [{ count: "2" }] }) } as unknown as QueryExecutor;
+    const id = await BiopsyService.generateSpecimenId({
+      tenantId: "tenant-1",
+      date: new Date(2025, 0, 2, 12),
+    }, executor);
+
+    expect(id).toBe("BX-20250102-003");
+    expect(executor.query).toHaveBeenCalledTimes(1);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("calculateTurnaroundTime handles missing dates", () => {
     expect(BiopsyService.calculateTurnaroundTime(null, new Date())).toBeNull();
   });
@@ -102,8 +115,22 @@ describe("BiopsyService", () => {
 
   it("updateLesionStatusForBiopsy updates marking", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "mark-1" }] });
-    const result = await BiopsyService.updateLesionStatusForBiopsy("lesion-1", "bio-1");
+    const result = await BiopsyService.updateLesionStatusForBiopsy("lesion-1", "bio-1", "tenant-1");
     expect(result.id).toBe("mark-1");
+  });
+
+  it("updateLesionStatusForBiopsy uses the provided transaction executor", async () => {
+    const executor = { query: jest.fn().mockResolvedValue({ rows: [{ id: "mark-1" }] }) } as unknown as QueryExecutor;
+    const result = await BiopsyService.updateLesionStatusForBiopsy(
+      "lesion-1",
+      "bio-1",
+      "tenant-1",
+      executor,
+    );
+
+    expect(result.id).toBe("mark-1");
+    expect(executor.query).toHaveBeenCalledTimes(1);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("createAlert inserts alert", async () => {
@@ -172,6 +199,18 @@ describe("BiopsyService", () => {
     expect(result.id).toBe("track-1");
   });
 
+  it("trackSpecimen uses the provided transaction executor", async () => {
+    const executor = { query: jest.fn().mockResolvedValue({ rows: [{ id: "track-1" }] }) } as unknown as QueryExecutor;
+    const result = await BiopsyService.trackSpecimen({
+      biopsyId: "bio-1",
+      eventType: "sent",
+    }, executor);
+
+    expect(result.id).toBe("track-1");
+    expect(executor.query).toHaveBeenCalledTimes(1);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("getQualityMetrics returns metrics", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ total_biopsies: "2" }] });
     const result = await BiopsyService.getQualityMetrics("tenant-1", new Date("2025-01-01"), new Date("2025-01-31"));
@@ -186,5 +225,7 @@ describe("BiopsyService", () => {
       providerId: "prov-1",
     });
     expect(result).toHaveLength(1);
+    expect(String(queryMock.mock.calls[0][0])).not.toContain("patient_name");
+    expect(String(queryMock.mock.calls[0][0])).not.toContain("p.dob");
   });
 });

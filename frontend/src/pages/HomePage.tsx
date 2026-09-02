@@ -681,7 +681,6 @@ export function HomePage() {
     attentionAppointments: [],
   });
 
-  const [showRegulatoryModal, setShowRegulatoryModal] = useState(false);
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [showAppointmentFinder, setShowAppointmentFinder] = useState(false);
   const [showFinderAppointmentModal, setShowFinderAppointmentModal] = useState(false);
@@ -2330,34 +2329,10 @@ export function HomePage() {
           <Bell size={17} aria-hidden="true" />
           General Reminder
         </button>
-        <div className="command-actions-menu">
-          <button type="button" onClick={() => setShowRegulatoryModal((prev) => !prev)}>
-            <BarChart3 size={17} aria-hidden="true" />
-            Regulatory Reporting
-          </button>
-          {showRegulatoryModal && (
-            <div className="command-actions-menu__content">
-              <button
-                type="button"
-                onClick={() => {
-                  navigate('/reports?type=regulatory');
-                  setShowRegulatoryModal(false);
-                }}
-              >
-                MIPS Report
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  navigate('/reports?type=regulatory');
-                  setShowRegulatoryModal(false);
-                }}
-              >
-                MIPS Value Path Report
-              </button>
-            </div>
-          )}
-        </div>
+        <button type="button" onClick={() => navigate('/mips-readiness')}>
+          <BarChart3 size={17} aria-hidden="true" />
+          Regulatory Reporting
+        </button>
       </section>
       )}
 

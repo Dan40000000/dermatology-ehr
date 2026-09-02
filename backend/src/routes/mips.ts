@@ -7,6 +7,7 @@ import { rateLimit } from '../middleware/rateLimit';
 import { auditLog } from '../services/audit';
 import { mipsService } from '../services/mipsService';
 import { logger } from '../lib/logger';
+import { MIPS_SUBMISSION_NOT_CONFIGURED } from '../services/mipsReadinessEngine';
 
 export const mipsRouter = Router();
 
@@ -627,79 +628,15 @@ mipsRouter.post('/alerts/:alertId/dismiss', requireAuth, async (req: AuthedReque
 // ============================================================================
 
 /**
- * POST /api/mips/submit - Submit MIPS data
+ * POST /api/mips/submit - Submission transport is intentionally disabled.
+ * This endpoint must never create a legacy mips_submissions row or fabricate
+ * a CMS/registry confirmation number.
  */
-const submitSchema = z.object({
-  year: z.number().min(2020).max(2099),
-  quarter: z.number().min(1).max(4).optional(),
-  providerId: z.string().optional(),
-  submissionType: z.enum(['quality', 'pi', 'ia', 'cost', 'final', 'interim']).optional(),
-});
-
-mipsRouter.post('/submit', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
-  try {
-    const parsed = submitSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.format() });
-    }
-
-    const tenantId = req.user!.tenantId;
-    const userId = req.user!.id;
-    const { year, quarter, providerId, submissionType } = parsed.data;
-
-    // Generate report
-    const report = await mipsService.generateMIPSReport(tenantId, providerId, year);
-
-    // Create submission record
-    const confirmationNumber = `MIPS-${year}${quarter ? `-Q${quarter}` : ''}-${report.reportId.substring(0, 8).toUpperCase()}`;
-
-    await pool.query(
-      `INSERT INTO mips_submissions (
-        id, tenant_id, provider_id, submission_year, submission_quarter,
-        submission_type, status, quality_score, pi_score, ia_score, cost_score,
-        final_score, submission_data, submitted_at, submitted_by, confirmation_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'submitted', $7, $8, $9, $10, $11, $12, NOW(), $13, $14)`,
-      [
-        report.reportId,
-        tenantId,
-        providerId || null,
-        year,
-        quarter || null,
-        submissionType || 'final',
-        report.qualityScore,
-        report.piScore,
-        report.iaScore,
-        report.costScore,
-        report.finalScore,
-        JSON.stringify({
-          measures: report.qualityMeasures,
-          recommendations: report.recommendations,
-          careGapCount: report.careGapCount,
-        }),
-        userId,
-        confirmationNumber,
-      ]
-    );
-
-    await auditLog(tenantId, userId, 'mips_data_submitted', 'mips_submissions', report.reportId);
-
-    res.json({
-      success: true,
-      submissionId: report.reportId,
-      confirmationNumber,
-      scores: {
-        quality: report.qualityScore,
-        pi: report.piScore,
-        ia: report.iaScore,
-        cost: report.costScore,
-        final: report.finalScore,
-        paymentAdjustment: report.paymentAdjustment,
-      },
-    });
-  } catch (err) {
-    logger.error('Error submitting MIPS data:', err);
-    res.status(500).json({ error: 'Failed to submit MIPS data' });
-  }
+mipsRouter.post('/submit', requireAuth, requireRoles(['admin']), (_req: AuthedRequest, res) => {
+  return res.status(501).json({
+    success: false,
+    ...MIPS_SUBMISSION_NOT_CONFIGURED,
+  });
 });
 
 /**

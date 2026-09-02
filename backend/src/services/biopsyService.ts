@@ -7,6 +7,7 @@
 import { pool } from '../db/pool';
 import { getTableColumns } from '../db/schema';
 import { logger } from '../lib/logger';
+import type { QueryExecutor } from '../lib/repository/types';
 
 interface BiopsySpecimenIdParams {
   tenantId: string;
@@ -178,7 +179,10 @@ export class BiopsyService {
    * Generate unique specimen ID in format: BX-YYYYMMDD-XXX
    * Critical for specimen tracking and chain of custody
    */
-  static async generateSpecimenId(params: BiopsySpecimenIdParams): Promise<string> {
+  static async generateSpecimenId(
+    params: BiopsySpecimenIdParams,
+    executor: QueryExecutor = pool,
+  ): Promise<string> {
     const { tenantId, date = new Date() } = params;
 
     // Format date as YYYYMMDD
@@ -188,7 +192,7 @@ export class BiopsyService {
     const dateStr = `${year}${month}${day}`;
 
     // Get count of biopsies created today for this tenant
-    const countResult = await pool.query(
+    const countResult = await executor.query(
       `SELECT COUNT(*) as count
        FROM biopsies
        WHERE tenant_id = $1
@@ -244,8 +248,8 @@ export class BiopsyService {
         pr.email as ordering_provider_email,
         EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_overdue
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers pr ON b.ordering_provider_id = pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
       WHERE b.tenant_id = $1
         AND b.is_overdue = true
         AND b.status NOT IN ('resulted', 'reviewed', 'closed')
@@ -271,8 +275,8 @@ export class BiopsyService {
         ${providerDisplayName('pr')} as ordering_provider_name,
         EXTRACT(DAY FROM (NOW() - b.resulted_at))::INTEGER as days_since_result
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers pr ON b.ordering_provider_id = pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
       WHERE b.tenant_id = $1
         AND b.status = 'resulted'
         AND b.deleted_at IS NULL
@@ -362,13 +366,13 @@ export class BiopsyService {
       return emptySafetyCommandCenter(now);
     }
 
-    if (!patientColumns.has('id')) {
+    if (!patientColumns.has('id') || !patientColumns.has('tenant_id')) {
       return emptySafetyCommandCenter(now);
     }
 
     const hasOrderingProvider = biopsyColumns.has('ordering_provider_id');
     const hasReviewingProvider = biopsyColumns.has('reviewing_provider_id');
-    const canJoinProviders = providerColumns.has('id');
+    const canJoinProviders = providerColumns.has('id') && providerColumns.has('tenant_id');
 
     if (providerId && !hasOrderingProvider) {
       return emptySafetyCommandCenter(now);
@@ -394,10 +398,10 @@ export class BiopsyService {
     const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
     const deletedFilter = biopsyColumns.has('deleted_at') ? 'AND b.deleted_at IS NULL' : '';
     const orderingProviderJoin = hasOrderingProvider && canJoinProviders
-      ? 'LEFT JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id'
+      ? 'LEFT JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id AND ordering_pr.tenant_id = b.tenant_id'
       : '';
     const reviewingProviderJoin = hasReviewingProvider && canJoinProviders
-      ? 'LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id'
+      ? 'LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id AND reviewing_pr.tenant_id = b.tenant_id'
       : '';
     const orderingProviderNameExpr = hasOrderingProvider && canJoinProviders
       ? providerNameExpr('ordering_pr', providerColumns)
@@ -405,8 +409,8 @@ export class BiopsyService {
     const reviewingProviderNameExpr = hasReviewingProvider && canJoinProviders
       ? providerNameExpr('reviewing_pr', providerColumns)
       : 'NULL::text';
-    const activeAlertCountExpr = alertColumns.has('biopsy_id') && alertColumns.has('status')
-      ? `(SELECT COUNT(*)::INTEGER FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.status = 'active')`
+    const activeAlertCountExpr = alertColumns.has('biopsy_id') && alertColumns.has('tenant_id') && alertColumns.has('status')
+      ? `(SELECT COUNT(*)::INTEGER FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.tenant_id = b.tenant_id AND ba.status = 'active')`
       : '0::INTEGER';
 
     const query = `
@@ -435,7 +439,7 @@ export class BiopsyService {
         EXTRACT(DAY FROM (NOW() - ${reviewedAtExpr}))::INTEGER as days_since_review,
         ${activeAlertCountExpr} as active_alert_count
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
       ${orderingProviderJoin}
       ${reviewingProviderJoin}
       WHERE b.tenant_id = $1
@@ -631,18 +635,25 @@ export class BiopsyService {
   /**
    * Update lesion status when biopsy is performed
    */
-  static async updateLesionStatusForBiopsy(lesionId: string, biopsyId: string) {
+  static async updateLesionStatusForBiopsy(
+    lesionId: string,
+    biopsyId: string,
+    tenantId: string,
+    executor: QueryExecutor = pool,
+  ) {
     const query = `
       UPDATE patient_body_markings
       SET status = 'biopsied',
           description = COALESCE(description, '') ||
-            E'\nBiopsy performed: ' || (SELECT specimen_id FROM biopsies WHERE id = $1),
+            E'\nBiopsy performed: ' || (
+              SELECT specimen_id FROM biopsies WHERE id = $1 AND tenant_id = $3
+            ),
           updated_at = NOW()
-      WHERE id = $2
+      WHERE id = $2 AND tenant_id = $3
       RETURNING *
     `;
 
-    const result = await pool.query(query, [biopsyId, lesionId]);
+    const result = await executor.query(query, [biopsyId, lesionId, tenantId]);
     return result.rows[0];
   }
 
@@ -700,8 +711,8 @@ export class BiopsyService {
         ${providerDisplayName('pr')} as provider_name,
         pr.email as provider_email
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers pr ON b.ordering_provider_id = pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
       WHERE b.id = $1 AND b.tenant_id = $2
     `;
 
@@ -802,7 +813,7 @@ export class BiopsyService {
     custodyPerson?: string;
     specimenQuality?: string;
     notes?: string;
-  }) {
+  }, executor: QueryExecutor = pool) {
     const { biopsyId, eventType, eventBy, location, custodyPerson, specimenQuality, notes } = params;
 
     const query = `
@@ -818,7 +829,7 @@ export class BiopsyService {
       RETURNING *
     `;
 
-    const result = await pool.query(query, [
+    const result = await executor.query(query, [
       biopsyId,
       eventType,
       eventBy || null,
@@ -914,33 +925,22 @@ export class BiopsyService {
       SELECT
         b.specimen_id,
         b.ordered_at,
-        b.collected_at,
-        b.sent_at,
-        b.resulted_at,
-        b.reviewed_at,
         b.status,
         p.mrn,
-        p.first_name || ' ' || p.last_name as patient_name,
-        p.dob as date_of_birth,
         b.body_location,
         b.specimen_type,
-        b.clinical_description,
         b.pathology_diagnosis,
         b.malignancy_type,
         b.diagnosis_code,
-        b.diagnosis_description,
         b.margins,
         b.follow_up_action,
         b.patient_notified,
         b.turnaround_time_days,
         ${providerDisplayName('ordering_pr')} as ordering_provider,
-        ${providerDisplayName('reviewing_pr')} as reviewing_provider,
-        b.path_lab,
-        b.path_lab_case_number
+        b.path_lab
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id
-      LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id AND ordering_pr.tenant_id = b.tenant_id
       WHERE b.tenant_id = $1
         AND b.deleted_at IS NULL
         ${filterQuery}

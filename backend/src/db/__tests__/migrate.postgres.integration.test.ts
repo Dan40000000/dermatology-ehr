@@ -75,6 +75,40 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     expect(applied.rows.length).toBeGreaterThan(1);
     expect(applied.rows.map((row) => row.name)).toContain('223_insurance_estimate_program');
     expect(applied.rows.map((row) => row.name)).toContain('229_fhir_hl7_interoperability_schema');
+    expect(applied.rows.map((row) => row.name)).toContain('230_mips_readiness_2026');
+    expect(applied.rows.map((row) => row.name)).toContain('232_mips_workflow_automation');
+  });
+
+  it('creates the MIPS automation ledger, review fields, and structured itch schema', async () => {
+    const columns = await applicationPool!.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('mips_readiness_evidence', 'mips_itch_assessments', 'mips_automation_runs')`,
+    );
+    const names = new Set(columns.rows.map((row) => `${row.table_name}.${row.column_name}`));
+    expect([...names]).toEqual(expect.arrayContaining([
+      'mips_readiness_evidence.origin',
+      'mips_readiness_evidence.automation_key',
+      'mips_readiness_evidence.source_revision',
+      'mips_readiness_evidence.reviewed_by',
+      'mips_itch_assessments.client_event_id',
+      'mips_itch_assessments.instrument_code',
+      'mips_itch_assessments.instrument_version',
+      'mips_automation_runs.connector_summary',
+      'mips_automation_runs.candidates_stale',
+    ]));
+
+    const indexes = await applicationPool!.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename IN ('mips_readiness_evidence', 'mips_itch_assessments', 'mips_automation_runs')`,
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual(expect.arrayContaining([
+      'idx_mips_readiness_evidence_automation_key',
+      'idx_mips_itch_assessments_patient',
+      'idx_mips_automation_runs_tenant_year',
+    ]));
   });
 
   it('creates the production FHIR OAuth and HL7 queue schema', async () => {

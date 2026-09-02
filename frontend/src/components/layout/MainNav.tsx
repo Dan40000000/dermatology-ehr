@@ -339,6 +339,14 @@ const navItems: NavItem[] = [
     ]
   },
   {
+    label: 'MIPS Readiness',
+    path: '/mips-readiness',
+    module: 'quality',
+    dropdown: [
+      { label: 'Readiness Center', path: '/mips-readiness', module: 'quality' },
+    ],
+  },
+  {
     label: 'Claims / Clearinghouse',
     path: '/claims',
     activePaths: ['/claims', '/clearinghouse'],

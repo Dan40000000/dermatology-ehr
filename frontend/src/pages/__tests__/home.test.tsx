@@ -319,8 +319,7 @@ describe('HomePage', () => {
     expect(navigateMock).toHaveBeenCalledWith('/notes');
 
     fireEvent.click(screen.getByRole('button', { name: /Regulatory Reporting/i }));
-    fireEvent.click(screen.getByRole('button', { name: 'MIPS Report' }));
-    expect(navigateMock).toHaveBeenCalledWith('/reports?type=regulatory');
+    expect(navigateMock).toHaveBeenCalledWith('/mips-readiness');
   }, 20000);
 
   it('prefers backend command center summary metrics when available', async () => {

@@ -306,6 +306,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/referrals', module: 'referrals' },
   { path: '/protocols', module: 'protocols' },
   { path: '/help', module: 'help' },
+  { path: '/mips-readiness', module: 'quality' },
   { path: '/quality', module: 'quality' },
   { path: '/reports', module: 'reports' },
   { path: '/analytics', module: 'analytics' },

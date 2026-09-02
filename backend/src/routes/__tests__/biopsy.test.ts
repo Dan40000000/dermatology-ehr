@@ -7,7 +7,7 @@ import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "user-1", tenantId: "tenant-1", role: "provider" };
+    req.user = { id: "user-1", tenantId: "tenant-1", role: req.header("X-Test-Role") || "provider" };
     return next();
   },
 }));
@@ -124,6 +124,9 @@ describe("Biopsy routes", () => {
     const client = makeClient();
     client.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{
+        patient_ok: true, encounter_ok: true, lesion_ok: true, provider_ok: true, lab_ok: true,
+      }] })
       .mockResolvedValueOnce({ rows: [{ id: "bio-1", lesion_id: lesionId }] })
       .mockResolvedValueOnce({ rows: [] });
     connectMock.mockResolvedValueOnce(client);
@@ -133,6 +136,43 @@ describe("Biopsy routes", () => {
     expect(res.body.id).toBe("bio-1");
     expect(biopsyService.updateLesionStatusForBiopsy).toHaveBeenCalled();
     expect(biopsyService.trackSpecimen).toHaveBeenCalled();
+    expect(biopsyService.generateSpecimenId).toHaveBeenCalledWith({ tenantId: "tenant-1" }, client);
+    expect(biopsyService.updateLesionStatusForBiopsy).toHaveBeenCalledWith(
+      lesionId,
+      "bio-1",
+      "tenant-1",
+      client,
+    );
+    expect(biopsyService.trackSpecimen).toHaveBeenCalledWith(
+      expect.objectContaining({ biopsyId: "bio-1", eventType: "ordered" }),
+      client,
+    );
+    expect(String(client.query.mock.calls[1][0])).toContain("patient_id::text = $2");
+  });
+
+  it("POST /biopsies rejects cross-tenant or cross-patient references before insert", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{
+        patient_ok: true, encounter_ok: false, lesion_ok: true, provider_ok: true, lab_ok: true,
+      }] })
+      .mockResolvedValueOnce({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/biopsies").send(baseBiopsy);
+    expect(res.status).toBe(400);
+    expect(res.body.invalidReferences).toEqual(["encounter"]);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO biopsies"))).toBe(false);
+  });
+
+  it("blocks non-clinical users from adding pathology results", async () => {
+    const res = await request(app)
+      .post("/biopsies/bio-1/result")
+      .set("X-Test-Role", "billing")
+      .send({ pathology_diagnosis: "Nevus" });
+    expect(res.status).toBe(403);
+    expect(connectMock).not.toHaveBeenCalled();
   });
 
   it("GET /biopsies returns filtered list", async () => {
@@ -144,6 +184,22 @@ describe("Biopsy routes", () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.biopsies).toHaveLength(1);
+  });
+
+  it("allows manager access to biopsy reads exposed by the clinical labs module", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "bio-1" }] });
+    const res = await request(app).get("/biopsies").set("X-Test-Role", "manager");
+    expect(res.status).toBe(200);
+    expect(res.body.biopsies).toHaveLength(1);
+  });
+
+  it("blocks non-clinical users from biopsy list and detail reads", async () => {
+    const list = await request(app).get("/biopsies").set("X-Test-Role", "billing");
+    const detail = await request(app).get("/biopsies/bio-1").set("X-Test-Role", "billing");
+
+    expect(list.status).toBe(403);
+    expect(detail.status).toBe(403);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("GET /biopsies/pending returns pending biopsies", async () => {
@@ -220,7 +276,12 @@ describe("Biopsy routes", () => {
     const res = await request(app).put("/biopsies/bio-1").send({ status: "sent" });
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("bio-1");
-    expect(biopsyService.trackSpecimen).toHaveBeenCalled();
+    expect(biopsyService.trackSpecimen).toHaveBeenCalledWith(
+      expect.objectContaining({ biopsyId: "bio-1", eventType: "sent" }),
+      client,
+    );
+    expect(String(client.query.mock.calls[1][0])).toContain("status = ANY");
+    expect(client.query.mock.calls[1][1]).toEqual(["sent", "bio-1", "tenant-1", ["ordered", "collected"]]);
   });
 
   it("PUT /biopsies/:id accepts diagnosis updates without status changes", async () => {
@@ -240,6 +301,50 @@ describe("Biopsy routes", () => {
     expect(biopsyService.trackSpecimen).not.toHaveBeenCalled();
   });
 
+  it("PUT /biopsies/:id cannot bypass the dedicated pathology result transition", async () => {
+    const client = makeClient();
+    client.query.mockResolvedValue({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+    const res = await request(app).put("/biopsies/bio-1").send({ status: "resulted" });
+    expect(res.status).toBe(400);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("UPDATE biopsies"))).toBe(false);
+  });
+
+  it("blocks an MA from changing provider-owned diagnosis fields", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app)
+      .put("/biopsies/bio-1")
+      .set("X-Test-Role", "ma")
+      .send({ diagnosis_code: "C44.91" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.forbiddenFields).toEqual(["diagnosis_code"]);
+    expect(client.query).not.toHaveBeenCalled();
+  });
+
+  it("atomically rejects a regressive status update", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ status: "sent" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app)
+      .put("/biopsies/bio-1")
+      .set("X-Test-Role", "ma")
+      .send({ status: "collected" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.currentStatus).toBe("sent");
+    expect(String(client.query.mock.calls[1][0])).toContain("status = ANY");
+    expect(client.query.mock.calls[1][1]).toEqual(["collected", "bio-1", "tenant-1", ["ordered"]]);
+    expect(biopsyService.trackSpecimen).not.toHaveBeenCalled();
+  });
+
   it("POST /biopsies/:id/result returns 404 when missing", async () => {
     const client = makeClient();
     client.query
@@ -256,7 +361,12 @@ describe("Biopsy routes", () => {
     const client = makeClient();
     client.query
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: "bio-1", lesion_id: lesionId }] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "bio-1", lesion_id: lesionId,
+        received_by_lab_at: "2026-01-01T00:00:00Z",
+        resulted_at: "2026-01-08T00:00:00Z",
+        updated_at: "2026-01-08T00:00:00Z",
+      }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     connectMock.mockResolvedValueOnce(client);
@@ -267,8 +377,13 @@ describe("Biopsy routes", () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("bio-1");
-    expect(biopsyService.trackSpecimen).toHaveBeenCalled();
+    expect(biopsyService.trackSpecimen).toHaveBeenCalledWith(
+      expect.objectContaining({ biopsyId: "bio-1", eventType: "resulted" }),
+      client,
+    );
     expect(biopsyService.sendNotification).toHaveBeenCalledTimes(2);
+    const candidateInserts = queryMock.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO mips_readiness_evidence'));
+    expect(candidateInserts.map(([, values]) => values[4])).toEqual(['440', 'AAD6']);
   });
 
   it("POST /biopsies/:id/review returns 404 when not resulted", async () => {
@@ -297,7 +412,11 @@ describe("Biopsy routes", () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("bio-1");
-    expect(biopsyService.trackSpecimen).toHaveBeenCalled();
+    expect(biopsyService.trackSpecimen).toHaveBeenCalledWith(
+      expect.objectContaining({ biopsyId: "bio-1", eventType: "reviewed" }),
+      client,
+    );
+    expect(String(client.query.mock.calls[1][0])).toContain("p.tenant_id = $8");
   });
 
   it("POST /biopsies/:id/notify-patient returns 404 when missing", async () => {
@@ -307,10 +426,32 @@ describe("Biopsy routes", () => {
   });
 
   it("POST /biopsies/:id/notify-patient marks notified", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "bio-1" }] });
+    queryMock.mockResolvedValueOnce({ rows: [{
+      id: "bio-1",
+      resulted_at: "2026-02-01T00:00:00Z",
+      patient_notified_at: "2026-02-09T00:00:00Z",
+      patient_notified_method: "phone",
+      updated_at: "2026-02-09T00:00:00Z",
+    }] });
     const res = await request(app).post("/biopsies/bio-1/notify-patient").send({ method: "phone" });
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("bio-1");
+    const aad6Insert = queryMock.mock.calls.find(([sql, values]) => (
+      String(sql).includes('INSERT INTO mips_readiness_evidence') && values[4] === 'AAD6'
+    ));
+    expect(aad6Insert?.[1][10]).toContain('notificationMethodRecorded');
+  });
+
+  it("POST /biopsies/:id/notify-patient is idempotent after notification is recorded", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "bio-1", patient_notified: true, patient_notified_at: "2026-02-09T00:00:00Z",
+        patient_notified_method: "phone",
+      }] });
+    const res = await request(app).post("/biopsies/bio-1/notify-patient").send({ method: "phone" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "bio-1", patient_notified: true, idempotent: true });
   });
 
   it("GET /biopsies/:id/alerts returns alerts", async () => {
@@ -347,5 +488,17 @@ describe("Biopsy routes", () => {
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.text).toContain("Specimen ID");
     expect(res.text).toContain("BX-1");
+    expect(res.text).not.toContain("Patient Name");
+    expect(res.text).not.toContain("DOB");
+  });
+
+  it("blocks non-provider users from exporting the biopsy log", async () => {
+    biopsyService.exportBiopsyLog.mockClear();
+    const res = await request(app)
+      .get("/biopsies/export/log")
+      .set("X-Test-Role", "ma");
+
+    expect(res.status).toBe(403);
+    expect(biopsyService.exportBiopsyLog).not.toHaveBeenCalled();
   });
 });

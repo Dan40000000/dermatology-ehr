@@ -52,6 +52,7 @@ const EncounterPage = lazy(() => import('../pages/EncounterPage').then(m => ({ d
 const DocumentsPage = lazy(() => import('../pages/DocumentsPage').then(m => ({ default: m.DocumentsPage })));
 const PhotosPage = lazy(() => import('../pages/PhotosPage').then(m => ({ default: m.PhotosPage })));
 const AnalyticsPage = lazy(() => import('../pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
+const MIPSReadinessPage = lazy(() => import('../pages/MIPSReadinessPage').then(m => ({ default: m.default })));
 const AnalyticsDashboard = lazy(() => import('../pages/admin/AnalyticsDashboard').then(m => ({ default: m.AnalyticsDashboard })));
 const PrescriptionsPage = lazy(() => import('../pages/PrescriptionsPage').then(m => ({ default: m.PrescriptionsPage })));
 const LabsPage = lazy(() => import('../pages/LabsPage').then(m => ({ default: m.LabsPage })));
@@ -321,8 +322,9 @@ export const routes: RouteObject[] = [
       { path: 'clearinghouse', element: lazyWithSuspense(ClearinghousePage) },
       { path: 'quotes', element: lazyWithSuspense(QuotesPage) },
       { path: 'analytics', element: lazyWithSuspense(AnalyticsPage) },
+      { path: 'mips-readiness', element: lazyWithSuspense(MIPSReadinessPage) },
       { path: 'reports', element: lazyWithSuspense(ReportsPage) },
-      { path: 'quality/*', element: <Navigate to="/analytics?tab=operational" replace /> },
+      { path: 'quality/*', element: <Navigate to="/mips-readiness" replace /> },
       { path: 'registry', element: <RegistryRedirect /> },
       { path: 'referrals', element: lazyWithSuspense(ReferralsPage) },
       { path: 'forms', element: <Navigate to="/documents?section=forms" replace /> },

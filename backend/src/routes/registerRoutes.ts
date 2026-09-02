@@ -136,6 +136,7 @@ import { claimsSubmissionRouter } from "./claimsSubmission";
 import { procedureTemplatesRouter } from "./procedureTemplates";
 import { consentsRouter } from "./consents";
 import { mipsRouter } from "./mips";
+import mipsReadinessRouter from "./mipsReadiness";
 import { allergiesRouter } from "./allergies";
 import { mohsRouter } from "./mohs";
 import biopsyRouter from "./biopsy";
@@ -270,6 +271,7 @@ export function registerRoutes(app: Express) {
   });
   app.use("/api/clearinghouse", ...requireClearinghouseAccess, clearinghouseRouter);
   app.use("/api/quality", qualityMeasuresRouter);
+  app.use("/api/mips/readiness", mipsReadinessRouter);
   app.use("/api/mips", mipsRouter);
   app.use("/api/referrals", referralsRouter);
   app.use("/api/registry", registryRouter);

@@ -12,6 +12,7 @@ import {
   PI_MEASURES,
 } from "../services/qualityMeasuresService";
 import { logger } from "../lib/logger";
+import { MIPS_SUBMISSION_NOT_CONFIGURED } from "../services/mipsReadinessEngine";
 
 export const qualityMeasuresRouter = Router();
 
@@ -500,93 +501,15 @@ qualityMeasuresRouter.get("/ia", requireAuth, async (req: AuthedRequest, res) =>
 // ============================================================================
 
 /**
- * POST /api/quality/submit - Generate MIPS submission
+ * POST /api/quality/submit - Submission transport is intentionally disabled.
+ * This endpoint must never create a legacy mips_submissions row or fabricate
+ * a CMS/registry confirmation number.
  */
-const submitSchema = z.object({
-  year: z.number().min(2020).max(2099),
-  quarter: z.number().min(1).max(4).optional(),
-  providerId: z.string().optional(),
-  submissionType: z.enum(["quality", "pi", "ia", "cost", "final"]).optional(),
-  generateQRDA: z.boolean().optional().default(false),
-});
-
-qualityMeasuresRouter.post("/submit", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
-  try {
-    const parsed = submitSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.format() });
-    }
-
-    const tenantId = req.user!.tenantId;
-    const userId = req.user!.id;
-    const { year, quarter, providerId, submissionType, generateQRDA } = parsed.data;
-
-    // Get dashboard data for submission
-    const dashboard = await qualityMeasuresService.getMIPSDashboard(
-      tenantId,
-      year,
-      providerId
-    );
-
-    // Create submission record
-    const submissionId = randomUUID();
-    const confirmationNumber = `MIPS-${year}${quarter ? `-Q${quarter}` : ''}-${submissionId.substring(0, 8).toUpperCase()}`;
-
-    await pool.query(
-      `INSERT INTO mips_submissions (
-        id, tenant_id, provider_id, submission_year, submission_quarter,
-        submission_type, status, quality_score, pi_score, ia_score, cost_score,
-        final_score, submission_data, submitted_at, submitted_by, confirmation_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14, $15)`,
-      [
-        submissionId,
-        tenantId,
-        providerId || null,
-        year,
-        quarter || null,
-        submissionType || 'final',
-        'submitted',
-        dashboard.qualityScore,
-        dashboard.piScore,
-        dashboard.iaScore,
-        dashboard.costScore,
-        dashboard.estimatedFinalScore,
-        JSON.stringify({
-          measures: dashboard.measures,
-          recommendations: dashboard.recommendations,
-          careGaps: dashboard.careGaps.length,
-        }),
-        userId,
-        confirmationNumber,
-      ]
-    );
-
-    // Generate QRDA if requested
-    let qrdaReport = null;
-    if (generateQRDA) {
-      qrdaReport = await qualityMeasuresService.generateQRDAReport(tenantId, year, providerId);
-    }
-
-    await auditLog(tenantId, userId, "mips_submitted", "mips_submission", submissionId);
-
-    res.json({
-      success: true,
-      submissionId,
-      confirmationNumber,
-      scores: {
-        quality: dashboard.qualityScore,
-        pi: dashboard.piScore,
-        ia: dashboard.iaScore,
-        cost: dashboard.costScore,
-        final: dashboard.estimatedFinalScore,
-        paymentAdjustment: dashboard.paymentAdjustment,
-      },
-      qrdaReport,
-    });
-  } catch (err) {
-    logger.error("Error submitting MIPS data:", err);
-    res.status(500).json({ error: "Failed to submit MIPS data" });
-  }
+qualityMeasuresRouter.post("/submit", requireAuth, requireRoles(["admin"]), (_req: AuthedRequest, res) => {
+  return res.status(501).json({
+    success: false,
+    ...MIPS_SUBMISSION_NOT_CONFIGURED,
+  });
 });
 
 /**
@@ -800,28 +723,16 @@ qualityMeasuresRouter.get("/reports/quarterly", requireAuth, async (req: AuthedR
 });
 
 /**
- * GET /api/quality/reports/qrda - Generate QRDA report
+ * GET /api/quality/reports/qrda - QRDA export is not configured.
+ * The old handler returned JSON metadata while implying a QRDA artifact.
  */
-qualityMeasuresRouter.get("/reports/qrda", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
-  try {
-    const tenantId = req.user!.tenantId;
-    const { year, providerId } = req.query;
-
-    const reportYear = year ? parseInt(year as string) : new Date().getFullYear();
-
-    const report = await qualityMeasuresService.generateQRDAReport(
-      tenantId,
-      reportYear,
-      providerId as string | undefined
-    );
-
-    await auditLog(tenantId, req.user!.id, "qrda_report_generated", "qrda_report", report.reportId);
-
-    res.json(report);
-  } catch (err) {
-    logger.error("Error generating QRDA report:", err);
-    res.status(500).json({ error: "Failed to generate QRDA report" });
-  }
+qualityMeasuresRouter.get("/reports/qrda", requireAuth, requireRoles(["admin"]), (_req: AuthedRequest, res) => {
+  return res.status(501).json({
+    success: false,
+    code: 'QRDA_EXPORT_NOT_CONFIGURED',
+    error: 'QRDA export is not configured. Use the draft MIPS readiness manifest for registry validation.',
+    instructions: 'GET /api/mips/readiness/preview returns a JSON-only draft and does not submit data.',
+  });
 });
 
 // ============================================================================

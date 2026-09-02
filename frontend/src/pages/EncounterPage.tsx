@@ -9,6 +9,7 @@ import { PatientBodyDiagram, type BodyMarker } from '../components/body-diagram'
 import { DiagnosisSearchModal, PerformedWorkModal, ProcedureSearchModal } from '../components/billing';
 import { InventoryUsageList, InventoryUsageModal } from '../components/inventory';
 import { EncounterPrescriptions } from '../components/prescriptions';
+import { MipsQualityCaptureCard } from '../components/mips/MipsQualityCaptureCard';
 import { ScribePanel } from '../components/ScribePanel';
 import { ClinicalCopilotPanel } from '../components/ClinicalCopilotPanel';
 import {
@@ -1965,11 +1966,18 @@ export function EncounterPage() {
         {activeSection === 'prescriptions' && (
           <div>
             {!isNew && encounterId && patientId && (
-              <EncounterPrescriptions
-                encounterId={encounterId}
-                patientId={patientId}
-                readOnly={isLocked}
-              />
+              <>
+                <EncounterPrescriptions
+                  encounterId={encounterId}
+                  patientId={patientId}
+                  readOnly={isLocked}
+                />
+                <MipsQualityCaptureCard
+                  encounterId={encounterId}
+                  patientId={patientId}
+                  readOnly={isLocked}
+                />
+              </>
             )}
             {isNew && (
               <div style={{

@@ -16520,6 +16520,176 @@ Consider age-appropriate treatments and include family counseling points.',
       ON locations(tenant_id, external_id) WHERE external_id IS NOT NULL;
     `,
   },
+  {
+    name: "230_mips_readiness_2026",
+    sql: `
+    -- Narrow, tenant-scoped MIPS 2026 readiness foundation.  These tables
+    -- intentionally do not alter the legacy quality/MIPS tables because the
+    -- live submission transport is not configured.
+    CREATE TABLE IF NOT EXISTS mips_readiness_profiles (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      performance_year INTEGER NOT NULL CHECK (performance_year = 2026),
+      selected_quality_measure_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      selected_cost_measure_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      selected_ia_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      category_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      eligibility_inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_readiness_profiles_quality_ids_array
+        CHECK (jsonb_typeof(selected_quality_measure_ids) = 'array'),
+      CONSTRAINT mips_readiness_profiles_cost_ids_array
+        CHECK (jsonb_typeof(selected_cost_measure_ids) = 'array'),
+      CONSTRAINT mips_readiness_profiles_ia_ids_array
+        CHECK (jsonb_typeof(selected_ia_ids) = 'array'),
+      CONSTRAINT mips_readiness_profiles_category_config_object
+        CHECK (jsonb_typeof(category_config) = 'object'),
+      CONSTRAINT mips_readiness_profiles_eligibility_object
+        CHECK (jsonb_typeof(eligibility_inputs) = 'object'),
+      CONSTRAINT mips_readiness_profiles_tenant_year_unique
+        UNIQUE (tenant_id, performance_year)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_profiles_tenant
+      ON mips_readiness_profiles(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_profiles_tenant_year
+      ON mips_readiness_profiles(tenant_id, performance_year);
+
+    CREATE TABLE IF NOT EXISTS mips_readiness_evidence (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      performance_year INTEGER NOT NULL CHECK (performance_year = 2026),
+      category TEXT NOT NULL CHECK (category IN ('quality', 'cost', 'pi', 'ia')),
+      measure_id TEXT,
+      evidence_type TEXT NOT NULL CHECK (length(btrim(evidence_type)) > 0),
+      source_type TEXT NOT NULL CHECK (length(btrim(source_type)) > 0),
+      source_id TEXT NOT NULL CHECK (length(btrim(source_id)) > 0),
+      observed_at TIMESTAMPTZ,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable')),
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_readiness_evidence_metadata_object
+        CHECK (jsonb_typeof(metadata) = 'object')
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_tenant_year
+      ON mips_readiness_evidence(tenant_id, performance_year);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_tenant_category
+      ON mips_readiness_evidence(tenant_id, performance_year, category);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_tenant_measure
+      ON mips_readiness_evidence(tenant_id, performance_year, measure_id)
+      WHERE measure_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_source
+      ON mips_readiness_evidence(tenant_id, source_type, source_id);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_status
+      ON mips_readiness_evidence(tenant_id, performance_year, status);
+    `,
+  },
+  {
+    name: "231_mips_readiness_evidence_status_hardening",
+    sql: `
+    -- 230 was introduced with permissive lifecycle values in some deployed
+    -- environments.  Normalize those values before enforcing the narrow
+    -- review lifecycle used by the deterministic readiness engine.
+    ALTER TABLE mips_readiness_evidence
+      DROP CONSTRAINT IF EXISTS mips_readiness_evidence_status_check;
+
+    UPDATE mips_readiness_evidence
+       SET status = CASE
+         WHEN status IN ('present', 'met', 'complete') THEN 'candidate'
+         WHEN status IN ('invalid', 'not_met') THEN 'rejected'
+         WHEN status IN ('unknown', 'action_needed') THEN 'pending'
+         ELSE status
+       END
+     WHERE status NOT IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable');
+
+    ALTER TABLE mips_readiness_evidence
+      ADD CONSTRAINT mips_readiness_evidence_status_check
+      CHECK (status IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable));
+    `,
+  },
+  {
+    name: "232_mips_workflow_automation",
+    sql: `
+    -- Workflow automation produces reviewable candidates only.  A human must
+    -- verify a candidate before the readiness engine can treat it as met.
+    ALTER TABLE mips_readiness_evidence
+      ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'manual',
+      ADD COLUMN IF NOT EXISTS automation_rule_id TEXT,
+      ADD COLUMN IF NOT EXISTS automation_key TEXT,
+      ADD COLUMN IF NOT EXISTS source_revision BIGINT,
+      ADD COLUMN IF NOT EXISTS reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+    ALTER TABLE mips_readiness_evidence
+      DROP CONSTRAINT IF EXISTS mips_readiness_evidence_origin_check;
+    ALTER TABLE mips_readiness_evidence
+      ADD CONSTRAINT mips_readiness_evidence_origin_check
+      CHECK (origin IN ('manual', 'automation'));
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mips_readiness_evidence_automation_key
+      ON mips_readiness_evidence(tenant_id, performance_year, automation_key)
+      WHERE automation_key IS NOT NULL;
+
+    ALTER TABLE chronic_therapy_registry
+      ADD COLUMN IF NOT EXISTS mips_therapy_classification TEXT,
+      ADD COLUMN IF NOT EXISTS mips_first_course BOOLEAN;
+
+    CREATE TABLE IF NOT EXISTS mips_itch_assessments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      condition_code TEXT NOT NULL CHECK (condition_code IN ('atopic_dermatitis', 'psoriasis')),
+      instrument_code TEXT NOT NULL CHECK (length(btrim(instrument_code)) > 0),
+      instrument_version TEXT NOT NULL DEFAULT 'practice_defined' CHECK (length(btrim(instrument_version)) > 0),
+      score NUMERIC NOT NULL,
+      scale_min NUMERIC NOT NULL DEFAULT 0,
+      scale_max NUMERIC NOT NULL,
+      assessment_date DATE NOT NULL,
+      phase TEXT NOT NULL CHECK (phase IN ('baseline', 'follow_up')),
+      client_event_id TEXT NOT NULL CHECK (length(btrim(client_event_id)) > 0),
+      source_revision INTEGER NOT NULL DEFAULT 1 CHECK (source_revision > 0),
+      assessed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_itch_assessments_scale_check
+        CHECK (scale_max > scale_min AND score >= scale_min AND score <= scale_max),
+      CONSTRAINT mips_itch_assessments_tenant_event_unique
+        UNIQUE (tenant_id, client_event_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_itch_assessments_patient
+      ON mips_itch_assessments(tenant_id, patient_id, condition_code, instrument_code, assessment_date);
+
+    CREATE TABLE IF NOT EXISTS mips_automation_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      performance_year INTEGER NOT NULL CHECK (performance_year = 2026),
+      status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'partial', 'failed')),
+      triggered_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      connector_summary JSONB NOT NULL DEFAULT '[]'::jsonb,
+      candidates_created INTEGER NOT NULL DEFAULT 0,
+      candidates_updated INTEGER NOT NULL DEFAULT 0,
+      candidates_unchanged INTEGER NOT NULL DEFAULT 0,
+      candidates_stale INTEGER NOT NULL DEFAULT 0,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMPTZ,
+      CONSTRAINT mips_automation_runs_summary_array
+        CHECK (jsonb_typeof(connector_summary) = 'array')
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_automation_runs_tenant_year
+      ON mips_automation_runs(tenant_id, performance_year, started_at DESC);
+    `,
+  },
 
 ];
 

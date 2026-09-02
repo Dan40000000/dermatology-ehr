@@ -172,7 +172,7 @@ describe('MIPSReadinessPage', () => {
     await waitFor(() => expect(apiMocks.reviewMipsEvidence).toHaveBeenCalledWith(
       expect.objectContaining({ headers: authMocks.headers }), 'auto-440', 'verified', 2, 2026,
     ));
-    expect(screen.getByRole('status')).toHaveTextContent(/marked verified/i);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/marked verified/i));
   });
 
   it('reconciles connected workflows and announces the idempotent result', async () => {
@@ -180,7 +180,7 @@ describe('MIPSReadinessPage', () => {
     await screen.findByRole('heading', { name: 'Automation coverage', level: 2 });
     fireEvent.click(screen.getByRole('button', { name: 'Reconcile workflow candidates' }));
     await waitFor(() => expect(apiMocks.syncMipsAutomation).toHaveBeenCalled());
-    expect(screen.getByRole('status')).toHaveTextContent(/1 created, 0 updated, 0 unchanged/i);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/1 created, 0 updated, 0 unchanged/i));
   });
 
   it('renders Ready when the backend reports a ready status', async () => {
@@ -295,7 +295,7 @@ describe('MIPSReadinessPage', () => {
       evidenceType: 'manual_attestation',
       status: 'candidate',
     });
-    expect(screen.getByRole('status')).toHaveTextContent(/human verification is still required/i);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/human verification is still required/i));
   });
 
   it('rejects PI evidence periods outside 2026 or shorter than 180 days', async () => {
@@ -376,6 +376,6 @@ describe('MIPSReadinessPage', () => {
     await waitFor(() => expect(apiMocks.saveMipsReadinessProfile).toHaveBeenCalled());
     expect(apiMocks.saveMipsReadinessProfile.mock.calls[0][1].selectedQualityMeasureIds).toEqual(['176', '410', '440', 'AAD6']);
     expect(apiMocks.fetchMipsReadiness).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole('status')).toHaveTextContent(/refreshed/i);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/refreshed/i));
   });
 });

@@ -1465,7 +1465,7 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       const noteUpdateParams = noteUpdateCall?.[1] as any[];
       expect(noteUpdateParams[16]).toBe('config-med-1');
       expect(noteUpdateParams[18]).toBe('claude-3-5-sonnet-20241022');
-      expect(noteUpdateParams[19]).toBe('ambient-scribe-contextual-v1');
+      expect(noteUpdateParams[19]).toBe('ambient-scribe-contextual-v2');
       expect(noteUpdateParams[20]).toMatch(/^PROMPT_[a-f0-9]+_15$/);
     });
 
@@ -2046,6 +2046,108 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(res.status).toBe(200);
       expect(queryMock.mock.calls[2][1][4]).toBe('Continue topical therapy');
       expect(queryMock.mock.calls[2][1][4]).not.toContain('null');
+    });
+
+    it('supports selective fill-empty and replace application with section review metadata', async () => {
+      const noteRow = {
+        id: 'note-1',
+        review_status: 'approved',
+        encounter_id: 'enc-1',
+        chief_complaint: 'New complaint',
+        hpi: 'New HPI',
+        ros: 'New ROS',
+        physical_exam: 'New exam',
+        assessment: 'New assessment',
+        plan: 'New plan',
+        note_content: {
+          sectionReview: {
+            chiefComplaint: { status: 'drafted', confidence: 0.9, evidence: [] },
+            hpi: { status: 'drafted', confidence: 0.9, evidence: [] },
+            ros: { status: 'not_documented', confidence: 0, evidence: [] },
+            physicalExam: { status: 'drafted', confidence: 0.4, evidence: [] },
+            assessment: { status: 'drafted', confidence: 0.9, evidence: [] },
+            plan: { status: 'drafted', confidence: 0.9, evidence: [] },
+          },
+        },
+      };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [noteRow], rowCount: 1 })
+        .mockResolvedValueOnce({
+          rows: [{
+            status: 'draft',
+            chief_complaint: '',
+            hpi: 'Clinician-entered HPI',
+            ros: '',
+            exam: '',
+            assessment_plan: '',
+          }],
+          rowCount: 1,
+        });
+
+      const fillEmpty = await request(app)
+        .post('/api/ambient/notes/note-1/apply-to-encounter')
+        .send({ sections: ['hpi'], applyStructuredActions: false });
+
+      expect(fillEmpty.status).toBe(200);
+      expect(fillEmpty.body.appliedSections).toEqual([]);
+      expect(fillEmpty.body.skippedSections).toEqual(['hpi']);
+      expect(queryMock).toHaveBeenCalledTimes(2);
+
+      queryMock.mockReset();
+      auditMock.mockReset();
+      queryMock
+        .mockResolvedValueOnce({ rows: [noteRow], rowCount: 1 })
+        .mockResolvedValueOnce({
+          rows: [{
+            status: 'draft',
+            chief_complaint: '',
+            hpi: 'Clinician-entered HPI',
+            ros: '',
+            exam: '',
+            assessment_plan: '',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+      const replace = await request(app)
+        .post('/api/ambient/notes/note-1/apply-to-encounter')
+        .send({ sections: ['hpi'], mode: 'replace', applyStructuredActions: false });
+
+      expect(replace.status).toBe(200);
+      expect(replace.body.appliedSections).toEqual(['hpi']);
+      expect(replace.body.skippedSections).toEqual([]);
+      expect(queryMock.mock.calls[2][1][1]).toBe('New HPI');
+      expect(replace.body.mode).toBe('replace');
+    });
+
+    it('does not apply a section marked not_documented even when it has legacy text', async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'note-1',
+            review_status: 'approved',
+            encounter_id: 'enc-1',
+            physical_exam: 'Normal exam filler',
+            note_content: {
+              sectionReview: {
+                physicalExam: { status: 'not_documented', confidence: 0, evidence: [] },
+              },
+            },
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [{ status: 'draft', exam: '' }], rowCount: 1 });
+
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/apply-to-encounter')
+        .send({ sections: ['physicalExam'], applyStructuredActions: false });
+
+      expect(res.status).toBe(200);
+      expect(res.body.appliedSections).toEqual([]);
+      expect(res.body.skippedSections).toEqual(['physicalExam']);
+      expect(queryMock).toHaveBeenCalledTimes(2);
     });
 
     it('creates a billing work-queue review item for AI CPT suggestions instead of auto-billing', async () => {

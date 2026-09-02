@@ -206,7 +206,56 @@ const applyNoteSchema = z.object({
   includeOrders: z.boolean().optional().default(true),
   includeTasks: z.boolean().optional().default(true),
   includeBillingReview: z.boolean().optional().default(true),
+  sections: z.array(z.enum(['chiefComplaint', 'hpi', 'ros', 'physicalExam', 'assessment', 'plan'])).max(6).optional(),
+  mode: z.enum(['fill_empty', 'replace']).optional().default('fill_empty'),
 });
+
+type AmbientApplySection = 'chiefComplaint' | 'hpi' | 'ros' | 'physicalExam' | 'assessment' | 'plan';
+type AmbientApplyMode = 'fill_empty' | 'replace';
+
+const AMBIENT_APPLY_SECTIONS: AmbientApplySection[] = [
+  'chiefComplaint',
+  'hpi',
+  'ros',
+  'physicalExam',
+  'assessment',
+  'plan',
+];
+
+function parseStoredNoteContent(value: unknown): Record<string, any> {
+  if (value && typeof value === 'object') {
+    return value as Record<string, any>;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed as Record<string, any> : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function normalizeApplySectionValue(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
+  return /^(not documented|not available|n\/a|none)$/i.test(normalized) ? '' : normalized;
+}
+
+function isStoredSectionDrafted(
+  section: AmbientApplySection,
+  noteContent: Record<string, any>,
+  hasReviewMetadata: boolean,
+): boolean {
+  if (!hasReviewMetadata) {
+    // Existing generated notes predate sectionReview. Preserve their approved
+    // apply behavior while new notes use the explicit review gate below.
+    return true;
+  }
+  const review = noteContent.sectionReview?.[section];
+  return review?.status === 'drafted';
+}
 
 const clinicalCopilotHistoryItemSchema = z.object({
   role: z.enum(['user', 'assistant']),
@@ -278,7 +327,7 @@ const clinicalCopilotApplySchema = z.object({
 
 const AMBIENT_CLINICAL_ROLES = ['provider', 'ma', 'admin'] as const;
 const AMBIENT_REVIEW_ROLES = ['provider', 'admin'] as const;
-const AMBIENT_SCRIBE_PROMPT_VERSION = 'ambient-scribe-contextual-v1';
+const AMBIENT_SCRIBE_PROMPT_VERSION = 'ambient-scribe-contextual-v2';
 const KNOWN_PATIENT_NAME_BLOCK_TYPE = 'known_patient_name';
 const MAX_KNOWN_PATIENT_NAME_CANDIDATES = 250;
 const NAME_CANDIDATE_STOP_WORDS = new Set([
@@ -2736,7 +2785,14 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIE
     }
 
     const encounterStatus = await pool.query(
-      `SELECT status FROM encounters WHERE id = $1 AND tenant_id = $2`,
+      `SELECT status,
+              chief_complaint,
+              hpi,
+              ros,
+              exam,
+              assessment_plan
+         FROM encounters
+        WHERE id = $1 AND tenant_id = $2`,
       [noteData.encounter_id, tenantId]
     );
 
@@ -2748,31 +2804,86 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIE
       return res.status(409).json({ error: immutableEncounterErrorMessage(encounterStatus.rows[0].status) });
     }
 
-    const assessmentPlan = [noteData.assessment, noteData.plan]
-      .map((section) => (typeof section === 'string' ? section.trim() : ''))
-      .filter(Boolean)
-      .join('\n\n') || null;
-
-    // Update encounter with note content
-    await pool.query(
-      `UPDATE encounters
-       SET chief_complaint = COALESCE($1, chief_complaint),
-           hpi = COALESCE($2, hpi),
-           ros = COALESCE($3, ros),
-           exam = COALESCE($4, exam),
-           assessment_plan = COALESCE($5, assessment_plan),
-           updated_at = NOW()
-       WHERE id = $6 AND tenant_id = $7`,
-      [
-        noteData.chief_complaint,
-        noteData.hpi,
-        noteData.ros,
-        noteData.physical_exam,
-        assessmentPlan,
-        noteData.encounter_id,
-        tenantId
-      ]
+    const encounter = encounterStatus.rows[0] || {};
+    const noteContent = parseStoredNoteContent(noteData.note_content);
+    const hasReviewMetadata = Boolean(
+      noteContent.sectionReview && typeof noteContent.sectionReview === 'object',
     );
+    const selectedSections: AmbientApplySection[] = parsed.data.sections
+      ? Array.from(new Set(parsed.data.sections))
+      : [...AMBIENT_APPLY_SECTIONS];
+    const mode: AmbientApplyMode = parsed.data.mode || 'fill_empty';
+    const noteValues: Record<AmbientApplySection, string> = {
+      chiefComplaint: normalizeApplySectionValue(noteData.chief_complaint),
+      hpi: normalizeApplySectionValue(noteData.hpi),
+      ros: normalizeApplySectionValue(noteData.ros),
+      physicalExam: normalizeApplySectionValue(noteData.physical_exam),
+      assessment: normalizeApplySectionValue(noteData.assessment),
+      plan: normalizeApplySectionValue(noteData.plan),
+    };
+    const existingValues: Record<AmbientApplySection, string> = {
+      chiefComplaint: normalizeApplySectionValue(encounter.chief_complaint),
+      hpi: normalizeApplySectionValue(encounter.hpi),
+      ros: normalizeApplySectionValue(encounter.ros),
+      physicalExam: normalizeApplySectionValue(encounter.exam),
+      assessment: normalizeApplySectionValue(encounter.assessment_plan),
+      plan: normalizeApplySectionValue(encounter.assessment_plan),
+    };
+    const appliedSections: AmbientApplySection[] = [];
+    const skippedSections: AmbientApplySection[] = [];
+    const valuesToApply: Partial<Record<AmbientApplySection, string>> = {};
+
+    for (const section of selectedSections) {
+      const value = noteValues[section];
+      if (!value || !isStoredSectionDrafted(section, noteContent, hasReviewMetadata)) {
+        skippedSections.push(section);
+        continue;
+      }
+
+      // Assessment and plan share the legacy assessment_plan column. In the
+      // safe default mode, any existing A/P text protects both subsections.
+      if (mode === 'fill_empty' && existingValues[section]) {
+        skippedSections.push(section);
+        continue;
+      }
+
+      valuesToApply[section] = value;
+      appliedSections.push(section);
+    }
+
+    const selectedAssessmentPlan = selectedSections
+      .filter((section) => section === 'assessment' || section === 'plan')
+      .filter((section) => appliedSections.includes(section))
+      .map((section) => noteValues[section])
+      .filter(Boolean)
+      .join('\n\n');
+    const nextAssessmentPlan = selectedAssessmentPlan || undefined;
+
+    // Update encounter with only selected, non-empty, reviewed note sections.
+    // Keep the flat SOAP columns as the canonical persistence model.
+    if (appliedSections.length > 0) {
+      await pool.query(
+        `UPDATE encounters
+         SET chief_complaint = $1,
+             hpi = $2,
+             ros = $3,
+             exam = $4,
+             assessment_plan = $5,
+             updated_at = NOW()
+         WHERE id = $6 AND tenant_id = $7`,
+        [
+          appliedSections.includes('chiefComplaint') ? valuesToApply.chiefComplaint : encounter.chief_complaint,
+          appliedSections.includes('hpi') ? valuesToApply.hpi : encounter.hpi,
+          appliedSections.includes('ros') ? valuesToApply.ros : encounter.ros,
+          appliedSections.includes('physicalExam') ? valuesToApply.physicalExam : encounter.exam,
+          (appliedSections.includes('assessment') || appliedSections.includes('plan'))
+            ? nextAssessmentPlan
+            : encounter.assessment_plan,
+          noteData.encounter_id,
+          tenantId
+        ]
+      );
+    }
 
     const structuredActions = await applyStructuredActionsFromAmbientNote(
       tenantId,
@@ -2786,6 +2897,9 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIE
     res.json({
       success: true,
       encounterId: noteData.encounter_id,
+      appliedSections,
+      skippedSections,
+      mode,
       structuredActions,
       message: 'Note applied to encounter successfully'
     });
@@ -3549,6 +3663,8 @@ function buildNoteContent(result: Awaited<ReturnType<typeof generateClinicalNote
   return {
     formalAppointmentSummary: buildFormalAppointmentSummary(result),
     patientSummary: result.patientSummary || null,
+    sectionReview: result.sectionReview,
+    notDocumentedSections: result.notDocumentedSections,
     generatedAt: new Date().toISOString()
   };
 }

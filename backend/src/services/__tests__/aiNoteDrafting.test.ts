@@ -225,6 +225,77 @@ describe('AINoteDraftingService', () => {
       expect(result.chiefComplaint).toBe('Skin concern');
     });
 
+    it('filters section evidence to exact current-source excerpts and caps unsupported drafts', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      service = new AINoteDraftingService();
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ first_name: 'Jane', last_name: 'Smith' }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            chiefComplaint: 'Rash on arms',
+            hpi: 'Patient reports itching',
+            ros: 'Negative except as noted',
+            exam: '',
+            assessmentPlan: 'Contact dermatitis; start treatment',
+            sectionReview: {
+              chiefComplaint: {
+                status: 'drafted',
+                confidence: 0.92,
+                evidence: [
+                  { source: 'chief_complaint', excerpt: 'Rash on arms' },
+                  { source: 'chief_complaint', excerpt: 'unrelated conversation' },
+                ],
+              },
+              hpi: {
+                status: 'drafted',
+                confidence: 0.88,
+                evidence: [{ source: 'brief_notes', excerpt: 'Patient reports itch' }],
+              },
+              ros: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'brief_notes', excerpt: 'not in brief notes' }],
+              },
+              exam: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'brief_notes', excerpt: 'not in brief notes' }],
+              },
+              assessmentPlan: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'chief_complaint', excerpt: 'not in complaint' }],
+              },
+            },
+          }) } }],
+        }),
+      });
+
+      const result = await service.generateNoteDraft({
+        patientId,
+        providerId,
+        chiefComplaint: 'Rash on arms',
+        briefNotes: 'Patient reports itch',
+      }, tenantId);
+
+      expect(result.sectionReview.chiefComplaint.evidence).toEqual([
+        { source: 'chief_complaint', excerpt: 'Rash on arms' },
+      ]);
+      expect(result.sectionReview.hpi.evidence).toEqual([
+        { source: 'brief_notes', excerpt: 'Patient reports itch' },
+      ]);
+      expect(result.sectionReview.ros.evidence).toEqual([]);
+      expect(result.sectionReview.ros.confidence).toBeLessThanOrEqual(0.5);
+      expect(result.sectionReview.exam.status).toBe('not_documented');
+      expect(result.sectionReview.assessmentPlan.confidence).toBeLessThanOrEqual(0.5);
+    });
+
     it('should include template when provided', async () => {
       const mockPatient = { first_name: 'John', last_name: 'Doe', date_of_birth: '1990-01-01', sex: 'M' };
       const mockTemplate = { chiefComplaint: 'Template CC', hpi: 'Template HPI' };
@@ -626,6 +697,30 @@ Assessment and Plan: Contact dermatitis, prescribe topical steroid`;
       const result = await service.generateNoteDraft(request, tenantId);
 
       expect(result.chiefComplaint).toContain('Specific complaint text');
+    });
+
+    it('does not use template filler or generic negatives in the synthetic draft', async () => {
+      const mockPatient = { first_name: 'John', last_name: 'Doe', date_of_birth: '1990-01-01', sex: 'M' };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [mockPatient] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await service.generateNoteDraft({
+        patientId,
+        providerId,
+        chiefComplaint: 'Rash on arms',
+        briefNotes: 'Patient reports itch',
+      }, tenantId);
+
+      expect(result.chiefComplaint).toBe('Rash on arms');
+      expect(result.hpi).toBe('Patient reports itch');
+      expect(result.ros).toBe('');
+      expect(result.exam).toBe('');
+      expect(result.assessmentPlan).toBe('');
+      expect(result.sectionReview.ros.status).toBe('not_documented');
+      expect(result.sectionReview.exam.status).toBe('not_documented');
     });
   });
 

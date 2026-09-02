@@ -999,8 +999,91 @@ describe('AmbientAI Service', () => {
       expect(prompt).toContain('Medical Dermatology');
       expect(prompt).toContain('Known allergies: Penicillin');
       expect(prompt).toContain('Only document facts supported by the transcript or supplied visit context.');
-      expect(prompt).toContain('If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return "Not documented" or an empty list as appropriate');
+      expect(prompt).toContain('If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return an empty string or empty list as appropriate');
       expect(prompt).toContain('Do not create a normal review of systems or normal physical exam for systems that were not actually discussed.');
+    });
+
+    it('should attach source-validated section review metadata and omit unsupported sections', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_NOTE_MODEL = 'gpt-4o';
+
+      const source = 'Patient reports an itchy rash on both forearms.';
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            chiefComplaint: 'Itchy rash on both forearms',
+            hpi: 'Patient reports an itchy rash on both forearms.',
+            ros: 'Negative except as noted.',
+            physicalExam: '',
+            assessment: 'Dermatitis',
+            plan: '',
+            sectionConfidence: {
+              chiefComplaint: 0.9,
+              hpi: 0.9,
+              ros: 0.9,
+              physicalExam: 0.9,
+              assessment: 0.9,
+              plan: 0.9,
+            },
+            sectionReview: {
+              chiefComplaint: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: 'Patient reports an itchy rash on both forearms.' }],
+              },
+              hpi: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: source }],
+              },
+              ros: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: 'This was not said.' }],
+              },
+              physicalExam: { status: 'not_documented', confidence: 0, evidence: [] },
+              assessment: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: 'This diagnosis was not said.' }],
+              },
+              plan: { status: 'not_documented', confidence: 0, evidence: [] },
+            },
+            notDocumentedSections: ['physicalExam', 'plan'],
+            suggestedIcd10: [],
+            suggestedCpt: [],
+            medications: [],
+            allergies: [],
+            followUpTasks: [],
+            differentialDiagnoses: [],
+            recommendedTests: [],
+            patientSummary: {
+              whatWeDiscussed: 'Rash',
+              yourConcerns: ['Itchy rash'],
+              treatmentPlan: '',
+              followUp: '',
+            },
+          }) } }],
+        }),
+      });
+
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'patient',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
+
+      expect(result.sectionReview.chiefComplaint.evidence).toEqual([
+        { source: 'transcript', excerpt: source },
+      ]);
+      expect(result.sectionReview.ros.evidence).toEqual([]);
+      expect(result.sectionReview.ros.confidence).toBeLessThanOrEqual(0.5);
+      expect(result.sectionReview.physicalExam.status).toBe('not_documented');
+      expect(result.sectionReview.plan.status).toBe('not_documented');
+      expect(result.notDocumentedSections).toEqual(expect.arrayContaining(['physicalExam', 'plan']));
     });
 
     it('should handle API errors and fallback to mock', async () => {
@@ -1522,41 +1605,69 @@ describe('AmbientAI Service', () => {
       expect(result.chiefComplaint.length).toBeGreaterThan(0);
     });
 
-    it('should generate HPI with OLDCARTS format', async () => {
-      const result = await ambientAI.generateClinicalNote('rash', []);
+    it('should generate HPI from the current patient statement only', async () => {
+      const source = 'The rash started two days ago and is itchy.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'patient',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.hpi).toContain('ONSET');
-      expect(result.hpi).toContain('LOCATION');
-      expect(result.hpi).toContain('DURATION');
-      expect(result.hpi).toContain('CHARACTER');
+      expect(result.hpi).toContain(source);
+      expect(result.hpi).not.toContain('ONSET');
+      expect(result.sectionReview.hpi.status).toBe('drafted');
     });
 
-    it('should generate complete ROS', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should leave ROS undocumented when it was not discussed', async () => {
+      const result = await ambientAI.generateClinicalNote('small talk only', []);
 
-      expect(result.ros).toContain('CONSTITUTIONAL');
-      expect(result.ros).toContain('SKIN');
+      expect(result.ros).toBe('');
+      expect(result.sectionReview.ros.status).toBe('not_documented');
+      expect(result.notDocumentedSections).toContain('ros');
     });
 
-    it('should generate physical exam with dermatologic terms', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should generate physical exam only from an explicit clinician observation', async () => {
+      const source = 'Exam shows an erythematous papule on the left cheek.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'doctor',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.physicalExam).toBeTruthy();
-      expect(result.physicalExam.length).toBeGreaterThan(0);
+      expect(result.physicalExam).toContain(source);
+      expect(result.sectionReview.physicalExam.status).toBe('drafted');
     });
 
-    it('should generate assessment with diagnosis', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should generate assessment only when the clinician states one', async () => {
+      const source = 'Assessment: contact dermatitis.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'doctor',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.assessment).toBeTruthy();
-      expect(result.assessment.length).toBeGreaterThan(0);
+      expect(result.assessment).toContain(source);
+      expect(result.sectionReview.assessment.status).toBe('drafted');
     });
 
-    it('should generate plan with medications and instructions', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should generate plan only from explicit clinician instructions', async () => {
+      const source = 'Start the documented cream and return in two weeks.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'doctor',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.plan).toBeTruthy();
-      expect(result.plan.length).toBeGreaterThan(0);
+      expect(result.plan).toContain(source);
+      expect(result.sectionReview.plan.status).toBe('drafted');
     });
   });
 

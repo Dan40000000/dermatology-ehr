@@ -372,6 +372,29 @@ export interface PatientSummary {
   followUp: string;
 }
 
+export type AmbientNoteSection =
+  | 'chiefComplaint'
+  | 'hpi'
+  | 'ros'
+  | 'physicalExam'
+  | 'assessment'
+  | 'plan';
+
+export type AmbientEvidenceSource = 'transcript' | 'visit_context';
+
+export interface AmbientSectionEvidence {
+  source: AmbientEvidenceSource;
+  excerpt: string;
+}
+
+export interface AmbientSectionReview {
+  status: 'drafted' | 'not_documented';
+  confidence: number;
+  evidence: AmbientSectionEvidence[];
+}
+
+export type AmbientSectionReviewMap = Record<AmbientNoteSection, AmbientSectionReview>;
+
 export interface ClinicalNote {
   chiefComplaint: string;
   hpi: string;
@@ -388,6 +411,8 @@ export interface ClinicalNote {
     assessment: number;
     plan: number;
   };
+  sectionReview: AmbientSectionReviewMap;
+  notDocumentedSections: AmbientNoteSection[];
   differentialDiagnoses: DifferentialDiagnosis[];
   recommendedTests: RecommendedTest[];
   patientSummary: PatientSummary;
@@ -1687,6 +1712,10 @@ async function generateNoteWithClaude(
     ? buildConfigurablePrompt(transcriptText, segments, agentConfig, patientContext)
     : buildClinicalNotePrompt(transcriptText, segments, patientContext);
 
+  const safeSystemPrompt = agentConfig?.systemPrompt
+    ? `${agentConfig.systemPrompt}\n\n${buildDocumentationRules(patientContext)}`
+    : `You are a clinical documentation assistant. Use only current encounter facts and leave unsupported sections empty.\n\n${buildDocumentationRules(patientContext)}`;
+
   // Use model and settings from config if available
   const temperature = agentConfig?.temperature || 0.3;
   const maxTokens = agentConfig?.maxTokens || 4000;
@@ -1705,7 +1734,7 @@ async function generateNoteWithClaude(
           model: model,
           max_tokens: maxTokens,
           temperature: temperature,
-          system: agentConfig?.systemPrompt || undefined,
+          system: safeSystemPrompt,
           messages: [
             {
               role: 'user',
@@ -1737,14 +1766,14 @@ async function generateNoteWithClaude(
 
   const noteText = result.content[0].text;
 
-  const parsed = parseAIGeneratedNote(noteText, segments, agentConfig);
+  const parsed = parseAIGeneratedNote(noteText, segments, agentConfig, patientContext);
   return {
     ...parsed,
     generationMetadata: {
       provider: 'anthropic',
       model,
       prompt: safePromptMetadata(prompt),
-      systemPrompt: agentConfig?.systemPrompt ? safePromptMetadata(agentConfig.systemPrompt) : undefined,
+      systemPrompt: safePromptMetadata(safeSystemPrompt),
       agentConfigId: agentConfig?.id || null,
       appointmentTypeName: patientContext?.appointmentTypeName,
       specialtyFocus: patientContext?.specialtyFocus,
@@ -1779,8 +1808,9 @@ async function generateNoteWithGPT4(
   // Use settings from config if available
   const temperature = agentConfig?.temperature || 0.3;
   const maxTokens = agentConfig?.maxTokens || 3000;
-  const systemPrompt = agentConfig?.systemPrompt ||
-    'You are an expert dermatology medical scribe. Generate accurate, detailed clinical notes following medical documentation standards.';
+  const systemPrompt = agentConfig?.systemPrompt
+    ? `${agentConfig.systemPrompt}\n\n${buildDocumentationRules(patientContext)}`
+    : `You are an expert dermatology medical scribe. Generate accurate clinical notes using only current encounter facts and leave unsupported sections empty.\n\n${buildDocumentationRules(patientContext)}`;
 
   // Execute API call with retry logic
   const result = await withRetry(
@@ -1839,7 +1869,7 @@ async function generateNoteWithGPT4(
 
   const noteText = result.choices[0].message.content;
 
-  const parsed = parseAIGeneratedNote(noteText, segments, agentConfig);
+  const parsed = parseAIGeneratedNote(noteText, segments, agentConfig, patientContext);
   return {
     ...parsed,
     generationMetadata: {
@@ -1884,8 +1914,10 @@ function buildDocumentationRules(patientContext?: PatientContext): string {
   const rules = [
     '- Only document facts supported by the transcript or supplied visit context.',
     '- The current transcript is the source of truth for today\'s chief complaint and diagnoses; do not import unrelated chronic problems or appointment labels into the note unless they are discussed.',
-    '- If a section is missing material information, explicitly state "Not documented" instead of inventing content.',
+    '- If a section is missing material information, return an empty string (never invent content or use a generic normal statement).',
     '- Do not create a normal review of systems or normal physical exam for systems that were not actually discussed.',
+    '- Omit small talk, scheduling, billing, administrative, and other nonclinical conversation.',
+    '- Never invent a diagnosis, medication, order, procedure, consent, code, or follow-up. Templates, style, visit labels, and defaults affect wording/structure only and are not clinical evidence.',
     '- Distinguish clearly between patient-reported symptoms, provider-observed findings, and diagnostic impression.',
     '- For dermatology exam content, preserve lesion morphology, color, distribution, location, size, scale, crust, pigment change, and symptom descriptors when stated.',
     '- For procedures, only document consent, site, preparation, anesthesia, specimen handling, wound care, and follow-up instructions if they are actually supported by the transcript/context.',
@@ -1918,7 +1950,7 @@ function buildClinicalNotePrompt(
   const contextBlock = buildPromptContextBlock(patientContext);
   const documentationRules = buildDocumentationRules(patientContext);
 
-  return `You are an expert dermatology medical scribe. Generate a comprehensive SOAP clinical note from the following patient-provider conversation transcript.
+  return `You are an expert dermatology medical scribe. Generate a problem-oriented SOAP clinical note from the following patient-provider conversation transcript, including only clinically relevant content supported by this current encounter.
 
 CONVERSATION TRANSCRIPT:
 ${transcriptText}
@@ -1935,11 +1967,20 @@ Please generate a structured clinical note in the following JSON format:
 
 {
   "chiefComplaint": "Brief chief complaint statement",
-  "hpi": "Detailed History of Present Illness using OLDCARTS format (Onset, Location, Duration, Character, Aggravating/Relieving factors, Timing, Severity)",
-  "ros": "Complete Review of Systems",
-  "physicalExam": "Detailed dermatologic examination findings with morphology, distribution, and clinical observations",
-  "assessment": "Clinical assessment with differential diagnosis",
-  "plan": "Detailed treatment plan including medications, patient education, follow-up",
+  "hpi": "History of Present Illness using only stated facts; empty string if unsupported",
+  "ros": "Only explicitly discussed review-of-systems findings; empty string if unsupported",
+  "physicalExam": "Only explicitly documented dermatologic findings; empty string if unsupported",
+  "assessment": "Problem-oriented assessment only when supported; empty string if unsupported",
+  "plan": "Only the discussed treatment, education, procedure, or follow-up plan; empty string if unsupported",
+  "sectionReview": {
+    "chiefComplaint": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "transcript|visit_context", "excerpt": "exact source excerpt" }] },
+    "hpi": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "transcript|visit_context", "excerpt": "exact source excerpt" }] },
+    "ros": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "transcript|visit_context", "excerpt": "exact source excerpt" }] },
+    "physicalExam": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "transcript|visit_context", "excerpt": "exact source excerpt" }] },
+    "assessment": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "transcript|visit_context", "excerpt": "exact source excerpt" }] },
+    "plan": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "transcript|visit_context", "excerpt": "exact source excerpt" }] }
+  },
+  "notDocumentedSections": [],
   "suggestedIcd10": [{"code": "X00.0", "description": "Diagnosis name", "confidence": 0.95}],
   "suggestedCpt": [{"code": "99213", "description": "E/M code", "confidence": 0.90}],
   "medications": [{"name": "Drug name", "dosage": "Strength/form", "frequency": "Schedule", "confidence": 0.92}],
@@ -1985,17 +2026,18 @@ REQUIREMENTS:
 - Identify all allergies mentioned
 - Suggest appropriate ICD-10 and CPT codes
 - Create follow-up tasks based on provider instructions
-- Provide confidence scores for each section
-- Be thorough but concise
+- Provide confidence scores and exact source evidence for each section
+- Be concise; omit unsupported sections rather than padding them
 - Keep unsupported assumptions out of the note
 - Do not invent or change the patient name; use the patient context name when provided, otherwise use "the patient"
-- If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return "Not documented" or an empty list as appropriate
+- If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return an empty string or empty list as appropriate
 
-DIFFERENTIAL_DIAGNOSES (array of 2-5 possible conditions):
+DIFFERENTIAL_DIAGNOSES (array of 0-5 possible conditions):
 - Rank by confidence level based on clinical presentation
 - Provide clear clinical reasoning for each differential
 - Include appropriate ICD-10 codes for billing consideration
 - Consider common dermatologic conditions and mimickers
+- Return an empty array when the current encounter does not support a differential
 
 RECOMMENDED_TESTS (array of relevant tests):
 - Base recommendations on clinical findings and differentials
@@ -2093,6 +2135,12 @@ function buildConfigurablePrompt(
   // Add standard extraction fields
   const fullSchema = {
     ...outputSchema,
+    sectionReview: Object.fromEntries(AMBIENT_NOTE_SECTIONS.map((section) => [section, {
+      status: 'drafted|not_documented',
+      confidence: 0.0,
+      evidence: [{ source: 'transcript|visit_context', excerpt: 'exact source excerpt' }],
+    }])),
+    notDocumentedSections: AMBIENT_NOTE_SECTIONS,
     overallConfidence: 0.90,
     sectionConfidence: Object.fromEntries(sections.map(s => [s, 0.90])),
     suggestedIcd10: [{ code: 'X00.0', description: 'Diagnosis', confidence: 0.90 }],
@@ -2136,6 +2184,9 @@ IDENTITY AND SUMMARY RULES:
 - Do not invent or change the patient name; use the patient context name when provided, otherwise use "the patient".
 - In patientSummary.yourConcerns, include only active symptoms or concerns the patient reported or the clinician observed.
 - Do not list denied symptoms or wound-care warning symptoms as current concerns.
+- Use only current transcript/visit-context facts. Omit small talk, scheduling, billing, and administrative conversation.
+- Never invent normal ROS/exam, diagnoses, medications, orders, procedures, consent, codes, or follow-up. Return empty strings for unsupported standard sections.
+- Templates, provider style, visit labels, terminology, focus areas, and defaults affect wording/structure only; they cannot add clinical facts.
 
 Please return a JSON object with this structure:
 ${JSON.stringify(fullSchema, null, 2)}
@@ -2606,6 +2657,141 @@ function normalizeSectionConfidence(raw: unknown): ClinicalNote['sectionConfiden
   };
 }
 
+const AMBIENT_NOTE_SECTIONS: AmbientNoteSection[] = [
+  'chiefComplaint',
+  'hpi',
+  'ros',
+  'physicalExam',
+  'assessment',
+  'plan',
+];
+
+function normalizeEvidenceForComparison(value: string): string {
+  return value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeDocumentedSection(value: unknown): string {
+  const content = toSafeString(value);
+  if (!content || /^(not documented|not available|n\/a|none)$/i.test(content)) {
+    return '';
+  }
+  return content;
+}
+
+function ambientSectionSources(
+  transcriptText: string,
+  patientContext?: PatientContext,
+): Array<{ source: AmbientEvidenceSource; text: string }> {
+  const sources: Array<{ source: AmbientEvidenceSource; text: string }> = [];
+  if (toSafeString(transcriptText)) {
+    sources.push({ source: 'transcript', text: toSafeString(transcriptText) });
+  }
+  const contextText = [patientContext?.chiefComplaint, patientContext?.relevantHistory]
+    .map(toSafeString)
+    .filter(Boolean)
+    .join(' ');
+  if (contextText) {
+    sources.push({ source: 'visit_context', text: contextText });
+  }
+  return sources;
+}
+
+function validateAmbientEvidence(
+  rawEvidence: unknown,
+  sources: Array<{ source: AmbientEvidenceSource; text: string }>,
+): AmbientSectionEvidence[] {
+  if (!Array.isArray(rawEvidence)) {
+    return [];
+  }
+
+  const validated: AmbientSectionEvidence[] = [];
+  const seen = new Set<string>();
+  for (const item of rawEvidence) {
+    if (!item || typeof item !== 'object') continue;
+    const candidate = item as Record<string, unknown>;
+    const source = candidate.source;
+    if (source !== 'transcript' && source !== 'visit_context') continue;
+    const excerpt = toSafeString(candidate.excerpt);
+    if (!excerpt) continue;
+
+    const normalizedExcerpt = normalizeEvidenceForComparison(excerpt);
+    const matchingSource = sources.find((entry) =>
+      entry.source === source
+      && normalizeEvidenceForComparison(entry.text).includes(normalizedExcerpt));
+    if (!matchingSource) continue;
+
+    const key = `${source}:${normalizedExcerpt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    validated.push({ source, excerpt: excerpt.slice(0, 1200) });
+  }
+
+  return validated.slice(0, 8);
+}
+
+function findDerivedAmbientEvidence(
+  content: string,
+  sources: Array<{ source: AmbientEvidenceSource; text: string }>,
+): AmbientSectionEvidence[] {
+  const normalizedContent = normalizeEvidenceForComparison(content);
+  if (!normalizedContent) return [];
+
+  for (const source of sources) {
+    const sourceSentences = splitClinicalSentences(source.text);
+    for (const sentence of sourceSentences) {
+      const normalizedSentence = normalizeEvidenceForComparison(sentence);
+      if (!normalizedSentence) continue;
+      if (normalizedContent.includes(normalizedSentence) || normalizedSentence.includes(normalizedContent)) {
+        // Avoid treating one-word labels as proof of a full generated section.
+        if (normalizedSentence.length < 4 || normalizedContent.length < 4) continue;
+        return [{ source: source.source, excerpt: sentence.slice(0, 1200) }];
+      }
+    }
+  }
+  return [];
+}
+
+function normalizeAmbientSectionReview(
+  rawReview: unknown,
+  sections: Record<AmbientNoteSection, string>,
+  rawSectionConfidence: ClinicalNote['sectionConfidence'],
+  sources: Array<{ source: AmbientEvidenceSource; text: string }>,
+): AmbientSectionReviewMap {
+  const reviewObject = rawReview && typeof rawReview === 'object'
+    ? rawReview as Record<string, unknown>
+    : {};
+  const normalized = {} as AmbientSectionReviewMap;
+
+  for (const section of AMBIENT_NOTE_SECTIONS) {
+    const content = normalizeDocumentedSection(sections[section]);
+    const candidate = reviewObject[section] && typeof reviewObject[section] === 'object'
+      ? reviewObject[section] as Record<string, unknown>
+      : {};
+    const evidence = validateAmbientEvidence(candidate.evidence, sources);
+    const derivedEvidence = evidence.length === 0 && content
+      ? findDerivedAmbientEvidence(content, sources)
+      : [];
+    const validatedEvidence = evidence.length > 0 ? evidence : derivedEvidence;
+    let confidence = content
+      ? normalizeConfidence(candidate.confidence, rawSectionConfidence[section] || 0.5)
+      : 0;
+
+    // Keep generated text available for clinician review, but make the lack of
+    // source evidence explicit so callers never treat it as a safe auto-fill.
+    if (content && validatedEvidence.length === 0) {
+      confidence = Math.min(confidence, 0.5);
+    }
+
+    normalized[section] = {
+      status: content ? 'drafted' : 'not_documented',
+      confidence,
+      evidence: validatedEvidence,
+    };
+  }
+
+  return normalized;
+}
+
 function removeUnsupportedContextTopics(text: string, transcriptText: string): string {
   let normalized = text.trim();
   const transcript = transcriptText.toLowerCase();
@@ -2654,16 +2840,18 @@ function normalizePatientSummary(
   const topDiagnosis = context.differentialDiagnoses[0];
 
   const whatWeDiscussed = toSafeString(source.whatWeDiscussed)
-    || `We discussed ${context.chiefComplaint || 'your dermatology concerns'} and reviewed exam findings.`;
+    || context.chiefComplaint
+    || context.hpi
+    || 'No clinical discussion documented.';
 
   const treatmentPlan = toSafeString(source.treatmentPlan)
     || (context.plan
       ? context.plan.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 3).join(' ')
-      : 'Follow the treatment plan and skin care instructions reviewed in clinic.');
+      : 'No treatment plan documented.');
 
   const dueDate = context.followUpTasks.find((task) => task.dueDate)?.dueDate;
   const followUp = toSafeString(source.followUp)
-    || (dueDate ? `Follow up by ${dueDate} or sooner if symptoms worsen.` : 'Follow up as directed by your provider.');
+    || (dueDate ? `Follow up by ${dueDate}.` : 'No follow-up documented.');
 
   return {
     whatWeDiscussed,
@@ -2706,7 +2894,8 @@ function normalizeAssessmentText(
 function parseAIGeneratedNote(
   noteText: string,
   segments: TranscriptionSegment[],
-  agentConfig?: AgentConfiguration | null
+  agentConfig?: AgentConfiguration | null,
+  patientContext?: PatientContext,
 ): ClinicalNote & ExtractedData {
   try {
     // Try to parse as JSON - strip any markdown code blocks if present
@@ -2725,6 +2914,7 @@ function parseAIGeneratedNote(
     const parsed = JSON.parse(cleanedText);
     const transcriptText = segments.map((segment) => segment.text).join(' ');
     const normalizedSectionConfidence = normalizeSectionConfidence(parsed.sectionConfidence);
+    const sources = ambientSectionSources(transcriptText, patientContext);
     const clinicalContext = [
       transcriptText,
       toSafeString(parsed.chiefComplaint),
@@ -2735,9 +2925,29 @@ function parseAIGeneratedNote(
     const followUpTasks = normalizeFollowUpTasks(parsed.followUpTasks, clinicalContext);
     const differentialDiagnoses = normalizeDifferentialDiagnoses(parsed.differentialDiagnoses, transcriptText);
     const recommendedTests = normalizeRecommendedTests(parsed.recommendedTests, transcriptText);
-    const chiefComplaint = removeUnsupportedContextTopics(toSafeString(parsed.chiefComplaint), transcriptText);
-    const hpi = removeUnsupportedContextTopics(toSafeString(parsed.hpi), transcriptText);
-    const assessment = normalizeAssessmentText(parsed.assessment, differentialDiagnoses);
+    const chiefComplaint = removeUnsupportedContextTopics(normalizeDocumentedSection(parsed.chiefComplaint), transcriptText);
+    const hpi = removeUnsupportedContextTopics(normalizeDocumentedSection(parsed.hpi), transcriptText);
+    const assessment = normalizeAssessmentText(normalizeDocumentedSection(parsed.assessment), differentialDiagnoses);
+    const sectionValues: Record<AmbientNoteSection, string> = {
+      chiefComplaint,
+      hpi,
+      ros: normalizeDocumentedSection(parsed.ros),
+      physicalExam: normalizeDocumentedSection(parsed.physicalExam),
+      assessment,
+      plan: normalizeDocumentedSection(parsed.plan),
+    };
+    const sectionReview = normalizeAmbientSectionReview(
+      parsed.sectionReview,
+      sectionValues,
+      normalizedSectionConfidence,
+      sources,
+    );
+    const effectiveSectionConfidence = Object.fromEntries(
+      AMBIENT_NOTE_SECTIONS.map((section) => [section, sectionReview[section].confidence]),
+    ) as ClinicalNote['sectionConfidence'];
+    const notDocumentedSections = AMBIENT_NOTE_SECTIONS.filter(
+      (section) => sectionReview[section].status === 'not_documented',
+    );
     const patientSummary = normalizePatientSummary(parsed.patientSummary, {
       chiefComplaint,
       hpi,
@@ -2748,7 +2958,7 @@ function parseAIGeneratedNote(
     });
 
     // Calculate overall confidence
-    const sectionScores = Object.values(normalizedSectionConfidence);
+    const sectionScores = Object.values(effectiveSectionConfidence);
     const overallConfidence = sectionScores.length > 0
       ? sectionScores.reduce((a, b) => a + b, 0) / sectionScores.length
       : 0.85;
@@ -2757,12 +2967,14 @@ function parseAIGeneratedNote(
     const note: ClinicalNote & ExtractedData = {
       chiefComplaint,
       hpi,
-      ros: toSafeString(parsed.ros),
-      physicalExam: toSafeString(parsed.physicalExam),
+      ros: sectionValues.ros,
+      physicalExam: sectionValues.physicalExam,
       assessment,
-      plan: toSafeString(parsed.plan),
+      plan: sectionValues.plan,
       overallConfidence: overallConfidence,
-      sectionConfidence: normalizedSectionConfidence,
+      sectionConfidence: effectiveSectionConfidence,
+      sectionReview,
+      notDocumentedSections,
       suggestedIcd10: parsed.suggestedIcd10 || [],
       suggestedCpt: parsed.suggestedCpt || [],
       medications: parsed.medications || [],
@@ -2818,7 +3030,7 @@ function parseAIGeneratedNote(
       error: toSafeErrorMessage(error),
     });
     if (isSyntheticAmbientRuntime()) {
-      return mockGenerateClinicalNoteSync(segments);
+      return mockGenerateClinicalNoteSync(segments, agentConfig, patientContext);
     }
     throw unavailableAmbientError('unknown', 'NOTE_RESPONSE_INVALID');
   }
@@ -2892,26 +3104,59 @@ function mockGenerateClinicalNoteSync(
   const { patientStatements, doctorStatements } = splitStatementsByRole(segments);
   const transcriptText = segments.map(s => toSafeString(s.text)).filter(Boolean).join(' ');
 
-  // Generate structured note sections
-  const note: ClinicalNote = {
-    chiefComplaint: generateChiefComplaint(patientStatements),
-    hpi: generateHPI(patientStatements, doctorStatements),
-    ros: generateROS(transcriptText),
-    physicalExam: generatePhysicalExam(doctorStatements),
-    assessment: generateAssessment(transcriptText),
-    plan: generatePlan(doctorStatements),
-    overallConfidence: 0.85 + Math.random() * 0.10,
-    sectionConfidence: {
-      chiefComplaint: 0.92,
-      hpi: 0.88,
-      ros: 0.82,
-      physicalExam: 0.90,
-      assessment: 0.87,
-      plan: 0.91
+  // The mock is deliberately source-bound. It is used by demos and tests, but
+  // must not teach the application that a normal ROS, physical exam, diagnosis,
+  // medication, or follow-up can be safely fabricated from a template.
+  const chiefComplaint = sourceBoundMockChiefComplaint(patientStatements, patientContext);
+  const hpi = sourceBoundMockHpi(patientStatements, patientContext);
+  const ros = '';
+  const physicalExam = sourceBoundMockExam(doctorStatements);
+  const assessment = sourceBoundMockAssessment(doctorStatements);
+  const plan = sourceBoundMockPlan(doctorStatements);
+  const sectionValues: Record<AmbientNoteSection, string> = {
+    chiefComplaint,
+    hpi,
+    ros,
+    physicalExam,
+    assessment,
+    plan,
+  };
+  const sources = ambientSectionSources(transcriptText, patientContext);
+  const sectionReview = normalizeAmbientSectionReview(
+    undefined,
+    sectionValues,
+    {
+      chiefComplaint: 0.8,
+      hpi: 0.8,
+      ros: 0,
+      physicalExam: 0.7,
+      assessment: 0.6,
+      plan: 0.7,
     },
+    sources,
+  );
+  const effectiveSectionConfidence = Object.fromEntries(
+    AMBIENT_NOTE_SECTIONS.map((section) => [section, sectionReview[section].confidence]),
+  ) as ClinicalNote['sectionConfidence'];
+  const notDocumentedSections = AMBIENT_NOTE_SECTIONS.filter(
+    (section) => sectionReview[section].status === 'not_documented',
+  );
+
+  const note: ClinicalNote = {
+    chiefComplaint,
+    hpi,
+    ros,
+    physicalExam,
+    assessment,
+    plan,
+    overallConfidence: Object.values(effectiveSectionConfidence).reduce((sum, value) => sum + value, 0)
+      / AMBIENT_NOTE_SECTIONS.length,
+    sectionConfidence: effectiveSectionConfidence,
+    sectionReview,
+    notDocumentedSections,
     differentialDiagnoses: generateDifferentialDiagnoses(transcriptText),
     recommendedTests: generateRecommendedTests(transcriptText),
-    patientSummary: generatePatientSummary(patientStatements, doctorStatements)
+    patientSummary: generateSourceBoundPatientSummary(patientStatements, doctorStatements, sectionValues),
   };
 
   // Extract structured data
@@ -2940,184 +3185,144 @@ function mockGenerateClinicalNoteSync(
   };
 }
 
-function generateChiefComplaint(patientStatements: string[]): string {
-  if (patientStatements.length === 0) return "Patient presents for evaluation.";
+function sourceBoundMockChiefComplaint(
+  patientStatements: string[],
+  patientContext?: PatientContext,
+): string {
+  const contextComplaint = normalizeDocumentedSection(patientContext?.chiefComplaint);
+  if (contextComplaint) return contextComplaint;
 
-  // Use first substantive patient statement
-  const firstStatement = patientStatements[0] || "Follow-up visit";
-
-  // Extract key complaint
-  if (firstStatement.toLowerCase().includes('rash')) {
-    return "Pruritic rash on bilateral arms x 2 weeks";
-  }
-  return "Skin concern requiring evaluation";
+  const clinicalStatement = patientStatements.find((statement) =>
+    /\b(rash|lesion|mole|spot|itch|pruritus|pain|scal|flak|acne|skin|bump|growth|red|bleed|burn)\b/i.test(statement)
+    && !/\b(schedule|appointment|insurance|billing|paperwork|phone|address)\b/i.test(statement));
+  return clinicalStatement || '';
 }
 
-function generateHPI(patientStatements: string[], doctorStatements: string[]): string {
-  const hpi = `Patient is a presenting with a chief complaint of pruritic rash on bilateral forearms of 2 weeks duration.
-
-ONSET: Rash began approximately 2 weeks ago, shortly after patient switched to a new laundry detergent.
-
-LOCATION: Bilateral forearms, symmetric distribution.
-
-DURATION: Persistent for 2 weeks with progressive worsening.
-
-CHARACTER: Erythematous patches with overlying scale. Patient describes intense pruritus.
-
-AGGRAVATING FACTORS: Symptoms worsen at night and during periods of increased stress.
-
-RELIEVING FACTORS: Minimal relief with over-the-counter hydrocortisone 1% cream and oral diphenhydramine.
-
-TIMING: Continuous, with nocturnal exacerbation of pruritus.
-
-ASSOCIATED SYMPTOMS: Denies fever, chills, joint pain, or rash elsewhere on body.
-
-PREVIOUS TREATMENT: Patient has self-treated with OTC hydrocortisone cream with minimal improvement.`;
-
-  return hpi;
+function sourceBoundMockHpi(
+  patientStatements: string[],
+  patientContext?: PatientContext,
+): string {
+  const statements = patientStatements.filter((statement) =>
+    !/\b(schedule|appointment|insurance|billing|paperwork|phone|address)\b/i.test(statement));
+  if (statements.length > 0) return statements.join(' ');
+  return normalizeDocumentedSection(patientContext?.chiefComplaint);
 }
 
-function generateROS(transcript: string): string {
-  return `CONSTITUTIONAL: Denies fever, chills, fatigue, or weight changes.
-SKIN: Positive for bilateral forearm rash as described in HPI. Denies other skin lesions.
-HEENT: Negative
-CARDIOVASCULAR: Negative
-RESPIRATORY: Negative
-GASTROINTESTINAL: Negative
-GENITOURINARY: Negative
-MUSCULOSKELETAL: Denies joint pain or swelling.
-NEUROLOGICAL: Negative
-PSYCHIATRIC: Denies anxiety or depression.
-ALLERGIC/IMMUNOLOGIC: History of penicillin allergy (hives). Denies other known allergies.`;
+function sourceBoundMockExam(doctorStatements: string[]): string {
+  return doctorStatements
+    .flatMap((statement) => splitClinicalSentences(statement))
+    .filter((sentence) =>
+      /\b(exam|examination|observed|shows?|noted|visualiz|papule|plaque|macule|patch|lesion|rash|erythematous|scaly|scale|tender|morphology|location|size)\b/i.test(sentence)
+      && !/\b(what brings|do you have|any pain|any drainage|any fever)\b/i.test(sentence))
+    .join(' ');
 }
 
-function generatePhysicalExam(doctorStatements: string[]): string {
-  return `GENERAL: Patient is alert, oriented, and in no acute distress.
-
-SKIN EXAMINATION:
-- UPPER EXTREMITIES: Bilateral erythematous patches on the volar and dorsal forearms
-- DISTRIBUTION: Symmetric, well-demarcated
-- MORPHOLOGY: Erythematous patches with fine scaling
-- SIZE: Patches range from 2-5 cm in diameter
-- PALPATION: Slightly raised, warm to touch, no induration
-- SECONDARY CHANGES: Mild excoriation from scratching, no lichenification
-- SURROUNDING SKIN: Normal, no satellite lesions
-
-REMAINDER OF SKIN: No other lesions, rashes, or concerning findings noted on exposed skin.
-
-LYMPH NODES: No palpable cervical, axillary, or inguinal lymphadenopathy.`;
+function sourceBoundMockAssessment(doctorStatements: string[]): string {
+  return doctorStatements
+    .flatMap((statement) => splitClinicalSentences(statement))
+    .filter((sentence) => /\b(assessment|diagnos|impression|consistent with|likely)\b/i.test(sentence))
+    .join(' ');
 }
 
-function generateAssessment(transcript: string): string {
-  return `1. Allergic contact dermatitis, bilateral upper extremities (likely secondary to new laundry detergent)
-   - ICD-10: L23.9 - Allergic contact dermatitis, unspecified cause
-   - Clinical presentation consistent with Type IV hypersensitivity reaction
-   - Symmetric distribution and temporal relationship to new detergent exposure support diagnosis
-
-2. Penicillin allergy (documented)
-   - History of hives with penicillin exposure`;
+function sourceBoundMockPlan(doctorStatements: string[]): string {
+  return doctorStatements
+    .flatMap((statement) => splitClinicalSentences(statement))
+    .filter((sentence) =>
+      /\b(start|stop|continue|apply|use|take|prescrib|treat|biopsy|cryotherap|freeze|return|follow.?up|call|avoid|counsel|discuss|plan)\b/i.test(sentence)
+      && !/^what brings you in/i.test(sentence))
+    .join(' ');
 }
 
-function generatePlan(doctorStatements: string[]): string {
-  return `1. MEDICATIONS:
-   - Triamcinolone acetonide 0.1% cream: Apply thin layer to affected areas BID x 14 days
-   - Cetirizine 10mg PO QHS for pruritus management
+function generateSourceBoundPatientSummary(
+  patientStatements: string[],
+  doctorStatements: string[],
+  sections: Record<AmbientNoteSection, string>,
+): PatientSummary {
+  const concern = sections.chiefComplaint || sections.hpi || '';
+  const discussion = [sections.chiefComplaint, sections.hpi, sections.physicalExam]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const concerns = patientStatements
+    .filter((statement) => /\b(rash|lesion|mole|spot|itch|pruritus|pain|scal|flak|acne|skin|bump|growth|red|bleed|burn)\b/i.test(statement))
+    .slice(0, 8);
+  const plan = sections.plan || '';
+  const followUp = splitClinicalSentences(plan)
+    .filter((sentence) => /\b(return|follow.?up|call|recheck|come back)\b/i.test(sentence))
+    .join(' ');
 
-2. ALLERGEN AVOIDANCE:
-   - Discontinue use of new laundry detergent immediately
-   - Return to previously used, well-tolerated detergent
-   - Consider hypoallergenic, fragrance-free detergents for future use
-
-3. SKIN CARE:
-   - Avoid hot showers; use lukewarm water
-   - Use gentle, fragrance-free soap (e.g., Dove Sensitive, Cetaphil)
-   - Apply fragrance-free moisturizer (e.g., CeraVe, Vanicream) BID to affected areas
-   - Avoid scratching; keep nails trimmed short
-
-4. PATIENT EDUCATION:
-   - Discussed contact dermatitis and allergen avoidance
-   - Reviewed proper application of topical corticosteroid
-   - Advised on signs/symptoms requiring earlier follow-up (spreading rash, fever, signs of infection)
-
-5. FOLLOW-UP:
-   - Return to clinic in 3 weeks for reassessment
-   - Call office if no improvement in 7 days or if condition worsens
-   - Consider patch testing if recurrent episodes occur`;
+  return {
+    whatWeDiscussed: discussion || concern || 'No clinical discussion documented.',
+    yourConcerns: concerns.length > 0 ? concerns : concern ? [concern] : [],
+    diagnosis: sections.assessment || undefined,
+    treatmentPlan: plan || 'No treatment plan documented.',
+    followUp: followUp || 'No follow-up documented.',
+  };
 }
 
 function extractICD10Codes(transcript: string): Array<{ code: string; description: string; confidence: number }> {
-  // Simulate intelligent code extraction based on keywords
   const codes: Array<{ code: string; description: string; confidence: number }> = [];
+  const text = transcript.toLowerCase();
 
-  if (transcript.toLowerCase().includes('contact dermatitis') || transcript.toLowerCase().includes('detergent')) {
+  // These are suggestions only and are returned when the diagnosis is stated
+  // in the source. Do not infer a diagnosis from a generic symptom such as a
+  // rash or an exposure alone.
+  if (text.includes('contact dermatitis')) {
     codes.push({ code: 'L23.9', description: 'Allergic contact dermatitis, unspecified cause', confidence: 0.94 });
   }
 
-  if (transcript.toLowerCase().includes('pruritus') || transcript.toLowerCase().includes('itchy')) {
+  if (text.includes('pruritus')) {
     codes.push({ code: 'L29.9', description: 'Pruritus, unspecified', confidence: 0.88 });
   }
 
-  return codes.length > 0 ? codes : [COMMON_DERM_ICD10[3]!]; // Default to dermatitis
+  return codes;
 }
 
 function extractCPTCodes(transcript: string): Array<{ code: string; description: string; confidence: number }> {
-  // Base E/M code on complexity
-  return [
-    { code: '99213', description: 'Office visit, established patient, low-moderate complexity', confidence: 0.91 }
-  ];
+  // An E/M level cannot be established from a transcript. Return a procedure
+  // suggestion only when the procedure is explicitly named.
+  if (/\b(shave|tangential) biopsy\b/i.test(transcript)) {
+    return [{ code: '11102', description: 'Tangential biopsy of skin, single lesion', confidence: 0.8 }];
+  }
+  return [];
 }
 
 function extractMedications(doctorStatements: string[]): Array<{ name: string; dosage: string; frequency: string; confidence: number }> {
-  const meds = [];
-  const text = doctorStatements.join(' ').toLowerCase();
+  const meds: Array<{ name: string; dosage: string; frequency: string; confidence: number }> = [];
+  const text = doctorStatements.join(' ');
 
-  if (text.includes('triamcinolone')) {
-    meds.push({ name: 'Triamcinolone acetonide', dosage: '0.1% cream', frequency: 'BID', confidence: 0.96 });
+  if (/\btriamcinolone\b/i.test(text)) {
+    meds.push({ name: 'Triamcinolone', dosage: '', frequency: '', confidence: 0.8 });
   }
 
-  if (text.includes('antihistamine') || text.includes('cetirizine')) {
-    meds.push({ name: 'Cetirizine', dosage: '10mg', frequency: 'QHS', confidence: 0.92 });
+  if (/\bantihistamine\b/i.test(text) || /\bcetirizine\b/i.test(text)) {
+    meds.push({ name: /\bcetirizine\b/i.test(text) ? 'Cetirizine' : 'Antihistamine', dosage: '', frequency: '', confidence: 0.8 });
   }
 
   return meds;
 }
 
 function extractAllergies(transcript: string): Array<{ allergen: string; reaction: string; confidence: number }> {
-  const allergies = [];
+  const allergies: Array<{ allergen: string; reaction: string; confidence: number }> = [];
+  const match = transcript.match(/\bpenicillin\b(?:[^.]{0,80}\b(hives?|rash|anaphylaxis|reaction)\b)?/i);
 
-  if (transcript.toLowerCase().includes('penicillin')) {
-    allergies.push({ allergen: 'Penicillin', reaction: 'Hives', confidence: 0.98 });
+  if (match) {
+    allergies.push({ allergen: 'Penicillin', reaction: match[1] || '', confidence: 0.8 });
   }
 
   return allergies;
 }
 
 function extractFollowUpTasks(doctorStatements: string[]): Array<{ task: string; priority: string; dueDate?: string; confidence: number }> {
-  const tasks = [];
-  const text = doctorStatements.join(' ').toLowerCase();
-
-  if (text.includes('follow up') || text.includes('return')) {
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 21); // 3 weeks
-
-    tasks.push({
-      task: 'Follow-up appointment for reassessment of contact dermatitis',
-      priority: 'medium',
-      dueDate: dueDate.toISOString().split('T')[0],
-      confidence: 0.95
-    });
-  }
-
-  if (text.includes('call') && text.includes('week')) {
-    tasks.push({
-      task: 'Patient to call if no improvement in 7 days',
-      priority: 'high',
-      dueDate: undefined,
-      confidence: 0.88
-    });
-  }
-
-  return tasks;
+  return doctorStatements
+    .flatMap((statement) => splitClinicalSentences(statement))
+    .filter((sentence) => /\b(follow.?up|return|call|recheck|come back)\b/i.test(sentence))
+    .slice(0, 8)
+    .map((task) => ({
+      task,
+      priority: /\b(urgent|immediately|today)\b/i.test(task) ? 'high' : 'medium',
+      confidence: 0.8,
+    }));
 }
 
 function generateDifferentialDiagnoses(transcript: string): DifferentialDiagnosis[] {

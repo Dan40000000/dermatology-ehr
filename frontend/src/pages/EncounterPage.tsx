@@ -54,6 +54,17 @@ import {
   buildSymptoms,
   buildTests
 } from '../utils/scribeSummary';
+import {
+  AI_NOTE_SECTIONS,
+  EMPTY_DRAFT_SECTION_SELECTION,
+  EMPTY_DRAFT_SECTION_TEXT,
+  buildDraftApplyResult,
+  getDefaultDraftSectionSelection,
+  getDraftSectionReview,
+  getDraftSectionText,
+  type DraftSectionSelection,
+  type DraftSectionText,
+} from '../utils/clinicalDocumentation';
 
 type EncounterSection = 'note' | 'exam' | 'orders' | 'prescriptions' | 'billing';
 
@@ -144,7 +155,10 @@ export function EncounterPage() {
   const [showAiDraftModal, setShowAiDraftModal] = useState(false);
   const [aiDraftInput, setAiDraftInput] = useState({ chiefComplaint: '', briefNotes: '' });
   const [aiDraftResult, setAiDraftResult] = useState<AINoteDraft | null>(null);
+  const [aiDraftSectionText, setAiDraftSectionText] = useState<DraftSectionText>({ ...EMPTY_DRAFT_SECTION_TEXT });
+  const [aiDraftSectionSelection, setAiDraftSectionSelection] = useState<DraftSectionSelection>({ ...EMPTY_DRAFT_SECTION_SELECTION });
   const [aiDraftError, setAiDraftError] = useState<string | null>(null);
+  const [aiDraftStatus, setAiDraftStatus] = useState('AI is optional. Manual documentation remains available.');
   const [aiDraftLoading, setAiDraftLoading] = useState(false);
   const [aiTemplates, setAiTemplates] = useState<NoteTemplate[]>([]);
   const [aiTemplateId, setAiTemplateId] = useState<string>('');
@@ -790,6 +804,9 @@ export function EncounterPage() {
   const openAiDraftModal = () => {
     setAiDraftError(null);
     setAiDraftResult(null);
+    setAiDraftSectionText({ ...EMPTY_DRAFT_SECTION_TEXT });
+    setAiDraftSectionSelection({ ...EMPTY_DRAFT_SECTION_SELECTION });
+    setAiDraftStatus('AI is optional. Manual documentation remains available.');
     setAiDraftInput({
       chiefComplaint: encounter.chiefComplaint || '',
       briefNotes: '',
@@ -805,12 +822,14 @@ export function EncounterPage() {
 
     if (!aiDraftInput.chiefComplaint && !aiDraftInput.briefNotes.trim()) {
       setAiDraftError('Add a chief complaint or brief notes to generate a draft.');
+      setAiDraftStatus('Draft not generated. Add a chief complaint or brief notes, or continue manually.');
       return;
     }
 
     setAiDraftLoading(true);
     setAiDraftError(null);
     setAiDraftResult(null);
+    setAiDraftStatus('Generating a draft from the supplied visit details. Review each section before applying.');
 
     try {
       const res = await generateAiNoteDraft(session.tenantId, session.accessToken, {
@@ -821,54 +840,70 @@ export function EncounterPage() {
         templateId: aiTemplateId || undefined,
       });
       setAiDraftResult(res.draft);
+      setAiDraftSectionText(getDraftSectionText(res.draft));
+      setAiDraftSectionSelection(getDefaultDraftSectionSelection(res.draft, {
+        chiefComplaint: encounter.chiefComplaint,
+        hpi: encounter.hpi,
+        ros: encounter.ros,
+        exam: encounter.exam,
+        assessmentPlan: encounter.assessmentPlan,
+      }));
+      setAiDraftStatus('Draft generated. Review the selected sections, edit as needed, and fill only blank encounter fields.');
     } catch (err: any) {
       setAiDraftError(err.message || 'Failed to generate AI draft');
+      setAiDraftStatus('Draft generation failed. You can continue documenting manually.');
     } finally {
       setAiDraftLoading(false);
     }
   };
 
-  const applyAiDraft = async (mode: 'replace' | 'merge') => {
+  const applyAiDraft = async (mode: 'fill_empty' | 'replace') => {
     if (!aiDraftResult) return;
 
-    const mergeText = (current: string | undefined, incoming: string) => {
-      if (!incoming) return current || '';
-      if (!current) return incoming;
-      return `${current}\n\n${incoming}`;
-    };
+    const result = buildDraftApplyResult(
+      aiDraftSectionText,
+      aiDraftSectionSelection,
+      {
+        chiefComplaint: encounter.chiefComplaint,
+        hpi: encounter.hpi,
+        ros: encounter.ros,
+        exam: encounter.exam,
+        assessmentPlan: encounter.assessmentPlan,
+      },
+      mode,
+    );
 
-    const updated = {
-      chiefComplaint: mode === 'merge'
-        ? mergeText(encounter.chiefComplaint, aiDraftResult.chiefComplaint)
-        : aiDraftResult.chiefComplaint,
-      hpi: mode === 'merge'
-        ? mergeText(encounter.hpi, aiDraftResult.hpi)
-        : aiDraftResult.hpi,
-      ros: mode === 'merge'
-        ? mergeText(encounter.ros, aiDraftResult.ros)
-        : aiDraftResult.ros,
-      exam: mode === 'merge'
-        ? mergeText(encounter.exam, aiDraftResult.exam)
-        : aiDraftResult.exam,
-      assessmentPlan: mode === 'merge'
-        ? mergeText(encounter.assessmentPlan, aiDraftResult.assessmentPlan)
-        : aiDraftResult.assessmentPlan,
-    };
+    if (mode === 'replace' && result.hasExistingSelectedContent) {
+      const confirmed = window.confirm(
+        'One or more selected encounter fields already contain documentation. Replace those fields with the edited AI draft? This cannot be undone automatically.'
+      );
+      if (!confirmed) return;
+    }
 
-    setEncounter((prev) => ({ ...prev, ...updated }));
-    setShowAiDraftModal(false);
-    setAiDraftResult(null);
+    if (result.appliedSections.length === 0) {
+      const message = 'No selected draft sections can be applied. Blank or already documented fields were preserved.';
+      setAiDraftError(message);
+      setAiDraftStatus(message);
+      return;
+    }
+
+    setAiDraftError(null);
+    setEncounter((prev) => ({ ...prev, ...result.updated }));
+    setAiDraftStatus(`${result.appliedSections.length} selected section${result.appliedSections.length === 1 ? '' : 's'} ready in the encounter. ${result.skippedSections.length > 0 ? `${result.skippedSections.length} section${result.skippedSections.length === 1 ? '' : 's'} preserved.` : ''}`.trim());
 
     if (!session || isNew || !encounterId || isLocked) {
-      showSuccess('AI draft applied');
+      showSuccess('Selected AI draft sections applied; review before signing');
       return;
     }
 
     try {
-      await updateEncounter(session.tenantId, session.accessToken, encounterId, updated);
-      showSuccess('AI draft applied');
+      await updateEncounter(session.tenantId, session.accessToken, encounterId, result.updated);
+      showSuccess('Selected AI draft sections applied; review before signing');
     } catch (err: any) {
-      showError(err.message || 'Failed to save AI draft');
+      const message = err.message || 'Failed to save AI draft';
+      setAiDraftError(message);
+      setAiDraftStatus(`AI draft application failed: ${message}`);
+      showError(message);
     }
   };
 
@@ -1612,10 +1647,32 @@ export function EncounterPage() {
               />
             )}
 
+            <section
+              aria-labelledby="clinical-documentation-heading"
+              style={{
+                border: '1px solid #d1d5db',
+                borderLeft: '4px solid #0369a1',
+                borderRadius: '0.5rem',
+                padding: '0.85rem 1rem',
+                background: '#f8fafc',
+              }}
+            >
+              <h2 id="clinical-documentation-heading" style={{ margin: 0, fontSize: '1rem', color: '#111827' }}>
+                Clinical documentation
+              </h2>
+              <p style={{ margin: '0.3rem 0 0', fontSize: '0.875rem', color: '#1f2937' }}>
+                Manual entry is always available and is the source of truth. AI drafting and the ambient scribe are optional; they never sign an encounter automatically. Review every suggested section before saving or signing.
+              </p>
+              <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: '0.45rem', fontSize: '0.8rem', color: '#374151' }}>
+                {isLocked ? 'This encounter is locked; documentation is read-only.' : 'You can document and sign this encounter without using AI.'}
+              </div>
+            </section>
+
             {/* Chief Complaint */}
             <div className="ema-form-section">
-              <div className="ema-section-header" style={{ marginBottom: '0.5rem' }}>Chief Complaint</div>
+              <label htmlFor="encounter-chief-complaint" className="ema-section-header" style={{ marginBottom: '0.5rem', display: 'block' }}>Chief Complaint</label>
               <input
+                id="encounter-chief-complaint"
                 type="text"
                 className="ema-filter-input"
                 value={encounter.chiefComplaint || ''}
@@ -1629,8 +1686,9 @@ export function EncounterPage() {
 
             {/* HPI */}
             <div className="ema-form-section">
-              <div className="ema-section-header" style={{ marginBottom: '0.5rem' }}>History of Present Illness (HPI)</div>
+              <label htmlFor="encounter-hpi" className="ema-section-header" style={{ marginBottom: '0.5rem', display: 'block' }}>History of Present Illness (HPI)</label>
               <textarea
+                id="encounter-hpi"
                 value={encounter.hpi || ''}
                 onChange={(e) => setEncounter((prev) => ({ ...prev, hpi: e.target.value }))}
                 placeholder="Patient presents with..."
@@ -1650,33 +1708,12 @@ export function EncounterPage() {
 
             {/* ROS */}
             <div className="ema-form-section">
-              <div className="ema-section-header" style={{ marginBottom: '0.5rem' }}>
-                Review of Systems (ROS)
-                {!isLocked && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEncounter((prev) => ({
-                        ...prev,
-                        ros: 'Constitutional: Negative. HEENT: Negative. Respiratory: Negative. Cardiovascular: Negative. GI: Negative. GU: Negative. Musculoskeletal: Negative. Neurological: Negative. Psychiatric: Negative.',
-                      }))
-                    }
-                    style={{
-                      marginLeft: '1rem',
-                      padding: '0.25rem 0.75rem',
-                      background: '#e0f2fe',
-                      color: '#0369a1',
-                      border: 'none',
-                      borderRadius: '4px',
-                      fontSize: '0.75rem',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    All Negative
-                  </button>
-                )}
-              </div>
+              <label htmlFor="encounter-ros" className="ema-section-header" style={{ marginBottom: '0.5rem', display: 'block' }}>Review of Systems (ROS)</label>
+              <p id="encounter-ros-help" style={{ margin: '0 0 0.5rem', color: '#374151', fontSize: '0.8rem' }}>
+                Document only reviewed, relevant positives and negatives. Do not use an all-negative shortcut for systems that were not reviewed.
+              </p>
               <textarea
+                id="encounter-ros"
                 value={encounter.ros || ''}
                 onChange={(e) => setEncounter((prev) => ({ ...prev, ros: e.target.value }))}
                 placeholder="Constitutional: No fever, chills, or weight loss..."
@@ -1691,13 +1728,44 @@ export function EncounterPage() {
                 }}
                 disabled={isLocked}
                 readOnly={isLocked}
+                aria-describedby="encounter-ros-help"
               />
             </div>
 
             {/* Assessment & Plan */}
             <div className="ema-form-section">
-              <div className="ema-section-header" style={{ marginBottom: '0.5rem' }}>Assessment & Plan</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <label htmlFor="encounter-assessment-plan" className="ema-section-header" style={{ margin: 0 }}>Assessment &amp; Plan</label>
+                {!isLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setEncounter((prev) => ({
+                      ...prev,
+                      assessmentPlan: prev.assessmentPlan?.trim()
+                        ? `${prev.assessmentPlan}\n\nProblem:\nAssessment:\nEvidence / differential:\nPlan:\nFollow-up:`
+                        : 'Problem:\nAssessment:\nEvidence / differential:\nPlan:\nFollow-up:',
+                    }))}
+                    style={{
+                      minHeight: '2.75rem',
+                      padding: '0.45rem 0.75rem',
+                      background: '#ffffff',
+                      color: '#075985',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Insert problem-oriented A/P outline
+                  </button>
+                )}
+              </div>
+              <p id="encounter-assessment-plan-help" style={{ margin: '0 0 0.5rem', color: '#374151', fontSize: '0.8rem' }}>
+                Use one problem at a time. The outline is a manual helper and appends without overwriting existing documentation.
+              </p>
               <textarea
+                id="encounter-assessment-plan"
                 value={encounter.assessmentPlan || ''}
                 onChange={(e) => setEncounter((prev) => ({ ...prev, assessmentPlan: e.target.value }))}
                 placeholder="1. Diagnosis - Treatment plan..."
@@ -1712,6 +1780,7 @@ export function EncounterPage() {
                 }}
                 disabled={isLocked}
                 readOnly={isLocked}
+                aria-describedby="encounter-assessment-plan-help"
               />
             </div>
           </div>
@@ -2768,18 +2837,36 @@ export function EncounterPage() {
         }}
         size="lg"
       >
-        <div className="modal-form">
-          <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1rem' }}>
-            Generate a structured note draft using AI. Review and edit before signing.
+        <div className="modal-form" aria-busy={aiDraftLoading}>
+          <p style={{ fontSize: '0.875rem', color: '#374151', marginBottom: '1rem' }}>
+            AI is optional. Provide only current-visit details, then review each section before filling the encounter. Unsupported or irrelevant conversation is left out.
           </p>
+          <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            style={{
+              border: '1px solid #d1d5db',
+              borderRadius: '0.375rem',
+              padding: '0.65rem 0.75rem',
+              background: '#f8fafc',
+              color: '#1f2937',
+              fontSize: '0.875rem',
+              marginBottom: '1rem',
+            }}
+          >
+            {aiDraftStatus}
+          </div>
           <div className="form-field">
-            <label>Chief Complaint</label>
+            <label htmlFor="ai-draft-chief-complaint">Chief Complaint</label>
             <input
+              id="ai-draft-chief-complaint"
               type="text"
               value={aiDraftInput.chiefComplaint}
               onChange={(e) => setAiDraftInput((prev) => ({ ...prev, chiefComplaint: e.target.value }))}
               placeholder="e.g., itchy rash, changing mole"
               disabled={aiDraftLoading}
+              aria-describedby={aiDraftError ? 'ai-draft-error' : undefined}
             />
           </div>
           <div className="form-field">
@@ -2789,6 +2876,7 @@ export function EncounterPage() {
               value={aiTemplateId}
               onChange={(e) => setAiTemplateId(e.target.value)}
               disabled={aiTemplateLoading || aiDraftLoading}
+              aria-describedby={aiTemplateError ? 'ai-template-error' : undefined}
             >
               <option value="">No template</option>
               {aiTemplates.map((template) => (
@@ -2798,33 +2886,35 @@ export function EncounterPage() {
               ))}
             </select>
             {aiTemplateLoading && (
-              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+              <div style={{ fontSize: '0.75rem', color: '#374151', marginTop: '0.25rem' }}>
                 Loading templates...
               </div>
             )}
             {aiTemplateError && (
-              <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.25rem' }}>
+              <div id="ai-template-error" role="alert" style={{ fontSize: '0.75rem', color: '#991b1b', marginTop: '0.25rem' }}>
                 {aiTemplateError}
               </div>
             )}
             {!aiTemplateLoading && !aiTemplateError && aiTemplates.length === 0 && (
-              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+              <div style={{ fontSize: '0.75rem', color: '#374151', marginTop: '0.25rem' }}>
                 No templates yet. Create them in Note Templates.
               </div>
             )}
           </div>
           <div className="form-field">
-            <label>Brief Notes for AI</label>
+            <label htmlFor="ai-draft-brief-notes">Brief Notes for AI</label>
             <textarea
+              id="ai-draft-brief-notes"
               value={aiDraftInput.briefNotes}
               onChange={(e) => setAiDraftInput((prev) => ({ ...prev, briefNotes: e.target.value }))}
               placeholder="Key symptoms, onset, treatments tried, exam highlights..."
               rows={4}
               disabled={aiDraftLoading}
+              aria-describedby={aiDraftError ? 'ai-draft-error' : undefined}
             />
           </div>
           {aiDraftError && (
-            <div style={{ color: '#dc2626', fontSize: '0.875rem', marginTop: '0.5rem' }}>
+            <div id="ai-draft-error" role="alert" style={{ color: '#991b1b', fontSize: '0.875rem', marginTop: '0.5rem' }}>
               {aiDraftError}
             </div>
           )}
@@ -2834,6 +2924,7 @@ export function EncounterPage() {
               className="btn-primary"
               onClick={handleGenerateAiDraft}
               disabled={aiDraftLoading}
+              aria-busy={aiDraftLoading}
             >
               {aiDraftLoading ? 'Generating...' : aiDraftResult ? 'Regenerate Draft' : 'Generate Draft'}
             </button>
@@ -2841,46 +2932,78 @@ export function EncounterPage() {
         </div>
 
         {aiDraftResult && (
-          <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '1rem', marginTop: '1rem' }}>
-            <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-              Draft Preview (Confidence: {Math.round((aiDraftResult.confidenceScore || 0) * 100)}%)
+          <fieldset
+            aria-describedby="ai-draft-review-help"
+            style={{ border: '1px solid #d1d5db', borderRadius: '0.5rem', padding: '1rem', marginTop: '1rem' }}
+          >
+            <legend style={{ padding: '0 0.35rem', fontWeight: 700, color: '#111827' }}>
+              Review sections before filling
+            </legend>
+            <p id="ai-draft-review-help" style={{ color: '#374151', fontSize: '0.875rem', margin: '0 0 1rem' }}>
+              Selected sections are filled only when the matching encounter field is blank. Existing documentation stays unchanged. Edit any draft text before applying.
+            </p>
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              {AI_NOTE_SECTIONS.map(({ key, label, destination }) => {
+                const review = getDraftSectionReview(aiDraftResult, key);
+                const draftText = aiDraftSectionText[key] || '';
+                const hasContent = Boolean(draftText.trim());
+                const destinationContent = String(encounter[destination] || '').trim();
+                const canSelect = review.status === 'drafted' && hasContent;
+                const evidence = (review.evidence || []).filter((item) => item.excerpt?.trim());
+                const confidence = Math.round(Math.max(0, Math.min(1, review.confidence || 0)) * 100);
+                return (
+                  <div key={`ai-review-${key}`} style={{ border: '1px solid #d1d5db', borderRadius: '0.375rem', padding: '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem' }}>
+                      <input
+                        id={`ai-draft-select-${key}`}
+                        type="checkbox"
+                        checked={Boolean(aiDraftSectionSelection[key])}
+                        disabled={!canSelect || aiDraftLoading}
+                        onChange={(event) => setAiDraftSectionSelection((previous) => ({ ...previous, [key]: event.target.checked }))}
+                        style={{ width: '1.15rem', height: '1.15rem', minWidth: '1.15rem', marginTop: '0.1rem' }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <label htmlFor={`ai-draft-select-${key}`} style={{ display: 'flex', alignItems: 'center', minHeight: '2.75rem', fontWeight: 700, color: '#111827', cursor: canSelect ? 'pointer' : 'not-allowed' }}>
+                          {label}
+                        </label>
+                        <div style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.2rem' }}>
+                          {review.status === 'drafted' && hasContent
+                            ? `Drafted · ${confidence}% confidence${destinationContent ? ' · Encounter field already has content' : ''}`
+                            : 'Not documented · will not be applied'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="form-field" style={{ marginTop: '0.65rem' }}>
+                      <label htmlFor={`ai-draft-text-${key}`}>Edited draft text</label>
+                      <textarea
+                        id={`ai-draft-text-${key}`}
+                        value={draftText}
+                        onChange={(event) => setAiDraftSectionText((previous) => ({ ...previous, [key]: event.target.value }))}
+                        rows={key === 'assessmentPlan' ? 6 : 4}
+                        disabled={aiDraftLoading}
+                        aria-describedby={aiDraftError ? 'ai-draft-error' : undefined}
+                      />
+                    </div>
+                    {evidence.length > 0 && (
+                      <details>
+                        <summary style={{ cursor: 'pointer', minHeight: '2.25rem', display: 'flex', alignItems: 'center', color: '#075985', fontWeight: 600 }}>
+                          Source evidence ({evidence.length})
+                        </summary>
+                        <ul style={{ margin: '0.35rem 0 0', paddingLeft: '1.15rem', color: '#374151', fontSize: '0.8rem' }}>
+                          {evidence.map((item, index) => (
+                            <li key={`${key}-evidence-${index}`}>
+                              <span style={{ fontWeight: 600 }}>{item.source === 'brief_notes' ? 'Brief notes' : 'Chief complaint'}:</span>{' '}
+                              {item.excerpt}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <div style={{ display: 'grid', gap: '0.75rem', fontSize: '0.875rem' }}>
-              <div>
-                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>Chief Complaint</div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.chiefComplaint || '—'}</div>
-              </div>
-              <div>
-                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>HPI</div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.hpi || '—'}</div>
-              </div>
-              <div>
-                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>ROS</div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.ros || '—'}</div>
-              </div>
-              <div>
-                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>Exam</div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.exam || '—'}</div>
-              </div>
-              <div>
-                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>Assessment & Plan</div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.assessmentPlan || '—'}</div>
-              </div>
-            </div>
-
-            {aiDraftResult.suggestions?.length > 0 && (
-              <div style={{ marginTop: '1rem' }}>
-                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>Suggestions</div>
-                <ul style={{ paddingLeft: '1.25rem', margin: 0, color: '#6b7280', fontSize: '0.875rem' }}>
-                  {aiDraftResult.suggestions.slice(0, 5).map((suggestion, idx) => (
-                    <li key={`${suggestion.section}-${idx}`}>
-                      {suggestion.section}: {suggestion.suggestion}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+          </fieldset>
         )}
 
         <div className="modal-footer">
@@ -2897,11 +3020,21 @@ export function EncounterPage() {
           </button>
           {aiDraftResult && (
             <>
-              <button type="button" className="btn-secondary" onClick={() => applyAiDraft('merge')}>
-                Merge Draft
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => applyAiDraft('fill_empty')}
+                disabled={!AI_NOTE_SECTIONS.some(({ key }) => aiDraftSectionSelection[key])}
+              >
+                Fill selected blank fields
               </button>
-              <button type="button" className="btn-primary" onClick={() => applyAiDraft('replace')}>
-                Apply Draft
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => applyAiDraft('replace')}
+                disabled={!AI_NOTE_SECTIONS.some(({ key }) => aiDraftSectionSelection[key])}
+              >
+                Replace selected fields
               </button>
             </>
           )}

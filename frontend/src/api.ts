@@ -2821,6 +2821,19 @@ export async function fetchProviderStats(tenantId: string, accessToken: string, 
 }
 
 // AI Notes API
+export type AINoteSectionKey = 'chiefComplaint' | 'hpi' | 'ros' | 'exam' | 'assessmentPlan';
+
+export interface AINoteSectionEvidence {
+  source: 'chief_complaint' | 'brief_notes';
+  excerpt: string;
+}
+
+export interface AINoteSectionReview {
+  status: 'drafted' | 'not_documented';
+  confidence: number;
+  evidence: AINoteSectionEvidence[];
+}
+
 export interface AINoteDraftRequest {
   templateId?: string;
   chiefComplaint?: string;
@@ -2837,6 +2850,8 @@ export interface AINoteDraft {
   exam: string;
   assessmentPlan: string;
   confidenceScore: number;
+  /** Per-section review metadata. Optional for compatibility with legacy drafts. */
+  sectionReview?: Partial<Record<AINoteSectionKey, AINoteSectionReview>>;
   suggestions: Array<{
     section: string;
     suggestion: string;
@@ -7155,6 +7170,8 @@ export interface AmbientGeneratedNote {
       treatmentPlan?: string;
       followUp?: string;
     };
+    sectionReview?: Partial<Record<AmbientSectionKey, AmbientSectionReview>>;
+    notDocumentedSections?: AmbientSectionKey[];
     generatedAt?: string;
   };
   overallConfidence: number;
@@ -7166,6 +7183,19 @@ export interface AmbientGeneratedNote {
   createdAt: string;
   completedAt?: string;
   transcriptText?: string;
+}
+
+export type AmbientSectionKey = 'chiefComplaint' | 'hpi' | 'ros' | 'physicalExam' | 'assessment' | 'plan';
+
+export interface AmbientSectionEvidence {
+  source: 'transcript' | 'visit_context';
+  excerpt: string;
+}
+
+export interface AmbientSectionReview {
+  status: 'drafted' | 'not_documented';
+  confidence: number;
+  evidence: AmbientSectionEvidence[];
 }
 
 export interface AmbientNoteEdit {
@@ -7661,6 +7691,8 @@ export async function applyAmbientNoteToEncounter(
     includeOrders?: boolean;
     includeTasks?: boolean;
     includeBillingReview?: boolean;
+    sections?: AmbientSectionKey[];
+    mode?: 'fill_empty' | 'replace';
   }
 ): Promise<{
   success: boolean;
@@ -7672,6 +7704,8 @@ export async function applyAmbientNoteToEncounter(
     tasksCreated: number;
     billingReviewItemsCreated?: number;
   };
+  appliedSections?: AmbientSectionKey[];
+  skippedSections?: AmbientSectionKey[];
 }> {
   const res = await fetch(`${API_BASE}/api/ambient/notes/${noteId}/apply-to-encounter`, {
     method: 'POST',

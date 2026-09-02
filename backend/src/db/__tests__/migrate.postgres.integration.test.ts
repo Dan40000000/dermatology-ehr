@@ -7,6 +7,7 @@ describePostgres('PostgreSQL migrations (real database)', () => {
   let adminPool: Pool | undefined;
   let applicationPool: Pool | undefined;
   let databaseName: string | undefined;
+  let runMigrations: (() => Promise<void>) | undefined;
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const originalDbSslEnabled = process.env.DB_SSL_ENABLED;
 
@@ -34,12 +35,13 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     const { clearEnvCache } = require('../../config/validate') as typeof import('../../config/validate');
     clearEnvCache();
     const migrationModule = require('../migrate') as typeof import('../migrate');
+    runMigrations = migrationModule.runMigrations;
     const poolModule = require('../pool') as typeof import('../pool');
     applicationPool = poolModule.pool;
 
     const migrationLog = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
-      await migrationModule.runMigrations();
+      await runMigrations!();
     } finally {
       migrationLog.mockRestore();
     }
@@ -77,6 +79,95 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     expect(applied.rows.map((row) => row.name)).toContain('229_fhir_hl7_interoperability_schema');
     expect(applied.rows.map((row) => row.name)).toContain('230_mips_readiness_2026');
     expect(applied.rows.map((row) => row.name)).toContain('232_mips_workflow_automation');
+    expect(applied.rows.map((row) => row.name)).toContain('233_biopsy_tracking_runtime');
+  });
+
+  it('creates the TEXT biopsy runtime schema, tenant-local specimen keys, and can be reapplied', async () => {
+    const columns = await applicationPool!.query<{ table_name: string; column_name: string; data_type: string }>(
+      `SELECT table_name, column_name, data_type
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN (
+            'biopsies', 'biopsy_alerts', 'biopsy_specimen_tracking',
+            'biopsy_status_history', 'biopsy_review_checklists'
+          )`,
+    );
+    const names = new Set(columns.rows.map((row) => `${row.table_name}.${row.column_name}`));
+    expect([...names]).toEqual(expect.arrayContaining([
+      'biopsies.id', 'biopsies.tenant_id', 'biopsies.patient_id', 'biopsies.specimen_id',
+      'biopsies.path_lab_id', 'biopsies.turnaround_time_days', 'biopsies.is_overdue',
+      'biopsy_alerts.tenant_id', 'biopsy_specimen_tracking.tenant_id',
+      'biopsy_status_history.tenant_id', 'biopsy_status_history.changed_by',
+      'biopsy_review_checklists.tenant_id', 'biopsy_review_checklists.reviewed_by',
+    ]));
+    expect(columns.rows.find((row) => row.table_name === 'biopsies' && row.column_name === 'id')).toMatchObject({
+      data_type: 'text',
+    });
+
+    const indexes = await applicationPool!.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename IN (
+            'biopsies', 'biopsy_alerts', 'biopsy_specimen_tracking',
+            'biopsy_status_history', 'biopsy_review_checklists'
+          )`,
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual(expect.arrayContaining([
+      'idx_biopsies_tenant_specimen_id',
+      'idx_biopsy_specimen_tracking_tenant_biopsy',
+      'idx_biopsy_status_history_tenant_biopsy',
+      'idx_biopsy_review_checklists_tenant_biopsy',
+    ]));
+
+    // Re-run only 233 to exercise its CREATE IF NOT EXISTS guards.
+    await applicationPool!.query(`DELETE FROM migrations WHERE name = '233_biopsy_tracking_runtime'`);
+    await runMigrations!();
+
+    const tenantA = `biopsy-test-a-${process.pid}-${Date.now()}`;
+    const tenantB = `${tenantA}-b`;
+    const userA = `${tenantA}-user`;
+    const patientA = `${tenantA}-patient`;
+    const patientB = `${tenantB}-patient`;
+    const providerA = `${tenantA}-provider`;
+    const providerB = `${tenantB}-provider`;
+    await applicationPool!.query('BEGIN');
+    try {
+      await applicationPool!.query('INSERT INTO tenants (id, name) VALUES ($1, $2), ($3, $4)', [tenantA, 'Biopsy A', tenantB, 'Biopsy B']);
+      await applicationPool!.query(
+        `INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
+         VALUES ($1, $2, $3, $4, 'provider', 'test-hash')`,
+        [userA, tenantA, `${userA}@example.test`, 'Biopsy Test User'],
+      );
+      await applicationPool!.query(
+        `INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
+         VALUES ($1, $2, $3, $4, 'provider', 'test-hash')`,
+        [`${tenantB}-user`, tenantB, `${tenantB}-user@example.test`, 'Biopsy Test User B'],
+      );
+      await applicationPool!.query(
+        `INSERT INTO patients (id, tenant_id, first_name, last_name)
+         VALUES ($1, $2, 'Biopsy', 'Patient A'), ($3, $4, 'Biopsy', 'Patient B')`,
+        [patientA, tenantA, patientB, tenantB],
+      );
+      await applicationPool!.query(
+        `INSERT INTO providers (id, tenant_id, user_id, full_name)
+         VALUES ($1, $2, $3, 'Biopsy Provider A'), ($4, $5, $6, 'Biopsy Provider B')`,
+        [providerA, tenantA, userA, providerB, tenantB, `${tenantB}-user`],
+      );
+      const insert = (tenantId: string, patientId: string, providerId: string) => applicationPool!.query(
+        `INSERT INTO biopsies (
+           tenant_id, patient_id, specimen_id, specimen_type, body_location,
+           ordering_provider_id, path_lab
+         ) VALUES ($1, $2, 'BX-TENANT-LOCAL', 'punch', 'arm', $3, 'Test Pathology')`,
+        [tenantId, patientId, providerId],
+      );
+      await insert(tenantA, patientA, providerA);
+      await applicationPool!.query('SAVEPOINT duplicate_specimen');
+      await expect(insert(tenantA, patientA, providerA)).rejects.toMatchObject({ code: '23505' });
+      await applicationPool!.query('ROLLBACK TO SAVEPOINT duplicate_specimen');
+      await expect(insert(tenantB, patientB, providerB)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await applicationPool!.query('ROLLBACK');
+    }
   });
 
   it('creates the MIPS automation ledger, review fields, and structured itch schema', async () => {

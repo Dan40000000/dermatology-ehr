@@ -56,6 +56,7 @@ const GENERIC_STATUS_PREDECESSORS: Record<string, string[]> = {
   processing: ['received_by_lab'],
   closed: ['reviewed'],
 };
+const OPAQUE_ID = z.string().trim().min(1).max(255);
 
 // All routes require authentication
 router.use(requireAuth);
@@ -106,20 +107,20 @@ async function validateTenantReferences(
   const result = await client.query(
     `SELECT
        EXISTS (SELECT 1 FROM patients
-                WHERE id::text = $2 AND tenant_id = $1) AS patient_ok,
+                WHERE id = $2 AND tenant_id = $1) AS patient_ok,
        ($3::text IS NULL OR EXISTS (
          SELECT 1 FROM encounters
-          WHERE id::text = $3 AND tenant_id = $1 AND patient_id::text = $2
+          WHERE id = $3 AND tenant_id = $1 AND patient_id = $2
        )) AS encounter_ok,
        ($4::text IS NULL OR EXISTS (
-         SELECT 1 FROM patient_body_markings
-          WHERE id::text = $4 AND tenant_id = $1 AND patient_id::text = $2
+         SELECT 1 FROM lesions
+          WHERE id = $4 AND tenant_id = $1 AND patient_id = $2
        )) AS lesion_ok,
        EXISTS (SELECT 1 FROM providers
-                WHERE id::text = $5 AND tenant_id = $1) AS provider_ok,
+                WHERE id = $5 AND tenant_id = $1) AS provider_ok,
        ($6::text IS NULL OR EXISTS (
-         SELECT 1 FROM lab_vendors
-          WHERE id::text = $6 AND tenant_id = $1
+         SELECT 1 FROM lab_interfaces
+          WHERE id = $6 AND tenant_id = $1
        )) AS lab_ok`,
     [
       tenantId,
@@ -140,11 +141,30 @@ async function validateTenantReferences(
   ].filter(([, valid]) => valid !== true).map(([label]) => String(label));
 }
 
+async function recordBiopsyStatusHistory(
+  client: { query: (text: string, values?: unknown[]) => Promise<{ rows: any[] }> },
+  params: {
+    tenantId: string;
+    biopsyId: string;
+    oldStatus: string | null;
+    newStatus: string;
+    changedBy: string;
+    notes: string;
+  },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO biopsy_status_history (
+       tenant_id, biopsy_id, old_status, new_status, changed_by, notes
+     ) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [params.tenantId, params.biopsyId, params.oldStatus, params.newStatus, params.changedBy, params.notes],
+  );
+}
+
 // Validation schemas
 const createBiopsySchema = z.object({
-  patient_id: z.string().uuid(),
-  encounter_id: z.string().uuid().optional().nullable(),
-  lesion_id: z.string().uuid().optional().nullable(),
+  patient_id: OPAQUE_ID,
+  encounter_id: OPAQUE_ID.optional().nullable(),
+  lesion_id: OPAQUE_ID.optional().nullable(),
   specimen_type: z.enum(['punch', 'shave', 'excisional', 'incisional']),
   specimen_size: z.string().optional(),
   body_location: z.string(),
@@ -155,9 +175,9 @@ const createBiopsySchema = z.object({
   clinical_history: z.string().optional(),
   differential_diagnoses: z.array(z.string()).optional(),
   indication: z.string().optional(),
-  ordering_provider_id: z.string().uuid(),
+  ordering_provider_id: OPAQUE_ID,
   path_lab: z.string(),
-  path_lab_id: z.string().uuid().optional().nullable(),
+  path_lab_id: OPAQUE_ID.optional().nullable(),
   special_stains: z.array(z.string()).optional(),
   send_for_cultures: z.boolean().optional(),
   send_for_immunofluorescence: z.boolean().optional(),
@@ -334,6 +354,15 @@ router.post('/', requireRoles(BIOPSY_CAPTURE_ROLES), async (req: AuthedRequest, 
       notes: 'Biopsy order created'
     }, client);
 
+    await recordBiopsyStatusHistory(client, {
+      tenantId,
+      biopsyId: biopsy.id,
+      oldStatus: null,
+      newStatus: 'ordered',
+      changedBy: userId,
+      notes: 'Biopsy order created',
+    });
+
     await client.query('COMMIT');
 
     logger.info('Biopsy created', {
@@ -388,7 +417,8 @@ router.get('/', requireRoles(BIOPSY_READ_ROLES), async (req: AuthedRequest, res:
         ${providerDisplayName('ordering_pr')} as ordering_provider_name,
         ${providerDisplayName('reviewing_pr')} as reviewing_provider_name,
         EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_since_sent,
-        (SELECT COUNT(*) FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.status = 'active') as active_alert_count
+        (SELECT COUNT(*) FROM biopsy_alerts ba
+          WHERE ba.biopsy_id = b.id AND ba.tenant_id = b.tenant_id AND ba.status = 'active') as active_alert_count
       FROM biopsies b
       JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
       JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id AND ordering_pr.tenant_id = b.tenant_id
@@ -635,7 +665,7 @@ router.get('/:id', requireRoles(BIOPSY_READ_ROLES), async (req: AuthedRequest, r
             ) ORDER BY bst.event_timestamp DESC
           )
           FROM biopsy_specimen_tracking bst
-          WHERE bst.biopsy_id = b.id
+          WHERE bst.biopsy_id = b.id AND bst.tenant_id = b.tenant_id
         ) as specimen_tracking,
         (
           SELECT json_agg(
@@ -647,7 +677,7 @@ router.get('/:id', requireRoles(BIOPSY_READ_ROLES), async (req: AuthedRequest, r
             ) ORDER BY bsh.changed_at DESC
           )
           FROM biopsy_status_history bsh
-          WHERE bsh.biopsy_id = b.id
+          WHERE bsh.biopsy_id = b.id AND bsh.tenant_id = b.tenant_id
         ) as status_history
       FROM biopsies b
       JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
@@ -725,6 +755,29 @@ router.put('/:id', requireRoles(BIOPSY_CAPTURE_ROLES), async (req: AuthedRequest
 
     await client.query('BEGIN');
 
+    let previousStatus: string | null = null;
+    if (validatedData.status) {
+      const current = await client.query(
+        `SELECT status
+           FROM biopsies
+          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+          FOR UPDATE`,
+        [id, tenantId],
+      );
+      if (current.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Biopsy not found' });
+      }
+      previousStatus = String(current.rows[0].status);
+      if (allowedPredecessors && !allowedPredecessors.includes(previousStatus)) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'Biopsy status changed or the requested transition is not allowed.',
+          currentStatus: previousStatus,
+        });
+      }
+    }
+
     // Build dynamic update query
     const updateFields: string[] = [];
     const params: any[] = [];
@@ -788,6 +841,15 @@ router.put('/:id', requireRoles(BIOPSY_CAPTURE_ROLES), async (req: AuthedRequest
         eventBy: userId,
         notes: `Status updated to ${validatedData.status}`
       }, client);
+
+      await recordBiopsyStatusHistory(client, {
+        tenantId,
+        biopsyId: id!,
+        oldStatus: previousStatus,
+        newStatus: validatedData.status,
+        changedBy: userId,
+        notes: `Status updated to ${validatedData.status}`,
+      });
     }
 
     await client.query('COMMIT');
@@ -825,6 +887,19 @@ router.post('/:id/result', requireRoles(BIOPSY_RESULT_ROLES), async (req: Authed
 
     await client.query('BEGIN');
 
+    const current = await client.query(
+      `SELECT status
+         FROM biopsies
+        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+        FOR UPDATE`,
+      [id, tenantId],
+    );
+    const previousStatus = current.rows[0]?.status ? String(current.rows[0].status) : null;
+    if (!previousStatus || !['sent', 'received_by_lab', 'processing'].includes(previousStatus)) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Biopsy not found' });
+    }
+
     const query = `
       UPDATE biopsies
       SET
@@ -849,6 +924,11 @@ router.post('/:id/result', requireRoles(BIOPSY_RESULT_ROLES), async (req: Authed
         path_lab_case_number = COALESCE($19, path_lab_case_number),
         status = 'resulted',
         resulted_at = NOW(),
+        turnaround_time_days = CASE
+          WHEN sent_at IS NULL THEN turnaround_time_days
+          ELSE GREATEST(0, CEIL(EXTRACT(EPOCH FROM (NOW() - sent_at)) / 86400.0))::INTEGER
+        END,
+        is_overdue = false,
         updated_at = NOW()
       WHERE id = $20
         AND tenant_id = $21
@@ -896,8 +976,26 @@ router.post('/:id/result', requireRoles(BIOPSY_RESULT_ROLES), async (req: Authed
       notes: 'Pathology result added'
     }, client);
 
-    // If linked to lesion, create lesion event (trigger auto-updates lesion status/diagnosis)
+    await recordBiopsyStatusHistory(client, {
+      tenantId,
+      biopsyId: id!,
+      oldStatus: previousStatus,
+      newStatus: 'resulted',
+      changedBy: userId,
+      notes: 'Pathology result added',
+    });
+
+    // Keep the canonical lesion record and event in sync with the result.
     if (biopsy.lesion_id) {
+      await client.query(
+        `UPDATE lesions
+            SET biopsy_result = $1,
+                biopsy_performed = true,
+                biopsy_date = COALESCE(biopsy_date, CURRENT_DATE),
+                updated_at = NOW()
+          WHERE id = $2 AND tenant_id = $3`,
+        [validatedData.pathology_diagnosis, biopsy.lesion_id, tenantId],
+      );
       await client.query(
         `INSERT INTO lesion_events (
           id, tenant_id, lesion_id, event_type, provider_id, description
@@ -1020,14 +1118,15 @@ router.post('/:id/review', requireRoles(BIOPSY_REVIEW_ROLES), async (req: Authed
     // Create review checklist
     await client.query(
       `INSERT INTO biopsy_review_checklists (
+        tenant_id,
         biopsy_id,
         reviewed_by,
         pathology_report_reviewed,
         diagnosis_coded,
         review_completed,
         review_completed_at
-      ) VALUES ($1, $2, true, true, true, NOW())`,
-      [id, userId]
+      ) VALUES ($1, $2, $3, true, true, true, NOW())`,
+      [tenantId, id, userId]
     );
 
     // Track review event
@@ -1037,6 +1136,15 @@ router.post('/:id/review', requireRoles(BIOPSY_REVIEW_ROLES), async (req: Authed
       eventBy: userId,
       notes: 'Pathology result reviewed and signed off'
     }, client);
+
+    await recordBiopsyStatusHistory(client, {
+      tenantId,
+      biopsyId: id!,
+      oldStatus: 'resulted',
+      newStatus: 'reviewed',
+      changedBy: userId,
+      notes: 'Pathology result reviewed and signed off',
+    });
 
     await client.query('COMMIT');
 

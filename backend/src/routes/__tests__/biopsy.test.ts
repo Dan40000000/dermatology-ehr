@@ -147,7 +147,34 @@ describe("Biopsy routes", () => {
       expect.objectContaining({ biopsyId: "bio-1", eventType: "ordered" }),
       client,
     );
-    expect(String(client.query.mock.calls[1][0])).toContain("patient_id::text = $2");
+    expect(String(client.query.mock.calls[1][0])).toContain("FROM lesions");
+    expect(String(client.query.mock.calls[1][0])).toContain("FROM lab_interfaces");
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO biopsy_status_history"))).toBe(true);
+  });
+
+  it("POST /biopsies accepts bounded opaque TEXT references", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{
+        patient_ok: true, encounter_ok: true, lesion_ok: true, provider_ok: true, lab_ok: true,
+      }] })
+      .mockResolvedValueOnce({ rows: [{ id: "biopsy-demo-1", lesion_id: "lesion-demo-1" }] });
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/biopsies").send({
+      ...baseBiopsy,
+      patient_id: "demo-patient-1",
+      encounter_id: "enc-demo-jane-biopsy",
+      lesion_id: "lesion-demo-1",
+      ordering_provider_id: "prov-demo",
+      path_lab_id: "lab-interface-demo",
+    });
+
+    expect(res.status).toBe(201);
+    expect(client.query.mock.calls[1][1]).toEqual([
+      "tenant-1", "demo-patient-1", "enc-demo-jane-biopsy", "lesion-demo-1", "prov-demo", "lab-interface-demo",
+    ]);
   });
 
   it("POST /biopsies rejects cross-tenant or cross-patient references before insert", async () => {
@@ -269,6 +296,7 @@ describe("Biopsy routes", () => {
     const client = makeClient();
     client.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ status: "ordered" }] })
       .mockResolvedValueOnce({ rows: [{ id: "bio-1" }] })
       .mockResolvedValueOnce({ rows: [] });
     connectMock.mockResolvedValueOnce(client);
@@ -280,8 +308,9 @@ describe("Biopsy routes", () => {
       expect.objectContaining({ biopsyId: "bio-1", eventType: "sent" }),
       client,
     );
-    expect(String(client.query.mock.calls[1][0])).toContain("status = ANY");
-    expect(client.query.mock.calls[1][1]).toEqual(["sent", "bio-1", "tenant-1", ["ordered", "collected"]]);
+    expect(String(client.query.mock.calls[2][0])).toContain("status = ANY");
+    expect(client.query.mock.calls[2][1]).toEqual(["sent", "bio-1", "tenant-1", ["ordered", "collected"]]);
+    expect(client.query.mock.calls[3][1]).toEqual(["tenant-1", "bio-1", "ordered", "sent", "user-1", "Status updated to sent"]);
   });
 
   it("PUT /biopsies/:id accepts diagnosis updates without status changes", async () => {
@@ -328,7 +357,6 @@ describe("Biopsy routes", () => {
     const client = makeClient();
     client.query
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ status: "sent" }] })
       .mockResolvedValueOnce({ rows: [] });
     connectMock.mockResolvedValueOnce(client);
@@ -340,8 +368,8 @@ describe("Biopsy routes", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.currentStatus).toBe("sent");
-    expect(String(client.query.mock.calls[1][0])).toContain("status = ANY");
-    expect(client.query.mock.calls[1][1]).toEqual(["collected", "bio-1", "tenant-1", ["ordered"]]);
+    expect(String(client.query.mock.calls[1][0])).toContain("FOR UPDATE");
+    expect(client.query.mock.calls[1][1]).toEqual(["bio-1", "tenant-1"]);
     expect(biopsyService.trackSpecimen).not.toHaveBeenCalled();
   });
 
@@ -361,12 +389,15 @@ describe("Biopsy routes", () => {
     const client = makeClient();
     client.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ status: "sent" }] })
       .mockResolvedValueOnce({ rows: [{
         id: "bio-1", lesion_id: lesionId,
         received_by_lab_at: "2026-01-01T00:00:00Z",
         resulted_at: "2026-01-08T00:00:00Z",
         updated_at: "2026-01-08T00:00:00Z",
       }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     connectMock.mockResolvedValueOnce(client);
@@ -381,6 +412,12 @@ describe("Biopsy routes", () => {
       expect.objectContaining({ biopsyId: "bio-1", eventType: "resulted" }),
       client,
     );
+    expect(client.query.mock.calls.some(([sql, values]) => (
+      String(sql).includes("INSERT INTO biopsy_status_history")
+      && values?.[2] === "sent"
+      && values?.[3] === "resulted"
+      && values?.[4] === "user-1"
+    ))).toBe(true);
     expect(biopsyService.sendNotification).toHaveBeenCalledTimes(2);
     const candidateInserts = queryMock.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO mips_readiness_evidence'));
     expect(candidateInserts.map(([, values]) => values[4])).toEqual(['440', 'AAD6']);

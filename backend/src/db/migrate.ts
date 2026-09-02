@@ -16690,6 +16690,222 @@ Consider age-appropriate treatments and include family counseling points.',
       ON mips_automation_runs(tenant_id, performance_year, started_at DESC);
     `,
   },
+  {
+    name: "233_biopsy_tracking_runtime",
+    sql: `
+    -- Runtime biopsy tracking schema.  This intentionally uses the active
+    -- application's TEXT identifiers and canonical lesions/lab_interfaces
+    -- tables instead of the historical UUID/body-marking definitions.
+    CREATE TABLE IF NOT EXISTS biopsies (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      lesion_id TEXT REFERENCES lesions(id) ON DELETE SET NULL,
+
+      specimen_id TEXT NOT NULL,
+      specimen_type TEXT NOT NULL,
+      specimen_size TEXT,
+      body_location TEXT NOT NULL,
+      body_location_code TEXT,
+      location_laterality TEXT,
+      location_details TEXT,
+      clinical_description TEXT,
+      clinical_history TEXT,
+      differential_diagnoses TEXT[],
+      indication TEXT,
+
+      status TEXT NOT NULL DEFAULT 'ordered',
+      ordered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      collected_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      received_by_lab_at TIMESTAMPTZ,
+      resulted_at TIMESTAMPTZ,
+      reviewed_at TIMESTAMPTZ,
+      closed_at TIMESTAMPTZ,
+
+      ordering_provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+      collecting_provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+      reviewing_provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+
+      path_lab TEXT NOT NULL,
+      path_lab_id TEXT REFERENCES lab_interfaces(id) ON DELETE SET NULL,
+      path_lab_case_number TEXT,
+      path_lab_contact TEXT,
+      special_stains TEXT[],
+      send_for_cultures BOOLEAN NOT NULL DEFAULT false,
+      send_for_immunofluorescence BOOLEAN NOT NULL DEFAULT false,
+      send_for_molecular_testing BOOLEAN NOT NULL DEFAULT false,
+      special_instructions TEXT,
+
+      pathology_diagnosis TEXT,
+      pathology_report TEXT,
+      pathology_gross_description TEXT,
+      pathology_microscopic_description TEXT,
+      pathology_comment TEXT,
+      malignancy_type TEXT,
+      malignancy_subtype TEXT,
+      margins TEXT,
+      margin_distance_mm NUMERIC(10, 2),
+      margin_details TEXT,
+      breslow_depth_mm NUMERIC(10, 3),
+      clark_level TEXT,
+      mitotic_rate INTEGER,
+      ulceration BOOLEAN,
+      sentinel_node_indicated BOOLEAN NOT NULL DEFAULT false,
+      diagnosis_code TEXT,
+      diagnosis_description TEXT,
+      snomed_code TEXT,
+
+      follow_up_action TEXT,
+      follow_up_interval TEXT,
+      follow_up_notes TEXT,
+      reexcision_required BOOLEAN NOT NULL DEFAULT false,
+      reexcision_scheduled_date DATE,
+      patient_notified BOOLEAN NOT NULL DEFAULT false,
+      patient_notified_at TIMESTAMPTZ,
+      patient_notified_method TEXT,
+      patient_notification_notes TEXT,
+
+      turnaround_time_days INTEGER,
+      is_overdue BOOLEAN NOT NULL DEFAULT false,
+      overdue_alert_sent_at TIMESTAMPTZ,
+      requisition_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+      pathology_report_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+      photo_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      procedure_code TEXT,
+      billed BOOLEAN NOT NULL DEFAULT false,
+      billing_date DATE,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TIMESTAMPTZ,
+      deleted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+
+      CONSTRAINT biopsies_tenant_specimen_unique UNIQUE (tenant_id, specimen_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      alert_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'medium',
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      acknowledged_at TIMESTAMPTZ,
+      acknowledged_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      resolved_at TIMESTAMPTZ,
+      resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      resolution_notes TEXT,
+      notification_sent BOOLEAN NOT NULL DEFAULT false,
+      notification_sent_at TIMESTAMPTZ,
+      notification_method TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_specimen_tracking (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      event_timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      event_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      location TEXT,
+      custody_person TEXT,
+      specimen_quality TEXT,
+      quality_notes TEXT,
+      shipping_method TEXT,
+      tracking_number TEXT,
+      shipped_to TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_status_history (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      old_status TEXT,
+      new_status TEXT NOT NULL,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      changed_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      notes TEXT,
+      system_generated BOOLEAN NOT NULL DEFAULT false,
+      CONSTRAINT biopsy_status_history_status_change
+        CHECK (old_status IS DISTINCT FROM new_status)
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_review_checklists (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      reviewed_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      pathology_report_reviewed BOOLEAN NOT NULL DEFAULT false,
+      diagnosis_coded BOOLEAN NOT NULL DEFAULT false,
+      patient_notification_completed BOOLEAN NOT NULL DEFAULT false,
+      follow_up_scheduled BOOLEAN NOT NULL DEFAULT false,
+      documentation_complete BOOLEAN NOT NULL DEFAULT false,
+      staging_documented BOOLEAN,
+      treatment_plan_created BOOLEAN,
+      specialist_referral_made BOOLEAN,
+      review_completed BOOLEAN NOT NULL DEFAULT false,
+      review_completed_at TIMESTAMPTZ,
+      review_notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Tenant-first indexes keep every clinical query scoped before its
+    -- patient/specimen/status dimensions.  IF NOT EXISTS makes a retry safe.
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_patient
+      ON biopsies(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_encounter
+      ON biopsies(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_lesion
+      ON biopsies(tenant_id, lesion_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_status
+      ON biopsies(tenant_id, status);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_ordering_provider
+      ON biopsies(tenant_id, ordering_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_reviewing_provider
+      ON biopsies(tenant_id, reviewing_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_ordered_at
+      ON biopsies(tenant_id, ordered_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_resulted_at
+      ON biopsies(tenant_id, resulted_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_overdue
+      ON biopsies(tenant_id, is_overdue, status)
+      WHERE is_overdue = true AND status NOT IN ('reviewed', 'closed');
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_malignancy
+      ON biopsies(tenant_id, malignancy_type)
+      WHERE malignancy_type IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_biopsies_tenant_specimen_id
+      ON biopsies(tenant_id, specimen_id);
+
+    CREATE INDEX IF NOT EXISTS idx_biopsy_alerts_tenant_biopsy
+      ON biopsy_alerts(tenant_id, biopsy_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_alerts_tenant_status
+      ON biopsy_alerts(tenant_id, status, severity)
+      WHERE status = 'active';
+    CREATE INDEX IF NOT EXISTS idx_biopsy_alerts_tenant_type
+      ON biopsy_alerts(tenant_id, alert_type);
+
+    CREATE INDEX IF NOT EXISTS idx_biopsy_specimen_tracking_tenant_biopsy
+      ON biopsy_specimen_tracking(tenant_id, biopsy_id, event_timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_status_history_tenant_biopsy
+      ON biopsy_status_history(tenant_id, biopsy_id, changed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_status_history_tenant_actor
+      ON biopsy_status_history(tenant_id, changed_by);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_review_checklists_tenant_biopsy
+      ON biopsy_review_checklists(tenant_id, biopsy_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_review_checklists_tenant_incomplete
+      ON biopsy_review_checklists(tenant_id, review_completed)
+      WHERE review_completed = false;
+    `,
+  },
 
 ];
 

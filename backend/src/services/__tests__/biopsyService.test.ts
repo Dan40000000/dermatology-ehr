@@ -93,6 +93,8 @@ describe("BiopsyService", () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "bio-1" }] });
     const result = await BiopsyService.getOverdueBiopsies("tenant-1");
     expect(result).toHaveLength(1);
+    expect(String(queryMock.mock.calls[0][0])).toContain("b.sent_at < NOW() - INTERVAL '7 days'");
+    expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.id = pr.user_id");
   });
 
   it("getPendingReviewBiopsies returns rows", async () => {
@@ -117,6 +119,7 @@ describe("BiopsyService", () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "mark-1" }] });
     const result = await BiopsyService.updateLesionStatusForBiopsy("lesion-1", "bio-1", "tenant-1");
     expect(result.id).toBe("mark-1");
+    expect(String(queryMock.mock.calls[0][0])).toContain("UPDATE lesions");
   });
 
   it("updateLesionStatusForBiopsy uses the provided transaction executor", async () => {
@@ -179,6 +182,8 @@ describe("BiopsyService", () => {
       recipientType: "provider",
     });
     expect(logger.info).toHaveBeenCalled();
+    expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.email as provider_email");
+    expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.id = pr.user_id");
   });
 
   it("validateBiopsyData returns errors for invalid data", () => {
@@ -197,6 +202,7 @@ describe("BiopsyService", () => {
       eventType: "sent",
     });
     expect(result.id).toBe("track-1");
+    expect(String(queryMock.mock.calls[0][0])).toContain("b.tenant_id");
   });
 
   it("trackSpecimen uses the provided transaction executor", async () => {

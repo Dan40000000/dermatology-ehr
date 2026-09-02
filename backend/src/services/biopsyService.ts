@@ -239,20 +239,28 @@ export class BiopsyService {
    * Used for safety alerts and dashboard
    */
   static async getOverdueBiopsies(tenantId: string) {
+    const overdueExpression = `(
+      b.sent_at IS NOT NULL
+      AND b.resulted_at IS NULL
+      AND b.status NOT IN ('resulted', 'reviewed', 'closed')
+      AND b.sent_at < NOW() - INTERVAL '7 days'
+    )`;
     const query = `
       SELECT
         b.*,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         ${providerDisplayName('pr')} as ordering_provider_name,
-        pr.email as ordering_provider_email,
+        provider_user.email as ordering_provider_email,
+        ${overdueExpression} as is_overdue,
         EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_overdue
       FROM biopsies b
       JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
       JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
+      LEFT JOIN users provider_user
+        ON provider_user.id = pr.user_id AND provider_user.tenant_id = pr.tenant_id
       WHERE b.tenant_id = $1
-        AND b.is_overdue = true
-        AND b.status NOT IN ('resulted', 'reviewed', 'closed')
+        AND ${overdueExpression}
         AND b.deleted_at IS NULL
       ORDER BY b.sent_at ASC
     `;
@@ -314,7 +322,14 @@ export class BiopsyService {
     }
 
     const statusExpr = biopsyColumns.has('status') ? 'b.status' : `'ordered'::text`;
-    const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
+    const isOverdueExpr = biopsyColumns.has('sent_at')
+      ? `(COALESCE(b.is_overdue, false) OR (
+          b.sent_at IS NOT NULL
+          AND b.resulted_at IS NULL
+          AND ${statusExpr} NOT IN ('resulted', 'reviewed', 'closed')
+          AND b.sent_at < NOW() - INTERVAL '7 days'
+        ))`
+      : booleanExpr(biopsyColumns, 'is_overdue', false);
     const malignancyExpr = textExpr(biopsyColumns, 'malignancy_type');
     const patientNotifiedExpr = booleanExpr(biopsyColumns, 'patient_notified', false);
     const turnaroundExpr = numberExpr(biopsyColumns, 'turnaround_time_days');
@@ -395,7 +410,14 @@ export class BiopsyService {
     const statusExpr = biopsyColumns.has('status') ? 'b.status' : `'ordered'::text`;
     const malignancyExpr = textExpr(biopsyColumns, 'malignancy_type');
     const patientNotifiedExpr = booleanExpr(biopsyColumns, 'patient_notified', false);
-    const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
+    const isOverdueExpr = biopsyColumns.has('sent_at')
+      ? `(COALESCE(b.is_overdue, false) OR (
+          b.sent_at IS NOT NULL
+          AND b.resulted_at IS NULL
+          AND ${statusExpr} NOT IN ('resulted', 'reviewed', 'closed')
+          AND b.sent_at < NOW() - INTERVAL '7 days'
+        ))`
+      : booleanExpr(biopsyColumns, 'is_overdue', false);
     const deletedFilter = biopsyColumns.has('deleted_at') ? 'AND b.deleted_at IS NULL' : '';
     const orderingProviderJoin = hasOrderingProvider && canJoinProviders
       ? 'LEFT JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id AND ordering_pr.tenant_id = b.tenant_id'
@@ -642,8 +664,10 @@ export class BiopsyService {
     executor: QueryExecutor = pool,
   ) {
     const query = `
-      UPDATE patient_body_markings
+      UPDATE lesions
       SET status = 'biopsied',
+          biopsy_performed = true,
+          biopsy_date = COALESCE(biopsy_date, CURRENT_DATE),
           description = COALESCE(description, '') ||
             E'\nBiopsy performed: ' || (
               SELECT specimen_id FROM biopsies WHERE id = $1 AND tenant_id = $3
@@ -709,10 +733,12 @@ export class BiopsyService {
         p.email as patient_email,
         p.phone as patient_phone,
         ${providerDisplayName('pr')} as provider_name,
-        pr.email as provider_email
+        provider_user.email as provider_email
       FROM biopsies b
       JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
       JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
+      LEFT JOIN users provider_user
+        ON provider_user.id = pr.user_id AND provider_user.tenant_id = pr.tenant_id
       WHERE b.id = $1 AND b.tenant_id = $2
     `;
 
@@ -818,6 +844,7 @@ export class BiopsyService {
 
     const query = `
       INSERT INTO biopsy_specimen_tracking (
+        tenant_id,
         biopsy_id,
         event_type,
         event_by,
@@ -825,7 +852,18 @@ export class BiopsyService {
         custody_person,
         specimen_quality,
         notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      )
+      SELECT
+        b.tenant_id,
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7
+      FROM biopsies b
+      WHERE b.id = $1
       RETURNING *
     `;
 

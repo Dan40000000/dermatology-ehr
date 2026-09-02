@@ -952,7 +952,7 @@ router.post('/:id/result', requireRoles(BIOPSY_RESULT_ROLES), async (req: Authed
       validatedData.clark_level || null,
       validatedData.mitotic_rate || null,
       validatedData.ulceration || null,
-      validatedData.sentinel_node_indicated || null,
+      validatedData.sentinel_node_indicated ?? false,
       validatedData.diagnosis_code || null,
       validatedData.diagnosis_description || null,
       validatedData.snomed_code || null,

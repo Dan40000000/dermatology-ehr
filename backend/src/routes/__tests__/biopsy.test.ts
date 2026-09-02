@@ -408,6 +408,7 @@ describe("Biopsy routes", () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("bio-1");
+    expect(client.query.mock.calls[2][1][14]).toBe(false);
     expect(biopsyService.trackSpecimen).toHaveBeenCalledWith(
       expect.objectContaining({ biopsyId: "bio-1", eventType: "resulted" }),
       client,

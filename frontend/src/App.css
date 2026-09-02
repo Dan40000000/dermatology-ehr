@@ -417,9 +417,10 @@ input, select, textarea {
 }
 
 input:focus, select:focus, textarea:focus {
-  outline: none;
-  border-color: var(--primary-500);
-  box-shadow: 0 0 0 3px var(--primary-100);
+  outline: 3px solid #075985;
+  outline-offset: 2px;
+  border-color: #075985;
+  box-shadow: none;
 }
 
 input:disabled, select:disabled, textarea:disabled {
@@ -2556,6 +2557,7 @@ pre {
 
 .modal-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
@@ -10783,11 +10785,42 @@ pre {
 /* === EMA Action Buttons Row === */
 .ema-action-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
   background: #ffffff;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.encounter-section-switcher {
+  flex-wrap: wrap;
+}
+
+.encounter-exam-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .ema-action-bar,
+  .modal-footer,
+  .encounter-section-switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ema-action-bar > *,
+  .modal-footer > *,
+  .encounter-section-switcher > * {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .encounter-exam-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ema-action-btn {

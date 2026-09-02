@@ -311,7 +311,12 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
   };
 
   if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '16rem' }}><div style={{ animation: 'spin 1s linear infinite', height: '2rem', width: '2rem', border: '4px solid #7c3aed', borderTopColor: 'transparent', borderRadius: '9999px' }} /></div>;
+    return (
+      <div role="status" aria-live="polite" aria-atomic="true" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.75rem', height: '16rem' }}>
+        <div aria-hidden="true" style={{ animation: 'spin 1s linear infinite', height: '2rem', width: '2rem', border: '4px solid #7c3aed', borderTopColor: 'transparent', borderRadius: '9999px' }} />
+        <span>Loading clinical note.</span>
+      </div>
+    );
   }
 
   if (!note) {
@@ -366,6 +371,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             type="button"
             onClick={() => setShowTranscript(!showTranscript)}
             className="scribe-review-toggle"
+            aria-expanded={showTranscript}
+            aria-controls="ambient-transcript-panel"
           >
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
@@ -373,13 +380,15 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             type="button"
             onClick={() => setShowSuggestions(!showSuggestions)}
             className="scribe-review-toggle"
+            aria-expanded={showSuggestions}
+            aria-controls="ambient-suggestions-panel"
           >
             {showSuggestions ? 'Hide' : 'Show'} Suggestions
           </button>
         </div>
       </div>
 
-      <div className={`scribe-review-layout ${showTranscript ? '' : 'scribe-review-layout--single'}`}>
+      <div className={`scribe-review-layout ${showTranscript || showSuggestions || edits.length > 0 ? '' : 'scribe-review-layout--single'}`}>
         {/* Main Note Content */}
         <div className="scribe-review-main">
           <div className="space-y-6">
@@ -735,13 +744,13 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         </div>
 
         {/* Sidebar */}
-        {showTranscript && (
+        {(showTranscript || showSuggestions || edits.length > 0) && (
           <div className="scribe-review-sidebar">
             {/* Transcript */}
-            {transcript && (
-              <div className="scribe-review-sidebar-card">
-                <h4 className="scribe-review-sidebar-title">Transcript</h4>
-                <div className="scribe-review-transcript-list">
+            {showTranscript && transcript && (
+              <div id="ambient-transcript-panel" className="scribe-review-sidebar-card">
+                <h3 id="ambient-transcript-heading" className="scribe-review-sidebar-title">Transcript</h3>
+                <div className="scribe-review-transcript-list" role="region" aria-labelledby="ambient-transcript-heading" tabIndex={0}>
                   {transcript.transcriptSegments.map((segment, idx) => (
                     <div key={idx} className={`scribe-review-transcript-segment ${getScribeSpeakerToneClass(segment)}`}>
                       <div className="scribe-review-transcript-meta">
@@ -759,11 +768,11 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
             {/* Suggestions */}
             {showSuggestions && (
-              <>
+              <div id="ambient-suggestions-panel">
                 {/* ICD-10 Codes */}
                 {note.suggestedIcd10Codes && note.suggestedIcd10Codes.length > 0 && (
                   <div className="scribe-review-sidebar-card">
-                    <h4 className="scribe-review-sidebar-title">Suggested ICD-10 Codes</h4>
+                    <h3 className="scribe-review-sidebar-title">Suggested ICD-10 Codes</h3>
                     <div className="scribe-review-code-list">
                       {note.suggestedIcd10Codes.map((code, idx) => (
                         <div key={idx} className="scribe-review-code-row">
@@ -784,7 +793,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                 {note.suggestedCptCodes && note.suggestedCptCodes.length > 0 && (
                   <div className="scribe-insight-card">
                     <div className="scribe-insight-card__header">
-                      <div className="scribe-insight-card__title">Suggested CPT Codes</div>
+                      <h3 className="scribe-insight-card__title">Suggested CPT Codes</h3>
                     </div>
                     <div className="scribe-insight-card__body">
                       {note.suggestedCptCodes.map((code, idx) => {
@@ -808,7 +817,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                 {/* Medications */}
                 {note.mentionedMedications && note.mentionedMedications.length > 0 && (
                   <div className="scribe-review-sidebar-card">
-                    <h4 className="scribe-review-sidebar-title">Mentioned Medications</h4>
+                    <h3 className="scribe-review-sidebar-title">Mentioned Medications</h3>
                     <div className="scribe-review-code-list">
                       {note.mentionedMedications.map((med, idx) => (
                         <div key={idx} className="scribe-review-med-row">
@@ -824,7 +833,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                 {note.followUpTasks && note.followUpTasks.length > 0 && (
                   <div className="scribe-insight-card">
                     <div className="scribe-insight-card__header">
-                      <div className="scribe-insight-card__title">Follow-up Tasks</div>
+                      <h3 className="scribe-insight-card__title">Follow-up Tasks</h3>
                     </div>
                     <div className="scribe-insight-card__body">
                       {note.followUpTasks.map((task, idx) => (
@@ -843,14 +852,14 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                     </div>
                   </div>
                 )}
-              </>
+              </div>
             )}
 
             {/* Edit History */}
             {edits.length > 0 && (
               <div className="scribe-review-sidebar-card">
-                <h4 className="scribe-review-sidebar-title">Edit History</h4>
-                <div className="scribe-review-edit-list">
+                <h3 id="ambient-edit-history-heading" className="scribe-review-sidebar-title">Edit History</h3>
+                <div className="scribe-review-edit-list" role="region" aria-labelledby="ambient-edit-history-heading" tabIndex={0}>
                   {edits.map((edit) => (
                     <div key={edit.id} className="scribe-review-edit-row">
                       <div className="scribe-review-edit-section">{edit.section.replace(/_/g, ' ')}</div>

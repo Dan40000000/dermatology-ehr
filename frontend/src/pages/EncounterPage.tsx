@@ -1316,6 +1316,9 @@ export function EncounterPage() {
 
   return (
     <div className="encounter-page">
+      <h1 className="sr-only">
+        {isNew ? 'New encounter' : 'Encounter'} for {patient.firstName} {patient.lastName}
+      </h1>
       {/* Patient Banner */}
       <PatientBanner patient={patient} compact />
 
@@ -1336,7 +1339,7 @@ export function EncounterPage() {
             className="ema-action-btn"
             onClick={handleCancelStartedVisit}
             disabled={cancellingStartedVisit}
-            style={{ background: '#f59e0b', color: '#ffffff' }}
+            style={{ background: '#92400e', color: '#ffffff' }}
           >
             <span className="icon">↩</span>
             {cancellingStartedVisit ? 'Cancelling...' : 'Cancel Started Visit'}
@@ -1394,7 +1397,7 @@ export function EncounterPage() {
             className="ema-action-btn"
             onClick={() => setShowSignModal(true)}
             disabled={saving}
-            style={{ background: '#10b981', color: '#ffffff' }}
+            style={{ background: '#047857', color: '#ffffff' }}
           >
             <span className="icon"></span>
             {encounter.appointmentId ? 'Sign & Checkout' : 'Sign & Lock'}
@@ -1406,7 +1409,7 @@ export function EncounterPage() {
             className="ema-action-btn"
             onClick={handleEndAppointment}
             disabled={endingAppointment}
-            style={{ background: '#0284c7', color: '#ffffff' }}
+            style={{ background: '#0369a1', color: '#ffffff' }}
           >
             <span className="icon"></span>
             {endingAppointment
@@ -1429,6 +1432,7 @@ export function EncounterPage() {
           className="ema-action-btn"
           onClick={openAiDraftModal}
           disabled={isLocked}
+          aria-haspopup="dialog"
           style={{ background: '#0f766e', color: '#ffffff' }}
         >
           <span className="icon"></span>
@@ -1584,7 +1588,7 @@ export function EncounterPage() {
       )}
 
       {/* Section Tabs - EMA Style */}
-      <div style={{
+      <div className="encounter-section-switcher" aria-label="Encounter sections" style={{
         display: 'flex',
         background: '#f3f4f6',
         borderBottom: '1px solid #e5e7eb'
@@ -1594,6 +1598,8 @@ export function EncounterPage() {
             key={section.id}
             type="button"
             onClick={() => setActiveSection(section.id)}
+            aria-pressed={activeSection === section.id}
+            aria-controls="encounter-section-content"
             style={{
               padding: '0.75rem 1.5rem',
               background: activeSection === section.id ? '#ffffff' : 'transparent',
@@ -1608,18 +1614,26 @@ export function EncounterPage() {
               fontSize: '0.875rem'
             }}
           >
-            <span>{section.icon}</span>
+            <span aria-hidden="true">{section.icon}</span>
             {section.label}
           </button>
         ))}
       </div>
 
       {/* Section Content */}
-      <div style={{ background: '#ffffff', padding: '1.5rem' }}>
+      <div
+        id="encounter-section-content"
+        role="region"
+        aria-label={sections.find((section) => section.id === activeSection)?.label || 'Encounter section'}
+        style={{ background: '#ffffff', padding: '1.5rem' }}
+      >
         {activeSection === 'note' && (
           <div style={{ display: 'grid', gap: '1.5rem' }}>
             {scribeNoteLoading && (
-              <Skeleton variant="card" height={180} />
+              <div role="status" aria-live="polite" aria-atomic="true">
+                <span className="sr-only">Loading AI scribe summary.</span>
+                <Skeleton variant="card" height={180} />
+              </div>
             )}
 
             {!scribeNoteLoading && scribeNote && (
@@ -1787,7 +1801,7 @@ export function EncounterPage() {
         )}
 
         {activeSection === 'exam' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+          <div className="encounter-exam-grid">
             {/* Shared Body Diagram */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -2886,7 +2900,7 @@ export function EncounterPage() {
               ))}
             </select>
             {aiTemplateLoading && (
-              <div style={{ fontSize: '0.75rem', color: '#374151', marginTop: '0.25rem' }}>
+              <div role="status" aria-live="polite" style={{ fontSize: '0.75rem', color: '#374151', marginTop: '0.25rem' }}>
                 Loading templates...
               </div>
             )}

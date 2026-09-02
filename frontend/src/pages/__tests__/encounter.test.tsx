@@ -417,6 +417,10 @@ describe('EncounterPage', () => {
 
     await screen.findByTestId('patient-banner');
     expect(screen.getByText('Encounter')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Encounter for Ana Derm' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'AI Draft' })).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(screen.getByRole('button', { name: 'Clinical Note' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('region', { name: 'Clinical Note' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Vitals' }));
     const vitalsModal = await screen.findByTestId('modal-record-vitals');
@@ -458,6 +462,8 @@ describe('EncounterPage', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Billing' }));
+    expect(screen.getByRole('button', { name: 'Billing' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('region', { name: 'Billing' })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: '+ Add Diagnosis' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Select Diagnosis' }));
 

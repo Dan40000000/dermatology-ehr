@@ -6,8 +6,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production=false
+# Install the complete locked tree required by the TypeScript build. Security
+# scanning runs as a dedicated fail-closed CI job instead of during installs.
+RUN npm ci --include=dev --no-audit --no-fund
 
 # Copy source code
 COPY . .
@@ -32,7 +33,7 @@ COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
 
 # Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # Create uploads and logs directories with correct permissions
 RUN mkdir -p uploads logs && chown -R nodejs:nodejs uploads logs

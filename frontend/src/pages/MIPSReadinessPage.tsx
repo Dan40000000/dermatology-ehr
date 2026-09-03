@@ -39,6 +39,7 @@ import {
   type MipsWorkQueueItem,
 } from '../api/mipsReadiness';
 import './MIPSReadinessPage.css';
+import { buildMipsSourceDestination, mipsSourceTraceabilityLimitation } from '../utils/mipsSourceTraceability';
 
 const PERFORMANCE_YEAR = 2026;
 const QUALITY_MINIMUM = 4;
@@ -127,54 +128,6 @@ interface DisplayRow {
   licensing?: string;
   collectionLimitations?: string;
   evaluation?: MipsEvaluation;
-}
-
-export interface MipsSourceDestination {
-  to: string;
-  label: string;
-  ariaLabel: string;
-}
-
-/**
- * Build a source-targeted link without carrying patient or encounter identity
- * in the MIPS record. These destinations rely on the authorized clinical
- * page's existing tenant-scoped data and search behavior.
- */
-export function buildMipsSourceDestination(
-  item: Pick<MipsEvidence, 'sourceType' | 'sourceId'>,
-): MipsSourceDestination | null {
-  const sourceId = typeof item.sourceId === 'string' ? item.sourceId.trim() : '';
-  if (!sourceId) return null;
-
-  if (item.sourceType === 'biopsy') {
-    const query = new URLSearchParams({ search: sourceId }).toString();
-    return {
-      to: `/biopsies?${query}`,
-      label: 'Open biopsy workflow',
-      ariaLabel: `Open biopsy workflow for source ${sourceId}`,
-    };
-  }
-
-  if (item.sourceType === 'chronic_therapy_registry') {
-    const query = new URLSearchParams({ tab: 'chronic-therapy', sourceId }).toString();
-    return {
-      to: `/registry?${query}`,
-      label: 'Open chronic therapy registry',
-      ariaLabel: `Open chronic therapy registry for source ${sourceId}`,
-    };
-  }
-
-  return null;
-}
-
-export function mipsSourceTraceabilityLimitation(
-  item: Pick<MipsEvidence, 'sourceType' | 'sourceId'>,
-): string | null {
-  if (item.sourceType !== 'itch_assessment') return null;
-  const sourceId = typeof item.sourceId === 'string' ? item.sourceId.trim() : '';
-  return sourceId
-    ? `No safe direct link is available for itch assessments. The authorized clinical view requires patient or encounter context, which is intentionally excluded from MIPS evidence. Open the originating patient encounter and compare opaque source ${sourceId} before reviewing this candidate.`
-    : 'No safe direct link is available for itch assessments. The authorized clinical view requires patient or encounter context, which is intentionally excluded from MIPS evidence.';
 }
 
 const EMPTY_FORM: ProfileFormState = {

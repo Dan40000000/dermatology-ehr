@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { requireModuleAccess } from '../middleware/moduleAccess';
 import { rateLimit } from '../middleware/rateLimit';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
@@ -37,6 +38,11 @@ mipsReadinessRouter.use(rateLimit({ windowMs: 60_000, max: 100 }));
 const SUPPORTED_YEAR = 2026;
 const PROFILE_WRITE_ROLES = ['admin', 'provider', 'manager', 'compliance_officer'];
 const CLINICAL_CAPTURE_ROLES = ['admin', 'provider', 'ma', 'nurse'];
+const requireReportingAccess = [
+  requireAuth,
+  requireRoles(PROFILE_WRITE_ROLES),
+  requireModuleAccess('quality'),
+];
 
 type JsonObject = Record<string, unknown>;
 
@@ -412,7 +418,7 @@ function bodyYear(
  * GET /api/mips/readiness?year=2026
  * Aggregate-only overview: evidence metadata is intentionally omitted.
  */
-mipsReadinessRouter.get('/', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.get('/', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsedYear = parseSupportedYear(req.query.year, true);
   if (rejectYear(res, parsedYear)) return;
   try {
@@ -444,7 +450,7 @@ mipsReadinessRouter.get('/', requireAuth, requireRoles(PROFILE_WRITE_ROLES), asy
 });
 
 /** GET /api/mips/readiness/profile - convenience profile read endpoint. */
-mipsReadinessRouter.get('/profile', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.get('/profile', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsedYear = parseSupportedYear(req.query.year, true);
   if (rejectYear(res, parsedYear)) return;
   try {
@@ -465,7 +471,7 @@ mipsReadinessRouter.get('/profile', requireAuth, requireRoles(PROFILE_WRITE_ROLE
 });
 
 /** PUT /api/mips/readiness/profile - validated tenant/year upsert. */
-mipsReadinessRouter.put('/profile', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.put('/profile', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsedBody = profileSchema.safeParse(req.body);
   if (!parsedBody.success) return res.status(400).json({ error: parsedBody.error.format() });
   const parsedYear = bodyYear(parsedBody.data, req.query.year);
@@ -540,7 +546,7 @@ mipsReadinessRouter.put('/profile', requireAuth, requireRoles(PROFILE_WRITE_ROLE
 });
 
 /** GET /api/mips/readiness/evidence - structured ledger rows, tenant scoped. */
-mipsReadinessRouter.get('/evidence', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.get('/evidence', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsedYear = parseSupportedYear(req.query.year, true);
   if (rejectYear(res, parsedYear)) return;
   try {
@@ -573,7 +579,7 @@ mipsReadinessRouter.get('/evidence', requireAuth, requireRoles(PROFILE_WRITE_ROL
 });
 
 /** POST /api/mips/readiness/evidence - create one structured evidence item. */
-mipsReadinessRouter.post('/evidence', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.post('/evidence', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsedBody = evidenceSchema.safeParse(req.body);
   if (!parsedBody.success) return res.status(400).json({ error: parsedBody.error.format() });
   const parsedYear = bodyYear(parsedBody.data, req.query.year);
@@ -644,7 +650,7 @@ mipsReadinessRouter.post('/evidence', requireAuth, requireRoles(PROFILE_WRITE_RO
 });
 
 /** PATCH /api/mips/readiness/evidence/:id/review - explicit human disposition. */
-mipsReadinessRouter.patch('/evidence/:id/review', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.patch('/evidence/:id/review', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsed = evidenceReviewSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
   const parsedYear = parseSupportedYear(req.query.year, true);
@@ -673,7 +679,7 @@ mipsReadinessRouter.patch('/evidence/:id/review', requireAuth, requireRoles(PROF
 });
 
 /** GET /api/mips/readiness/automation - aggregate connector health, never patient data. */
-mipsReadinessRouter.get('/automation', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.get('/automation', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsedYear = parseSupportedYear(req.query.year, true);
   if (rejectYear(res, parsedYear)) return;
   try {
@@ -728,7 +734,7 @@ mipsReadinessRouter.get('/automation', requireAuth, requireRoles(PROFILE_WRITE_R
 });
 
 /** POST /api/mips/readiness/automation/sync - idempotent tenant reconciliation. */
-mipsReadinessRouter.post('/automation/sync', requireAuth, requireRoles(PROFILE_WRITE_ROLES), async (req: AuthedRequest, res) => {
+mipsReadinessRouter.post('/automation/sync', ...requireReportingAccess, async (req: AuthedRequest, res) => {
   const parsedYear = parseSupportedYear(req.query.year, true);
   if (rejectYear(res, parsedYear)) return;
   try {
@@ -883,5 +889,5 @@ async function previewHandler(req: AuthedRequest, res: any) {
   }
 }
 
-mipsReadinessRouter.get('/preview', requireAuth, requireRoles(PROFILE_WRITE_ROLES), previewHandler);
-mipsReadinessRouter.post('/preview', requireAuth, requireRoles(PROFILE_WRITE_ROLES), previewHandler);
+mipsReadinessRouter.get('/preview', ...requireReportingAccess, previewHandler);
+mipsReadinessRouter.post('/preview', ...requireReportingAccess, previewHandler);

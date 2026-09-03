@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { requireModuleAccess } from '../middleware/moduleAccess';
 import { rateLimit } from '../middleware/rateLimit';
 import { auditLog } from '../services/audit';
 import { MipsReferenceValidationError, mipsService } from '../services/mipsService';
@@ -17,7 +18,7 @@ export const mipsRouter = Router();
 const MIPS_REPORTING_ROLES = ['admin', 'provider', 'manager', 'compliance_officer'];
 
 mipsRouter.use(rateLimit({ windowMs: 60_000, max: 100 }));
-mipsRouter.use(requireAuth, requireRoles(MIPS_REPORTING_ROLES));
+mipsRouter.use(requireAuth, requireRoles(MIPS_REPORTING_ROLES), requireModuleAccess('quality'));
 
 function boundedPercentage(numerator: number, denominator: number): number {
   if (denominator <= 0 || !Number.isFinite(numerator) || !Number.isFinite(denominator)) return 0;

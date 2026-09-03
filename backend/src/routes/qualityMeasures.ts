@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { rateLimit } from "../middleware/rateLimit";
 import { randomUUID } from "crypto";
 import { auditLog } from "../services/audit";
@@ -23,7 +24,7 @@ export const qualityMeasuresRouter = Router();
 const MIPS_REPORTING_ROLES = ['admin', 'provider', 'manager', 'compliance_officer'];
 
 qualityMeasuresRouter.use(rateLimit({ windowMs: 60_000, max: 100 }));
-qualityMeasuresRouter.use(requireAuth, requireRoles(MIPS_REPORTING_ROLES));
+qualityMeasuresRouter.use(requireAuth, requireRoles(MIPS_REPORTING_ROLES), requireModuleAccess("quality"));
 
 // ============================================================================
 // QUALITY MEASURES

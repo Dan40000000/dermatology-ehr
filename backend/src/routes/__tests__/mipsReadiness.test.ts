@@ -19,6 +19,10 @@ jest.mock('../../middleware/rbac', () => ({
   requireRoles: () => (_req: any, _res: any, next: any) => next(),
 }));
 
+jest.mock('../../middleware/moduleAccess', () => ({
+  requireModuleAccess: () => (_req: any, _res: any, next: any) => next(),
+}));
+
 jest.mock('../../middleware/rateLimit', () => ({
   rateLimit: () => (_req: any, _res: any, next: any) => next(),
 }));

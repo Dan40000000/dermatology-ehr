@@ -16,22 +16,26 @@ const mocks = vi.hoisted(() => ({
   canAccessModule: vi.fn(),
 }));
 
-vi.mock('../../../contexts/AuthContext', () => ({
-  useAuth: () => ({
+vi.mock('../../../contexts/AuthContext', () => {
+  const user = { id: 'user-a', role: mocks.role, fullName: 'Test User' };
+  const value = {
     isAuthenticated: true,
     passwordResetRequired: false,
-    session: {
-      tenantId: 'tenant-a',
-      accessToken: 'test-token',
-      user: { id: 'user-a', role: mocks.role, fullName: 'Test User' },
+    session: { tenantId: 'tenant-a', accessToken: 'test-token', user },
+    user,
+  };
+  return {
+    useAuth: () => {
+      user.role = mocks.role;
+      return value;
     },
-    user: { id: 'user-a', role: mocks.role, fullName: 'Test User' },
-  }),
-}));
+  };
+});
 
-vi.mock('../../../contexts/AccessControlContext', () => ({
-  useAccessControl: () => ({ canAccessModule: mocks.canAccessModule }),
-}));
+vi.mock('../../../contexts/AccessControlContext', () => {
+  const value = { canAccessModule: mocks.canAccessModule };
+  return { useAccessControl: () => value };
+});
 
 vi.mock('../../../api', () => ({
   fetchUnreadCount: mocks.fetchUnreadCount,
@@ -83,7 +87,9 @@ describe('MIPS reporting frontend access intersection', () => {
     mocks.role = 'provider';
     mocks.qualityRoles = [...DEFAULT_QUALITY_ROLES];
     mocks.fetchUnreadCount.mockResolvedValue({ count: 0 });
-    mocks.fetchPatients.mockResolvedValue({ data: [] });
+    // Patient loading is unrelated to route authorization. Keeping this
+    // request pending avoids an asynchronous state update during assertions.
+    mocks.fetchPatients.mockImplementation(() => new Promise(() => undefined));
     configureAccess();
   });
 

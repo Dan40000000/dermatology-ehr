@@ -16976,6 +16976,22 @@ Consider age-appropriate treatments and include family counseling points.',
     UPDATE patient_measure_status
        SET status_date = COALESCE(
              status_date,
+             CASE
+               WHEN EXTRACT(YEAR FROM completed_date)::INTEGER = reporting_year
+                 THEN completed_date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM updated_at)::INTEGER = reporting_year
+                 THEN updated_at::date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM created_at)::INTEGER = reporting_year
+                 THEN created_at::date
+             END,
+             CASE
+               WHEN reporting_year BETWEEN 1900 AND 9999
+                 THEN make_date(reporting_year, 12, 31)
+             END,
              completed_date,
              updated_at::date,
              created_at::date,
@@ -17573,6 +17589,167 @@ Consider age-appropriate treatments and include family counseling points.',
       WHERE status = 'open';
     CREATE INDEX IF NOT EXISTS idx_quality_gaps_tenant_provider_status
       ON quality_gaps(tenant_id, provider_id, status);
+    `,
+  },
+  {
+    name: "235_mips_history_integrity_followup",
+    sql: `
+    -- Forward repair for any deployment that recorded the initial form of
+    -- migration 234 before its year/history corrections were added.
+    DROP INDEX IF EXISTS idx_patient_measure_status_tenant_patient_measure_encounter;
+
+    -- The first 234 migration archived rows before consolidating its old
+    -- yearless key. Restore only a missing reporting-year projection, keeping
+    -- the newest archived candidate for each annual identity.
+    WITH archived_status AS (
+      SELECT jsonb_populate_record(NULL::patient_measure_status, archive.row_data) AS status_row
+        FROM mips_integrity_duplicate_archive archive
+       WHERE archive.source_table = 'patient_measure_status'
+         AND archive.reason = 'duplicate_patient_measure_status'
+    ),
+    ranked_restore AS (
+      SELECT status_row,
+             ROW_NUMBER() OVER (
+               PARTITION BY
+                 (status_row).tenant_id,
+                 (status_row).patient_id,
+                 (status_row).measure_id,
+                 (status_row).reporting_year,
+                 (status_row).encounter_id
+               ORDER BY (status_row).updated_at DESC NULLS LAST,
+                        (status_row).created_at DESC NULLS LAST,
+                        (status_row).id DESC
+             ) AS restore_rank
+        FROM archived_status
+    )
+    INSERT INTO patient_measure_status
+    SELECT (candidate.status_row).*
+      FROM ranked_restore candidate
+     WHERE candidate.restore_rank = 1
+       AND NOT EXISTS (
+         SELECT 1
+           FROM patient_measure_status live_status
+          WHERE live_status.tenant_id = (candidate.status_row).tenant_id
+            AND live_status.patient_id = (candidate.status_row).patient_id
+            AND live_status.measure_id = (candidate.status_row).measure_id
+            AND live_status.reporting_year = (candidate.status_row).reporting_year
+            AND live_status.encounter_id IS NOT DISTINCT FROM (candidate.status_row).encounter_id
+       )
+    ON CONFLICT (id) DO NOTHING;
+
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT pms.tenant_id, 'patient_measure_status', pms.id,
+           'duplicate_patient_measure_status', to_jsonb(pms)
+      FROM patient_measure_status pms
+      JOIN ranked_status duplicate_status ON pms.ctid = duplicate_status.ctid
+     WHERE duplicate_status.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    DELETE FROM patient_measure_status pms
+     USING ranked_status duplicate_status
+     WHERE pms.ctid = duplicate_status.ctid
+       AND duplicate_status.row_number > 1;
+
+    UPDATE patient_measure_status
+       SET status_date = COALESCE(
+             CASE
+               WHEN EXTRACT(YEAR FROM completed_date)::INTEGER = reporting_year
+                 THEN completed_date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM updated_at)::INTEGER = reporting_year
+                 THEN updated_at::date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM created_at)::INTEGER = reporting_year
+                 THEN created_at::date
+             END,
+             CASE
+               WHEN reporting_year BETWEEN 1900 AND 9999
+                 THEN make_date(reporting_year, 12, 31)
+             END,
+             status_date,
+             CURRENT_DATE
+           ),
+           performance_met = COALESCE(status = 'met', false)
+     WHERE status_date IS NULL
+        OR EXTRACT(YEAR FROM status_date)::INTEGER IS DISTINCT FROM reporting_year
+        OR performance_met IS DISTINCT FROM COALESCE(status = 'met', false);
+
+    CREATE UNIQUE INDEX idx_patient_measure_status_tenant_patient_measure_encounter
+      ON patient_measure_status(tenant_id, patient_id, measure_id, reporting_year, encounter_id)
+      NULLS NOT DISTINCT;
+
+    -- Recover closed episodes removed by the old all-status deduplication.
+    -- Open duplicates remain archived and are consolidated below.
+    ALTER TABLE quality_gaps
+      DROP CONSTRAINT IF EXISTS quality_gaps_tenant_id_patient_id_measure_id_status_key;
+    DROP INDEX IF EXISTS idx_quality_gaps_tenant_patient_measure_open;
+    WITH archived_gaps AS (
+      SELECT jsonb_populate_record(NULL::quality_gaps, archive.row_data) AS gap_row
+        FROM mips_integrity_duplicate_archive archive
+       WHERE archive.source_table = 'quality_gaps'
+         AND archive.reason = 'duplicate_quality_gap'
+    )
+    INSERT INTO quality_gaps
+    SELECT (candidate.gap_row).*
+      FROM archived_gaps candidate
+     WHERE (candidate.gap_row).status <> 'open'
+       AND NOT EXISTS (
+         SELECT 1 FROM quality_gaps live_gap WHERE live_gap.id = (candidate.gap_row).id
+       )
+    ON CONFLICT (id) DO NOTHING;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+       WHERE status = 'open'
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT qg.tenant_id, 'quality_gaps', qg.id,
+           'duplicate_quality_gap', to_jsonb(qg)
+      FROM quality_gaps qg
+      JOIN ranked_gaps duplicate_gap ON qg.ctid = duplicate_gap.ctid
+     WHERE duplicate_gap.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+       WHERE status = 'open'
+    )
+    DELETE FROM quality_gaps qg
+     USING ranked_gaps duplicate_gap
+     WHERE qg.ctid = duplicate_gap.ctid
+       AND duplicate_gap.row_number > 1;
+
+    CREATE UNIQUE INDEX idx_quality_gaps_tenant_patient_measure_open
+      ON quality_gaps(tenant_id, patient_id, measure_id)
+      WHERE status = 'open';
     `,
   },
 

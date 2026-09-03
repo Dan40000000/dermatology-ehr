@@ -81,6 +81,7 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     expect(applied.rows.map((row) => row.name)).toContain('232_mips_workflow_automation');
     expect(applied.rows.map((row) => row.name)).toContain('233_biopsy_tracking_runtime');
     expect(applied.rows.map((row) => row.name)).toContain('234_mips_legacy_integrity');
+    expect(applied.rows.map((row) => row.name)).toContain('235_mips_history_integrity_followup');
   });
 
   it('creates the TEXT biopsy runtime schema, tenant-local specimen keys, and can be reapplied', async () => {

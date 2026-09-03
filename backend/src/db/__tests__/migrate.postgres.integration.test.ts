@@ -430,7 +430,7 @@ describePostgres('PostgreSQL migrations (real database)', () => {
 
     // Exercise both nullable and encounter-scoped status upserts against the
     // NULL-safe conflict target.
-    await mipsService.recordMeasureStatus(
+    const noEncounterStatus = await mipsService.recordMeasureStatus(
       smokeTenant,
       smokePatient,
       smokeMeasure,
@@ -438,7 +438,7 @@ describePostgres('PostgreSQL migrations (real database)', () => {
       'met',
       'service no-encounter status',
     );
-    await mipsService.recordMeasureStatus(
+    const noEncounterUpdate = await mipsService.recordMeasureStatus(
       smokeTenant,
       smokePatient,
       smokeMeasure,
@@ -446,6 +446,8 @@ describePostgres('PostgreSQL migrations (real database)', () => {
       'not_met',
       'service no-encounter update',
     );
+    expect(noEncounterStatus.id).toBe(smokeStatus);
+    expect(noEncounterUpdate.id).toBe(smokeStatus);
     await mipsService.recordMeasureStatus(
       smokeTenant,
       smokePatient,

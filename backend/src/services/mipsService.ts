@@ -1195,7 +1195,7 @@ export class MIPSService {
   ): Promise<PatientMeasureStatus> {
     const id = crypto.randomUUID();
 
-    await client.query(
+    const upsertResult = await client.query<{ id: string }>(
       `INSERT INTO patient_measure_status (
         id, tenant_id, patient_id, measure_id, encounter_id, provider_id,
         status, status_date, documentation, documentation_data,
@@ -1209,7 +1209,8 @@ export class MIPSService {
         documentation_data = COALESCE($9, patient_measure_status.documentation_data),
         exclusion_reason = $10,
         performance_met = $11,
-        updated_at = NOW()`,
+        updated_at = NOW()
+      RETURNING id`,
       [
         id,
         tenantId,
@@ -1226,7 +1227,9 @@ export class MIPSService {
     );
 
     return {
-      id,
+      // An upsert keeps the existing database identity. Return that durable
+      // identity instead of the throwaway INSERT candidate UUID.
+      id: upsertResult.rows[0]?.id || id,
       patientId,
       measureId,
       encounterId,

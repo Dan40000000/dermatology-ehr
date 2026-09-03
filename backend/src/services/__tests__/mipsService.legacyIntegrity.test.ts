@@ -140,7 +140,7 @@ describe('legacy MIPS integrity', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'patient-a' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'encounter-a' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'provider-a' }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // INSERT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'persisted-status-a' }] }) // INSERT/upsert
       .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // alert update
       .mockResolvedValueOnce({}); // COMMIT
     const client = makeClient(clientQuery);
@@ -159,6 +159,7 @@ describe('legacy MIPS integrity', () => {
     );
 
     expect(result).toMatchObject({
+      id: 'persisted-status-a',
       patientId: 'patient-a',
       measureId: 'measure-db-a',
       encounterId: 'encounter-a',
@@ -166,6 +167,8 @@ describe('legacy MIPS integrity', () => {
       performanceMet: true,
     });
     expect(clientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO patient_measure_status'))).toBe(true);
+    expect(String(clientQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO patient_measure_status'))?.[0]))
+      .toContain('RETURNING id');
     expect(clientQuery.mock.calls[clientQuery.mock.calls.length - 1]?.[0]).toBe('COMMIT');
   });
 });

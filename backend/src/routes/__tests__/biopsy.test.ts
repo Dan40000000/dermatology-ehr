@@ -455,25 +455,51 @@ describe("Biopsy routes", () => {
       client,
     );
     expect(String(client.query.mock.calls[1][0])).toContain("p.tenant_id = $8");
+    expect(String(client.query.mock.calls[2][0])).toContain("INSERT INTO biopsy_review_checklists");
+    expect(client.query.mock.calls[2][1]).toEqual(["tenant-1", "bio-1", "user-1"]);
   });
 
   it("POST /biopsies/:id/notify-patient returns 404 when missing", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+
     const res = await request(app).post("/biopsies/bio-1/notify-patient").send({ method: "phone" });
     expect(res.status).toBe(404);
+    expect(client.query.mock.calls.map(([sql]) => String(sql))).toEqual([
+      "BEGIN",
+      expect.stringContaining("UPDATE biopsies"),
+      expect.stringContaining("FOR UPDATE"),
+      "ROLLBACK",
+    ]);
   });
 
   it("POST /biopsies/:id/notify-patient marks notified", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{
-      id: "bio-1",
-      resulted_at: "2026-02-01T00:00:00Z",
-      patient_notified_at: "2026-02-09T00:00:00Z",
-      patient_notified_method: "phone",
-      updated_at: "2026-02-09T00:00:00Z",
-    }] });
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "bio-1",
+        resulted_at: "2026-02-01T00:00:00Z",
+        patient_notified: true,
+        patient_notified_at: "2026-02-09T00:00:00Z",
+        patient_notified_method: "phone",
+        updated_at: "2026-02-09T00:00:00Z",
+      }] })
+      .mockResolvedValueOnce({ rows: [{ biopsy_id: "bio-1", patient_notification_completed: true }] })
+      .mockResolvedValueOnce({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+
     const res = await request(app).post("/biopsies/bio-1/notify-patient").send({ method: "phone" });
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("bio-1");
+    expect(client.query.mock.calls[2][1]).toEqual(["tenant-1", "bio-1"]);
+    expect(String(client.query.mock.calls[2][0])).toContain("patient_notification_completed = true");
+    expect(String(client.query.mock.calls[2][0])).toContain("tenant_id = $1");
     const aad6Insert = queryMock.mock.calls.find(([sql, values]) => (
       String(sql).includes('INSERT INTO mips_readiness_evidence') && values[4] === 'AAD6'
     ));
@@ -481,15 +507,59 @@ describe("Biopsy routes", () => {
   });
 
   it("POST /biopsies/:id/notify-patient is idempotent after notification is recorded", async () => {
-    queryMock
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{
         id: "bio-1", patient_notified: true, patient_notified_at: "2026-02-09T00:00:00Z",
         patient_notified_method: "phone",
-      }] });
+      }] })
+      .mockResolvedValueOnce({ rows: [{ biopsy_id: "bio-1", patient_notification_completed: true }] })
+      .mockResolvedValueOnce({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+
     const res = await request(app).post("/biopsies/bio-1/notify-patient").send({ method: "phone" });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ id: "bio-1", patient_notified: true, idempotent: true });
+    expect(String(client.query.mock.calls[3][0])).toContain("patient_notification_completed = true");
+    expect(client.query.mock.calls[3][1]).toEqual(["tenant-1", "bio-1"]);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("POST /biopsies/:id/notify-patient rolls back the biopsy when checklist completion fails", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "bio-1", patient_notified: true }] })
+      .mockRejectedValueOnce(new Error("checklist unavailable"))
+      .mockResolvedValueOnce({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/biopsies/bio-1/notify-patient").send({ method: "phone" });
+    expect(res.status).toBe(500);
+    expect(client.query.mock.calls.map(([sql]) => String(sql))).toEqual([
+      "BEGIN",
+      expect.stringContaining("UPDATE biopsies"),
+      expect.stringContaining("UPDATE biopsy_review_checklists"),
+      "ROLLBACK",
+    ]);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("POST /biopsies/:id/notify-patient keeps checklist updates tenant-scoped", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "bio-1", patient_notified: true }] })
+      .mockResolvedValueOnce({ rows: [{ biopsy_id: "bio-1", patient_notification_completed: true }] })
+      .mockResolvedValueOnce({ rows: [] });
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/biopsies/bio-1/notify-patient").send({ method: "phone" });
+    expect(res.status).toBe(200);
+    expect(String(client.query.mock.calls[2][0])).toMatch(/WHERE tenant_id = \$1\s+AND biopsy_id = \$2/);
+    expect(client.query.mock.calls[2][1]).toEqual(["tenant-1", "bio-1"]);
   });
 
   it("GET /biopsies/:id/alerts returns alerts", async () => {

@@ -7,7 +7,7 @@
 import { pool } from '../db/pool';
 import { getTableColumns } from '../db/schema';
 import { logger } from '../lib/logger';
-import type { QueryExecutor } from '../lib/repository/types';
+import { isPoolClient, type QueryExecutor } from '../lib/repository/types';
 
 interface BiopsySpecimenIdParams {
   tenantId: string;
@@ -181,9 +181,17 @@ export class BiopsyService {
    */
   static async generateSpecimenId(
     params: BiopsySpecimenIdParams,
-    executor: QueryExecutor = pool,
+    executor: QueryExecutor,
   ): Promise<string> {
     const { tenantId, date = new Date() } = params;
+
+    // The identifier is allocated immediately before the biopsy insert.  It
+    // must therefore be calculated and consumed by the same transaction
+    // client; a pool-level query would release the advisory lock before the
+    // caller inserts the row and reintroduce the collision this method avoids.
+    if (!executor || !isPoolClient(executor)) {
+      throw new Error('generateSpecimenId requires an active transaction client');
+    }
 
     // Format date as YYYYMMDD
     const year = date.getFullYear();
@@ -191,19 +199,43 @@ export class BiopsyService {
     const day = String(date.getDate()).padStart(2, '0');
     const dateStr = `${year}${month}${day}`;
 
-    // Get count of biopsies created today for this tenant
-    const countResult = await executor.query(
-      `SELECT COUNT(*) as count
-       FROM biopsies
-       WHERE tenant_id = $1
-         AND DATE(ordered_at) = DATE($2)`,
-      [tenantId, date]
+    // Serialize allocations for this tenant/date for the lifetime of the
+    // caller's transaction.  The key includes the date so independent clinic
+    // days do not block one another unnecessarily.
+    await executor.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`biopsy-specimen:${tenantId}:${dateStr}`],
     );
 
-    const count = parseInt(countResult.rows[0].count) + 1;
-    const sequenceStr = String(count).padStart(3, '0');
+    // COUNT(*) is not an allocator: gaps from deleted rows or non-canonical
+    // legacy IDs can cause it to reuse an existing specimen number.  Read the
+    // canonical IDs and continue from the largest suffix instead.
+    const specimenResult = await executor.query<{ specimen_id: string }>(
+      `SELECT specimen_id
+         FROM biopsies
+        WHERE tenant_id = $1
+          AND specimen_id LIKE $2`,
+      [tenantId, `BX-${dateStr}-%`],
+    );
 
-    return `BX-${dateStr}-${sequenceStr}`;
+    const specimenPrefix = `BX-${dateStr}-`;
+    const suffixPattern = new RegExp(`^${specimenPrefix}(\\d+)$`);
+    let maxSuffix = 0;
+    for (const row of specimenResult.rows) {
+      const match = suffixPattern.exec(String(row.specimen_id || ''));
+      if (!match) continue;
+      const suffix = Number.parseInt(match[1]!, 10);
+      if (Number.isSafeInteger(suffix) && suffix > maxSuffix) {
+        maxSuffix = suffix;
+      }
+    }
+
+    const nextSuffix = maxSuffix + 1;
+    if (!Number.isSafeInteger(nextSuffix)) {
+      throw new Error(`Specimen ID sequence exhausted for tenant ${tenantId} on ${dateStr}`);
+    }
+
+    return `BX-${dateStr}-${String(nextSuffix).padStart(3, '0')}`;
   }
 
   /**
@@ -719,8 +751,11 @@ export class BiopsyService {
   }
 
   /**
-   * Send notifications for biopsy events
-   * Integrates with notification system (email, SMS, in-app)
+   * Build a notification intent for a biopsy event.
+   *
+   * Delivery is intentionally not attempted here.  Keeping this boundary
+   * explicit prevents a local workflow action from being mistaken for a
+   * patient/provider message that was actually sent.
    */
   static async sendNotification(params: BiopsyNotificationParams): Promise<void> {
     const { biopsyId, tenantId, type, recipientType } = params;
@@ -749,43 +784,17 @@ export class BiopsyService {
 
     const biopsy = biopsyResult.rows[0];
 
-    // Build notification content based on type
-    let subject = '';
-    let message = '';
-
-    switch (type) {
-      case 'result_available':
-        subject = `Biopsy Result Available: ${biopsy.specimen_id}`;
-        message = `Pathology results are now available for biopsy ${biopsy.specimen_id} (Patient: ${biopsy.patient_name}). Please review and take appropriate action.`;
-        break;
-
-      case 'overdue':
-        subject = `URGENT: Overdue Biopsy Result - ${biopsy.specimen_id}`;
-        message = `Biopsy ${biopsy.specimen_id} (Patient: ${biopsy.patient_name}) was sent ${biopsy.days_overdue} days ago and no result has been received. Please follow up with pathology lab.`;
-        break;
-
-      case 'malignancy':
-        subject = `CRITICAL: Malignancy Detected - ${biopsy.specimen_id}`;
-        message = `Malignancy detected in biopsy ${biopsy.specimen_id} (Patient: ${biopsy.patient_name}). Diagnosis: ${biopsy.malignancy_type}. Immediate review and follow-up required.`;
-        break;
-
-      case 'followup_required':
-        subject = `Follow-up Required: ${biopsy.specimen_id}`;
-        message = `Biopsy ${biopsy.specimen_id} requires follow-up action: ${biopsy.follow_up_action}. Patient: ${biopsy.patient_name}.`;
-        break;
-    }
-
-    // Log notification (actual implementation would integrate with notification service)
-    logger.info('Biopsy notification', {
+    // Record only a delivery-neutral intent.  Do not log the generated
+    // message, patient name, or recipient address because this is not a
+    // delivery service and logs must not become a PHI sink.
+    logger.info('Biopsy notification intent recorded; delivery not attempted', {
       biopsyId,
       type,
       recipientType,
-      subject,
-      recipient: recipientType === 'provider' ? biopsy.provider_email : biopsy.patient_email
     });
 
-    // TODO: Integrate with actual notification service (email/SMS/in-app)
-    // This would call services like Twilio, SendGrid, or internal notification system
+    // Future delivery integration requires its own audited, BAA-covered
+    // channel and delivery status before this boundary can change.
   }
 
   /**

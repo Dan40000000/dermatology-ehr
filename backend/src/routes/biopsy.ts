@@ -1174,10 +1174,16 @@ router.post('/:id/review', requireRoles(BIOPSY_REVIEW_ROLES), async (req: Authed
  * Mark patient as notified
  */
 router.post('/:id/notify-patient', requireRoles(BIOPSY_CAPTURE_ROLES), async (req: AuthedRequest, res: Response) => {
+  const client = await pool.connect();
+  let transactionOpen = false;
   try {
     const { id } = req.params;
     const { method, notes } = notifyPatientSchema.parse(req.body);
     const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    await client.query('BEGIN');
+    transactionOpen = true;
 
     const query = `
       UPDATE biopsies
@@ -1195,38 +1201,78 @@ router.post('/:id/notify-patient', requireRoles(BIOPSY_CAPTURE_ROLES), async (re
       RETURNING *
     `;
 
-    const result = await pool.query(query, [method, notes || null, id, tenantId]);
+    const result = await client.query(query, [method, notes || null, id, tenantId]);
+    let biopsy = result.rows[0];
+    let idempotent = false;
 
-    if (result.rows.length === 0) {
-      const existing = await pool.query(
+    if (!biopsy) {
+      const existing = await client.query(
         `SELECT id, patient_notified, patient_notified_at, patient_notified_method,
                 resulted_at, updated_at
            FROM biopsies
           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-          LIMIT 1`,
+          LIMIT 1
+          FOR UPDATE`,
         [id, tenantId],
       );
       if (existing.rows[0]?.patient_notified) {
-        return res.json({ ...existing.rows[0], idempotent: true });
+        biopsy = existing.rows[0];
+        idempotent = true;
+      } else {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        return res.status(404).json({ error: 'Biopsy not found' });
       }
-      return res.status(404).json({ error: 'Biopsy not found' });
     }
 
-    await syncBiopsyMipsCandidates(tenantId, req.user!.id, result.rows[0]);
+    // The local notification record and its review checklist are one unit of
+    // state.  Keep this explicit local-only acknowledgement boundary: this
+    // route records that staff documented notification, but does not deliver
+    // a message through email, SMS, portal, or any other external channel.
+    const checklist = await client.query(
+      `UPDATE biopsy_review_checklists
+          SET patient_notification_completed = true,
+              updated_at = NOW()
+        WHERE tenant_id = $1
+          AND biopsy_id = $2
+        RETURNING biopsy_id, patient_notification_completed`,
+      [tenantId, id],
+    );
+    if (checklist.rows.length === 0) {
+      await client.query('ROLLBACK');
+      transactionOpen = false;
+      return res.status(409).json({
+        error: 'Biopsy review checklist is missing; notification was not recorded.',
+      });
+    }
 
-    logger.info('Patient notified of biopsy result', {
+    await client.query('COMMIT');
+    transactionOpen = false;
+
+    if (idempotent) {
+      return res.json({ ...biopsy, idempotent: true });
+    }
+
+    await syncBiopsyMipsCandidates(tenantId, userId, biopsy);
+
+    logger.info('Patient notification documented for biopsy result', {
       biopsyId: id,
       method,
-      userId: req.user!.id
+      userId,
     });
 
-    res.json(result.rows[0]);
+    res.json(biopsy);
   } catch (error: any) {
+    if (transactionOpen) {
+      await client.query('ROLLBACK').catch(() => undefined);
+    }
     logger.error('Error notifying patient', { error: error.message, biopsyId: req.params.id });
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.issues });
     }
     res.status(500).json({ error: 'Failed to mark patient as notified' });
+  } finally {
+    client.release();
   }
 });
 

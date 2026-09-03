@@ -172,6 +172,95 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     }
   });
 
+  it('allocates tenant-local specimen IDs safely across concurrent biopsy creates', async () => {
+    const { BiopsyService } = require('../../services/biopsyService') as typeof import('../../services/biopsyService');
+    const tenantId = `biopsy-concurrency-${process.pid}-${Date.now()}`;
+    const patientId = `${tenantId}-patient`;
+    const providerId = `${tenantId}-provider`;
+    const allocationDate = new Date('2026-09-03T12:00:00Z');
+    const datePrefix = '20260903';
+
+    await applicationPool!.query('INSERT INTO tenants (id, name) VALUES ($1, $2)', [tenantId, 'Biopsy concurrency test']);
+    await applicationPool!.query(
+      `INSERT INTO patients (id, tenant_id, first_name, last_name)
+       VALUES ($1, $2, 'Concurrency', 'Patient')`,
+      [patientId, tenantId],
+    );
+    await applicationPool!.query(
+      `INSERT INTO providers (id, tenant_id, full_name)
+       VALUES ($1, $2, 'Concurrency Provider')`,
+      [providerId, tenantId],
+    );
+    await applicationPool!.query(
+      `INSERT INTO biopsies (
+         tenant_id, patient_id, specimen_id, specimen_type, body_location,
+         ordering_provider_id, path_lab, deleted_at
+       ) VALUES
+         ($1, $2, $3, 'punch', 'arm', $4, 'Test Pathology', NULL),
+         ($1, $2, $5, 'punch', 'arm', $4, 'Test Pathology', NULL),
+         ($1, $2, $6, 'punch', 'arm', $4, 'Test Pathology', CURRENT_TIMESTAMP),
+         ($1, $2, $7, 'punch', 'arm', $4, 'Test Pathology', NULL)`,
+      [
+        tenantId,
+        patientId,
+        `BX-${datePrefix}-001`,
+        providerId,
+        `BX-${datePrefix}-003`,
+        `BX-${datePrefix}-004`,
+        `BX-${datePrefix}-legacy`,
+      ],
+    );
+
+    const clientA = await applicationPool!.connect();
+    const clientB = await applicationPool!.connect();
+    const createBiopsy = async (client: typeof clientA): Promise<string> => {
+      await client.query('BEGIN');
+      try {
+        const specimenId = await BiopsyService.generateSpecimenId({ tenantId, date: allocationDate }, client);
+        await client.query(
+          `INSERT INTO biopsies (
+             tenant_id, patient_id, specimen_id, specimen_type, body_location,
+             ordering_provider_id, path_lab
+           ) VALUES ($1, $2, $3, 'punch', 'arm', $4, 'Test Pathology')`,
+          [tenantId, patientId, specimenId, providerId],
+        );
+        await client.query('COMMIT');
+        return specimenId;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
+    };
+
+    try {
+      const allocatedIds = await Promise.all([
+        createBiopsy(clientA),
+        createBiopsy(clientB),
+      ]);
+      expect(allocatedIds.sort()).toEqual([
+        `BX-${datePrefix}-005`,
+        `BX-${datePrefix}-006`,
+      ]);
+
+      const persisted = await applicationPool!.query<{ specimen_id: string }>(
+        `SELECT specimen_id
+           FROM biopsies
+          WHERE tenant_id = $1
+            AND specimen_id IN ($2, $3)
+          ORDER BY specimen_id`,
+        [tenantId, ...allocatedIds],
+      );
+      expect(persisted.rows.map((row) => row.specimen_id)).toEqual(allocatedIds);
+    } finally {
+      clientA.release();
+      clientB.release();
+      await applicationPool!.query('DELETE FROM biopsies WHERE tenant_id = $1', [tenantId]);
+      await applicationPool!.query('DELETE FROM providers WHERE tenant_id = $1', [tenantId]);
+      await applicationPool!.query('DELETE FROM patients WHERE tenant_id = $1', [tenantId]);
+      await applicationPool!.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
+    }
+  });
+
   it('creates the MIPS automation ledger, review fields, and structured itch schema', async () => {
     const columns = await applicationPool!.query<{ table_name: string; column_name: string }>(
       `SELECT table_name, column_name

@@ -49,23 +49,70 @@ beforeEach(() => {
 
 describe("BiopsyService", () => {
   it("generateSpecimenId returns formatted id", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ count: "0" }] });
+    const executor = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] }),
+      release: jest.fn(),
+    } as unknown as QueryExecutor;
     const id = await BiopsyService.generateSpecimenId({
       tenantId: "tenant-1",
       date: new Date(2025, 0, 2, 12),
-    });
+    }, executor);
     expect(id).toBe("BX-20250102-001");
+    expect(executor.query).toHaveBeenCalledTimes(2);
+    expect((executor.query as jest.Mock).mock.calls[0][0]).toContain("pg_advisory_xact_lock");
+    expect((executor.query as jest.Mock).mock.calls[0][1]).toEqual([
+      "biopsy-specimen:tenant-1:20250102",
+    ]);
   });
 
   it("generateSpecimenId uses the provided transaction executor", async () => {
-    const executor = { query: jest.fn().mockResolvedValue({ rows: [{ count: "2" }] }) } as unknown as QueryExecutor;
+    const executor = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [
+          { specimen_id: "BX-20250102-001" },
+          { specimen_id: "BX-20250102-003" },
+          { specimen_id: "BX-20250102-legacy" },
+        ] }),
+      release: jest.fn(),
+    } as unknown as QueryExecutor;
     const id = await BiopsyService.generateSpecimenId({
       tenantId: "tenant-1",
       date: new Date(2025, 0, 2, 12),
     }, executor);
 
-    expect(id).toBe("BX-20250102-003");
-    expect(executor.query).toHaveBeenCalledTimes(1);
+    expect(id).toBe("BX-20250102-004");
+    expect(executor.query).toHaveBeenCalledTimes(2);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("generateSpecimenId advances past gaps and deleted-row suffixes", async () => {
+    const executor = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [
+          { specimen_id: "BX-20250102-001" },
+          { specimen_id: "BX-20250102-004" },
+        ] }),
+      release: jest.fn(),
+    } as unknown as QueryExecutor;
+
+    await expect(BiopsyService.generateSpecimenId({
+      tenantId: "tenant-1",
+      date: new Date(2025, 0, 2, 12),
+    }, executor)).resolves.toBe("BX-20250102-005");
+    expect((executor.query as jest.Mock).mock.calls[1][1]).toEqual([
+      "tenant-1",
+      "BX-20250102-%",
+    ]);
+  });
+
+  it("generateSpecimenId requires a transaction client", async () => {
+    await expect(BiopsyService.generateSpecimenId({ tenantId: "tenant-1" }, {
+      query: jest.fn(),
+    } as unknown as QueryExecutor)).rejects.toThrow("active transaction client");
     expect(queryMock).not.toHaveBeenCalled();
   });
 
@@ -182,6 +229,8 @@ describe("BiopsyService", () => {
       recipientType: "provider",
     });
     expect(logger.info).toHaveBeenCalled();
+    expect((logger.info as jest.Mock).mock.calls[0][0]).toContain("delivery not attempted");
+    expect((logger.info as jest.Mock).mock.calls[0][1]).not.toHaveProperty("recipient");
     expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.email as provider_email");
     expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.id = pr.user_id");
   });

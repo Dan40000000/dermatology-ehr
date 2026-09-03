@@ -498,9 +498,12 @@ export class QualityMeasuresService {
           id, tenant_id, measure_name, numerator, denominator, performance_rate,
           tracking_period_start, tracking_period_end
         ) VALUES (
-          $1, $2, $3, $4, $5,
-          CASE WHEN $5 > 0
-            THEN LEAST(100::numeric, GREATEST(0::numeric, ($4::numeric / $5::numeric) * 100))
+          $1, $2, $3, $4::integer, $5::integer,
+          CASE WHEN $5::integer > 0
+            THEN LEAST(
+              100::numeric,
+              GREATEST(0::numeric, (($4::integer)::numeric / ($5::integer)::numeric) * 100)
+            )
             ELSE 0
           END,
           $6, $7

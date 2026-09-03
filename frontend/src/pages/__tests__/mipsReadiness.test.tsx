@@ -175,12 +175,46 @@ describe('MIPSReadinessPage', () => {
     expect(screen.getByText('Automatic candidate')).toBeInTheDocument();
     expect(screen.getByText('mips-440-biopsy-v2026.1')).toBeInTheDocument();
     expect(screen.getByText(/delivery proxy/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open biopsy workflow' })).toHaveAttribute('href', '/biopsies');
+    expect(screen.getByRole('link', { name: 'Open biopsy workflow for source synthetic-biopsy-1' })).toHaveAttribute('href', '/biopsies?search=synthetic-biopsy-1');
     fireEvent.click(screen.getByRole('button', { name: /^Verify candidate/ }));
     await waitFor(() => expect(apiMocks.reviewMipsEvidence).toHaveBeenCalledWith(
       expect.objectContaining({ headers: authMocks.headers }), 'auto-440', 'verified', 2, 2026,
     ));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/marked verified/i));
+  });
+
+  it('builds opaque source-targeted links and surfaces the safe itch limitation without PHI', async () => {
+    renderPage(makeOverview(), [
+      {
+        id: 'auto-biopsy', category: 'quality', measureId: '440', evidenceType: 'pathology_turnaround',
+        sourceType: 'biopsy', sourceId: 'biopsy-source-42', status: 'candidate', origin: 'automation', metadata: {},
+      },
+      {
+        id: 'auto-therapy', category: 'quality', measureId: '176', evidenceType: 'tb_before_biologic',
+        sourceType: 'chronic_therapy_registry', sourceId: 'therapy-source-42', status: 'candidate', origin: 'automation', metadata: {},
+      },
+      {
+        id: 'auto-itch', category: 'quality', measureId: '486', evidenceType: 'itch',
+        sourceType: 'itch_assessment', sourceId: 'itch-source-42', status: 'candidate', origin: 'automation', metadata: {},
+      },
+    ]);
+
+    await screen.findByRole('heading', { name: 'Automation coverage', level: 2 });
+    await waitForMipsReady();
+
+    expect(screen.getByRole('link', { name: 'Open biopsy workflow for source biopsy-source-42' })).toHaveAttribute(
+      'href',
+      '/biopsies?search=biopsy-source-42',
+    );
+    expect(screen.getByRole('link', { name: 'Open chronic therapy registry for source therapy-source-42' })).toHaveAttribute(
+      'href',
+      '/registry?tab=chronic-therapy&sourceId=therapy-source-42',
+    );
+    expect(screen.getByText(/No safe direct link is available for itch assessments/i)).toBeInTheDocument();
+    expect(screen.getByText(/compare opaque source itch-source-42/i)).toBeInTheDocument();
+    expect(screen.queryByText('Jane Doe')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open biopsy workflow for source biopsy-source-42' }).getAttribute('href')).not.toContain('patient');
+    expect(screen.getByRole('link', { name: 'Open chronic therapy registry for source therapy-source-42' }).getAttribute('href')).not.toContain('patient');
   });
 
   it('lets a reviewer explicitly verify manual evidence and restores focus to the reviewed row', async () => {

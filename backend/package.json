@@ -101,5 +101,9 @@
     "ts-jest": "^29.4.6",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "browserslist": "4.28.8",
+    "qs": "6.16.0"
   }
 }

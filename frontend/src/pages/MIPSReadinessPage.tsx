@@ -479,6 +479,16 @@ function categoryLabel(category: MipsCategory): string {
   return category === 'pi' ? 'Promoting Interoperability' : category === 'ia' ? 'Improvement Activities' : category[0].toUpperCase() + category.slice(1);
 }
 
+const WORK_QUEUE_RULE_LABELS: Record<string, string> = {
+  'pi:cehrt-confirmed': 'CEHRT status',
+  'pi:chpl-id': 'CHPL identifier',
+  'pi:verified-attestation-evidence': 'Promoting Interoperability evidence',
+};
+
+function workQueueTitle(item: MipsWorkQueueItem): string {
+  return WORK_QUEUE_RULE_LABELS[item.ruleId] || item.title;
+}
+
 function evidenceTypeLabel(evidenceType: string): string {
   return EVIDENCE_TYPES.find((type) => type.value === evidenceType)?.label || evidenceType.replaceAll('_', ' ');
 }
@@ -1318,7 +1328,7 @@ export default function MIPSReadinessPage() {
 
         <section className="mips-section" aria-labelledby="queue-heading">
           <div className="mips-section__heading"><div><p className="mips-eyebrow">Next actions</p><h2 id="queue-heading">Work queue</h2></div><span className="mips-section__meta">{workQueue.length} open item{workQueue.length === 1 ? '' : 's'}</span></div>
-          {workQueue.length ? <ul className="mips-work-queue">{workQueue.map((item) => <li key={item.id}><div className="mips-work-queue__body"><div className="mips-work-queue__top"><span className={`mips-priority mips-priority--${item.priority}`}>{item.priority} priority</span><StatusBadge status={item.status} /></div><h3>{item.title}</h3><p>{item.action}</p>{item.reasons?.[0] && <p className="mips-help">{item.reasons[0]}</p>}</div><button type="button" className="mips-secondary-button" onClick={() => handleWorkQueueAction(item)} aria-label={`Review item: ${item.title}`}>Review item</button></li>)}</ul> : <div className="mips-empty-state"><CheckCircle2 size={20} aria-hidden="true" /><p>No open work queue items are currently returned. Continue human review before relying on any readiness state.</p></div>}
+          {workQueue.length ? <ul className="mips-work-queue">{workQueue.map((item) => <li key={item.id}><div className="mips-work-queue__body"><div className="mips-work-queue__top"><span className={`mips-priority mips-priority--${item.priority}`}>{item.priority} priority</span><StatusBadge status={item.status} /></div><h3>{workQueueTitle(item)}</h3><p>{item.action}</p>{item.reasons?.[0] && <p className="mips-help">{item.reasons[0]}</p>}</div><button type="button" className="mips-secondary-button" onClick={() => handleWorkQueueAction(item)} aria-label={`Review item: ${workQueueTitle(item)}`}>Review item</button></li>)}</ul> : <div className="mips-empty-state"><CheckCircle2 size={20} aria-hidden="true" /><p>No open work queue items are currently returned. Continue human review before relying on any readiness state.</p></div>}
         </section>
 
         <section ref={evidenceSectionRef} className="mips-section" aria-labelledby="evidence-heading" tabIndex={-1}>

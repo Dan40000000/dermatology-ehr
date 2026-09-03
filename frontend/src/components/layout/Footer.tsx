@@ -4,10 +4,10 @@ export function Footer() {
   return (
     <footer className="footer" role="contentinfo">
       <div className="footer-content">
-        <div className="footer-logo" aria-label="DermEHR Electronic Health Record System">
+        <div className="footer-logo">
           DermEHR
         </div>
-        <div className="footer-version" aria-label="Application version information">
+        <div className="footer-version">
           {PILOT_FOOTER_TEXT}
         </div>
         <div className="footer-legal">

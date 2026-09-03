@@ -446,6 +446,24 @@ describe('MIPSReadinessPage', () => {
     expect(document.activeElement).toBe(screen.getByLabelText('CHPL identifier'));
   });
 
+  it('uses human-readable labels for PI work queue headings when titles are rule IDs', async () => {
+    renderPage(makeOverview({ workQueue: [
+      { id: 'work-cehrt', category: 'pi', ruleId: 'pi:cehrt-confirmed', title: 'pi:cehrt-confirmed', status: 'unknown', priority: 'medium', action: 'Confirm CEHRT status.' },
+      { id: 'work-chpl', category: 'pi', ruleId: 'pi:chpl-id', title: 'pi:chpl-id', status: 'unknown', priority: 'medium', action: 'Add CHPL identifier.' },
+      { id: 'work-attestation', category: 'pi', ruleId: 'pi:verified-attestation-evidence', title: 'pi:verified-attestation-evidence', status: 'unknown', priority: 'medium', action: 'Add verified PI evidence.' },
+    ] }));
+
+    await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
+
+    expect(screen.getByRole('heading', { name: 'CEHRT status', level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'CHPL identifier', level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Promoting Interoperability evidence', level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'pi:cehrt-confirmed', level: 3 })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'pi:chpl-id', level: 3 })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'pi:verified-attestation-evidence', level: 3 })).not.toBeInTheDocument();
+  });
+
   it('only previews a draft, shows the exact disclaimer, and focuses the preview heading', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });

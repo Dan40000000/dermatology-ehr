@@ -24,12 +24,12 @@ describe('Footer Component', () => {
     expect(screen.getByText(/CPT.*American Medical Association/i)).toBeInTheDocument();
   });
 
-  it('has proper aria labels', () => {
+  it('does not override visible text with labels on generic elements', () => {
     const { container } = render(<Footer />);
-    const logo = container.querySelector('[aria-label*="DermEHR"]');
-    const version = container.querySelector('[aria-label*="version"]');
+    const logo = container.querySelector('.footer-logo');
+    const version = container.querySelector('.footer-version');
 
-    expect(logo).toBeInTheDocument();
-    expect(version).toBeInTheDocument();
+    expect(logo).not.toHaveAttribute('aria-label');
+    expect(version).not.toHaveAttribute('aria-label');
   });
 });

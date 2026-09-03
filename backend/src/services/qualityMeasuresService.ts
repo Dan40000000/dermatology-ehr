@@ -487,52 +487,63 @@ export class QualityMeasuresService {
       const trackingPeriodStart = `${year}-01-01`;
       const trackingPeriodEnd = `${year}-12-31`;
 
-      // Get or create PI tracking record
-      const existingResult = await client.query(
-        `SELECT * FROM promoting_interoperability_tracking
-         WHERE tenant_id = $1 AND measure_name = $2 AND tracking_period_start = $3`,
-        [tenantId, measureName, trackingPeriodStart]
-      );
-
-      let numerator = 0;
-      let denominator = 0;
-
-      if (existingResult.rowCount) {
-        numerator = existingResult.rows[0].numerator || 0;
-        denominator = existingResult.rows[0].denominator || 0;
-      }
-
-      if (incrementNumerator) numerator++;
-      if (incrementDenominator) denominator++;
-
-      const performanceRate = boundedPercentage(numerator, denominator);
-
-      const trackingId = existingResult.rowCount
-        ? existingResult.rows[0].id
-        : crypto.randomUUID();
-
-      await client.query(
+      // Use one atomic upsert so concurrent requests cannot overwrite each
+      // other's counter increments. PostgreSQL locks the conflicting row for
+      // the DO UPDATE expression, and EXCLUDED carries only this request's
+      // delta rather than an absolute counter value.
+      const numeratorIncrement = incrementNumerator ? 1 : 0;
+      const denominatorIncrement = incrementDenominator ? 1 : 0;
+      const result = await client.query(
         `INSERT INTO promoting_interoperability_tracking (
           id, tenant_id, measure_name, numerator, denominator, performance_rate,
           tracking_period_start, tracking_period_end
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          CASE WHEN $5 > 0
+            THEN LEAST(100::numeric, GREATEST(0::numeric, ($4::numeric / $5::numeric) * 100))
+            ELSE 0
+          END,
+          $6, $7
+        )
         ON CONFLICT (tenant_id, measure_name, tracking_period_start)
         DO UPDATE SET
-          numerator = $4,
-          denominator = $5,
-          performance_rate = $6,
-          updated_at = NOW()`,
+          numerator = promoting_interoperability_tracking.numerator + EXCLUDED.numerator,
+          denominator = promoting_interoperability_tracking.denominator + EXCLUDED.denominator,
+          performance_rate = CASE
+            WHEN promoting_interoperability_tracking.denominator + EXCLUDED.denominator > 0
+              THEN LEAST(
+                100::numeric,
+                GREATEST(
+                  0::numeric,
+                  (
+                    (promoting_interoperability_tracking.numerator + EXCLUDED.numerator)::numeric
+                    / (promoting_interoperability_tracking.denominator + EXCLUDED.denominator)::numeric
+                  ) * 100
+                )
+              )
+            ELSE 0
+          END,
+          updated_at = NOW()
+        RETURNING numerator, denominator, performance_rate`,
         [
-          trackingId,
+          crypto.randomUUID(),
           tenantId,
           measureName,
-          numerator,
-          denominator,
-          performanceRate,
+          numeratorIncrement,
+          denominatorIncrement,
           trackingPeriodStart,
           trackingPeriodEnd,
         ]
       );
+
+      const row = result.rows[0] as {
+        numerator: number | string;
+        denominator: number | string;
+        performance_rate: number | string;
+      } | undefined;
+      const numerator = Number(row?.numerator ?? numeratorIncrement);
+      const denominator = Number(row?.denominator ?? denominatorIncrement);
+      const performanceRate = Number(row?.performance_rate ?? boundedPercentage(numerator, denominator));
 
       return {
         measureName,

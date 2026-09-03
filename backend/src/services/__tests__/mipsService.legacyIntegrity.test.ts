@@ -169,6 +169,78 @@ describe('legacy MIPS integrity', () => {
     expect(clientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO patient_measure_status'))).toBe(true);
     expect(String(clientQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO patient_measure_status'))?.[0]))
       .toContain('RETURNING id');
+    expect(String(clientQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO patient_measure_status'))?.[0]))
+      .toContain('reporting_year');
+    expect(String(clientQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO patient_measure_status'))?.[0]))
+      .toContain('ON CONFLICT (tenant_id, patient_id, measure_id, reporting_year, encounter_id)');
     expect(clientQuery.mock.calls[clientQuery.mock.calls.length - 1]?.[0]).toBe('COMMIT');
+  });
+
+  it('returns the persisted status identity from encounter evaluation', async () => {
+    const clientQuery = jest.fn()
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'patient-a' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'encounter-a' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'provider-a' }] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          id: 'measure-db-a',
+          measure_id: 'MIPS-A',
+          denominator_criteria: {},
+          numerator_criteria: {},
+          exclusion_criteria: {},
+        }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ notes: 'Synthetic encounter note' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'persisted-evaluation-status' }] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          id: 'measure-db-a',
+          measure_id: 'MIPS-A',
+          measure_name: 'Synthetic quality measure',
+          numerator_criteria: {},
+        }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // checklist upsert
+      .mockResolvedValueOnce({}); // COMMIT
+    const client = makeClient(clientQuery);
+    poolConnectMock.mockResolvedValueOnce(client);
+
+    const results = await service.evaluatePatientMeasures(
+      'tenant-a',
+      'encounter-a',
+      'patient-a',
+      'provider-a',
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      id: 'persisted-evaluation-status',
+      measureId: 'MIPS-A',
+      status: 'met',
+    });
+    expect(clientQuery.mock.calls[clientQuery.mock.calls.length - 1]?.[0]).toBe('COMMIT');
+  });
+
+  it('maps provider records to user ids when counting provider care gaps', async () => {
+    const clientQuery = jest.fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'provider-a' }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // quality performance
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // PI
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // IA
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ count: '2' }] }) // gaps
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ count: '3' }] }) // patients
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }); // history insert
+    const client = makeClient(clientQuery);
+    poolConnectMock.mockResolvedValueOnce(client);
+
+    const report = await service.generateMIPSReport('tenant-a', 'provider-a', 2026);
+
+    expect(report.careGapCount).toBe(2);
+    const gapQuery = String(clientQuery.mock.calls.find(([sql]) => String(sql).includes('FROM quality_gaps'))?.[0]);
+    expect(gapQuery).toContain('SELECT user_id FROM providers');
+    expect(gapQuery).toContain('tenant_id = $1 AND id = $2');
   });
 });

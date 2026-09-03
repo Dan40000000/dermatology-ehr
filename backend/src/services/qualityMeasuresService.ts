@@ -1288,9 +1288,9 @@ export class QualityMeasuresService {
     await client.query(
       `INSERT INTO quality_gaps (
         id, tenant_id, patient_id, measure_id, provider_id,
-        status, priority, gap_description, gap_reason, recommended_action
-      ) VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $7, $8)
-      ON CONFLICT ON CONSTRAINT quality_gaps_tenant_id_patient_id_measure_id_status_key
+        gap_type, status, priority, gap_description, gap_reason, recommended_action
+      ) VALUES ($1, $2, $3, $4, $5, 'performance', 'open', $6, $7, $7, $8)
+      ON CONFLICT (tenant_id, patient_id, measure_id) WHERE status = 'open'
       DO UPDATE SET
         provider_id = COALESCE($5, quality_gaps.provider_id),
         priority = $6,

@@ -16974,13 +16974,19 @@ Consider age-appropriate treatments and include family counseling points.',
       ADD COLUMN IF NOT EXISTS source_data JSONB DEFAULT '{}'::jsonb;
 
     UPDATE patient_measure_status
-       SET status_date = COALESCE(status_date, CURRENT_DATE),
+       SET status_date = COALESCE(
+             status_date,
+             completed_date,
+             updated_at::date,
+             created_at::date,
+             CURRENT_DATE
+           ),
            documentation_data = COALESCE(documentation_data, '{}'::jsonb),
-           performance_met = COALESCE(performance_met, status = 'met'),
+           performance_met = COALESCE(status = 'met', false),
            source_data = COALESCE(source_data, '{}'::jsonb)
      WHERE status_date IS NULL
         OR documentation_data IS NULL
-        OR performance_met IS NULL
+        OR performance_met IS DISTINCT FROM COALESCE(status = 'met', false)
         OR source_data IS NULL;
 
     ALTER TABLE patient_measure_status
@@ -17034,7 +17040,7 @@ Consider age-appropriate treatments and include family counseling points.',
     WITH ranked_status AS (
       SELECT ctid,
              ROW_NUMBER() OVER (
-               PARTITION BY tenant_id, patient_id, measure_id, encounter_id
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
                ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
              ) AS row_number
         FROM patient_measure_status
@@ -17050,7 +17056,7 @@ Consider age-appropriate treatments and include family counseling points.',
     WITH ranked_status AS (
       SELECT ctid,
              ROW_NUMBER() OVER (
-               PARTITION BY tenant_id, patient_id, measure_id, encounter_id
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
                ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
              ) AS row_number
         FROM patient_measure_status
@@ -17062,7 +17068,7 @@ Consider age-appropriate treatments and include family counseling points.',
 
     DROP INDEX IF EXISTS idx_patient_measure_status_tenant_patient_measure_encounter;
     CREATE UNIQUE INDEX idx_patient_measure_status_tenant_patient_measure_encounter
-      ON patient_measure_status(tenant_id, patient_id, measure_id, encounter_id)
+      ON patient_measure_status(tenant_id, patient_id, measure_id, reporting_year, encounter_id)
       NULLS NOT DISTINCT;
 
     -- The original inline table has the catalog-shaped IA columns only. Add
@@ -17531,10 +17537,11 @@ Consider age-appropriate treatments and include family counseling points.',
     WITH ranked_gaps AS (
       SELECT ctid,
              ROW_NUMBER() OVER (
-               PARTITION BY tenant_id, patient_id, measure_id, status
+               PARTITION BY tenant_id, patient_id, measure_id
                ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
              ) AS row_number
         FROM quality_gaps
+       WHERE status = 'open'
     )
     INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
     SELECT qg.tenant_id, 'quality_gaps', qg.id,
@@ -17547,31 +17554,23 @@ Consider age-appropriate treatments and include family counseling points.',
     WITH ranked_gaps AS (
       SELECT ctid,
              ROW_NUMBER() OVER (
-               PARTITION BY tenant_id, patient_id, measure_id, status
+               PARTITION BY tenant_id, patient_id, measure_id
                ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
              ) AS row_number
         FROM quality_gaps
+       WHERE status = 'open'
     )
     DELETE FROM quality_gaps qg
      USING ranked_gaps duplicate_gap
      WHERE qg.ctid = duplicate_gap.ctid
        AND duplicate_gap.row_number > 1;
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_gaps_tenant_patient_measure_open
-      ON quality_gaps(tenant_id, patient_id, measure_id, status)
+    ALTER TABLE quality_gaps
+      DROP CONSTRAINT IF EXISTS quality_gaps_tenant_id_patient_id_measure_id_status_key;
+    DROP INDEX IF EXISTS idx_quality_gaps_tenant_patient_measure_open;
+    CREATE UNIQUE INDEX idx_quality_gaps_tenant_patient_measure_open
+      ON quality_gaps(tenant_id, patient_id, measure_id)
       WHERE status = 'open';
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'quality_gaps_tenant_id_patient_id_measure_id_status_key'
-      ) THEN
-        ALTER TABLE quality_gaps
-          ADD CONSTRAINT quality_gaps_tenant_id_patient_id_measure_id_status_key
-          UNIQUE (tenant_id, patient_id, measure_id, status);
-      END IF;
-    END $$;
     CREATE INDEX IF NOT EXISTS idx_quality_gaps_tenant_provider_status
       ON quality_gaps(tenant_id, provider_id, status);
     `,
@@ -17590,26 +17589,38 @@ async function ensureMigrationsTable() {
 
 async function run() {
   await ensureMigrationsTable();
-  for (const m of migrations) {
-    const existing = await pool.query("select 1 from migrations where name = $1", [m.name]);
-    if (existing.rowCount) {
-      // eslint-disable-next-line no-console
-      console.log(`Skipping ${m.name}`);
-      continue;
+  const client = await pool.connect();
+  try {
+    for (const m of migrations) {
+      await client.query("begin");
+      try {
+        // Serialize migration decisions across application instances. The
+        // transaction-scoped lock is released automatically on commit or
+        // rollback and every statement below uses this same connection.
+        await client.query("select pg_advisory_xact_lock(hashtext($1))", ["derm_app_migrations"]);
+
+        const existing = await client.query("select 1 from migrations where name = $1", [m.name]);
+        if (existing.rowCount) {
+          await client.query("commit");
+          // eslint-disable-next-line no-console
+          console.log(`Skipping ${m.name}`);
+          continue;
+        }
+
+        // eslint-disable-next-line no-console
+        console.log(`Applying ${m.name}...`);
+        await client.query(m.sql);
+        await client.query("insert into migrations(name) values ($1)", [m.name]);
+        await client.query("commit");
+        // eslint-disable-next-line no-console
+        console.log(`Applied ${m.name}`);
+      } catch (err) {
+        await client.query("rollback");
+        throw err;
+      }
     }
-    // eslint-disable-next-line no-console
-    console.log(`Applying ${m.name}...`);
-    await pool.query("begin");
-    try {
-      await pool.query(m.sql);
-      await pool.query("insert into migrations(name) values ($1)", [m.name]);
-      await pool.query("commit");
-      // eslint-disable-next-line no-console
-      console.log(`Applied ${m.name}`);
-    } catch (err) {
-      await pool.query("rollback");
-      throw err;
-    }
+  } finally {
+    client.release();
   }
 }
 

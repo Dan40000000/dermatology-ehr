@@ -92,4 +92,45 @@ describe('legacy quality-measures integrity', () => {
     expect(clientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO patient_measure_events'))).toBe(false);
     expect(client.release).toHaveBeenCalledTimes(1);
   });
+
+  it('creates only one open care gap while preserving recurrent closed history', async () => {
+    const clientQuery = jest.fn()
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'measure-db-a' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'patient-a' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'encounter-a' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'provider-user-a' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // tracking upsert
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // event insert
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: 'measure-db-a', measure_name: 'Synthetic measure', high_priority: true }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // gap upsert
+      .mockResolvedValueOnce({}); // COMMIT
+    const client = makeClient(clientQuery);
+    poolConnectMock.mockResolvedValueOnce(client);
+
+    await service.trackMeasurePerformance(
+      'tenant-a',
+      'patient-a',
+      'MIPS-A',
+      'encounter-a',
+      'provider-a',
+      {
+        patientId: 'patient-a',
+        measureId: 'MIPS-A',
+        isDenominatorEligible: true,
+        numeratorMet: false,
+        exclusionApplied: false,
+        sourceData: {},
+      },
+    );
+
+    const gapInsert = String(clientQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO quality_gaps'))?.[0]);
+    expect(gapInsert).toContain("gap_type");
+    expect(gapInsert).toContain("'performance'");
+    expect(gapInsert).toContain("ON CONFLICT (tenant_id, patient_id, measure_id) WHERE status = 'open'");
+    expect(gapInsert).not.toContain('ON CONSTRAINT');
+  });
 });

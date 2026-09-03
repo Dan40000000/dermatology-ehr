@@ -38,6 +38,7 @@ jest.mock('../../services/mipsService', () => ({
   mipsService: {
     recordMeasureStatus: jest.fn(),
     resolveProviderId: jest.fn(),
+    estimateMIPSScore: jest.fn(),
   },
   MipsReferenceValidationError: class MipsReferenceValidationError extends Error {
     statusCode = 400;
@@ -61,6 +62,8 @@ app.use('/api/quality', qualityMeasuresRouter);
 
 const queryMock = pool.query as jest.Mock;
 const recordMeasureStatusMock = mipsService.recordMeasureStatus as jest.Mock;
+const resolveProviderIdMock = mipsService.resolveProviderId as jest.Mock;
+const estimateMipsScoreMock = mipsService.estimateMIPSScore as jest.Mock;
 const trackPiMock = qualityMeasuresService.trackPromotingInteroperability as jest.Mock;
 
 const REPORTING_ROLES = ['admin', 'provider', 'manager', 'compliance_officer'];
@@ -78,6 +81,19 @@ beforeEach(() => {
     statusDate: '2026-01-01',
     documentationData: {},
     performanceMet: true,
+  });
+  resolveProviderIdMock.mockReset();
+  resolveProviderIdMock.mockResolvedValue('provider-a');
+  estimateMipsScoreMock.mockReset();
+  estimateMipsScoreMock.mockResolvedValue({
+    estimated: 0,
+    quality: 0,
+    pi: 0,
+    ia: 0,
+    cost: 0,
+    paymentAdjustment: 0,
+    trajectory: 'stable',
+    projectedYear: 2026,
   });
   trackPiMock.mockReset();
   trackPiMock.mockResolvedValue({
@@ -176,5 +192,22 @@ describe('legacy MIPS reporting role matrix', () => {
       .set('X-Test-Role', 'admin')
       .send({});
     expect(adminResponse.status).toBe(501);
+  });
+
+  it('maps provider ids to the user namespace for provider care-gap counts', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // measures
+      .mockResolvedValueOnce({ rows: [{ count: '2' }], rowCount: 1 }) // gaps
+      .mockResolvedValueOnce({ rows: [{ count: '3' }], rowCount: 1 }); // patients
+
+    const response = await request(app)
+      .get('/api/mips/provider/provider-a/dashboard?year=2026')
+      .set('X-Test-Role', 'provider');
+
+    expect(response.status).toBe(200);
+    expect(response.body.careGapCount).toBe(2);
+    const gapSql = String(queryMock.mock.calls[1]?.[0]);
+    expect(gapSql).toContain('SELECT user_id FROM providers');
+    expect(queryMock.mock.calls[1]?.[1]).toEqual(['tenant-a', 'provider-a']);
   });
 });

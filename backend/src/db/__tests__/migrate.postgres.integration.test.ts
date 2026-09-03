@@ -335,7 +335,8 @@ describePostgres('PostgreSQL migrations (real database)', () => {
           AND tablename IN (
             'patient_measure_status', 'patient_measure_tracking',
             'encounter_measure_checklist', 'mips_score_history', 'ia_activities',
-            'promoting_interoperability_tracking', 'improvement_activities', 'measure_performance'
+            'promoting_interoperability_tracking', 'improvement_activities', 'measure_performance',
+            'quality_gaps'
           )`,
     );
     expect(indexes.rows.map((row) => row.indexname)).toEqual(expect.arrayContaining([
@@ -347,9 +348,12 @@ describePostgres('PostgreSQL migrations (real database)', () => {
       'idx_promoting_interoperability_tenant_measure_period',
       'idx_improvement_activities_tenant_activity_start',
       'idx_measure_performance_tenant_provider_measure_period',
+      'idx_quality_gaps_tenant_patient_measure_open',
     ]));
     expect(indexes.rows.find((row) => row.indexname === 'idx_patient_measure_status_tenant_patient_measure_encounter')?.indexdef)
-      .toMatch(/UNIQUE INDEX.*tenant_id, patient_id, measure_id, encounter_id.*NULLS NOT DISTINCT/i);
+      .toMatch(/UNIQUE INDEX.*tenant_id, patient_id, measure_id, reporting_year, encounter_id.*NULLS NOT DISTINCT/i);
+    expect(indexes.rows.find((row) => row.indexname === 'idx_quality_gaps_tenant_patient_measure_open')?.indexdef)
+      .toMatch(/UNIQUE INDEX.*tenant_id, patient_id, measure_id.*WHERE.*status.*open/i);
 
     const constraints = await applicationPool!.query<{ conname: string }>(
       `SELECT conname
@@ -358,6 +362,13 @@ describePostgres('PostgreSQL migrations (real database)', () => {
           AND conname = 'encounter_measure_checklist_tenant_encounter_measure_unique'`,
     );
     expect(constraints.rows).toHaveLength(1);
+    const obsoleteGapConstraint = await applicationPool!.query<{ conname: string }>(
+      `SELECT conname
+         FROM pg_constraint
+        WHERE conrelid = 'quality_gaps'::regclass
+          AND conname = 'quality_gaps_tenant_id_patient_id_measure_id_status_key'`,
+    );
+    expect(obsoleteGapConstraint.rows).toHaveLength(0);
 
     const smokeSuffix = `${process.pid}-${Date.now()}`;
     const smokeTenant = `mips-legacy-${smokeSuffix}`;
@@ -448,6 +459,14 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     );
     expect(noEncounterStatus.id).toBe(smokeStatus);
     expect(noEncounterUpdate.id).toBe(smokeStatus);
+    const historicalStatus = `mips-legacy-status-2025-${smokeSuffix}`;
+    await applicationPool!.query(
+      `INSERT INTO patient_measure_status (
+         id, tenant_id, patient_id, measure_id, reporting_year,
+         status, status_date, documentation, documentation_data, performance_met
+       ) VALUES ($1, $2, $3, $4, 2025, 'met', '2025-06-30', 'historical status', '{}', true)`,
+      [historicalStatus, smokeTenant, smokePatient, smokeMeasure],
+    );
     await mipsService.recordMeasureStatus(
       smokeTenant,
       smokePatient,
@@ -470,7 +489,70 @@ describePostgres('PostgreSQL migrations (real database)', () => {
         WHERE tenant_id = $1 AND patient_id = $2 AND measure_id = $3`,
       [smokeTenant, smokePatient, smokeMeasure],
     );
-    expect(statusUpserts.rows[0]?.count).toBe('2');
+    expect(statusUpserts.rows[0]?.count).toBe('3');
+    const preservedHistoricalStatus = await applicationPool!.query<{ documentation: string }>(
+      `SELECT documentation
+         FROM patient_measure_status
+        WHERE id = $1 AND reporting_year = 2025`,
+      [historicalStatus],
+    );
+    expect(preservedHistoricalStatus.rows[0]?.documentation).toBe('historical status');
+
+    // Closed gaps are an event history. Only the single active/open gap is
+    // unique, so recurring episodes can close without colliding with prior
+    // closed rows.
+    await applicationPool!.query(
+      `INSERT INTO quality_gaps (
+         id, tenant_id, patient_id, provider_id, measure_id,
+         gap_type, gap_description, status, closed_date
+       ) VALUES
+         ($1, $2, $3, $4, $5, 'performance', 'closed episode one', 'closed', NOW()),
+         ($6, $2, $3, $4, $5, 'performance', 'closed episode two', 'closed', NOW()),
+         ($7, $2, $3, $4, $5, 'performance', 'active episode', 'open', NULL)`,
+      [
+        `mips-gap-closed-1-${smokeSuffix}`,
+        smokeTenant,
+        smokePatient,
+        smokeUser,
+        smokeMeasure,
+        `mips-gap-closed-2-${smokeSuffix}`,
+        `mips-gap-open-${smokeSuffix}`,
+      ],
+    );
+    await applicationPool!.query(
+      `INSERT INTO quality_gaps (
+         id, tenant_id, patient_id, provider_id, measure_id,
+         gap_type, gap_description, status
+       ) VALUES ($1, $2, $3, $4, $5, 'performance', 'updated active episode', 'open')
+       ON CONFLICT (tenant_id, patient_id, measure_id) WHERE status = 'open'
+       DO UPDATE SET gap_description = EXCLUDED.gap_description`,
+      [`mips-gap-open-retry-${smokeSuffix}`, smokeTenant, smokePatient, smokeUser, smokeMeasure],
+    );
+    await applicationPool!.query(
+      `UPDATE quality_gaps
+          SET status = 'closed', closed_date = NOW()
+        WHERE tenant_id = $1 AND patient_id = $2 AND measure_id = $3 AND status = 'open'`,
+      [smokeTenant, smokePatient, smokeMeasure],
+    );
+    await applicationPool!.query(
+      `INSERT INTO quality_gaps (
+         id, tenant_id, patient_id, provider_id, measure_id,
+         gap_type, gap_description, status
+       ) VALUES ($1, $2, $3, $4, $5, 'performance', 'recurrent active episode', 'open')`,
+      [`mips-gap-recurrent-${smokeSuffix}`, smokeTenant, smokePatient, smokeUser, smokeMeasure],
+    );
+    const recurrentGaps = await applicationPool!.query<{ status: string; count: string }>(
+      `SELECT status, COUNT(*)::text AS count
+         FROM quality_gaps
+        WHERE tenant_id = $1 AND patient_id = $2 AND measure_id = $3
+        GROUP BY status
+        ORDER BY status`,
+      [smokeTenant, smokePatient, smokeMeasure],
+    );
+    expect(recurrentGaps.rows).toEqual([
+      { status: 'closed', count: '3' },
+      { status: 'open', count: '1' },
+    ]);
 
     // Exercise the real service upsert against the migrated IA table. The
     // historical title NOT NULL and global activity_id key must both remain
@@ -596,15 +678,28 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     // the live record when the NULL-safe target is rebuilt.
     const archiveStatusOld = `mips-legacy-archive-old-${smokeSuffix}`;
     const archiveStatusNew = `mips-legacy-archive-new-${smokeSuffix}`;
+    const archiveStatusPriorYear = `mips-legacy-archive-2025-${smokeSuffix}`;
+    const historicalBackfillStatus = `mips-legacy-backfill-2024-${smokeSuffix}`;
     await applicationPool!.query('DROP INDEX idx_patient_measure_status_tenant_patient_measure_encounter');
     await applicationPool!.query(
       `INSERT INTO patient_measure_status (
          id, tenant_id, patient_id, measure_id, reporting_year,
-         status, documentation, documentation_data, performance_met, updated_at, created_at
+         status, status_date, completed_date, documentation, documentation_data,
+         performance_met, updated_at, created_at
        ) VALUES
-         ($1, $2, $3, $4, 2026, 'met', 'archived old documentation', '{}', true, '2099-01-01', '2099-01-01'),
-         ($5, $2, $3, $4, 2026, 'not_met', 'kept newest documentation', '{}', false, '2099-01-02', '2099-01-02')`,
-      [archiveStatusOld, smokeTenant, archivePatient, smokeMeasure, archiveStatusNew],
+         ($1, $2, $3, $4, 2026, 'met', '2099-01-01', NULL, 'archived old documentation', '{}', true, '2099-01-01', '2099-01-01'),
+         ($5, $2, $3, $4, 2026, 'not_met', '2099-01-02', NULL, 'kept newest documentation', '{}', false, '2099-01-02', '2099-01-02'),
+         ($6, $2, $3, $4, 2025, 'met', '2025-01-02', NULL, 'prior-year documentation', '{}', true, '2025-01-02', '2025-01-02'),
+         ($7, $2, $3, $4, 2024, 'met', NULL, '2024-05-01', 'historical backfill', '{}', false, NULL, '2024-05-01')`,
+      [
+        archiveStatusOld,
+        smokeTenant,
+        archivePatient,
+        smokeMeasure,
+        archiveStatusNew,
+        archiveStatusPriorYear,
+        historicalBackfillStatus,
+      ],
     );
     await applicationPool!.query(`DELETE FROM migrations WHERE name = '234_mips_legacy_integrity'`);
     await runMigrations!();
@@ -620,15 +715,25 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     );
     expect(archivedStatus.rows).toHaveLength(1);
     expect(archivedStatus.rows[0]?.row_data.documentation).toBe('archived old documentation');
-    const keptStatus = await applicationPool!.query<{ id: string; documentation: string }>(
-      `SELECT id, documentation
+    const keptStatus = await applicationPool!.query<{ id: string; documentation: string; reporting_year: number }>(
+      `SELECT id, documentation, reporting_year
          FROM patient_measure_status
-        WHERE tenant_id = $1 AND patient_id = $2 AND measure_id = $3 AND encounter_id IS NULL`,
+        WHERE tenant_id = $1 AND patient_id = $2 AND measure_id = $3 AND encounter_id IS NULL
+        ORDER BY reporting_year`,
       [smokeTenant, archivePatient, smokeMeasure],
     );
     expect(keptStatus.rows).toEqual([
-      { id: archiveStatusNew, documentation: 'kept newest documentation' },
+      { id: historicalBackfillStatus, documentation: 'historical backfill', reporting_year: 2024 },
+      { id: archiveStatusPriorYear, documentation: 'prior-year documentation', reporting_year: 2025 },
+      { id: archiveStatusNew, documentation: 'kept newest documentation', reporting_year: 2026 },
     ]);
+    const correctedBackfill = await applicationPool!.query<{ status_date: string; performance_met: boolean }>(
+      `SELECT status_date::text, performance_met
+         FROM patient_measure_status
+        WHERE id = $1`,
+      [historicalBackfillStatus],
+    );
+    expect(correctedBackfill.rows[0]).toEqual({ status_date: '2024-05-01', performance_met: true });
 
     // Archive identity is tenant-scoped: equal source IDs/reasons from two
     // tenants must not cause the second displaced row to be lost.
@@ -646,6 +751,7 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     );
     expect(crossTenantArchive.rows[0]?.count).toBe('2');
 
+    await applicationPool!.query('DELETE FROM quality_gaps WHERE tenant_id = $1', [smokeTenant]);
     await applicationPool!.query('DELETE FROM patient_measure_status WHERE tenant_id = $1', [smokeTenant]);
     await applicationPool!.query('DELETE FROM mips_integrity_duplicate_archive WHERE tenant_id IN ($1, $2)', [smokeTenant, smokeTenantB]);
     await applicationPool!.query('DELETE FROM ia_activities WHERE tenant_id = $1', [smokeTenant]);

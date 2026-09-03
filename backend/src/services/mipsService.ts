@@ -266,10 +266,9 @@ export class MIPSService {
             validatedProviderId,
             measure
           );
-          results.push(status);
 
           // Record the status
-          await this.recordMeasureStatusInternal(
+          const persistedStatus = await this.recordMeasureStatusInternal(
             client,
             tenantId,
             patientId,
@@ -281,6 +280,9 @@ export class MIPSService {
             status.exclusionReason,
             status.documentationData
           );
+          // The checklist and API use the public measure code, while the
+          // status identity must be the durable id returned by PostgreSQL.
+          results.push({ ...persistedStatus, measureId: status.measureId });
         } catch (err) {
           logger.error(`Error evaluating measure ${measure.measure_id}:`, err);
         }
@@ -490,7 +492,9 @@ export class MIPSService {
       const gapResult = await client.query(
         `SELECT COUNT(*) as count FROM quality_gaps
          WHERE tenant_id = $1 AND status = 'open'
-         ${validatedProviderId ? 'AND provider_id = $2' : ''}`,
+         ${validatedProviderId
+           ? 'AND provider_id = (SELECT user_id FROM providers WHERE tenant_id = $1 AND id = $2)'
+           : ''}`,
         validatedProviderId ? [tenantId, validatedProviderId] : [tenantId]
       );
       const careGapCount = parseInt(gapResult.rows[0]?.count) || 0;
@@ -1198,10 +1202,11 @@ export class MIPSService {
     const upsertResult = await client.query<{ id: string }>(
       `INSERT INTO patient_measure_status (
         id, tenant_id, patient_id, measure_id, encounter_id, provider_id,
-        status, status_date, documentation, documentation_data,
+        reporting_year, status, status_date, documentation, documentation_data,
         exclusion_reason, performance_met
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, $8, $9, $10, $11)
-      ON CONFLICT (tenant_id, patient_id, measure_id, encounter_id)
+      ) VALUES ($1, $2, $3, $4, $5, $6, EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER,
+                $7, CURRENT_DATE, $8, $9, $10, $11)
+      ON CONFLICT (tenant_id, patient_id, measure_id, reporting_year, encounter_id)
       DO UPDATE SET
         status = $7,
         status_date = CURRENT_DATE,

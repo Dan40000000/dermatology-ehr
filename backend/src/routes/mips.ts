@@ -281,7 +281,11 @@ mipsRouter.get('/provider/:providerId/dashboard', requireAuth, async (req: Authe
     // Get care gaps count
     const gapsResult = await pool.query(
       `SELECT COUNT(*) as count FROM quality_gaps
-       WHERE tenant_id = $1 AND provider_id = $2 AND status = 'open'`,
+       WHERE tenant_id = $1
+         AND provider_id = (
+           SELECT user_id FROM providers WHERE tenant_id = $1 AND id = $2
+         )
+         AND status = 'open'`,
       [tenantId, providerId]
     );
 

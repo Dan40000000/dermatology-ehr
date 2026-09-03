@@ -121,9 +121,14 @@ function renderPage(overview = makeOverview(), evidence: MipsEvidence[] = []) {
   return render(<MemoryRouter initialEntries={['/mips-readiness']}><MIPSReadinessPage /></MemoryRouter>);
 }
 
+async function waitForMipsReady() {
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save practice profile' })).toBeEnabled());
+}
+
 describe('MIPSReadinessPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.values(apiMocks).forEach((mock) => mock.mockReset());
     authMocks.isAuthenticated = true;
     apiMocks.saveMipsReadinessProfile.mockResolvedValue({ year: 2026, profile: makeOverview().profile });
     apiMocks.createMipsEvidence.mockResolvedValue({ year: 2026, evidence: { id: 'ev-1', category: 'quality', status: 'candidate', evidenceType: 'data_completeness', sourceType: 'qpp_manual', sourceId: 'ref-1', metadata: {} } });
@@ -136,6 +141,7 @@ describe('MIPSReadinessPage', () => {
     renderPage(makeOverview({ catalog: { ...makeOverview().catalog, qualityMeasures: [], improvementActivities: [] } }));
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'MIPS Readiness Center', level: 1 })).toBeInTheDocument());
+    await waitForMipsReady();
     expect(document.title).toBe('MIPS Readiness Center - DermEHR');
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByRole('combobox', { name: 'Performance year' })).toHaveValue('2026');
@@ -148,6 +154,7 @@ describe('MIPSReadinessPage', () => {
   it('does not refetch in a loop when AuthContext returns fresh header objects', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     await waitFor(() => expect(apiMocks.fetchMipsReadiness).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => window.setTimeout(resolve, 20));
     expect(apiMocks.fetchMipsReadiness).toHaveBeenCalledTimes(1);
@@ -164,6 +171,7 @@ describe('MIPSReadinessPage', () => {
       metadata: { computedStatus: 'met', limitationCode: 'VERIFY_REPORT_SENT_TO_BIOPSYING_CLINICIAN' },
     }]);
     await screen.findByRole('heading', { name: 'Automation coverage', level: 2 });
+    await waitForMipsReady();
     expect(screen.getByText('Automatic candidate')).toBeInTheDocument();
     expect(screen.getByText('mips-440-biopsy-v2026.1')).toBeInTheDocument();
     expect(screen.getByText(/delivery proxy/i)).toBeInTheDocument();
@@ -184,6 +192,7 @@ describe('MIPSReadinessPage', () => {
     }]);
 
     await screen.findByRole('heading', { name: 'Manual evidence', level: 2 });
+    await waitForMipsReady();
     const reviewButton = screen.getByRole('button', { name: /^Verify manual evidence/ });
     const evidenceRow = reviewButton.closest('li');
     fireEvent.click(reviewButton);
@@ -215,6 +224,7 @@ describe('MIPSReadinessPage', () => {
     ]);
 
     await screen.findByRole('heading', { name: 'Manual evidence', level: 2 });
+    await waitForMipsReady();
     const verifyButtons = screen.getAllByRole('button', { name: /^Verify/ });
     const rejectButtons = screen.getAllByRole('button', { name: /^Reject/ });
     expect(verifyButtons).toHaveLength(2);
@@ -239,6 +249,7 @@ describe('MIPSReadinessPage', () => {
   it('reconciles connected workflows and announces the idempotent result', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Automation coverage', level: 2 });
+    await waitForMipsReady();
     fireEvent.click(screen.getByRole('button', { name: 'Reconcile workflow candidates' }));
     await waitFor(() => expect(apiMocks.syncMipsAutomation).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/1 created, 0 updated, 0 unchanged/i));
@@ -253,12 +264,14 @@ describe('MIPSReadinessPage', () => {
       },
     }));
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     expect(screen.getAllByText('Ready').length).toBeGreaterThan(0);
   });
 
   it('uses labelled controls, fieldset legends, and focuses the validation summary with ARIA references', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
 
     expect(screen.getByLabelText('Allowed Part B charges ($)')).toHaveAttribute('type', 'number');
     expect(screen.getByLabelText('Medicare beneficiaries')).toHaveAttribute('min', '0');
@@ -283,6 +296,7 @@ describe('MIPSReadinessPage', () => {
   it('sorts the real table with caption, scopes, aria-sort, and a live announcement', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     const table = screen.getByRole('table', { name: /2026 measure and activity catalog/i });
     expect(within(table).getByText(/2026 measure and activity catalog/i)).toBeInTheDocument();
     expect(within(table).getAllByRole('columnheader')).toHaveLength(4);
@@ -296,6 +310,7 @@ describe('MIPSReadinessPage', () => {
   it('keeps evidence structured with candidate default and a server-generated opaque reference', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     expect(screen.getByRole('combobox', { name: 'Lifecycle status' })).toHaveValue('candidate');
     expect(screen.getByText(/opaque reference is generated by the server/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Source ID \/ internal reference/i)).not.toBeInTheDocument();
@@ -310,6 +325,7 @@ describe('MIPSReadinessPage', () => {
   it('validates evidence values, auto-selects measure IDs, and serializes only relevant metadata', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.change(screen.getByLabelText('Evidence type'), { target: { value: 'tb_before_biologic' } });
     expect(screen.getByLabelText(/Measure or activity ID/i)).toHaveValue('176');
     fireEvent.change(screen.getByLabelText('Screening date'), { target: { value: '2026-01-01' } });
@@ -326,6 +342,7 @@ describe('MIPSReadinessPage', () => {
   it('blocks invalid completeness and cost evidence while focusing the visible error summary', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.change(screen.getByLabelText('Complete records'), { target: { value: '11' } });
     fireEvent.change(screen.getByLabelText('Eligible records'), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add structured evidence' }));
@@ -345,6 +362,7 @@ describe('MIPSReadinessPage', () => {
   it('keeps a selected Improvement Activity on a manual attestation', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'ia' } });
     fireEvent.change(screen.getByLabelText(/Measure or activity ID/i), { target: { value: 'IA_BE_4' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add structured evidence' }));
@@ -362,6 +380,7 @@ describe('MIPSReadinessPage', () => {
   it('rejects PI evidence periods outside 2026 or shorter than 180 days', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'pi' } });
     fireEvent.change(screen.getByLabelText('Evidence type'), { target: { value: 'continuous_period' } });
     fireEvent.change(screen.getByLabelText('Period start'), { target: { value: '2025-12-31' } });
@@ -380,6 +399,7 @@ describe('MIPSReadinessPage', () => {
   it('focuses the related profile control from the work queue', async () => {
     renderPage(makeOverview({ workQueue: [{ id: 'work-176', category: 'quality', ruleId: 'quality:measure:176', measureId: '176', title: 'TB screening workflow', status: 'unknown', priority: 'medium', action: 'Collect evidence.' }] }));
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.click(await screen.findByRole('button', { name: 'Review item: TB screening workflow' }));
     expect(document.activeElement).toBe(screen.getByRole('checkbox', { name: /TB screening before biologic/i }));
   });
@@ -387,6 +407,7 @@ describe('MIPSReadinessPage', () => {
   it('maps PI and CHPL work items to their actual profile controls', async () => {
     renderPage(makeOverview({ workQueue: [{ id: 'work-chpl', category: 'pi', ruleId: 'pi:chpl-id', title: 'CHPL identifier', status: 'unknown', priority: 'medium', action: 'Add CHPL identifier.' }] }));
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.click(await screen.findByRole('button', { name: 'Review item: CHPL identifier' }));
     expect(document.activeElement).toBe(screen.getByLabelText('CHPL identifier'));
   });
@@ -394,6 +415,7 @@ describe('MIPSReadinessPage', () => {
   it('only previews a draft, shows the exact disclaimer, and focuses the preview heading', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     const previewButton = screen.getByRole('button', { name: 'Preview draft registry export' });
     expect(previewButton).toHaveAttribute('type', 'button');
     expect(screen.getByText('Draft preview only—nothing will be submitted or sent.')).toBeInTheDocument();
@@ -409,6 +431,7 @@ describe('MIPSReadinessPage', () => {
     apiMocks.previewMipsRegistryManifest.mockRejectedValueOnce(new Error('Preview unavailable'));
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.click(screen.getByRole('button', { name: 'Preview draft registry export' }));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Preview unavailable'));
     expect(document.activeElement).toBe(screen.getByRole('alert'));
@@ -419,6 +442,7 @@ describe('MIPSReadinessPage', () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     await user.clear(screen.getByLabelText('Quality period start'));
     await user.type(screen.getByLabelText('Quality period start'), '2026-01-01');
     await user.clear(screen.getByLabelText('Quality period end'));
@@ -483,6 +507,7 @@ describe('MIPSReadinessPage', () => {
     apiMocks.fetchMipsAutomation.mockResolvedValue(automationStatus);
     const { container } = render(<MemoryRouter initialEntries={['/mips-readiness']}><MIPSReadinessPage /></MemoryRouter>);
     await screen.findByText('Automatic candidate');
+    await waitForMipsReady();
     fireEvent.click(screen.getByRole('button', { name: 'Preview draft registry export' }));
     await screen.findByText('Preview manifest');
 
@@ -509,6 +534,7 @@ describe('MIPSReadinessPage', () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     for (const [label, value] of [
       ['Quality period start', '2026-01-01'], ['Quality period end', '2026-12-31'],
       ['PI period start (180 days)', '2026-01-01'], ['PI period end', '2026-06-29'],
@@ -534,6 +560,7 @@ describe('MIPSReadinessPage', () => {
     };
     renderPage(makeOverview(), [manualEvidence]);
     await screen.findByRole('button', { name: /^Verify manual evidence/ });
+    await waitForMipsReady();
     fireEvent.click(screen.getByRole('button', { name: /^Verify manual evidence/ }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveAttribute('id', 'mips-load-error-summary'));
@@ -550,6 +577,7 @@ describe('MIPSReadinessPage', () => {
   it('marks only the invalid conditional evidence controls and exposes field-specific descriptions', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.change(screen.getByLabelText('Evidence type'), { target: { value: 'pathology_turnaround' } });
     const specimen = screen.getByLabelText('Specimen receipt date');
     const report = screen.getByLabelText('Report sent date');
@@ -587,6 +615,7 @@ describe('MIPSReadinessPage', () => {
   it('accepts a TB negative outcome when screening occurred after the first biologic date', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    await waitForMipsReady();
     fireEvent.change(screen.getByLabelText('Evidence type'), { target: { value: 'tb_before_biologic' } });
     fireEvent.change(screen.getByLabelText('Screening date'), { target: { value: '2026-03-01' } });
     fireEvent.change(screen.getByLabelText('First biologic / immune-modifier date'), { target: { value: '2026-02-01' } });

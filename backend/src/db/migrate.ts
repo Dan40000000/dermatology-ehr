@@ -16906,6 +16906,676 @@ Consider age-appropriate treatments and include family counseling points.',
       WHERE review_completed = false;
     `,
   },
+  {
+    name: "234_mips_legacy_integrity",
+    sql: `
+    -- Legacy MIPS routes/services are still mounted alongside the 2026
+    -- readiness flow.  Keep this forward-only compatibility migration in the
+    -- embedded migration list so a startup-only bootstrap has the same schema
+    -- as an existing deployment that ran the historical SQL files.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    -- Forward-migration recovery ledger. If an old deployment contains
+    -- duplicate rows that prevent a required NULL-safe unique target, retain
+    -- every displaced full row before consolidation. The source/id/reason
+    -- key makes retries idempotent and the tenant column keeps recovery
+    -- records scoped for audit/retention controls.
+    CREATE TABLE IF NOT EXISTS mips_integrity_duplicate_archive (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+      source_table TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      row_data JSONB NOT NULL,
+      archived_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_integrity_duplicate_archive_source_key
+        UNIQUE NULLS NOT DISTINCT (tenant_id, source_table, source_id, reason)
+    );
+    ALTER TABLE mips_integrity_duplicate_archive
+      DROP CONSTRAINT IF EXISTS mips_integrity_duplicate_archive_source_key;
+    ALTER TABLE mips_integrity_duplicate_archive
+      ADD CONSTRAINT mips_integrity_duplicate_archive_source_key
+      UNIQUE NULLS NOT DISTINCT (tenant_id, source_table, source_id, reason);
+    CREATE INDEX IF NOT EXISTS idx_mips_integrity_duplicate_archive_tenant
+      ON mips_integrity_duplicate_archive(tenant_id, archived_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mips_integrity_duplicate_archive_source
+      ON mips_integrity_duplicate_archive(source_table, source_id);
+
+    -- quality_measures was originally created with measure_code.  The mounted
+    -- legacy MIPS service uses the newer measure_id/benchmark/points names.
+    ALTER TABLE quality_measures
+      ADD COLUMN IF NOT EXISTS measure_id TEXT,
+      ADD COLUMN IF NOT EXISTS benchmark_data JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS weight NUMERIC(6,2) DEFAULT 10,
+      ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 10,
+      ADD COLUMN IF NOT EXISTS cms_measure_id TEXT;
+
+    UPDATE quality_measures
+       SET measure_id = COALESCE(measure_id, measure_code),
+           benchmark_data = COALESCE(benchmark_data, '{}'::jsonb),
+           weight = COALESCE(weight, 10),
+           points = COALESCE(points, 10)
+     WHERE measure_id IS NULL
+        OR benchmark_data IS NULL
+        OR weight IS NULL
+        OR points IS NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_measures_measure_id
+      ON quality_measures(measure_id)
+      WHERE measure_id IS NOT NULL;
+
+    -- patient_measure_status is the active table name used by mipsService.
+    -- The historical table did not include the service's status projection or
+    -- a conflict target for encounter-scoped upserts.
+    ALTER TABLE patient_measure_status
+      ADD COLUMN IF NOT EXISTS status_date DATE,
+      ADD COLUMN IF NOT EXISTS documentation_data JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS performance_met BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS source_data JSONB DEFAULT '{}'::jsonb;
+
+    UPDATE patient_measure_status
+       SET status_date = COALESCE(status_date, CURRENT_DATE),
+           documentation_data = COALESCE(documentation_data, '{}'::jsonb),
+           performance_met = COALESCE(performance_met, status = 'met'),
+           source_data = COALESCE(source_data, '{}'::jsonb)
+     WHERE status_date IS NULL
+        OR documentation_data IS NULL
+        OR performance_met IS NULL
+        OR source_data IS NULL;
+
+    ALTER TABLE patient_measure_status
+      ALTER COLUMN status_date SET DEFAULT CURRENT_DATE,
+      ALTER COLUMN documentation_data SET DEFAULT '{}'::jsonb,
+      ALTER COLUMN performance_met SET DEFAULT false,
+      ALTER COLUMN source_data SET DEFAULT '{}'::jsonb;
+
+    ALTER TABLE patient_measure_status
+      ADD COLUMN IF NOT EXISTS reporting_year INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER;
+
+    UPDATE patient_measure_status
+       SET reporting_year = COALESCE(reporting_year, EXTRACT(YEAR FROM status_date)::INTEGER, EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER)
+     WHERE reporting_year IS NULL;
+
+    ALTER TABLE patient_measure_status
+      ALTER COLUMN reporting_year SET DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER;
+
+    -- The inline 112 definition typed documentation as JSONB, while the
+    -- active service contract accepts plain clinical documentation text.
+    -- Preserve JSON objects as JSON text and unwrap JSON strings so existing
+    -- rows remain readable after the type is made compatible with inserts.
+    DO $$
+    DECLARE documentation_type TEXT;
+    BEGIN
+      SELECT data_type
+        INTO documentation_type
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'patient_measure_status'
+         AND column_name = 'documentation';
+
+      IF documentation_type = 'jsonb' THEN
+        ALTER TABLE patient_measure_status
+          ALTER COLUMN documentation TYPE TEXT
+          USING CASE
+            WHEN documentation IS NULL THEN NULL
+            WHEN jsonb_typeof(documentation) = 'string' THEN documentation #>> '{}'
+            ELSE documentation::text
+          END;
+      END IF;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_status_tenant_patient
+      ON patient_measure_status(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_status_tenant_measure_date
+      ON patient_measure_status(tenant_id, measure_id, status_date);
+    -- Consolidate any pre-existing duplicate status projections before making
+    -- the tenant/patient/measure key NULL-safe. Archive every displaced full
+    -- row first, then keep the newest deterministic row.
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT pms.tenant_id, 'patient_measure_status', pms.id,
+           'duplicate_patient_measure_status', to_jsonb(pms)
+      FROM patient_measure_status pms
+      JOIN ranked_status duplicate_status ON pms.ctid = duplicate_status.ctid
+     WHERE duplicate_status.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    DELETE FROM patient_measure_status pms
+     USING ranked_status duplicate_status
+     WHERE pms.ctid = duplicate_status.ctid
+       AND duplicate_status.row_number > 1;
+
+    DROP INDEX IF EXISTS idx_patient_measure_status_tenant_patient_measure_encounter;
+    CREATE UNIQUE INDEX idx_patient_measure_status_tenant_patient_measure_encounter
+      ON patient_measure_status(tenant_id, patient_id, measure_id, encounter_id)
+      NULLS NOT DISTINCT;
+
+    -- The original inline table has the catalog-shaped IA columns only. Add
+    -- the tenant-scoped attestation projection consumed by the mounted
+    -- /mips/ia and /quality/ia routes. start_date remains nullable for old
+    -- catalog rows; the NULL-safe unique target below still allows only one
+    -- tenant/catalog row when a legacy row has no start date.
+    ALTER TABLE ia_activities
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS activity_name TEXT,
+      ADD COLUMN IF NOT EXISTS activity_description TEXT,
+      ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'ia',
+      ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 10,
+      ADD COLUMN IF NOT EXISTS is_attested BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS attestation_date DATE,
+      ADD COLUMN IF NOT EXISTS attestation_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS start_date DATE,
+      ADD COLUMN IF NOT EXISTS end_date DATE,
+      ADD COLUMN IF NOT EXISTS documentation JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS evidence_files JSONB DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS attestation_status TEXT DEFAULT 'not_started',
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+    UPDATE ia_activities
+       SET activity_name = COALESCE(activity_name, title),
+           activity_description = COALESCE(activity_description, description),
+           category = COALESCE(category, 'ia'),
+           points = COALESCE(points, 10),
+           is_attested = COALESCE(is_attested, false),
+           documentation = COALESCE(documentation, '{}'::jsonb),
+           evidence_files = COALESCE(evidence_files, '[]'::jsonb),
+           attestation_status = COALESCE(attestation_status, 'not_started'),
+           updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+     WHERE activity_name IS NULL
+        OR activity_description IS NULL
+        OR category IS NULL
+        OR points IS NULL
+        OR is_attested IS NULL
+        OR documentation IS NULL
+        OR evidence_files IS NULL
+        OR attestation_status IS NULL
+        OR updated_at IS NULL;
+
+    -- 112 declared activity_id globally unique, which prevents a tenant's
+    -- attestation row from sharing a catalog activity id. Replace that
+    -- historical target with the tenant/start-date target used by both
+    -- attestation services. The DROP INDEX fallback covers deployments that
+    -- materialized the old unique target as a standalone index.
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'ia_activities'::regclass
+          AND conname = 'ia_activities_activity_id_key'
+      ) THEN
+        ALTER TABLE ia_activities DROP CONSTRAINT ia_activities_activity_id_key;
+      END IF;
+    END $$;
+    DROP INDEX IF EXISTS ia_activities_activity_id_key;
+    WITH ranked_ia AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM ia_activities
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT ia.tenant_id, 'ia_activities', ia.id,
+           'duplicate_ia_activity', to_jsonb(ia)
+      FROM ia_activities ia
+      JOIN ranked_ia duplicate_ia ON ia.ctid = duplicate_ia.ctid
+     WHERE duplicate_ia.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_ia AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM ia_activities
+    )
+    DELETE FROM ia_activities ia
+     USING ranked_ia duplicate_ia
+     WHERE ia.ctid = duplicate_ia.ctid
+       AND duplicate_ia.row_number > 1;
+
+    DROP INDEX IF EXISTS idx_ia_activities_tenant_activity_start;
+    CREATE UNIQUE INDEX idx_ia_activities_tenant_activity_start
+      ON ia_activities(tenant_id, activity_id, start_date)
+      NULLS NOT DISTINCT;
+    CREATE INDEX IF NOT EXISTS idx_ia_activities_tenant
+      ON ia_activities(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_ia_activities_tenant_attestation
+      ON ia_activities(tenant_id, is_attested, start_date);
+
+    -- PI tracking was referenced by the legacy service/routes but never
+    -- created by the embedded migration list.
+    CREATE TABLE IF NOT EXISTS promoting_interoperability_tracking (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      measure_name TEXT NOT NULL,
+      numerator INTEGER NOT NULL DEFAULT 0,
+      denominator INTEGER NOT NULL DEFAULT 0,
+      performance_rate NUMERIC(6,2) NOT NULL DEFAULT 0,
+      is_required BOOLEAN NOT NULL DEFAULT true,
+      threshold NUMERIC(6,2) NOT NULL DEFAULT 1,
+      tracking_period_start DATE NOT NULL,
+      tracking_period_end DATE NOT NULL,
+      attestation_status BOOLEAN NOT NULL DEFAULT false,
+      exclusion_applied BOOLEAN NOT NULL DEFAULT false,
+      exclusion_reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT promoting_interoperability_tracking_tenant_measure_period_unique
+        UNIQUE (tenant_id, measure_name, tracking_period_start)
+    );
+    ALTER TABLE promoting_interoperability_tracking
+      ADD COLUMN IF NOT EXISTS is_required BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS threshold NUMERIC(6,2) DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS attestation_status BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS exclusion_applied BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS exclusion_reason TEXT,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_promoting_interoperability_tenant_measure_period
+      ON promoting_interoperability_tracking(tenant_id, measure_name, tracking_period_start);
+    CREATE INDEX IF NOT EXISTS idx_promoting_interoperability_tenant_period
+      ON promoting_interoperability_tracking(tenant_id, tracking_period_start, tracking_period_end);
+
+    -- Improvement-activity attestations are distinct from the global IA
+    -- catalog above and are used by qualityMeasuresService.
+    CREATE TABLE IF NOT EXISTS improvement_activities (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      activity_id TEXT NOT NULL,
+      activity_name TEXT NOT NULL,
+      activity_description TEXT,
+      weight TEXT NOT NULL,
+      category TEXT DEFAULT 'ia',
+      subcategory TEXT,
+      points INTEGER NOT NULL DEFAULT 10,
+      is_attested BOOLEAN NOT NULL DEFAULT false,
+      attestation_date DATE,
+      attestation_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      start_date DATE,
+      end_date DATE,
+      documentation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      evidence_files JSONB NOT NULL DEFAULT '[]'::jsonb,
+      attestation_status TEXT NOT NULL DEFAULT 'not_started',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT improvement_activities_tenant_activity_start_unique
+        UNIQUE NULLS NOT DISTINCT (tenant_id, activity_id, start_date)
+    );
+    ALTER TABLE improvement_activities
+      DROP CONSTRAINT IF EXISTS improvement_activities_tenant_activity_start_unique;
+    DROP INDEX IF EXISTS idx_improvement_activities_tenant_activity_start;
+    ALTER TABLE improvement_activities
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    WITH ranked_improvement AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM improvement_activities
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT ia.tenant_id, 'improvement_activities', ia.id,
+           'duplicate_improvement_activity', to_jsonb(ia)
+      FROM improvement_activities ia
+      JOIN ranked_improvement duplicate_improvement ON ia.ctid = duplicate_improvement.ctid
+     WHERE duplicate_improvement.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_improvement AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM improvement_activities
+    )
+    DELETE FROM improvement_activities ia
+     USING ranked_improvement duplicate_improvement
+     WHERE ia.ctid = duplicate_improvement.ctid
+       AND duplicate_improvement.row_number > 1;
+    CREATE UNIQUE INDEX idx_improvement_activities_tenant_activity_start
+      ON improvement_activities(tenant_id, activity_id, start_date)
+      NULLS NOT DISTINCT;
+    CREATE INDEX IF NOT EXISTS idx_improvement_activities_tenant_attestation
+      ON improvement_activities(tenant_id, attestation_status, start_date);
+
+    -- QRDA generation is currently disabled at the HTTP boundary, but the
+    -- service method remains available to internal callers and needs its
+    -- durable report table on startup-only bootstraps.
+    CREATE TABLE IF NOT EXISTS qrda_reports (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      report_type TEXT NOT NULL,
+      reporting_year INTEGER NOT NULL,
+      reporting_period TEXT NOT NULL,
+      generated_by TEXT,
+      patient_count INTEGER NOT NULL DEFAULT 0,
+      measure_count INTEGER NOT NULL DEFAULT 0,
+      summary_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_qrda_reports_tenant_year
+      ON qrda_reports(tenant_id, reporting_year, created_at DESC);
+
+    -- Recalculate writes this composite target, but 017 only supplied
+    -- non-unique dimension indexes. NULLS NOT DISTINCT keeps practice-level
+    -- (provider_id IS NULL) recalculation idempotent as well.
+    WITH ranked_performance AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, provider_id, measure_id, reporting_period_start, reporting_period_end
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM measure_performance
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT mp.tenant_id, 'measure_performance', mp.id,
+           'duplicate_measure_performance', to_jsonb(mp)
+      FROM measure_performance mp
+      JOIN ranked_performance duplicate_performance ON mp.ctid = duplicate_performance.ctid
+     WHERE duplicate_performance.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_performance AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, provider_id, measure_id, reporting_period_start, reporting_period_end
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM measure_performance
+    )
+    DELETE FROM measure_performance mp
+     USING ranked_performance duplicate_performance
+     WHERE mp.ctid = duplicate_performance.ctid
+       AND duplicate_performance.row_number > 1;
+    DROP INDEX IF EXISTS idx_measure_performance_tenant_provider_measure_period;
+    CREATE UNIQUE INDEX idx_measure_performance_tenant_provider_measure_period
+      ON measure_performance(tenant_id, provider_id, measure_id, reporting_period_start, reporting_period_end)
+      NULLS NOT DISTINCT;
+
+    -- Existing 079/112 SQL files created these compatibility fields with
+    -- different names.  Add the route/service names without rewriting data.
+    ALTER TABLE mips_submissions
+      ADD COLUMN IF NOT EXISTS submission_date TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS quality_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS pi_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS ia_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS cost_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS payment_adjustment_percent NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS quality_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS pi_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS ia_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS cost_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS final_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS payment_adjustment NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS response_data JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS notes TEXT;
+
+    UPDATE mips_submissions
+       SET submitted_at = COALESCE(submitted_at, submission_date),
+           quality_score = COALESCE(quality_score, quality_category_score),
+           pi_score = COALESCE(pi_score, pi_category_score),
+           ia_score = COALESCE(ia_score, ia_category_score),
+           cost_score = COALESCE(cost_score, cost_category_score),
+           payment_adjustment = COALESCE(payment_adjustment, payment_adjustment_percent),
+           response_data = COALESCE(response_data, '{}'::jsonb)
+     WHERE submitted_at IS NULL
+        OR quality_score IS NULL
+        OR pi_score IS NULL
+        OR ia_score IS NULL
+        OR cost_score IS NULL
+        OR payment_adjustment IS NULL
+        OR response_data IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_mips_submissions_tenant_year
+      ON mips_submissions(tenant_id, submission_year);
+
+    -- Encounter checklist consumed by mipsService.
+    CREATE TABLE IF NOT EXISTS encounter_measure_checklist (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      encounter_id TEXT NOT NULL REFERENCES encounters(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+      measure_id TEXT NOT NULL REFERENCES quality_measures(id) ON DELETE CASCADE,
+      measure_code TEXT NOT NULL,
+      measure_name TEXT NOT NULL,
+      is_applicable BOOLEAN NOT NULL DEFAULT true,
+      is_completed BOOLEAN NOT NULL DEFAULT false,
+      completion_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (completion_status IN ('pending', 'met', 'not_met', 'excluded', 'not_applicable')),
+      completion_notes TEXT,
+      required_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      completed_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      prompted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT encounter_measure_checklist_tenant_encounter_measure_unique
+        UNIQUE (tenant_id, encounter_id, measure_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_encounter_measure_checklist_tenant_encounter
+      ON encounter_measure_checklist(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_encounter_measure_checklist_tenant_patient
+      ON encounter_measure_checklist(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_encounter_measure_checklist_tenant_measure
+      ON encounter_measure_checklist(tenant_id, measure_id);
+
+    -- Historical score snapshots used by generateMIPSReport and the score
+    -- history endpoint.
+    CREATE TABLE IF NOT EXISTS mips_score_history (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+      calculation_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      reporting_year INTEGER NOT NULL,
+      quality_score NUMERIC(5,2),
+      pi_score NUMERIC(5,2),
+      ia_score NUMERIC(5,2),
+      cost_score NUMERIC(5,2),
+      final_score NUMERIC(5,2),
+      quality_weight NUMERIC(5,2) NOT NULL DEFAULT 30.00,
+      pi_weight NUMERIC(5,2) NOT NULL DEFAULT 25.00,
+      ia_weight NUMERIC(5,2) NOT NULL DEFAULT 15.00,
+      cost_weight NUMERIC(5,2) NOT NULL DEFAULT 30.00,
+      estimated_payment_adjustment NUMERIC(5,2),
+      measure_details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_score_history_tenant_year
+      ON mips_score_history(tenant_id, reporting_year, calculation_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_mips_score_history_tenant_provider
+      ON mips_score_history(tenant_id, provider_id, calculation_date DESC);
+
+    -- Patient-level tracking used by the mounted quality-measures routes.
+    CREATE TABLE IF NOT EXISTS patient_measure_tracking (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      measure_id TEXT NOT NULL REFERENCES quality_measures(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      provider_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      is_denominator_eligible BOOLEAN NOT NULL DEFAULT false,
+      performance_met BOOLEAN NOT NULL DEFAULT false,
+      exclusion_applied BOOLEAN NOT NULL DEFAULT false,
+      exclusion_reason TEXT,
+      numerator_met BOOLEAN NOT NULL DEFAULT false,
+      denominator_met BOOLEAN NOT NULL DEFAULT false,
+      tracking_period_start DATE NOT NULL,
+      tracking_period_end DATE NOT NULL,
+      evaluated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      evaluation_method TEXT NOT NULL DEFAULT 'automatic',
+      evaluation_notes TEXT,
+      source_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT patient_measure_tracking_tenant_patient_measure_period_encounter_unique
+        UNIQUE NULLS NOT DISTINCT (tenant_id, patient_id, measure_id, tracking_period_start, encounter_id)
+    );
+
+    -- Replace any historical ordinary unique target with the NULL-safe form
+    -- so optional encounter IDs still upsert deterministically.
+    ALTER TABLE patient_measure_tracking
+      DROP CONSTRAINT IF EXISTS patient_measure_tracking_tenant_patient_measure_period_encounter_unique;
+    DROP INDEX IF EXISTS idx_patient_measure_tracking_tenant_patient_measure_period_encounter;
+    ALTER TABLE patient_measure_tracking
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    WITH ranked_tracking AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, tracking_period_start, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_tracking
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT pmt.tenant_id, 'patient_measure_tracking', pmt.id,
+           'duplicate_patient_measure_tracking', to_jsonb(pmt)
+      FROM patient_measure_tracking pmt
+      JOIN ranked_tracking duplicate_tracking ON pmt.ctid = duplicate_tracking.ctid
+     WHERE duplicate_tracking.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_tracking AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, tracking_period_start, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_tracking
+    )
+    DELETE FROM patient_measure_tracking pmt
+     USING ranked_tracking duplicate_tracking
+     WHERE pmt.ctid = duplicate_tracking.ctid
+       AND duplicate_tracking.row_number > 1;
+    CREATE UNIQUE INDEX idx_patient_measure_tracking_tenant_patient_measure_period_encounter
+      ON patient_measure_tracking(tenant_id, patient_id, measure_id, tracking_period_start, encounter_id)
+      NULLS NOT DISTINCT;
+
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_patient
+      ON patient_measure_tracking(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_measure_period
+      ON patient_measure_tracking(tenant_id, measure_id, tracking_period_start, tracking_period_end);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_encounter
+      ON patient_measure_tracking(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_provider
+      ON patient_measure_tracking(tenant_id, provider_id);
+
+    -- The inline 112 table used abbreviated alert/gap names.  These aliases
+    -- keep the mounted services tenant-safe and executable after startup-only
+    -- bootstrap while preserving the historical columns for compatibility.
+    ALTER TABLE measure_alerts
+      ADD COLUMN IF NOT EXISTS alert_priority TEXT DEFAULT 'medium',
+      ADD COLUMN IF NOT EXISTS alert_title TEXT,
+      ADD COLUMN IF NOT EXISTS recommended_action TEXT,
+      ADD COLUMN IF NOT EXISTS is_dismissed BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS is_resolved BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS dismissed_by TEXT,
+      ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS dismiss_reason TEXT,
+      ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS resolution_encounter_id TEXT;
+
+    UPDATE measure_alerts
+       SET alert_priority = COALESCE(alert_priority, priority, 'medium'),
+           alert_title = COALESCE(alert_title, alert_type),
+           is_dismissed = COALESCE(is_dismissed, status IN ('dismissed', 'closed')),
+           is_resolved = COALESCE(is_resolved, status IN ('resolved', 'closed'))
+     WHERE alert_priority IS NULL
+        OR alert_title IS NULL
+        OR is_dismissed IS NULL
+        OR is_resolved IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_measure_alerts_tenant_status
+      ON measure_alerts(tenant_id, is_dismissed, is_resolved, alert_priority);
+
+    ALTER TABLE quality_gaps
+      ADD COLUMN IF NOT EXISTS gap_reason TEXT,
+      ADD COLUMN IF NOT EXISTS recommended_action TEXT,
+      ADD COLUMN IF NOT EXISTS resolution_method TEXT,
+      ADD COLUMN IF NOT EXISTS resolution_encounter_id TEXT,
+      ADD COLUMN IF NOT EXISTS outreach_attempts INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS last_outreach_date TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_outreach_method TEXT;
+
+    UPDATE quality_gaps
+       SET gap_reason = COALESCE(gap_reason, gap_description),
+           outreach_attempts = COALESCE(outreach_attempts, 0)
+     WHERE gap_reason IS NULL
+        OR outreach_attempts IS NULL;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, status
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT qg.tenant_id, 'quality_gaps', qg.id,
+           'duplicate_quality_gap', to_jsonb(qg)
+      FROM quality_gaps qg
+      JOIN ranked_gaps duplicate_gap ON qg.ctid = duplicate_gap.ctid
+     WHERE duplicate_gap.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, status
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+    )
+    DELETE FROM quality_gaps qg
+     USING ranked_gaps duplicate_gap
+     WHERE qg.ctid = duplicate_gap.ctid
+       AND duplicate_gap.row_number > 1;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_gaps_tenant_patient_measure_open
+      ON quality_gaps(tenant_id, patient_id, measure_id, status)
+      WHERE status = 'open';
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'quality_gaps_tenant_id_patient_id_measure_id_status_key'
+      ) THEN
+        ALTER TABLE quality_gaps
+          ADD CONSTRAINT quality_gaps_tenant_id_patient_id_measure_id_status_key
+          UNIQUE (tenant_id, patient_id, measure_id, status);
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_quality_gaps_tenant_provider_status
+      ON quality_gaps(tenant_id, provider_id, status);
+    `,
+  },
 
 ];
 

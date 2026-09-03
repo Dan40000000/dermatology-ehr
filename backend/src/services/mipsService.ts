@@ -3,6 +3,21 @@ import { PoolClient } from 'pg';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
 
+export class MipsReferenceValidationError extends Error {
+  readonly statusCode = 400;
+  readonly code = 'MIPS_REFERENCE_INVALID';
+
+  constructor(reference: 'patient' | 'encounter' | 'provider') {
+    super(`Invalid ${reference} reference`);
+    this.name = 'MipsReferenceValidationError';
+  }
+}
+
+function boundedPercentage(numerator: number, denominator: number): number {
+  if (denominator <= 0 || !Number.isFinite(numerator) || !Number.isFinite(denominator)) return 0;
+  return Math.min(100, Math.max(0, (numerator / denominator) * 100));
+}
+
 // ============================================================================
 // TYPES & INTERFACES
 // ============================================================================
@@ -129,6 +144,85 @@ export interface MeasureAlert {
 
 export class MIPSService {
   /**
+   * Resolve a provider id supplied by a client or a provider's user id.
+   * Provider references are always returned in the providers table's id
+   * namespace so downstream MIPS rows cannot accidentally store a user id.
+   */
+  async resolveProviderId(tenantId: string, providerId?: string): Promise<string | undefined> {
+    if (!providerId) return undefined;
+
+    const client = await pool.connect();
+    try {
+      return await this.resolveProviderReference(client, tenantId, providerId);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async resolveProviderReference(
+    client: PoolClient,
+    tenantId: string,
+    providerId: string
+  ): Promise<string> {
+    const result = await client.query(
+      `SELECT id
+       FROM providers
+       WHERE tenant_id = $1
+         AND (id = $2 OR user_id = $2)
+       LIMIT 1`,
+      [tenantId, providerId]
+    );
+
+    if (!result.rowCount) {
+      throw new MipsReferenceValidationError('provider');
+    }
+
+    return result.rows[0].id as string;
+  }
+
+  private async validateMipsReferences(
+    client: PoolClient,
+    tenantId: string,
+    patientId: string,
+    encounterId?: string,
+    providerId?: string
+  ): Promise<{ encounterId?: string; providerId?: string }> {
+    const patientResult = await client.query(
+      `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+      [patientId, tenantId]
+    );
+    if (!patientResult.rowCount) {
+      throw new MipsReferenceValidationError('patient');
+    }
+
+    let validatedEncounterId: string | undefined;
+    if (encounterId) {
+      const encounterResult = await client.query(
+        `SELECT id
+         FROM encounters
+         WHERE id = $1
+           AND tenant_id = $2
+           AND patient_id = $3
+         LIMIT 1`,
+        [encounterId, tenantId, patientId]
+      );
+      if (!encounterResult.rowCount) {
+        throw new MipsReferenceValidationError('encounter');
+      }
+      validatedEncounterId = encounterResult.rows[0].id as string;
+    }
+
+    const validatedProviderId = providerId
+      ? await this.resolveProviderReference(client, tenantId, providerId)
+      : undefined;
+
+    return {
+      encounterId: validatedEncounterId,
+      providerId: validatedProviderId,
+    };
+  }
+
+  /**
    * Evaluate all applicable measures for a patient encounter
    */
   async evaluatePatientMeasures(
@@ -139,6 +233,18 @@ export class MIPSService {
   ): Promise<PatientMeasureStatus[]> {
     const client = await pool.connect();
     try {
+      await client.query('BEGIN');
+
+      const references = await this.validateMipsReferences(
+        client,
+        tenantId,
+        patientId,
+        encounterId,
+        providerId
+      );
+      const validatedEncounterId = references.encounterId!;
+      const validatedProviderId = references.providerId!;
+
       // Get applicable dermatology measures
       const measuresResult = await client.query(
         `SELECT * FROM quality_measures
@@ -156,8 +262,8 @@ export class MIPSService {
             client,
             tenantId,
             patientId,
-            encounterId,
-            providerId,
+            validatedEncounterId,
+            validatedProviderId,
             measure
           );
           results.push(status);
@@ -168,8 +274,8 @@ export class MIPSService {
             tenantId,
             patientId,
             measure.id,
-            encounterId,
-            providerId,
+            validatedEncounterId,
+            validatedProviderId,
             status.status,
             status.documentation,
             status.exclusionReason,
@@ -181,10 +287,22 @@ export class MIPSService {
       }
 
       // Generate checklist for encounter
-      await this.generateEncounterChecklist(client, tenantId, encounterId, patientId, providerId, results);
+      await this.generateEncounterChecklist(
+        client,
+        tenantId,
+        validatedEncounterId,
+        patientId,
+        validatedProviderId,
+        results
+      );
+
+      await client.query('COMMIT');
 
       logger.info(`Evaluated ${results.length} measures for encounter ${encounterId}`);
       return results;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
     } finally {
       client.release();
     }
@@ -201,10 +319,13 @@ export class MIPSService {
     status: 'eligible' | 'met' | 'not_met' | 'excluded' | 'pending',
     documentation?: string,
     exclusionReason?: string,
-    documentationData?: Record<string, unknown>
+    documentationData?: Record<string, unknown>,
+    providerId?: string
   ): Promise<PatientMeasureStatus> {
     const client = await pool.connect();
     try {
+      await client.query('BEGIN');
+
       // Get measure info
       const measureResult = await client.query(
         `SELECT * FROM quality_measures WHERE id = $1 OR measure_id = $1`,
@@ -216,14 +337,21 @@ export class MIPSService {
       }
 
       const measure = measureResult.rows[0];
+      const references = await this.validateMipsReferences(
+        client,
+        tenantId,
+        patientId,
+        encounterId,
+        providerId
+      );
 
       const result = await this.recordMeasureStatusInternal(
         client,
         tenantId,
         patientId,
         measure.id,
-        encounterId,
-        undefined,
+        references.encounterId,
+        references.providerId,
         status,
         documentation,
         exclusionReason,
@@ -232,10 +360,14 @@ export class MIPSService {
 
       // Update or close any existing alerts
       if (status === 'met' || status === 'excluded') {
-        await this.resolvePatientMeasureAlerts(client, tenantId, patientId, measure.id, encounterId);
+        await this.resolvePatientMeasureAlerts(client, tenantId, patientId, measure.id, references.encounterId);
       }
 
+      await client.query('COMMIT');
       return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
     } finally {
       client.release();
     }
@@ -258,7 +390,7 @@ export class MIPSService {
         qm.measure_name,
         qm.benchmark_data,
         qm.points,
-        COUNT(*) FILTER (WHERE pms.status IN ('met', 'not_met', 'eligible')) as denominator_count,
+        COUNT(*) FILTER (WHERE pms.status IN ('met', 'not_met', 'eligible', 'excluded')) as denominator_count,
         COUNT(*) FILTER (WHERE pms.status = 'met') as numerator_count,
         COUNT(*) FILTER (WHERE pms.status = 'excluded') as exclusion_count
       FROM quality_measures qm
@@ -282,8 +414,8 @@ export class MIPSService {
     const numerator = parseInt(row.numerator_count) || 0;
     const denominator = (parseInt(row.denominator_count) || 0);
     const exclusions = parseInt(row.exclusion_count) || 0;
-    const adjustedDenominator = denominator - exclusions;
-    const performanceRate = adjustedDenominator > 0 ? (numerator / adjustedDenominator) * 100 : 0;
+    const adjustedDenominator = Math.max(0, denominator - exclusions);
+    const performanceRate = boundedPercentage(numerator, adjustedDenominator);
     const benchmark = row.benchmark_data?.national_average || 75;
     const topDecile = row.benchmark_data?.top_decile || 95;
 
@@ -319,12 +451,15 @@ export class MIPSService {
     try {
       const periodStart = `${year}-01-01`;
       const periodEnd = `${year}-12-31`;
+      const validatedProviderId = providerId
+        ? await this.resolveProviderReference(client, tenantId, providerId)
+        : undefined;
 
       // Get quality measures performance
       const qualityMeasures = await this.getQualityMeasuresPerformance(
         client,
         tenantId,
-        providerId,
+        validatedProviderId,
         periodStart,
         periodEnd
       );
@@ -355,8 +490,8 @@ export class MIPSService {
       const gapResult = await client.query(
         `SELECT COUNT(*) as count FROM quality_gaps
          WHERE tenant_id = $1 AND status = 'open'
-         ${providerId ? 'AND provider_id = $2' : ''}`,
-        providerId ? [tenantId, providerId] : [tenantId]
+         ${validatedProviderId ? 'AND provider_id = $2' : ''}`,
+        validatedProviderId ? [tenantId, validatedProviderId] : [tenantId]
       );
       const careGapCount = parseInt(gapResult.rows[0]?.count) || 0;
 
@@ -367,9 +502,9 @@ export class MIPSService {
          WHERE tenant_id = $1
            AND status_date >= $2
            AND status_date <= $3
-         ${providerId ? 'AND provider_id = $4' : ''}`,
-        providerId
-          ? [tenantId, periodStart, periodEnd, providerId]
+         ${validatedProviderId ? 'AND provider_id = $4' : ''}`,
+        validatedProviderId
+          ? [tenantId, periodStart, periodEnd, validatedProviderId]
           : [tenantId, periodStart, periodEnd]
       );
       const patientCount = parseInt(patientResult.rows[0]?.count) || 0;
@@ -396,7 +531,7 @@ export class MIPSService {
         [
           reportId,
           tenantId,
-          providerId || null,
+          validatedProviderId || null,
           year,
           qualityScore,
           piScore,
@@ -410,7 +545,7 @@ export class MIPSService {
 
       return {
         reportId,
-        providerId,
+        providerId: validatedProviderId,
         reportingYear: year,
         generatedAt: new Date().toISOString(),
         qualityScore: Math.round(qualityScore * 100) / 100,
@@ -523,10 +658,10 @@ export class MIPSService {
       const id = crypto.randomUUID();
       await client.query(
         `INSERT INTO ia_activities (
-          id, tenant_id, activity_id, activity_name, activity_description,
+          id, tenant_id, activity_id, title, activity_name, activity_description,
           weight, category, points, is_attested, attestation_date, attestation_by,
           start_date, end_date, documentation, attestation_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_DATE, $9, $10, $11, $12, 'attested')
+        ) VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, true, CURRENT_DATE, $9, $10, $11, $12, 'attested')
         ON CONFLICT (tenant_id, activity_id, start_date)
         DO UPDATE SET
           is_attested = true,
@@ -705,7 +840,9 @@ export class MIPSService {
         encounterId,
         status === 'not_applicable' ? 'excluded' : status,
         notes,
-        status === 'not_applicable' ? 'Not applicable for this encounter' : undefined
+        status === 'not_applicable' ? 'Not applicable for this encounter' : undefined,
+        undefined,
+        provider_id || undefined
       );
     }
   }
@@ -1065,7 +1202,6 @@ export class MIPSService {
         exclusion_reason, performance_met
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, $8, $9, $10, $11)
       ON CONFLICT (tenant_id, patient_id, measure_id, encounter_id)
-      WHERE encounter_id IS NOT NULL
       DO UPDATE SET
         status = $7,
         status_date = CURRENT_DATE,
@@ -1188,7 +1324,7 @@ export class MIPSService {
         qm.measure_name,
         qm.benchmark_data,
         qm.points,
-        COUNT(*) FILTER (WHERE pms.status IN ('met', 'not_met', 'eligible')) as denominator_count,
+        COUNT(*) FILTER (WHERE pms.status IN ('met', 'not_met', 'eligible', 'excluded')) as denominator_count,
         COUNT(*) FILTER (WHERE pms.status = 'met') as numerator_count,
         COUNT(*) FILTER (WHERE pms.status = 'excluded') as exclusion_count
       FROM quality_measures qm
@@ -1210,8 +1346,8 @@ export class MIPSService {
       const numerator = parseInt(row.numerator_count) || 0;
       const denominator = parseInt(row.denominator_count) || 0;
       const exclusions = parseInt(row.exclusion_count) || 0;
-      const adjustedDenominator = denominator - exclusions;
-      const performanceRate = adjustedDenominator > 0 ? (numerator / adjustedDenominator) * 100 : 0;
+      const adjustedDenominator = Math.max(0, denominator - exclusions);
+      const performanceRate = boundedPercentage(numerator, adjustedDenominator);
       const benchmark = row.benchmark_data?.national_average || 75;
       const topDecile = row.benchmark_data?.top_decile || 95;
       const decileScore = this.calculateDecileScore(performanceRate, benchmark, topDecile);

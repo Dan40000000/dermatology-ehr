@@ -1,6 +1,13 @@
 import { pool } from '../db/pool';
+import { PoolClient } from 'pg';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
+import { MipsReferenceValidationError } from './mipsService';
+
+function boundedPercentage(numerator: number, denominator: number): number {
+  if (denominator <= 0 || !Number.isFinite(numerator) || !Number.isFinite(denominator)) return 0;
+  return Math.min(100, Math.max(0, (numerator / denominator) * 100));
+}
 
 // Dermatology-specific measure IDs
 export const DERM_MEASURES = {
@@ -102,6 +109,64 @@ export interface ImprovementActivity {
 }
 
 export class QualityMeasuresService {
+  private async validateMipsReferences(
+    client: PoolClient,
+    tenantId: string,
+    patientId: string,
+    encounterId?: string,
+    providerId?: string
+  ): Promise<{ encounterId?: string; providerId?: string }> {
+    const patientResult = await client.query(
+      `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+      [patientId, tenantId]
+    );
+    if (!patientResult.rowCount) {
+      throw new MipsReferenceValidationError('patient');
+    }
+
+    let validatedEncounterId: string | undefined;
+    if (encounterId) {
+      const encounterResult = await client.query(
+        `SELECT id
+         FROM encounters
+         WHERE id = $1
+           AND tenant_id = $2
+           AND patient_id = $3
+         LIMIT 1`,
+        [encounterId, tenantId, patientId]
+      );
+      if (!encounterResult.rowCount) {
+        throw new MipsReferenceValidationError('encounter');
+      }
+      validatedEncounterId = encounterResult.rows[0].id as string;
+    }
+
+    let validatedProviderId: string | undefined;
+    if (providerId) {
+      // patient_measure_tracking and patient_measure_events use users.id as
+      // their provider namespace. Accept a providers.id input as well, but
+      // always normalize it to the tenant-scoped user id before inserting.
+      const providerResult = await client.query(
+        `SELECT u.id
+         FROM users u
+         WHERE u.tenant_id = $1 AND u.id = $2
+         UNION
+         SELECT p.user_id AS id
+         FROM providers p
+         JOIN users u ON u.id = p.user_id AND u.tenant_id = p.tenant_id
+         WHERE p.tenant_id = $1 AND p.id = $2
+         LIMIT 1`,
+        [tenantId, providerId]
+      );
+      if (!providerResult.rowCount) {
+        throw new MipsReferenceValidationError('provider');
+      }
+      validatedProviderId = providerResult.rows[0].id as string;
+    }
+
+    return { encounterId: validatedEncounterId, providerId: validatedProviderId };
+  }
+
   /**
    * Evaluate a patient for a specific quality measure
    */
@@ -114,6 +179,14 @@ export class QualityMeasuresService {
   ): Promise<PatientMeasureResult> {
     const client = await pool.connect();
     try {
+      const references = await this.validateMipsReferences(
+        client,
+        tenantId,
+        patientId,
+        encounterId,
+        providerId
+      );
+
       // Get measure criteria
       const measureResult = await client.query(
         `SELECT * FROM quality_measures WHERE measure_id = $1 AND is_active = true`,
@@ -135,7 +208,7 @@ export class QualityMeasuresService {
         tenantId,
         patientId,
         denomCriteria,
-        encounterId
+        references.encounterId
       );
 
       if (!denominatorCheck.eligible) {
@@ -175,7 +248,7 @@ export class QualityMeasuresService {
         tenantId,
         patientId,
         numCriteria,
-        encounterId
+        references.encounterId
       );
 
       return {
@@ -212,6 +285,25 @@ export class QualityMeasuresService {
     try {
       await client.query('BEGIN');
 
+      const measureResult = await client.query(
+        `SELECT id FROM quality_measures WHERE id = $1 OR measure_id = $1 LIMIT 1`,
+        [measureId]
+      );
+      if (!measureResult.rowCount) {
+        throw new Error(`Measure ${measureId} not found`);
+      }
+
+      const references = await this.validateMipsReferences(
+        client,
+        tenantId,
+        patientId,
+        encounterId,
+        providerId
+      );
+      const validatedEncounterId = references.encounterId!;
+      const validatedProviderId = references.providerId!;
+      const validatedMeasureId = measureResult.rows[0].id as string;
+
       const now = new Date();
       const year = now.getFullYear();
       const trackingPeriodStart = `${year}-01-01`;
@@ -241,9 +333,9 @@ export class QualityMeasuresService {
           trackingId,
           tenantId,
           patientId,
-          measureId,
-          encounterId,
-          providerId,
+          validatedMeasureId,
+          validatedEncounterId,
+          validatedProviderId,
           result.isDenominatorEligible,
           result.numeratorMet,
           result.exclusionApplied,
@@ -267,9 +359,9 @@ export class QualityMeasuresService {
           eventId,
           tenantId,
           patientId,
-          measureId,
-          providerId,
-          encounterId,
+          validatedMeasureId,
+          validatedProviderId,
+          validatedEncounterId,
           'encounter_evaluation',
           result.numeratorMet,
           result.isDenominatorEligible,
@@ -285,11 +377,11 @@ export class QualityMeasuresService {
           tenantId,
           patientId,
           measureId,
-          providerId
+          validatedProviderId
         );
       } else {
         // Close any existing care gap
-        await this.closeCareGap(client, tenantId, patientId, measureId, encounterId);
+        await this.closeCareGap(client, tenantId, patientId, measureId, validatedEncounterId);
       }
 
       await client.query('COMMIT');
@@ -324,7 +416,7 @@ export class QualityMeasuresService {
         qm.measure_id,
         qm.measure_name,
         qm.benchmark_data,
-        COUNT(*) FILTER (WHERE pmt.denominator_met = true) as denominator_count,
+        COUNT(*) FILTER (WHERE pmt.denominator_met = true OR pmt.exclusion_applied = true) as denominator_count,
         COUNT(*) FILTER (WHERE pmt.numerator_met = true) as numerator_count,
         COUNT(*) FILTER (WHERE pmt.exclusion_applied = true) as exclusion_count
       FROM quality_measures qm
@@ -346,8 +438,8 @@ export class QualityMeasuresService {
 
     const row = result.rows[0];
     const numerator = parseInt(row.numerator_count) || 0;
-    const denominator = (parseInt(row.denominator_count) || 0) - (parseInt(row.exclusion_count) || 0);
-    const performanceRate = denominator > 0 ? (numerator / denominator) * 100 : 0;
+    const denominator = Math.max(0, (parseInt(row.denominator_count) || 0) - (parseInt(row.exclusion_count) || 0));
+    const performanceRate = boundedPercentage(numerator, denominator);
     const benchmark = row.benchmark_data?.national_average || 0;
 
     return {
@@ -413,7 +505,7 @@ export class QualityMeasuresService {
       if (incrementNumerator) numerator++;
       if (incrementDenominator) denominator++;
 
-      const performanceRate = denominator > 0 ? (numerator / denominator) * 100 : 0;
+      const performanceRate = boundedPercentage(numerator, denominator);
 
       const trackingId = existingResult.rowCount
         ? existingResult.rows[0].id
@@ -545,7 +637,7 @@ export class QualityMeasuresService {
           qm.measure_id,
           qm.measure_name,
           qm.category,
-          COUNT(DISTINCT pmt.patient_id) FILTER (WHERE pmt.denominator_met = true) as denominator_count,
+          COUNT(DISTINCT pmt.patient_id) FILTER (WHERE pmt.denominator_met = true OR pmt.exclusion_applied = true) as denominator_count,
           COUNT(DISTINCT pmt.patient_id) FILTER (WHERE pmt.numerator_met = true) as numerator_count,
           COUNT(DISTINCT pmt.patient_id) FILTER (WHERE pmt.exclusion_applied = true) as exclusion_count
         FROM quality_measures qm
@@ -579,12 +671,13 @@ export class QualityMeasuresService {
         measureName: row.measure_name,
         category: row.category,
         numerator: parseInt(row.numerator_count) || 0,
-        denominator: (parseInt(row.denominator_count) || 0) - (parseInt(row.exclusion_count) || 0),
+        denominator: Math.max(0, (parseInt(row.denominator_count) || 0) - (parseInt(row.exclusion_count) || 0)),
         exclusions: parseInt(row.exclusion_count) || 0,
-        performanceRate:
-          row.denominator_count - row.exclusion_count > 0
-            ? ((row.numerator_count / (row.denominator_count - row.exclusion_count)) * 100).toFixed(2)
-            : 0,
+        performanceRate: (() => {
+          const denominator = Math.max(0, (parseInt(row.denominator_count) || 0) - (parseInt(row.exclusion_count) || 0));
+          const rate = boundedPercentage(parseInt(row.numerator_count) || 0, denominator);
+          return Math.round(rate * 100) / 100;
+        })(),
       }));
 
       const summary = {
@@ -644,7 +737,7 @@ export class QualityMeasuresService {
         qm.measure_name,
         qm.benchmark_data,
         qm.high_priority,
-        COUNT(*) FILTER (WHERE pmt.denominator_met = true) as denominator_count,
+        COUNT(*) FILTER (WHERE pmt.denominator_met = true OR pmt.exclusion_applied = true) as denominator_count,
         COUNT(*) FILTER (WHERE pmt.numerator_met = true) as numerator_count,
         COUNT(*) FILTER (WHERE pmt.exclusion_applied = true) as exclusion_count
       FROM quality_measures qm
@@ -663,8 +756,8 @@ export class QualityMeasuresService {
 
     const measures: MeasurePerformance[] = qualityResult.rows.map((row) => {
       const numerator = parseInt(row.numerator_count) || 0;
-      const denominator = (parseInt(row.denominator_count) || 0) - (parseInt(row.exclusion_count) || 0);
-      const performanceRate = denominator > 0 ? (numerator / denominator) * 100 : 0;
+      const denominator = Math.max(0, (parseInt(row.denominator_count) || 0) - (parseInt(row.exclusion_count) || 0));
+      const performanceRate = boundedPercentage(numerator, denominator);
       const benchmark = row.benchmark_data?.national_average || 75;
 
       return {
@@ -1195,8 +1288,8 @@ export class QualityMeasuresService {
     await client.query(
       `INSERT INTO quality_gaps (
         id, tenant_id, patient_id, measure_id, provider_id,
-        status, priority, gap_reason, recommended_action
-      ) VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8)
+        status, priority, gap_description, gap_reason, recommended_action
+      ) VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $7, $8)
       ON CONFLICT ON CONSTRAINT quality_gaps_tenant_id_patient_id_measure_id_status_key
       DO UPDATE SET
         provider_id = COALESCE($5, quality_gaps.provider_id),

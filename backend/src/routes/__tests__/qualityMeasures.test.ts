@@ -4,6 +4,7 @@ import { qualityMeasuresRouter } from "../qualityMeasures";
 import { pool } from "../../db/pool";
 import { qualityMeasuresService } from "../../services/qualityMeasuresService";
 import { auditLog } from "../../services/audit";
+import { MipsReferenceValidationError } from "../../services/mipsService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -33,6 +34,8 @@ jest.mock("../../services/audit", () => ({
 jest.mock("../../services/qualityMeasuresService", () => ({
   qualityMeasuresService: {
     getDermatologyMeasures: jest.fn(),
+    evaluatePatientForMeasure: jest.fn(),
+    trackMeasurePerformance: jest.fn(),
     calculateMeasureRate: jest.fn(),
     getMIPSDashboard: jest.fn(),
     generateQRDAReport: jest.fn(),
@@ -54,6 +57,8 @@ const auditLogMock = auditLog as jest.Mock;
 beforeEach(() => {
   queryMock.mockReset();
   serviceMock.getDermatologyMeasures.mockReset();
+  serviceMock.evaluatePatientForMeasure.mockReset();
+  serviceMock.trackMeasurePerformance.mockReset();
   serviceMock.calculateMeasureRate.mockReset();
   serviceMock.getMIPSDashboard.mockReset();
   serviceMock.generateQRDAReport.mockReset();
@@ -83,6 +88,22 @@ describe("Quality measures routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.performance).toHaveLength(1);
     expect(res.body.performance[0].measure_code).toBe("measure-1");
+  });
+
+  it("POST /quality/tracking rejects a cross-tenant reference before tracking", async () => {
+    serviceMock.evaluatePatientForMeasure.mockRejectedValueOnce(
+      new MipsReferenceValidationError("patient")
+    );
+
+    const res = await request(app).post("/quality/tracking").send({
+      patientId: "patient-from-another-tenant",
+      measureId: "Q1",
+      encounterId: "encounter-1",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("MIPS_REFERENCE_INVALID");
+    expect(serviceMock.trackMeasurePerformance).not.toHaveBeenCalled();
   });
 
   it("GET /quality/performance calculates when cache is missing", async () => {

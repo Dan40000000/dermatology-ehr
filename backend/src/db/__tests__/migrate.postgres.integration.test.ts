@@ -80,6 +80,7 @@ describePostgres('PostgreSQL migrations (real database)', () => {
     expect(applied.rows.map((row) => row.name)).toContain('230_mips_readiness_2026');
     expect(applied.rows.map((row) => row.name)).toContain('232_mips_workflow_automation');
     expect(applied.rows.map((row) => row.name)).toContain('233_biopsy_tracking_runtime');
+    expect(applied.rows.map((row) => row.name)).toContain('234_mips_legacy_integrity');
   });
 
   it('creates the TEXT biopsy runtime schema, tenant-local specimen keys, and can be reapplied', async () => {
@@ -291,6 +292,379 @@ describePostgres('PostgreSQL migrations (real database)', () => {
       'idx_mips_itch_assessments_patient',
       'idx_mips_automation_runs_tenant_year',
     ]));
+  });
+
+  it('creates the legacy MIPS runtime schema and a valid status upsert target', async () => {
+    const columns = await applicationPool!.query<{ table_name: string; column_name: string; data_type: string }>(
+      `SELECT table_name, column_name, data_type
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN (
+            'quality_measures', 'patient_measure_status', 'patient_measure_tracking',
+            'encounter_measure_checklist', 'mips_score_history', 'ia_activities',
+            'promoting_interoperability_tracking', 'improvement_activities', 'qrda_reports'
+          )`,
+    );
+    const names = new Set(columns.rows.map((row) => `${row.table_name}.${row.column_name}`));
+    expect([...names]).toEqual(expect.arrayContaining([
+      'quality_measures.measure_id',
+      'quality_measures.benchmark_data',
+      'patient_measure_status.status_date',
+      'patient_measure_status.documentation_data',
+      'patient_measure_status.performance_met',
+      'patient_measure_tracking.tracking_period_start',
+      'encounter_measure_checklist.completion_status',
+      'mips_score_history.reporting_year',
+      'ia_activities.activity_name',
+      'ia_activities.title',
+      'promoting_interoperability_tracking.measure_name',
+      'improvement_activities.attestation_status',
+      'qrda_reports.summary_data',
+    ]));
+    expect(columns.rows.find((row) => row.table_name === 'patient_measure_status' && row.column_name === 'id')).toMatchObject({
+      data_type: 'text',
+    });
+    expect(columns.rows.find((row) => row.table_name === 'patient_measure_status' && row.column_name === 'documentation')).toMatchObject({
+      data_type: 'text',
+    });
+
+    const indexes = await applicationPool!.query<{ indexname: string; indexdef: string }>(
+      `SELECT indexname, indexdef
+         FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename IN (
+            'patient_measure_status', 'patient_measure_tracking',
+            'encounter_measure_checklist', 'mips_score_history', 'ia_activities',
+            'promoting_interoperability_tracking', 'improvement_activities', 'measure_performance'
+          )`,
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual(expect.arrayContaining([
+      'idx_patient_measure_status_tenant_patient_measure_encounter',
+      'idx_patient_measure_tracking_tenant_measure_period',
+      'idx_encounter_measure_checklist_tenant_encounter',
+      'idx_mips_score_history_tenant_year',
+      'idx_ia_activities_tenant_activity_start',
+      'idx_promoting_interoperability_tenant_measure_period',
+      'idx_improvement_activities_tenant_activity_start',
+      'idx_measure_performance_tenant_provider_measure_period',
+    ]));
+    expect(indexes.rows.find((row) => row.indexname === 'idx_patient_measure_status_tenant_patient_measure_encounter')?.indexdef)
+      .toMatch(/UNIQUE INDEX.*tenant_id, patient_id, measure_id, encounter_id.*NULLS NOT DISTINCT/i);
+
+    const constraints = await applicationPool!.query<{ conname: string }>(
+      `SELECT conname
+         FROM pg_constraint
+        WHERE conrelid = 'encounter_measure_checklist'::regclass
+          AND conname = 'encounter_measure_checklist_tenant_encounter_measure_unique'`,
+    );
+    expect(constraints.rows).toHaveLength(1);
+
+    const smokeSuffix = `${process.pid}-${Date.now()}`;
+    const smokeTenant = `mips-legacy-${smokeSuffix}`;
+    const smokeTenantB = `mips-legacy-b-${smokeSuffix}`;
+    const smokeUser = `mips-legacy-user-${smokeSuffix}`;
+    const smokePatient = `mips-legacy-patient-${smokeSuffix}`;
+    const archivePatient = `mips-legacy-archive-patient-${smokeSuffix}`;
+    const smokeProvider = `mips-legacy-provider-${smokeSuffix}`;
+    const smokeEncounter = `mips-legacy-encounter-${smokeSuffix}`;
+    const smokeMeasure = `MIPS-SMOKE-${smokeSuffix}`;
+    const smokeStatus = `mips-legacy-status-${smokeSuffix}`;
+    await applicationPool!.query(
+      `INSERT INTO tenants (id, name) VALUES ($1, 'MIPS legacy smoke tenant')`,
+      [smokeTenant],
+    );
+    await applicationPool!.query(
+      `INSERT INTO tenants (id, name) VALUES ($1, 'MIPS legacy smoke tenant B')`,
+      [smokeTenantB],
+    );
+    await applicationPool!.query(
+      `INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
+       VALUES ($1, $2, $3, 'MIPS Legacy Smoke User', 'provider', 'test-hash')`,
+      [smokeUser, smokeTenant, `${smokeUser}@example.test`],
+    );
+    await applicationPool!.query(
+      `INSERT INTO patients (id, tenant_id, first_name, last_name)
+       VALUES ($1, $2, 'MIPS', 'Smoke')`,
+      [smokePatient, smokeTenant],
+    );
+    await applicationPool!.query(
+      `INSERT INTO patients (id, tenant_id, first_name, last_name)
+       VALUES ($1, $2, 'MIPS', 'Archive')`,
+      [archivePatient, smokeTenant],
+    );
+    await applicationPool!.query(
+      `INSERT INTO providers (id, tenant_id, user_id, full_name)
+       VALUES ($1, $2, $3, 'MIPS Legacy Smoke Provider')`,
+      [smokeProvider, smokeTenant, smokeUser],
+    );
+    await applicationPool!.query(
+      `INSERT INTO encounters (id, tenant_id, patient_id, provider_id, status)
+       VALUES ($1, $2, $3, $4, 'completed')`,
+      [smokeEncounter, smokeTenant, smokePatient, smokeProvider],
+    );
+    await applicationPool!.query(
+      `INSERT INTO quality_measures (
+         id, measure_code, measure_name, category,
+         numerator_criteria, denominator_criteria, exclusion_criteria,
+         measure_id, benchmark_data, weight, points, is_active
+       ) VALUES ($1, $2, 'MIPS Legacy Smoke Activity', 'ia', '{}', '{}', '{}', $2, '{}', 10, 10, true)`,
+      [smokeMeasure, smokeMeasure],
+    );
+
+    // The active legacy status contract stores ordinary documentation text,
+    // despite the historical 112 JSONB declaration.
+    await applicationPool!.query(
+      `INSERT INTO patient_measure_status (
+         id, tenant_id, patient_id, measure_id, reporting_year,
+         status, documentation, documentation_data, performance_met
+       ) VALUES ($1, $2, $3, $4, 2026, 'met', 'plain text documentation', '{}', true)`,
+      [smokeStatus, smokeTenant, smokePatient, smokeMeasure],
+    );
+    const statusSmoke = await applicationPool!.query<{ documentation: string }>(
+      `SELECT documentation FROM patient_measure_status WHERE id = $1`,
+      [smokeStatus],
+    );
+    expect(statusSmoke.rows[0]?.documentation).toBe('plain text documentation');
+
+    const { mipsService } = require('../../services/mipsService') as typeof import('../../services/mipsService');
+
+    // Exercise both nullable and encounter-scoped status upserts against the
+    // NULL-safe conflict target.
+    await mipsService.recordMeasureStatus(
+      smokeTenant,
+      smokePatient,
+      smokeMeasure,
+      undefined,
+      'met',
+      'service no-encounter status',
+    );
+    await mipsService.recordMeasureStatus(
+      smokeTenant,
+      smokePatient,
+      smokeMeasure,
+      undefined,
+      'not_met',
+      'service no-encounter update',
+    );
+    await mipsService.recordMeasureStatus(
+      smokeTenant,
+      smokePatient,
+      smokeMeasure,
+      smokeEncounter,
+      'met',
+      'service encounter status',
+    );
+    await mipsService.recordMeasureStatus(
+      smokeTenant,
+      smokePatient,
+      smokeMeasure,
+      smokeEncounter,
+      'not_met',
+      'service encounter update',
+    );
+    const statusUpserts = await applicationPool!.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM patient_measure_status
+        WHERE tenant_id = $1 AND patient_id = $2 AND measure_id = $3`,
+      [smokeTenant, smokePatient, smokeMeasure],
+    );
+    expect(statusUpserts.rows[0]?.count).toBe('2');
+
+    // Exercise the real service upsert against the migrated IA table. The
+    // historical title NOT NULL and global activity_id key must both remain
+    // satisfied while the tenant/start-date conflict target is used.
+    await mipsService.attestIAActivity(
+      smokeTenant,
+      smokeMeasure,
+      smokeUser,
+      '2026-01-01',
+      '2026-12-31',
+      { source: 'postgres-smoke' },
+    );
+    await mipsService.attestIAActivity(
+      smokeTenant,
+      smokeMeasure,
+      smokeUser,
+      '2026-01-01',
+      '2026-12-31',
+      { source: 'postgres-smoke-upsert' },
+    );
+    const iaSmoke = await applicationPool!.query<{ count: string; title: string; documentation: Record<string, unknown> }>(
+      `SELECT
+         (SELECT COUNT(*)::text FROM ia_activities
+           WHERE tenant_id = $1 AND activity_id = $2 AND start_date = '2026-01-01') AS count,
+         title, documentation
+         FROM ia_activities
+        WHERE tenant_id = $1 AND activity_id = $2 AND start_date = '2026-01-01'
+        LIMIT 1`,
+      [smokeTenant, smokeMeasure],
+    );
+    expect(iaSmoke.rows[0]?.count).toBe('1');
+    expect(iaSmoke.rows[0]?.title).toBe('MIPS Legacy Smoke Activity');
+    expect(iaSmoke.rows[0]?.documentation).toEqual({ source: 'postgres-smoke-upsert' });
+
+    // Exercise the PI tracking conflict target with a real SQL upsert.
+    const piTrackingId = `mips-legacy-pi-${smokeSuffix}`;
+    await applicationPool!.query(
+      `INSERT INTO promoting_interoperability_tracking (
+         id, tenant_id, measure_name, numerator, denominator, performance_rate,
+         tracking_period_start, tracking_period_end
+       ) VALUES ($1, $2, 'e-Prescribing', 1, 2, 50, '2026-01-01', '2026-12-31')
+       ON CONFLICT (tenant_id, measure_name, tracking_period_start)
+       DO UPDATE SET numerator = EXCLUDED.numerator,
+                     denominator = EXCLUDED.denominator,
+                     performance_rate = EXCLUDED.performance_rate`,
+      [piTrackingId, smokeTenant],
+    );
+    await applicationPool!.query(
+      `INSERT INTO promoting_interoperability_tracking (
+         id, tenant_id, measure_name, numerator, denominator, performance_rate,
+         tracking_period_start, tracking_period_end
+       ) VALUES ($1, $2, 'e-Prescribing', 2, 2, 100, '2026-01-01', '2026-12-31')
+       ON CONFLICT (tenant_id, measure_name, tracking_period_start)
+       DO UPDATE SET numerator = EXCLUDED.numerator,
+                     denominator = EXCLUDED.denominator,
+                     performance_rate = EXCLUDED.performance_rate`,
+      [`${piTrackingId}-upsert`, smokeTenant],
+    );
+    const piSmoke = await applicationPool!.query<{ count: string; numerator: number; performance_rate: number }>(
+      `SELECT COUNT(*)::text AS count, MAX(numerator) AS numerator, MAX(performance_rate)::float AS performance_rate
+         FROM promoting_interoperability_tracking
+        WHERE tenant_id = $1 AND measure_name = 'e-Prescribing' AND tracking_period_start = '2026-01-01'`,
+      [smokeTenant],
+    );
+    expect(piSmoke.rows[0]).toMatchObject({ count: '1', numerator: 2, performance_rate: 100 });
+
+    // Exercise the improvement-activity service upsert target.
+    const { qualityMeasuresService } = require('../../services/qualityMeasuresService') as typeof import('../../services/qualityMeasuresService');
+    await qualityMeasuresService.attestImprovementActivity(
+      smokeTenant,
+      smokeMeasure,
+      smokeUser,
+      '2026-01-01',
+      '2026-12-31',
+      { source: 'improvement-smoke' },
+    );
+    await qualityMeasuresService.attestImprovementActivity(
+      smokeTenant,
+      smokeMeasure,
+      smokeUser,
+      '2026-01-01',
+      '2026-12-31',
+      { source: 'improvement-smoke-upsert' },
+    );
+    const improvementSmoke = await applicationPool!.query<{ count: string; documentation: Record<string, unknown> }>(
+      `SELECT COUNT(*)::text AS count, documentation
+         FROM improvement_activities
+        WHERE tenant_id = $1 AND activity_id = $2 AND start_date = '2026-01-01'
+        GROUP BY documentation`,
+      [smokeTenant, smokeMeasure],
+    );
+    expect(improvementSmoke.rows).toHaveLength(1);
+    expect(improvementSmoke.rows[0]).toMatchObject({
+      count: '1',
+      documentation: { source: 'improvement-smoke-upsert' },
+    });
+
+    // Practice-level performance has a NULL provider_id. Verify the PG16
+    // NULLS NOT DISTINCT target prevents duplicate cached rows.
+    const performanceValues = (id: string, rate: number) => applicationPool!.query(
+      `INSERT INTO measure_performance (
+         id, tenant_id, provider_id, measure_id,
+         reporting_period_start, reporting_period_end,
+         numerator_count, denominator_count, exclusion_count, performance_rate
+       ) VALUES ($1, $2, NULL, $3, '2026-01-01', '2026-12-31', $4, 2, 0, $5)
+       ON CONFLICT (tenant_id, provider_id, measure_id, reporting_period_start, reporting_period_end)
+       DO UPDATE SET numerator_count = EXCLUDED.numerator_count,
+                     performance_rate = EXCLUDED.performance_rate`,
+      [id, smokeTenant, smokeMeasure, rate === 100 ? 2 : 1, rate],
+    );
+    await performanceValues(`mips-legacy-performance-${smokeSuffix}`, 50);
+    await performanceValues(`mips-legacy-performance-${smokeSuffix}-upsert`, 100);
+    const performanceSmoke = await applicationPool!.query<{ count: string; performance_rate: number }>(
+      `SELECT COUNT(*)::text AS count, MAX(performance_rate)::float AS performance_rate
+         FROM measure_performance
+        WHERE tenant_id = $1 AND provider_id IS NULL AND measure_id = $2`,
+      [smokeTenant, smokeMeasure],
+    );
+    expect(performanceSmoke.rows[0]).toMatchObject({ count: '1', performance_rate: 100 });
+
+    // Exercise the recovery path with a real duplicate no-encounter status.
+    // The older row is archived with its full payload; the newest row remains
+    // the live record when the NULL-safe target is rebuilt.
+    const archiveStatusOld = `mips-legacy-archive-old-${smokeSuffix}`;
+    const archiveStatusNew = `mips-legacy-archive-new-${smokeSuffix}`;
+    await applicationPool!.query('DROP INDEX idx_patient_measure_status_tenant_patient_measure_encounter');
+    await applicationPool!.query(
+      `INSERT INTO patient_measure_status (
+         id, tenant_id, patient_id, measure_id, reporting_year,
+         status, documentation, documentation_data, performance_met, updated_at, created_at
+       ) VALUES
+         ($1, $2, $3, $4, 2026, 'met', 'archived old documentation', '{}', true, '2099-01-01', '2099-01-01'),
+         ($5, $2, $3, $4, 2026, 'not_met', 'kept newest documentation', '{}', false, '2099-01-02', '2099-01-02')`,
+      [archiveStatusOld, smokeTenant, archivePatient, smokeMeasure, archiveStatusNew],
+    );
+    await applicationPool!.query(`DELETE FROM migrations WHERE name = '234_mips_legacy_integrity'`);
+    await runMigrations!();
+
+    const archivedStatus = await applicationPool!.query<{ source_id: string; row_data: { documentation: string } }>(
+      `SELECT source_id, row_data
+         FROM mips_integrity_duplicate_archive
+        WHERE tenant_id = $1
+          AND source_table = 'patient_measure_status'
+          AND reason = 'duplicate_patient_measure_status'
+          AND source_id = $2`,
+      [smokeTenant, archiveStatusOld],
+    );
+    expect(archivedStatus.rows).toHaveLength(1);
+    expect(archivedStatus.rows[0]?.row_data.documentation).toBe('archived old documentation');
+    const keptStatus = await applicationPool!.query<{ id: string; documentation: string }>(
+      `SELECT id, documentation
+         FROM patient_measure_status
+        WHERE tenant_id = $1 AND patient_id = $2 AND measure_id = $3 AND encounter_id IS NULL`,
+      [smokeTenant, archivePatient, smokeMeasure],
+    );
+    expect(keptStatus.rows).toEqual([
+      { id: archiveStatusNew, documentation: 'kept newest documentation' },
+    ]);
+
+    // Archive identity is tenant-scoped: equal source IDs/reasons from two
+    // tenants must not cause the second displaced row to be lost.
+    await applicationPool!.query(
+      `INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+       VALUES
+         ($1, 'synthetic', 'same-source-id', 'cross-tenant-test', '{}'),
+         ($2, 'synthetic', 'same-source-id', 'cross-tenant-test', '{}')`,
+      [smokeTenant, smokeTenantB],
+    );
+    const crossTenantArchive = await applicationPool!.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM mips_integrity_duplicate_archive
+        WHERE source_table = 'synthetic' AND source_id = 'same-source-id' AND reason = 'cross-tenant-test'`,
+    );
+    expect(crossTenantArchive.rows[0]?.count).toBe('2');
+
+    await applicationPool!.query('DELETE FROM patient_measure_status WHERE tenant_id = $1', [smokeTenant]);
+    await applicationPool!.query('DELETE FROM mips_integrity_duplicate_archive WHERE tenant_id IN ($1, $2)', [smokeTenant, smokeTenantB]);
+    await applicationPool!.query('DELETE FROM ia_activities WHERE tenant_id = $1', [smokeTenant]);
+    await applicationPool!.query('DELETE FROM promoting_interoperability_tracking WHERE tenant_id = $1', [smokeTenant]);
+    await applicationPool!.query('DELETE FROM improvement_activities WHERE tenant_id = $1', [smokeTenant]);
+    await applicationPool!.query('DELETE FROM measure_performance WHERE tenant_id = $1', [smokeTenant]);
+    await applicationPool!.query('DELETE FROM quality_measures WHERE id = $1', [smokeMeasure]);
+    await applicationPool!.query('DELETE FROM encounters WHERE id = $1', [smokeEncounter]);
+    await applicationPool!.query('DELETE FROM patients WHERE id = $1', [smokePatient]);
+    await applicationPool!.query('DELETE FROM patients WHERE id = $1', [archivePatient]);
+    await applicationPool!.query('DELETE FROM providers WHERE id = $1', [smokeProvider]);
+    await applicationPool!.query('DELETE FROM users WHERE id = $1', [smokeUser]);
+    await applicationPool!.query('DELETE FROM tenants WHERE id = $1', [smokeTenant]);
+    await applicationPool!.query('DELETE FROM tenants WHERE id = $1', [smokeTenantB]);
+
+    // The migration runner's idempotence guard must also hold for this
+    // compatibility migration after the schema already exists.
+    const reapplied = await applicationPool!.query<{ name: string }>(
+      `SELECT name FROM migrations WHERE name = '234_mips_legacy_integrity'`,
+    );
+    expect(reapplied.rows).toHaveLength(1);
   });
 
   it('creates the production FHIR OAuth and HL7 queue schema', async () => {

@@ -11,12 +11,19 @@ import {
   DERM_MEASURES,
   PI_MEASURES,
 } from "../services/qualityMeasuresService";
+import { MipsReferenceValidationError } from "../services/mipsService";
 import { logger } from "../lib/logger";
 import { MIPS_SUBMISSION_NOT_CONFIGURED } from "../services/mipsReadinessEngine";
 
 export const qualityMeasuresRouter = Router();
 
+// Legacy quality/MIPS reporting endpoints use the same reporting access
+// model as the 2026 readiness center.  Clinical capture roles do not gain
+// reporting access merely because an endpoint is under /quality.
+const MIPS_REPORTING_ROLES = ['admin', 'provider', 'manager', 'compliance_officer'];
+
 qualityMeasuresRouter.use(rateLimit({ windowMs: 60_000, max: 100 }));
+qualityMeasuresRouter.use(requireAuth, requireRoles(MIPS_REPORTING_ROLES));
 
 // ============================================================================
 // QUALITY MEASURES
@@ -139,6 +146,9 @@ qualityMeasuresRouter.post("/tracking", requireAuth, async (req: AuthedRequest, 
       message: result.numeratorMet ? "Performance met" : "Performance not met",
     });
   } catch (err) {
+    if (err instanceof MipsReferenceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    }
     logger.error("Error tracking patient measure:", err);
     res.status(500).json({ error: "Failed to track patient measure" });
   }

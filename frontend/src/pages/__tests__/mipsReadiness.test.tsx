@@ -596,6 +596,6 @@ describe('MIPSReadinessPage', () => {
       expect.objectContaining({ headers: authMocks.headers }),
       expect.objectContaining({ measureId: '176', evidenceType: 'tb_before_biologic' }),
     ));
-    expect(screen.getByRole('status')).toHaveTextContent(/structured evidence created/i);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/structured evidence created/i));
   });
 });

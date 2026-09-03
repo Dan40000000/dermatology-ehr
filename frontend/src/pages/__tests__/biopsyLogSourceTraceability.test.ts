@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { biopsyMatchesSearch } from '../BiopsyLogPage';
+import { biopsyMatchesSearch } from '../../utils/mipsSourceTraceability';
 
 describe('biopsy source traceability search', () => {
   it('matches the opaque biopsy record ID without requiring patient identity', () => {

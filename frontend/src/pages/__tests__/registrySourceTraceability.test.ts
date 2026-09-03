@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterChronicTherapyBySourceId } from '../RegistryPage';
+import { filterChronicTherapyBySourceId } from '../../utils/mipsSourceTraceability';
 
 describe('chronic therapy source traceability search', () => {
   it('selects only the exact opaque source ID', () => {

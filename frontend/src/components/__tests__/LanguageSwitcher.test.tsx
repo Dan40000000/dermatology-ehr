@@ -13,7 +13,9 @@ describe('LanguageSwitcher', () => {
     expect(trigger).toHaveAttribute('aria-controls', 'language-switcher-options');
     expect(trigger).toHaveStyle({
       background: '#ffffff',
-      border: '1px solid #0369a1',
+      borderColor: '#0369a1',
+      borderStyle: 'solid',
+      borderWidth: '1px',
       color: '#0369a1',
     });
   });

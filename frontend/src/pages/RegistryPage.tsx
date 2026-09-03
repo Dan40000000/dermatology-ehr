@@ -14,6 +14,7 @@ import {
 } from '../api';
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatPhoneDisplay } from '../utils/phone';
+import { filterChronicTherapyBySourceId } from '../utils/mipsSourceTraceability';
 import {
   DEFAULT_RECALL_SMS_TEMPLATE,
   estimateSmsSegments,
@@ -71,15 +72,6 @@ const REGISTRY_TAB_QUERY_MAP: Record<string, RegistryType> = {
   chronictherapy: 'chronic_therapy',
   alerts: 'alerts',
 };
-
-export function filterChronicTherapyBySourceId<T extends { id?: unknown }>(
-  rows: readonly T[],
-  sourceId: string,
-): T[] {
-  const normalized = sourceId.trim();
-  if (!normalized) return [...rows];
-  return rows.filter((row) => String(row.id || '') === normalized);
-}
 
 export function RegistryPage({ embedded = false, queryParamName = 'tab' }: RegistryPageProps = {}) {
   const { session } = useAuth();

@@ -51,6 +51,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import BiopsyResultReview from '../components/Biopsy/BiopsyResultReview';
 import { useAuth } from '../contexts/AuthContext';
 import { API_BASE_URL, createTask } from '../api';
+import { biopsyMatchesSearch } from '../utils/mipsSourceTraceability';
 
 type Severity = 'low' | 'medium' | 'high' | 'critical';
 type QueueTab = 'critical' | 'pendingResults' | 'pendingReview' | 'pendingNotification' | 'treatmentFollowUp' | 'all';
@@ -93,17 +94,6 @@ interface Biopsy {
   safety_stage?: string;
   loop_status?: string;
   next_action?: string;
-}
-
-export interface BiopsySearchRecord {
-  id?: string | null;
-  specimen_id?: string | null;
-  patient_name?: string | null;
-  mrn?: string | null;
-  body_location?: string | null;
-  pathology_diagnosis?: string | null;
-  path_lab?: string | null;
-  loop_status?: string | null;
 }
 
 interface CommandCenterSummary {
@@ -163,23 +153,6 @@ function formatDate(value?: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
   return format(date, 'MM/dd/yyyy');
-}
-
-export function biopsyMatchesSearch(biopsy: BiopsySearchRecord, searchTerm: string): boolean {
-  const term = searchTerm.trim().toLowerCase();
-  if (!term) return true;
-  return [
-    biopsy.id,
-    biopsy.specimen_id,
-    biopsy.patient_name,
-    biopsy.mrn,
-    biopsy.body_location,
-    biopsy.pathology_diagnosis,
-    biopsy.path_lab,
-    biopsy.loop_status,
-  ]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(term));
 }
 
 function statusColor(status: string): 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'error' {

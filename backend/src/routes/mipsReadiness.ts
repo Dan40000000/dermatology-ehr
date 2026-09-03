@@ -42,7 +42,7 @@ const requireReportingAccess = [
   requireAuth,
   requireRoles(PROFILE_WRITE_ROLES),
   requireModuleAccess('quality'),
-];
+] as const;
 
 type JsonObject = Record<string, unknown>;
 

@@ -17520,7 +17520,8 @@ Consider age-appropriate treatments and include family counseling points.',
       ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS dismiss_reason TEXT,
       ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS resolution_encounter_id TEXT;
+      ADD COLUMN IF NOT EXISTS resolution_encounter_id TEXT,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 
     UPDATE measure_alerts
        SET alert_priority = COALESCE(alert_priority, priority, 'medium'),
@@ -17596,6 +17597,9 @@ Consider age-appropriate treatments and include family counseling points.',
     sql: `
     -- Forward repair for any deployment that recorded the initial form of
     -- migration 234 before its year/history corrections were added.
+    ALTER TABLE measure_alerts
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
     DROP INDEX IF EXISTS idx_patient_measure_status_tenant_patient_measure_encounter;
 
     -- The first 234 migration archived rows before consolidating its old

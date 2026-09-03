@@ -303,7 +303,8 @@ describePostgres('PostgreSQL migrations (real database)', () => {
           AND table_name IN (
             'quality_measures', 'patient_measure_status', 'patient_measure_tracking',
             'encounter_measure_checklist', 'mips_score_history', 'ia_activities',
-            'promoting_interoperability_tracking', 'improvement_activities', 'qrda_reports'
+            'promoting_interoperability_tracking', 'improvement_activities', 'qrda_reports',
+            'measure_alerts'
           )`,
     );
     const names = new Set(columns.rows.map((row) => `${row.table_name}.${row.column_name}`));
@@ -313,6 +314,7 @@ describePostgres('PostgreSQL migrations (real database)', () => {
       'patient_measure_status.status_date',
       'patient_measure_status.documentation_data',
       'patient_measure_status.performance_met',
+      'measure_alerts.updated_at',
       'patient_measure_tracking.tracking_period_start',
       'encounter_measure_checklist.completion_status',
       'mips_score_history.reporting_year',

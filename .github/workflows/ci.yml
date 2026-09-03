@@ -455,7 +455,7 @@ jobs:
 
       - name: Run npm audit
         working-directory: ${{ matrix.workspace }}
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm audit --package-lock-only --omit=dev --audit-level=critical --legacy-peer-deps
 
   # Build and push Docker images
   docker:

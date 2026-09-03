@@ -114,8 +114,9 @@ interface EvidenceFormState {
   endDate: string;
 }
 
-type FieldName = keyof ProfileFormState | 'profile' | 'evidence';
+type FieldName = keyof ProfileFormState | keyof EvidenceFormState | 'profile' | 'evidence';
 type FieldErrors = Partial<Record<FieldName, string>>;
+type LoadResult = { ok: true } | { ok: false; message: string };
 
 interface DisplayRow {
   id: string;
@@ -278,68 +279,96 @@ function evidenceTypeMetadata(form: EvidenceFormState): Record<string, unknown> 
   }
 }
 
-function validateEvidenceForm(form: EvidenceFormState): string | undefined {
-  if (form.category === 'cost') return 'Cost is CMS claims-calculated and cannot be evidenced or scored in this page.';
+function validateEvidenceForm(form: EvidenceFormState): FieldErrors {
+  const next: FieldErrors = {};
+  const messages: string[] = [];
+  const addError = (message: string, field?: keyof EvidenceFormState) => {
+    if (!messages.includes(message)) messages.push(message);
+    if (field && !next[field]) next[field] = message;
+  };
+
+  if (form.category === 'cost') {
+    addError('Cost is CMS claims-calculated and cannot be evidenced or scored in this page.');
+  }
 
   const specializedQualityTypes = ['tb_before_biologic', 'pathology_turnaround', 'biopsy_notification', 'itch'];
   if (form.evidenceType === 'data_completeness' && form.category !== 'quality') {
-    return 'Data completeness evidence must be recorded under the Quality category.';
+    addError('Data completeness evidence must be recorded under the Quality category.');
   }
   if (specializedQualityTypes.includes(form.evidenceType) && form.category !== 'quality') {
-    return 'This deterministic evidence type must be recorded under the Quality category.';
+    addError('This deterministic evidence type must be recorded under the Quality category.');
   }
   const enforcedMeasureId = enforcedMeasureForEvidenceType(form.evidenceType);
   if (enforcedMeasureId && form.measureId !== enforcedMeasureId) {
-    return `This evidence type must use quality measure ${enforcedMeasureId}.`;
+    addError(`This evidence type must use quality measure ${enforcedMeasureId}.`);
   }
   if (form.evidenceType === 'itch' && form.measureId !== '485' && form.measureId !== '486') {
-    return 'Itch evidence must use quality measure 485 or 486.';
+    addError('Itch evidence must use quality measure 485 or 486.');
   }
 
   if (form.evidenceType === 'data_completeness') {
     const complete = parseNonnegativeInteger(form.completeCount);
     const eligible = parseNonnegativeInteger(form.eligibleCount);
-    if (complete === null || eligible === null) return 'Enter nonnegative whole-number completeness and eligible counts.';
-    if (eligible <= 0) return 'Eligible count must be greater than zero.';
-    if (complete > eligible) return 'Complete count cannot exceed eligible count.';
+    if (complete === null) addError('Enter a nonnegative whole-number complete count.', 'completeCount');
+    if (eligible === null) addError('Enter a nonnegative whole-number eligible count.', 'eligibleCount');
+    if (eligible !== null && eligible <= 0) addError('Eligible count must be greater than zero.', 'eligibleCount');
+    if (complete !== null && eligible !== null && complete > eligible) addError('Complete count cannot exceed eligible count.', 'completeCount');
   }
 
-  const datePairs: Record<string, [string, string, string]> = {
-    tb_before_biologic: [form.screeningDate, form.firstBiologicDate, 'screening and first biologic dates'],
-    pathology_turnaround: [form.specimenReceiptDate, form.reportSentDate, 'specimen receipt and report sent dates'],
-    biopsy_notification: [form.finalReportDate, form.notificationDate, 'final report and patient notification dates'],
-    continuous_period: [form.startDate, form.endDate, 'period start and end dates'],
+  const datePairs: Partial<Record<string, {
+    start: keyof EvidenceFormState;
+    end: keyof EvidenceFormState;
+    label: string;
+    enforceOrder: boolean;
+  }>> = {
+    tb_before_biologic: { start: 'screeningDate', end: 'firstBiologicDate', label: 'screening and first biologic dates', enforceOrder: false },
+    pathology_turnaround: { start: 'specimenReceiptDate', end: 'reportSentDate', label: 'specimen receipt and report sent dates', enforceOrder: true },
+    biopsy_notification: { start: 'finalReportDate', end: 'notificationDate', label: 'final report and patient notification dates', enforceOrder: true },
+    continuous_period: { start: 'startDate', end: 'endDate', label: 'period start and end dates', enforceOrder: true },
   };
   const datePair = datePairs[form.evidenceType];
   if (datePair) {
-    if (!datePair[0] || !datePair[1]) return `Enter both ${datePair[2]}.`;
-    if (datePair[0] > datePair[1]) return `The ${datePair[2]} must be in chronological order.`;
+    const start = form[datePair.start];
+    const end = form[datePair.end];
+    if (!start) addError(`Enter the first of the ${datePair.label}.`, datePair.start);
+    if (!end) addError(`Enter the second of the ${datePair.label}.`, datePair.end);
+    if (start && end && datePair.enforceOrder && start > end) {
+      addError(`The ${datePair.label} must be in chronological order.`, datePair.end);
+    }
   }
 
   if (form.evidenceType === 'continuous_period' && form.startDate && form.endDate) {
-    if (form.startDate < `${PERFORMANCE_YEAR}-01-01` || form.endDate > `${PERFORMANCE_YEAR}-12-31`) {
-      return `The continuous period must stay within the ${PERFORMANCE_YEAR} performance year.`;
-    }
+    if (form.startDate < `${PERFORMANCE_YEAR}-01-01`) addError(`The continuous period must stay within the ${PERFORMANCE_YEAR} performance year.`, 'startDate');
+    if (form.endDate > `${PERFORMANCE_YEAR}-12-31`) addError(`The continuous period must stay within the ${PERFORMANCE_YEAR} performance year.`, 'endDate');
     const durationDays = inclusiveCalendarDays(form.startDate, form.endDate);
-    if (form.category === 'quality' && (form.startDate !== `${PERFORMANCE_YEAR}-01-01` || form.endDate !== `${PERFORMANCE_YEAR}-12-31`)) {
-      return `Quality evidence must cover the full ${PERFORMANCE_YEAR} performance year.`;
+    if (form.category === 'quality') {
+      if (form.startDate !== `${PERFORMANCE_YEAR}-01-01`) addError(`Quality evidence must cover the full ${PERFORMANCE_YEAR} performance year.`, 'startDate');
+      if (form.endDate !== `${PERFORMANCE_YEAR}-12-31`) addError(`Quality evidence must cover the full ${PERFORMANCE_YEAR} performance year.`, 'endDate');
     }
     if (form.category === 'pi' && durationDays !== null && durationDays < 180) {
-      return 'Promoting Interoperability evidence must cover at least 180 continuous days.';
+      addError('Promoting Interoperability evidence must cover at least 180 continuous days.', 'endDate');
     }
     if (form.category === 'ia' && durationDays !== null && durationDays < 90) {
-      return 'Improvement Activities evidence must cover at least 90 continuous days.';
+      addError('Improvement Activities evidence must cover at least 90 continuous days.', 'endDate');
     }
   }
 
   if (form.evidenceType === 'itch') {
-    if (!form.baselineInstrument.trim() || !form.followUpInstrument.trim()) return 'Enter the baseline and follow-up itch instrument.';
-    if (form.baselineInstrument.trim() !== form.followUpInstrument.trim()) return 'Baseline and follow-up must use the same itch instrument.';
+    const baselineInstrument = form.baselineInstrument.trim();
+    const followUpInstrument = form.followUpInstrument.trim();
+    if (!baselineInstrument) addError('Enter the baseline itch instrument.', 'baselineInstrument');
+    if (!followUpInstrument) addError('Enter the follow-up itch instrument.', 'followUpInstrument');
+    if (baselineInstrument && followUpInstrument && baselineInstrument !== followUpInstrument) {
+      addError('Baseline and follow-up must use the same itch instrument.', 'followUpInstrument');
+    }
     const baseline = parseOptionalNumber(form.baselineScore);
     const followUp = parseOptionalNumber(form.followUpScore);
-    if (baseline === undefined || followUp === undefined || baseline < 0 || followUp < 0) return 'Enter finite, nonnegative baseline and follow-up scores.';
+    if (baseline === undefined || baseline < 0) addError('Enter a finite, nonnegative baseline score.', 'baselineScore');
+    if (followUp === undefined || followUp < 0) addError('Enter a finite, nonnegative follow-up score.', 'followUpScore');
   }
-  return undefined;
+
+  if (messages.length) next.evidence = messages.join(' ');
+  return next;
 }
 
 function inclusiveCalendarDays(start: string, end: string): number | null {
@@ -495,10 +524,10 @@ export default function MIPSReadinessPage() {
     headingRef.current?.focus();
   }, [location.pathname]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ focusOnSuccess = false }: { focusOnSuccess?: boolean } = {}): Promise<LoadResult> => {
     if (!isAuthenticated) {
       setLoading(false);
-      return;
+      return { ok: true };
     }
     setLoading(true);
     setLoadError('');
@@ -513,11 +542,27 @@ export default function MIPSReadinessPage() {
       setForm(profileToForm(readiness.profile));
       setEvidence(evidenceResponse.evidence || []);
       setAutomation(automationResponse);
+      setPreview(null);
+      setPreviewError('');
+      setErrors({});
       setAnnouncement(`2026 MIPS readiness data loaded. ${evidenceResponse.evidence?.length || 0} structured evidence items found.`);
+      if (focusOnSuccess) {
+        window.requestAnimationFrame(() => headingRef.current?.focus());
+      }
+      return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load MIPS readiness data.';
+      setOverview(null);
+      setEvidence([]);
+      setAutomation(null);
+      setForm({ ...EMPTY_FORM });
+      setEvidenceForm({ ...EMPTY_EVIDENCE_FORM });
+      setPreview(null);
+      setPreviewError('');
+      setErrors({});
       setLoadError(message);
       setAnnouncement(`MIPS readiness data could not be loaded: ${message}`);
+      return { ok: false, message };
     } finally {
       setLoading(false);
     }
@@ -535,6 +580,14 @@ export default function MIPSReadinessPage() {
     const hasProfileFieldError = Object.entries(errors).some(([field, message]) => field !== 'profile' && Boolean(message));
     if (hasProfileFieldError) document.getElementById('profile-validation-summary')?.focus();
   }, [errors]);
+
+  useLayoutEffect(() => {
+    if (errors.profile) document.getElementById('profile-error-summary')?.focus();
+  }, [errors.profile]);
+
+  useLayoutEffect(() => {
+    if (loadError) document.getElementById('mips-load-error-summary')?.focus();
+  }, [loadError]);
 
   useLayoutEffect(() => {
     if (previewError) document.getElementById('preview-error-summary')?.focus();
@@ -655,8 +708,10 @@ export default function MIPSReadinessPage() {
           sourceType: 'qpp_manual',
         },
       });
-      await loadData();
-      setAnnouncement('Practice profile saved. Readiness results refreshed.');
+      const refresh = await loadData();
+      setAnnouncement(refresh.ok
+        ? 'Practice profile saved. Readiness results refreshed.'
+        : `Practice profile saved, but the readiness refresh failed: ${refresh.message}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save the practice profile.';
       setErrors({ profile: message });
@@ -782,7 +837,7 @@ export default function MIPSReadinessPage() {
 
   const handleEvidenceChange = <K extends keyof EvidenceFormState>(field: K, value: EvidenceFormState[K]) => {
     setEvidenceForm((current) => ({ ...current, [field]: value }));
-    if (errors.evidence) setErrors((current) => ({ ...current, evidence: undefined }));
+    if (errors.evidence || errors[field]) setErrors((current) => ({ ...current, evidence: undefined, [field]: undefined }));
   };
 
   const handleEvidenceTypeChange = (evidenceType: string) => {
@@ -824,9 +879,10 @@ export default function MIPSReadinessPage() {
 
   const handleEvidenceSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const validationError = validateEvidenceForm(evidenceForm);
-    if (validationError) {
-      setErrors({ evidence: validationError });
+    const validationErrors = validateEvidenceForm(evidenceForm);
+    if (Object.keys(validationErrors).length) {
+      const validationError = validationErrors.evidence || 'Review the evidence fields before saving.';
+      setErrors(validationErrors);
       setAnnouncement(`Evidence validation found an error: ${validationError}`);
       window.requestAnimationFrame(() => document.getElementById('evidence-validation-summary')?.focus());
       return;
@@ -850,9 +906,11 @@ export default function MIPSReadinessPage() {
         status: evidenceForm.status,
         metadata,
       });
-      await loadData();
-      setEvidenceForm((current) => ({ ...EMPTY_EVIDENCE_FORM, category: current.category, evidenceType: current.evidenceType, sourceType: current.sourceType }));
-      setAnnouncement(`Structured evidence created with ${statusLabel(selectedStatus).toLowerCase()} status. Human verification is still required.`);
+      const refresh = await loadData();
+      setEvidenceForm({ ...EMPTY_EVIDENCE_FORM });
+      setAnnouncement(refresh.ok
+        ? `Structured evidence created with ${statusLabel(selectedStatus).toLowerCase()} status. Human verification is still required.`
+        : `Structured evidence was created with ${statusLabel(selectedStatus).toLowerCase()} status, but the readiness refresh failed: ${refresh.message}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to create structured evidence.';
       setErrors({ evidence: message });
@@ -867,10 +925,10 @@ export default function MIPSReadinessPage() {
     setAnnouncement('Reconciling structured 2026 workflow events into candidate evidence.');
     try {
       const result = await syncMipsAutomation({ headers: requestHeaders }, year);
-      await loadData();
-      setAnnouncement(
-        `Automation reconciliation ${result.status}. ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, and ${result.stale} stale event${result.stale === 1 ? '' : 's'} ignored.`,
-      );
+      const refresh = await loadData();
+      setAnnouncement(refresh.ok
+        ? `Automation reconciliation ${result.status}. ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, and ${result.stale} stale event${result.stale === 1 ? '' : 's'} ignored.`
+        : `Automation reconciliation ${result.status} succeeded, but the readiness refresh failed: ${refresh.message}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to reconcile workflow candidates.';
       setAnnouncement(`Automation reconciliation failed: ${message}`);
@@ -887,11 +945,15 @@ export default function MIPSReadinessPage() {
     setAnnouncement(`${status === 'verified' ? 'Verifying' : 'Rejecting'} candidate evidence for measure ${item.measureId || item.category}.`);
     try {
       await reviewMipsEvidence({ headers: requestHeaders }, item.id, status, item.sourceRevision ?? null, year);
-      await loadData();
-      setAnnouncement(
-        `Candidate evidence for measure ${item.measureId || item.category} marked ${status}. This remains workflow readiness, not an official submitted score.`,
-      );
-      window.requestAnimationFrame(() => evidenceItemRefs.current[item.id]?.focus());
+      const refresh = await loadData();
+      if (refresh.ok) {
+        setAnnouncement(
+          `Candidate evidence for measure ${item.measureId || item.category} marked ${status}. This remains workflow readiness, not an official submitted score.`,
+        );
+        window.requestAnimationFrame(() => evidenceItemRefs.current[item.id]?.focus());
+      } else {
+        setAnnouncement(`Candidate evidence for measure ${item.measureId || item.category} was marked ${status}, but the readiness refresh failed: ${refresh.message}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to review candidate evidence.';
       setAnnouncement(`Evidence review failed: ${message}`);
@@ -928,6 +990,7 @@ export default function MIPSReadinessPage() {
   });
 
   const categories: MipsCategory[] = ['quality', 'cost', 'pi', 'ia'];
+  const actionsDisabled = loading || Boolean(loadError) || !overview;
   const workQueue = overview?.workQueue || [];
   const readinessStatus = overview?.readiness?.status || 'unknown';
   const eligibilityStatus = overview?.eligibility?.status || 'unknown';
@@ -950,18 +1013,23 @@ export default function MIPSReadinessPage() {
   return (
     <div className="mips-page" id="mips-readiness-main" tabIndex={-1}>
       <div className="mips-page__inner">
-        <div className="mips-skip-link"><a href="#mips-readiness-main">Skip to MIPS readiness content</a></div>
         <header className="mips-hero">
           <div>
             <p className="mips-eyebrow">Quality &amp; regulatory operations</p>
             <h1 ref={headingRef} data-page-heading tabIndex={-1}>MIPS Readiness Center</h1>
             <p className="mips-lede">Build a reviewable, practice-owned readiness record for the 2026 performance year.</p>
           </div>
-          <div className="mips-year-chip" aria-label="Performance year 2026">Performance year <strong>{year}</strong></div>
+          <div className="mips-year-chip">Performance year <strong>{year}</strong></div>
         </header>
 
         <div className="mips-live-region" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
-        {loadError && <div className="mips-alert mips-alert--error" role="alert">{loadError}</div>}
+        {loadError && (
+          <div id="mips-load-error-summary" className="mips-alert mips-alert--error mips-load-error-summary" role="alert" tabIndex={-1}>
+            <strong>Unable to load MIPS readiness data.</strong>
+            <p>{loadError}</p>
+            <button className="mips-secondary-button" type="button" onClick={() => void loadData({ focusOnSuccess: true })} disabled={loading}>Retry loading MIPS data</button>
+          </div>
+        )}
 
         <section className="mips-context-card" aria-labelledby="mips-context-heading">
           <div className="mips-context-card__icon"><Info size={22} aria-hidden="true" /></div>
@@ -978,7 +1046,7 @@ export default function MIPSReadinessPage() {
             <div><p className="mips-eyebrow">Configuration</p><h2 id="profile-heading">Practice profile</h2></div>
             <span className="mips-section__meta">2026 only</span>
           </div>
-          {errors.profile && <div className="mips-alert mips-alert--error" role="alert">{errors.profile}</div>}
+          {errors.profile && <div id="profile-error-summary" className="mips-alert mips-alert--error" role="alert" tabIndex={-1}><strong>Practice profile save failed.</strong><p>{errors.profile}</p></div>}
           <form className="mips-form" onSubmit={handleProfileSubmit} noValidate>
             <p id="profile-required-help" className="mips-help">Required for readiness: the quality, PI, and IA performance dates plus at least four quality measures and one Improvement Activity.</p>
             {Object.keys(errors).length > 0 && (errors.selectedQualityMeasureIds || errors.selectedImprovementActivityIds || errors.qualityStartDate || errors.qualityEndDate || errors.piStartDate || errors.piEndDate || errors.iaStartDate || errors.iaEndDate || errors.chplId || errors.allowedCharges || errors.beneficiaries || errors.coveredServices) && (
@@ -1101,7 +1169,7 @@ export default function MIPSReadinessPage() {
             </fieldset>
 
             <div className="mips-cost-note"><LockKeyhole size={19} aria-hidden="true" /><div><strong>Cost is CMS claims-calculated</strong><p>COST_MR_1 is read-only here. Local EMR evidence cannot create a cost score.</p></div></div>
-            <div className="mips-form-actions"><button className="mips-primary-button" type="submit" disabled={saving}>{saving ? 'Saving profile…' : 'Save practice profile'}</button></div>
+            <div className="mips-form-actions"><button className="mips-primary-button" type="submit" disabled={saving || actionsDisabled}>{saving ? 'Saving profile…' : 'Save practice profile'}</button></div>
           </form>
         </section>
 
@@ -1143,7 +1211,7 @@ export default function MIPSReadinessPage() {
                 ? `Last reconciled ${formatDate(automation.lastRun.completedAt)}: ${automation.lastRun.created} created, ${automation.lastRun.updated} updated, ${automation.lastRun.unchanged} unchanged.`
                 : 'Run reconciliation to backfill current 2026 structured records and repair any missed event hook.'}
             </p>
-            <button className="mips-secondary-button" type="button" onClick={() => void handleAutomationSync()} disabled={syncingAutomation}>
+            <button className="mips-secondary-button" type="button" onClick={() => void handleAutomationSync()} disabled={syncingAutomation || actionsDisabled}>
               {syncingAutomation ? 'Reconciling workflows…' : 'Reconcile workflow candidates'}
             </button>
           </div>
@@ -1171,8 +1239,8 @@ export default function MIPSReadinessPage() {
                       {item.metadata?.limitationCode && <p className="mips-candidate-limitation">Review requirement: {String(item.metadata.limitationCode).replaceAll('_', ' ').toLowerCase()}.</p>}
                       <div className="mips-candidate-actions">
                         {destination && <Link className="mips-text-link" to={destination.to}>{destination.label}</Link>}
-                        <button type="button" className="mips-secondary-button" aria-label={evidenceReviewLabel('Verify candidate', item)} disabled={reviewingEvidenceId !== null || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify candidate</button>
-                        <button type="button" className="mips-secondary-button mips-secondary-button--danger" aria-label={evidenceReviewLabel('Reject candidate', item)} disabled={reviewingEvidenceId !== null || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject candidate</button>
+                        <button type="button" className="mips-secondary-button" aria-label={evidenceReviewLabel('Verify candidate', item)} disabled={actionsDisabled || reviewingEvidenceId !== null || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify candidate</button>
+                        <button type="button" className="mips-secondary-button mips-secondary-button--danger" aria-label={evidenceReviewLabel('Reject candidate', item)} disabled={actionsDisabled || reviewingEvidenceId !== null || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject candidate</button>
                       </div>
                     </li>
                   );
@@ -1229,17 +1297,17 @@ export default function MIPSReadinessPage() {
               <div className="mips-field"><label htmlFor="evidence-status">Lifecycle status</label><select id="evidence-status" value={evidenceForm.status} onChange={(event) => handleEvidenceChange('status', event.target.value as EvidenceStatus)}>{EVIDENCE_STATUSES.map((status) => <option value={status} key={status}>{statusLabel(status)}</option>)}</select><span className="mips-help">New evidence cannot be verified here. Verification requires the separate review action with reviewer provenance.</span></div>
             </div>
 
-            {(evidenceForm.evidenceType === 'data_completeness') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Data completeness counts</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="complete-count">Complete records</label><input id="complete-count" type="number" min={0} step={1} value={evidenceForm.completeCount} onChange={(event) => handleEvidenceChange('completeCount', event.target.value)} aria-invalid={Boolean(errors.evidence)} aria-describedby="evidence-error" /></div><div className="mips-field"><label htmlFor="eligible-count">Eligible records</label><input id="eligible-count" type="number" min={0} step={1} value={evidenceForm.eligibleCount} onChange={(event) => handleEvidenceChange('eligibleCount', event.target.value)} aria-invalid={Boolean(errors.evidence)} aria-describedby="evidence-error" /></div></div></fieldset>}
-            {(evidenceForm.evidenceType === 'tb_before_biologic') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>TB screening timing</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="screening-date">Screening date</label><input id="screening-date" type="date" value={evidenceForm.screeningDate} onChange={(event) => handleEvidenceChange('screeningDate', event.target.value)} /></div><div className="mips-field"><label htmlFor="first-biologic-date">First biologic / immune-modifier date</label><input id="first-biologic-date" type="date" value={evidenceForm.firstBiologicDate} onChange={(event) => handleEvidenceChange('firstBiologicDate', event.target.value)} /></div></div></fieldset>}
-            {(evidenceForm.evidenceType === 'pathology_turnaround') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Pathology turnaround dates</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="specimen-receipt-date">Specimen receipt date</label><input id="specimen-receipt-date" type="date" value={evidenceForm.specimenReceiptDate} onChange={(event) => handleEvidenceChange('specimenReceiptDate', event.target.value)} /></div><div className="mips-field"><label htmlFor="report-sent-date">Report sent date</label><input id="report-sent-date" type="date" value={evidenceForm.reportSentDate} onChange={(event) => handleEvidenceChange('reportSentDate', event.target.value)} /></div></div></fieldset>}
-            {(evidenceForm.evidenceType === 'biopsy_notification') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Biopsy result notification dates</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="final-report-date">Final report date</label><input id="final-report-date" type="date" value={evidenceForm.finalReportDate} onChange={(event) => handleEvidenceChange('finalReportDate', event.target.value)} /></div><div className="mips-field"><label htmlFor="notification-date">Patient notification date</label><input id="notification-date" type="date" value={evidenceForm.notificationDate} onChange={(event) => handleEvidenceChange('notificationDate', event.target.value)} /></div></div></fieldset>}
-            {(evidenceForm.evidenceType === 'itch') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Itch instrument and scores</legend><div className="mips-form-grid mips-form-grid--four"><div className="mips-field"><label htmlFor="baseline-instrument">Baseline instrument</label><input id="baseline-instrument" type="text" value={evidenceForm.baselineInstrument} onChange={(event) => handleEvidenceChange('baselineInstrument', event.target.value)} /></div><div className="mips-field"><label htmlFor="baseline-score">Baseline score</label><input id="baseline-score" type="number" step="any" value={evidenceForm.baselineScore} onChange={(event) => handleEvidenceChange('baselineScore', event.target.value)} /></div><div className="mips-field"><label htmlFor="follow-up-instrument">Follow-up instrument</label><input id="follow-up-instrument" type="text" value={evidenceForm.followUpInstrument} onChange={(event) => handleEvidenceChange('followUpInstrument', event.target.value)} /></div><div className="mips-field"><label htmlFor="follow-up-score">Follow-up score</label><input id="follow-up-score" type="number" step="any" value={evidenceForm.followUpScore} onChange={(event) => handleEvidenceChange('followUpScore', event.target.value)} /></div></div></fieldset>}
-            {(evidenceForm.evidenceType === 'continuous_period') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Continuous period</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="evidence-start-date">Period start</label><input id="evidence-start-date" type="date" value={evidenceForm.startDate} onChange={(event) => handleEvidenceChange('startDate', event.target.value)} /></div><div className="mips-field"><label htmlFor="evidence-end-date">Period end</label><input id="evidence-end-date" type="date" value={evidenceForm.endDate} onChange={(event) => handleEvidenceChange('endDate', event.target.value)} /></div></div></fieldset>}
-            <div className="mips-form-actions"><button className="mips-primary-button" type="submit" disabled={creatingEvidence}>{creatingEvidence ? 'Adding evidence…' : 'Add structured evidence'}</button></div>
+            {(evidenceForm.evidenceType === 'data_completeness') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Data completeness counts</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="complete-count">Complete records</label><input id="complete-count" type="number" min={0} step={1} value={evidenceForm.completeCount} onChange={(event) => handleEvidenceChange('completeCount', event.target.value)} aria-invalid={Boolean(errors.completeCount)} aria-describedby={errorDescription('completeCount')} required />{renderFieldError('completeCount')}</div><div className="mips-field"><label htmlFor="eligible-count">Eligible records</label><input id="eligible-count" type="number" min={0} step={1} value={evidenceForm.eligibleCount} onChange={(event) => handleEvidenceChange('eligibleCount', event.target.value)} aria-invalid={Boolean(errors.eligibleCount)} aria-describedby={errorDescription('eligibleCount')} required />{renderFieldError('eligibleCount')}</div></div></fieldset>}
+            {(evidenceForm.evidenceType === 'tb_before_biologic') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>TB screening timing</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="screening-date">Screening date</label><input id="screening-date" type="date" value={evidenceForm.screeningDate} onChange={(event) => handleEvidenceChange('screeningDate', event.target.value)} aria-invalid={Boolean(errors.screeningDate)} aria-describedby={errorDescription('screeningDate')} required />{renderFieldError('screeningDate')}</div><div className="mips-field"><label htmlFor="first-biologic-date">First biologic / immune-modifier date</label><input id="first-biologic-date" type="date" value={evidenceForm.firstBiologicDate} onChange={(event) => handleEvidenceChange('firstBiologicDate', event.target.value)} aria-invalid={Boolean(errors.firstBiologicDate)} aria-describedby={errorDescription('firstBiologicDate')} required />{renderFieldError('firstBiologicDate')}</div></div></fieldset>}
+            {(evidenceForm.evidenceType === 'pathology_turnaround') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Pathology turnaround dates</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="specimen-receipt-date">Specimen receipt date</label><input id="specimen-receipt-date" type="date" value={evidenceForm.specimenReceiptDate} onChange={(event) => handleEvidenceChange('specimenReceiptDate', event.target.value)} aria-invalid={Boolean(errors.specimenReceiptDate)} aria-describedby={errorDescription('specimenReceiptDate')} required />{renderFieldError('specimenReceiptDate')}</div><div className="mips-field"><label htmlFor="report-sent-date">Report sent date</label><input id="report-sent-date" type="date" value={evidenceForm.reportSentDate} onChange={(event) => handleEvidenceChange('reportSentDate', event.target.value)} aria-invalid={Boolean(errors.reportSentDate)} aria-describedby={errorDescription('reportSentDate')} required />{renderFieldError('reportSentDate')}</div></div></fieldset>}
+            {(evidenceForm.evidenceType === 'biopsy_notification') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Biopsy result notification dates</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="final-report-date">Final report date</label><input id="final-report-date" type="date" value={evidenceForm.finalReportDate} onChange={(event) => handleEvidenceChange('finalReportDate', event.target.value)} aria-invalid={Boolean(errors.finalReportDate)} aria-describedby={errorDescription('finalReportDate')} required />{renderFieldError('finalReportDate')}</div><div className="mips-field"><label htmlFor="notification-date">Patient notification date</label><input id="notification-date" type="date" value={evidenceForm.notificationDate} onChange={(event) => handleEvidenceChange('notificationDate', event.target.value)} aria-invalid={Boolean(errors.notificationDate)} aria-describedby={errorDescription('notificationDate')} required />{renderFieldError('notificationDate')}</div></div></fieldset>}
+            {(evidenceForm.evidenceType === 'itch') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Itch instrument and scores</legend><div className="mips-form-grid mips-form-grid--four"><div className="mips-field"><label htmlFor="baseline-instrument">Baseline instrument</label><input id="baseline-instrument" type="text" value={evidenceForm.baselineInstrument} onChange={(event) => handleEvidenceChange('baselineInstrument', event.target.value)} aria-invalid={Boolean(errors.baselineInstrument)} aria-describedby={errorDescription('baselineInstrument')} required />{renderFieldError('baselineInstrument')}</div><div className="mips-field"><label htmlFor="baseline-score">Baseline score</label><input id="baseline-score" type="number" step="any" value={evidenceForm.baselineScore} onChange={(event) => handleEvidenceChange('baselineScore', event.target.value)} aria-invalid={Boolean(errors.baselineScore)} aria-describedby={errorDescription('baselineScore')} required />{renderFieldError('baselineScore')}</div><div className="mips-field"><label htmlFor="follow-up-instrument">Follow-up instrument</label><input id="follow-up-instrument" type="text" value={evidenceForm.followUpInstrument} onChange={(event) => handleEvidenceChange('followUpInstrument', event.target.value)} aria-invalid={Boolean(errors.followUpInstrument)} aria-describedby={errorDescription('followUpInstrument')} required />{renderFieldError('followUpInstrument')}</div><div className="mips-field"><label htmlFor="follow-up-score">Follow-up score</label><input id="follow-up-score" type="number" step="any" value={evidenceForm.followUpScore} onChange={(event) => handleEvidenceChange('followUpScore', event.target.value)} aria-invalid={Boolean(errors.followUpScore)} aria-describedby={errorDescription('followUpScore')} required />{renderFieldError('followUpScore')}</div></div></fieldset>}
+            {(evidenceForm.evidenceType === 'continuous_period') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Continuous period</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="evidence-start-date">Period start</label><input id="evidence-start-date" type="date" value={evidenceForm.startDate} onChange={(event) => handleEvidenceChange('startDate', event.target.value)} aria-invalid={Boolean(errors.startDate)} aria-describedby={errorDescription('startDate')} required />{renderFieldError('startDate')}</div><div className="mips-field"><label htmlFor="evidence-end-date">Period end</label><input id="evidence-end-date" type="date" value={evidenceForm.endDate} onChange={(event) => handleEvidenceChange('endDate', event.target.value)} aria-invalid={Boolean(errors.endDate)} aria-describedby={errorDescription('endDate')} required />{renderFieldError('endDate')}</div></div></fieldset>}
+            <div className="mips-form-actions"><button className="mips-primary-button" type="submit" disabled={creatingEvidence || actionsDisabled}>{creatingEvidence ? 'Adding evidence…' : 'Add structured evidence'}</button></div>
           </form>
 
           <div className="mips-evidence-list">
-            {manualEvidence.length ? <ul>{manualEvidence.map((item) => <li key={item.id} ref={(element) => { evidenceItemRefs.current[item.id] = element; }} tabIndex={-1}><div className="mips-evidence-list__top"><strong>{item.measureId || categoryLabel(item.category)}</strong><StatusBadge status={item.status} /></div><p>{evidenceTypeLabel(item.evidenceType)}</p><dl><div><dt>Source</dt><dd>{item.sourceType} · {item.sourceId}</dd></div><div><dt>Observed</dt><dd>{formatDate(item.observedAt)}</dd></div></dl>{Object.keys(item.metadata || {}).length > 0 && <details><summary>Structured values</summary><dl>{Object.entries(item.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}<div className="mips-candidate-actions"><button type="button" className="mips-secondary-button" aria-label={evidenceReviewLabel('Verify manual evidence', item)} disabled={reviewingEvidenceId !== null || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify manual evidence</button><button type="button" className="mips-secondary-button mips-secondary-button--danger" aria-label={evidenceReviewLabel('Reject manual evidence', item)} disabled={reviewingEvidenceId !== null || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject manual evidence</button></div></li>)}</ul> : <p className="mips-empty-state">No manual evidence is recorded yet. Automatic candidates appear in the dedicated review section above.</p>}
+            {manualEvidence.length ? <ul>{manualEvidence.map((item) => <li key={item.id} ref={(element) => { evidenceItemRefs.current[item.id] = element; }} tabIndex={-1}><div className="mips-evidence-list__top"><strong>{item.measureId || categoryLabel(item.category)}</strong><StatusBadge status={item.status} /></div><p>{evidenceTypeLabel(item.evidenceType)}</p><dl><div><dt>Source</dt><dd>{item.sourceType} · {item.sourceId}</dd></div><div><dt>Observed</dt><dd>{formatDate(item.observedAt)}</dd></div></dl>{Object.keys(item.metadata || {}).length > 0 && <details><summary>Structured values</summary><dl>{Object.entries(item.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}<div className="mips-candidate-actions"><button type="button" className="mips-secondary-button" aria-label={evidenceReviewLabel('Verify manual evidence', item)} disabled={actionsDisabled || reviewingEvidenceId !== null || item.status === 'verified'} onClick={() => void handleEvidenceReview(item, 'verified')}>Verify manual evidence</button><button type="button" className="mips-secondary-button mips-secondary-button--danger" aria-label={evidenceReviewLabel('Reject manual evidence', item)} disabled={actionsDisabled || reviewingEvidenceId !== null || item.status === 'rejected'} onClick={() => void handleEvidenceReview(item, 'rejected')}>Reject manual evidence</button></div></li>)}</ul> : <p className="mips-empty-state">No manual evidence is recorded yet. Automatic candidates appear in the dedicated review section above.</p>}
           </div>
         </section>
 
@@ -1248,7 +1316,7 @@ export default function MIPSReadinessPage() {
           {previewError && <div id="preview-error-summary" className="mips-alert mips-alert--error" role="alert" tabIndex={-1}>{previewError}</div>}
           <p>Draft preview only—nothing will be submitted or sent.</p>
           <div className="mips-preview-state"><span><strong>Submission state</strong> not_submitted</span><span><strong>Transport state</strong> not_configured</span></div>
-          <button className="mips-secondary-button" type="button" onClick={() => void handlePreview()} disabled={previewing}>{previewing ? 'Generating preview…' : 'Preview draft registry export'}</button>
+          <button className="mips-secondary-button" type="button" onClick={() => void handlePreview()} disabled={previewing || actionsDisabled}>{previewing ? 'Generating preview…' : 'Preview draft registry export'}</button>
           <div>{preview && <div className="mips-preview-output"><h3>Preview manifest</h3><dl className="mips-manifest-list"><div><dt>Performance year</dt><dd>{preview.manifest.performanceYear}</dd></div><div><dt>Payment year</dt><dd>{preview.manifest.paymentYear}</dd></div><div><dt>Eligibility</dt><dd>{statusLabel(preview.manifest.eligibilityStatus)}</dd></div><div><dt>Readiness</dt><dd>{statusLabel(preview.manifest.readinessStatus)}</dd></div><div><dt>Export state</dt><dd>{statusLabel(preview.exportState)}</dd></div></dl><h4>Selected quality measures</h4><ul>{preview.manifest.selectedQualityMeasureIds.length ? preview.manifest.selectedQualityMeasureIds.map((id) => <li key={id}>{id}</li>) : <li>None selected</li>}</ul><h4>Selected Improvement Activities</h4><ul>{preview.manifest.selectedImprovementActivityIds.length ? preview.manifest.selectedImprovementActivityIds.map((id) => <li key={id}>{id}</li>) : <li>None selected</li>}</ul><h4>Open work queue</h4>{preview.manifest.workQueue.length ? <ul>{preview.manifest.workQueue.map((item) => <li key={item.id}>{item.title} — {statusLabel(item.status)}</li>)}</ul> : <p>No open items returned.</p>}</div>}</div>
         </section>
       </div>

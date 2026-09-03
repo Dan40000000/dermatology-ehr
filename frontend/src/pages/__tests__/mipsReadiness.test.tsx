@@ -334,7 +334,7 @@ describe('MIPSReadinessPage', () => {
     expect(document.activeElement).toBe(screen.getByRole('alert'));
     const completeCount = screen.getByLabelText('Complete records');
     expect(completeCount).toHaveAttribute('aria-invalid', 'true');
-    expect(completeCount).toHaveAttribute('aria-describedby', 'evidence-error');
+    expect(completeCount).toHaveAttribute('aria-describedby', 'completecount-error');
 
     fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'cost' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add structured evidence' }));
@@ -438,5 +438,164 @@ describe('MIPSReadinessPage', () => {
     expect(apiMocks.saveMipsReadinessProfile.mock.calls[0][1].selectedQualityMeasureIds).toEqual(['176', '410', '440', 'AAD6']);
     expect(apiMocks.fetchMipsReadiness).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/refreshed/i));
+  });
+
+  it('clears failed initial loads, disables mutations, and recovers through the retry action', async () => {
+    apiMocks.fetchMipsReadiness.mockRejectedValueOnce(new Error('Initial MIPS load unavailable')).mockResolvedValueOnce(makeOverview());
+    apiMocks.fetchMipsEvidence.mockResolvedValue({ year: 2026, evidence: [] });
+    apiMocks.fetchMipsAutomation.mockResolvedValue(automationStatus);
+    const { container } = render(<MemoryRouter initialEntries={['/mips-readiness']}><MIPSReadinessPage /></MemoryRouter>);
+
+    const loadError = await screen.findByRole('alert');
+    expect(loadError).toHaveAttribute('id', 'mips-load-error-summary');
+    expect(loadError).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(loadError);
+    expect(screen.getByRole('button', { name: 'Retry loading MIPS data' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save practice profile' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Reconcile workflow candidates' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add structured evidence' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Preview draft registry export' })).toBeDisabled();
+    expect(container.querySelector('.mips-year-chip')).not.toHaveAttribute('aria-label');
+    expect(screen.queryByText('Skip to MIPS readiness content')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading MIPS data' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'MIPS Readiness Center', level: 1 })).toHaveFocus());
+    expect(screen.getByRole('button', { name: 'Save practice profile' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Reconcile workflow candidates' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add structured evidence' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Preview draft registry export' })).toBeEnabled();
+  });
+
+  it('clears stale data after a refresh failure and reports a confirmed evidence create separately', async () => {
+    const configuredOverview = makeOverview({
+      profile: {
+        ...makeOverview().profile,
+        selectedQualityMeasureIds: ['176', '410', '440', 'AAD6'],
+        categoryConfiguration: { qualityStartDate: '2026-01-01', qualityEndDate: '2026-12-31' },
+      },
+    });
+    const automaticCandidate: MipsEvidence = {
+      id: 'auto-176', category: 'quality', measureId: '176', evidenceType: 'tb_before_biologic',
+      sourceType: 'chronic_therapy_registry', sourceId: 'synthetic-therapy-1', status: 'candidate', origin: 'automation', metadata: {},
+    };
+    apiMocks.fetchMipsReadiness.mockResolvedValueOnce(configuredOverview).mockRejectedValueOnce(new Error('Refresh MIPS load unavailable'));
+    apiMocks.fetchMipsEvidence.mockResolvedValue({ year: 2026, evidence: [automaticCandidate] });
+    apiMocks.fetchMipsAutomation.mockResolvedValue(automationStatus);
+    const { container } = render(<MemoryRouter initialEntries={['/mips-readiness']}><MIPSReadinessPage /></MemoryRouter>);
+    await screen.findByText('Automatic candidate');
+    fireEvent.click(screen.getByRole('button', { name: 'Preview draft registry export' }));
+    await screen.findByText('Preview manifest');
+
+    fireEvent.change(screen.getByLabelText('Complete records'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Eligible records'), { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add structured evidence' }));
+
+    await waitFor(() => expect(apiMocks.createMipsEvidence).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('alert', { name: '' })).toHaveAttribute('id', 'mips-load-error-summary'));
+    expect(screen.getByRole('status')).toHaveTextContent(/structured evidence was created.*refresh failed/i);
+    expect(screen.queryByText('Automatic candidate')).not.toBeInTheDocument();
+    expect(screen.queryByText('Preview manifest')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Quality period start')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Save practice profile' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Reconcile workflow candidates' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add structured evidence' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Preview draft registry export' })).toBeDisabled();
+    expect(container.querySelector('.mips-coverage-grid')?.textContent).toBe('');
+    expect(screen.getByLabelText('Complete records')).toHaveValue(null);
+  });
+
+  it('focuses the profile save error summary when a valid save fails', async () => {
+    apiMocks.saveMipsReadinessProfile.mockRejectedValueOnce(new Error('Profile service unavailable'));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    for (const [label, value] of [
+      ['Quality period start', '2026-01-01'], ['Quality period end', '2026-12-31'],
+      ['PI period start (180 days)', '2026-01-01'], ['PI period end', '2026-06-29'],
+      ['IA period start (90 days)', '2026-01-01'], ['IA period end', '2026-03-31'],
+    ]) {
+      await user.clear(screen.getByLabelText(label));
+      await user.type(screen.getByLabelText(label), value);
+    }
+    for (const id of ['176', '410', '440', 'AAD6']) await user.click(screen.getByRole('checkbox', { name: new RegExp(id) }));
+    await user.click(screen.getByRole('checkbox', { name: /IA_BE_4/ }));
+    await user.click(screen.getByRole('button', { name: 'Save practice profile' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveAttribute('id', 'profile-error-summary'));
+    expect(document.activeElement).toBe(screen.getByRole('alert'));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Profile service unavailable/);
+  });
+
+  it('focuses the top load error summary after a review conflict', async () => {
+    apiMocks.reviewMipsEvidence.mockRejectedValueOnce(new Error('Evidence revision conflict'));
+    const manualEvidence: MipsEvidence = {
+      id: 'manual-conflict', category: 'quality', measureId: '410', evidenceType: 'manual_attestation',
+      sourceType: 'qpp_manual', sourceId: 'synthetic-reference-1', status: 'candidate', origin: 'manual', metadata: {},
+    };
+    renderPage(makeOverview(), [manualEvidence]);
+    await screen.findByRole('button', { name: /^Verify manual evidence/ });
+    fireEvent.click(screen.getByRole('button', { name: /^Verify manual evidence/ }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveAttribute('id', 'mips-load-error-summary'));
+    expect(document.activeElement).toBe(screen.getByRole('alert'));
+    expect(screen.getByRole('button', { name: 'Save practice profile' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Verify manual evidence/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Reject manual evidence/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading MIPS data' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Verify manual evidence/ })).toBeEnabled());
+    expect(screen.getByRole('button', { name: /^Reject manual evidence/ })).toBeEnabled();
+  });
+
+  it('marks only the invalid conditional evidence controls and exposes field-specific descriptions', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    fireEvent.change(screen.getByLabelText('Evidence type'), { target: { value: 'pathology_turnaround' } });
+    const specimen = screen.getByLabelText('Specimen receipt date');
+    const report = screen.getByLabelText('Report sent date');
+    expect(specimen).toBeRequired();
+    expect(report).toBeRequired();
+    expect(specimen).toHaveAttribute('aria-invalid', 'false');
+    expect(report).toHaveAttribute('aria-invalid', 'false');
+    expect(specimen).toHaveAttribute('aria-describedby', 'specimenreceiptdate-error');
+    expect(report).toHaveAttribute('aria-describedby', 'reportsentdate-error');
+
+    fireEvent.change(report, { target: { value: '2026-01-01' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add structured evidence' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/first of the specimen receipt/i));
+    expect(specimen).toHaveAttribute('aria-invalid', 'true');
+    expect(report).toHaveAttribute('aria-invalid', 'false');
+    expect(document.getElementById('specimenreceiptdate-error')).toHaveTextContent(/Enter the first of the specimen receipt/i);
+
+    fireEvent.change(screen.getByLabelText('Evidence type'), { target: { value: 'itch' } });
+    for (const label of ['Baseline instrument', 'Baseline score', 'Follow-up instrument', 'Follow-up score']) {
+      expect(screen.getByLabelText(label)).toBeRequired();
+      expect(screen.getByLabelText(label)).toHaveAttribute('aria-describedby', `${label.replace(/[^a-zA-Z0-9]+/g, '').toLowerCase()}-error`);
+    }
+    fireEvent.change(screen.getByLabelText('Baseline instrument'), { target: { value: 'POEM' } });
+    fireEvent.change(screen.getByLabelText('Follow-up instrument'), { target: { value: 'DLQI' } });
+    fireEvent.change(screen.getByLabelText('Baseline score'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Follow-up score'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add structured evidence' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/same itch instrument/i));
+    expect(screen.getByLabelText('Baseline instrument')).toHaveAttribute('aria-invalid', 'false');
+    expect(screen.getByLabelText('Follow-up instrument')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Baseline score')).toHaveAttribute('aria-invalid', 'false');
+    expect(screen.getByLabelText('Follow-up score')).toHaveAttribute('aria-invalid', 'false');
+  });
+
+  it('accepts a TB negative outcome when screening occurred after the first biologic date', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'MIPS Readiness Center', level: 1 });
+    fireEvent.change(screen.getByLabelText('Evidence type'), { target: { value: 'tb_before_biologic' } });
+    fireEvent.change(screen.getByLabelText('Screening date'), { target: { value: '2026-03-01' } });
+    fireEvent.change(screen.getByLabelText('First biologic / immune-modifier date'), { target: { value: '2026-02-01' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add structured evidence' }));
+
+    await waitFor(() => expect(apiMocks.createMipsEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: authMocks.headers }),
+      expect.objectContaining({ measureId: '176', evidenceType: 'tb_before_biologic' }),
+    ));
+    expect(screen.getByRole('status')).toHaveTextContent(/structured evidence created/i);
   });
 });

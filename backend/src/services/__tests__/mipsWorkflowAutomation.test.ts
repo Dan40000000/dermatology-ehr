@@ -107,7 +107,7 @@ describe('MIPS workflow automation backtest', () => {
       },
     ]);
     expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toMatchObject({ measureId: '486', sourceId: 'synthetic-followup' });
+    expect(candidates[0]).toMatchObject({ measureId: '486', sourceId: 'synthetic-followup', sourceRevision: 2 });
     expect(candidates[0]?.metadata).toMatchObject({ computedStatus: 'met', baselineScore: 7, followUpScore: 3 });
     expect(JSON.stringify(candidates[0]?.metadata)).not.toContain('synthetic-patient-a');
   });

@@ -272,7 +272,10 @@ export function deriveItchCandidates(rows: readonly ItchAssessmentSource[]): Aut
       observedAt: iso(anchor.assessment_date),
       automationRuleId: `mips-${measureId}-itch-v${MIPS_AUTOMATION_RULE_VERSION}`,
       automationKey: `v1|${measureId}|itch_assessment|${stableGroup}`,
-      sourceRevision: Math.max(...sorted.map((row) => row.source_revision)),
+      // Each assessment has its own monotonic revision. Summing the series makes
+      // the aggregate candidate advance when a new baseline/follow-up row is
+      // added or an existing assessment is corrected.
+      sourceRevision: sorted.reduce((revision, row) => revision + row.source_revision, 0),
       metadata: evaluationMetadata(evaluation, {
         baselineInstrument: comparable ? instrument : null,
         baselineScore: comparable ? Number(baseline!.score) : null,

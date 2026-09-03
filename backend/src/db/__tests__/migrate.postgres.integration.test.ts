@@ -621,6 +621,37 @@ describePostgres('PostgreSQL migrations (real database)', () => {
 
     // Exercise the improvement-activity service upsert target.
     const { qualityMeasuresService } = require('../../services/qualityMeasuresService') as typeof import('../../services/qualityMeasuresService');
+    const concurrentPiMeasure = `Concurrent PI ${smokeSuffix}`;
+    await Promise.all(Array.from({ length: 20 }, () =>
+      qualityMeasuresService.trackPromotingInteroperability(
+        smokeTenant,
+        concurrentPiMeasure,
+        true,
+        true,
+        smokeUser,
+      )
+    ));
+    const concurrentPi = await applicationPool!.query<{
+      count: string;
+      numerator: number;
+      denominator: number;
+      performance_rate: number;
+    }>(
+      `SELECT COUNT(*)::text AS count,
+              MAX(numerator) AS numerator,
+              MAX(denominator) AS denominator,
+              MAX(performance_rate)::float AS performance_rate
+         FROM promoting_interoperability_tracking
+        WHERE tenant_id = $1 AND measure_name = $2`,
+      [smokeTenant, concurrentPiMeasure],
+    );
+    expect(concurrentPi.rows[0]).toMatchObject({
+      count: '1',
+      numerator: 20,
+      denominator: 20,
+      performance_rate: 100,
+    });
+
     await qualityMeasuresService.attestImprovementActivity(
       smokeTenant,
       smokeMeasure,

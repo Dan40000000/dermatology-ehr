@@ -38,6 +38,9 @@ mipsReadinessRouter.use(rateLimit({ windowMs: 60_000, max: 100 }));
 const SUPPORTED_YEAR = 2026;
 const PROFILE_WRITE_ROLES = ['admin', 'provider', 'manager', 'compliance_officer'];
 const CLINICAL_CAPTURE_ROLES = ['admin', 'provider', 'ma', 'nurse'];
+const UAT_RESET_ROLES = ['admin'];
+const UAT_RESET_CONFIRMATION = 'RESET_SYNTHETIC_MIPS_UAT';
+const UAT_TENANT_ID = 'tenant-demo';
 const requireReportingAccess = [
   requireAuth,
   requireRoles(PROFILE_WRITE_ROLES),
@@ -402,6 +405,10 @@ const itchAssessmentSchema = z.object({
   }
 });
 
+const uatResetSchema = z.object({
+  confirmation: z.literal(UAT_RESET_CONFIRMATION),
+}).strict();
+
 function bodyYear(
   body: { year?: number; performanceYear?: number },
   queryYear?: unknown,
@@ -744,6 +751,78 @@ mipsReadinessRouter.post('/automation/sync', ...requireReportingAccess, async (r
   } catch (error) {
     logger.error('MIPS automation reconciliation failed', { errorCode: safeErrorCode(error) });
     return res.status(500).json({ error: 'Failed to reconcile MIPS workflow candidates' });
+  }
+});
+
+/**
+ * POST /api/mips/readiness/uat/reset
+ * Removes only the uniquely tagged itch records created by the synthetic pilot
+ * suite. The durable biopsy and therapy fixtures are intentionally preserved.
+ */
+mipsReadinessRouter.post('/uat/reset', requireAuth, requireRoles(UAT_RESET_ROLES), async (req: AuthedRequest, res) => {
+  if (process.env.MIPS_UAT_RESET_ENABLED !== '1') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  if (req.user!.tenantId !== UAT_TENANT_ID) {
+    return res.status(403).json({ error: 'Synthetic UAT reset is restricted to the demo tenant' });
+  }
+  const parsedYear = parseSupportedYear(req.query.year, true);
+  if (rejectYear(res, parsedYear)) return;
+  const parsed = uatResetSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Exact synthetic UAT reset confirmation is required' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query<{ evidence_count: string; assessment_count: string }>(
+      `WITH uat_assessments AS MATERIALIZED (
+         SELECT id
+           FROM mips_itch_assessments
+          WHERE tenant_id = $1
+            AND instrument_code ~ $3
+            AND instrument_version = 'uat-v1'
+            AND client_event_id ~ $4
+       ), deleted_evidence AS (
+         DELETE FROM mips_readiness_evidence
+          WHERE tenant_id = $1
+            AND performance_year = $2
+            AND source_type = 'itch_assessment'
+            AND source_id IN (SELECT id FROM uat_assessments)
+         RETURNING id
+       ), deleted_assessments AS (
+         DELETE FROM mips_itch_assessments
+          WHERE tenant_id = $1
+            AND id IN (SELECT id FROM uat_assessments)
+         RETURNING id
+       )
+       SELECT
+         (SELECT count(*)::text FROM deleted_evidence) AS evidence_count,
+         (SELECT count(*)::text FROM deleted_assessments) AS assessment_count`,
+      [
+        UAT_TENANT_ID,
+        parsedYear.year!,
+        `^uat_itch_${parsedYear.year}_[0-9a-f]{12}$`,
+        '^uat-[0-9a-f]{12}-itch-(baseline|followup)$',
+      ],
+    );
+    await client.query('COMMIT');
+    const deleted = {
+      evidence: Number(result.rows[0]?.evidence_count || 0),
+      assessments: Number(result.rows[0]?.assessment_count || 0),
+    };
+    await auditLog(UAT_TENANT_ID, req.user!.id, 'mips_synthetic_uat_reset', 'mips_uat_fixture', `${UAT_TENANT_ID}:${parsedYear.year}`);
+    return res.json({
+      reset: true,
+      performanceYear: parsedYear.year,
+      deleted,
+      persistentWorkflowFixtures: 'preserved',
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error('MIPS synthetic UAT reset failed', { errorCode: safeErrorCode(error) });
+    return res.status(500).json({ error: 'Failed to reset synthetic MIPS UAT records' });
+  } finally {
+    client.release();
   }
 });
 

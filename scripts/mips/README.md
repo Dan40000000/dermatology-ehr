@@ -30,6 +30,15 @@ the pilot fixture is reseeded. It deliberately refuses to run unless
 synthetic itch-assessment evidence, restores access settings in a `finally`
 block, and never calls an external registry or submission endpoint.
 
+For repeatable runs with no accumulated itch-assessment fixtures, enable
+`MIPS_UAT_RESET_ENABLED=1` on the synthetic API service and add
+`MIPS_UAT_RESET_SYNTHETIC=1` to the UAT command. The admin-only reset runs before
+and after qualification, refuses every tenant except `tenant-demo`, requires an
+exact confirmation phrase, and deletes only records matching the UAT-generated
+instrument and client-event formats. Durable biopsy and therapy seed fixtures,
+ordinary clinical records, profiles, and manual evidence are preserved. Keep
+the server flag unset in production and any environment that can contain PHI.
+
 These commands qualify the software and the controlled pilot. They do not
 override the HIPAA readiness gate, prove CMS measure certification, or
 authorize live-PHI use or registry submission.

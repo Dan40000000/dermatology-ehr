@@ -9,14 +9,18 @@ jest.mock('../../middleware/auth', () => ({
   requireAuth: (req: any, res: any, next: any) => {
     if (req.headers.authorization !== 'Bearer test-token') return res.status(401).json({ error: 'Missing token' });
     const tenantId = String(req.headers['x-test-tenant'] || 'tenant-a');
-    req.user = { id: 'user-a', tenantId, role: 'admin' };
+    req.user = { id: 'user-a', tenantId, role: String(req.headers['x-test-role'] || 'admin') };
     req.tenantId = tenantId;
     return next();
   },
 }));
 
 jest.mock('../../middleware/rbac', () => ({
-  requireRoles: () => (_req: any, _res: any, next: any) => next(),
+  requireRoles: (roles: string[]) => (req: any, res: any, next: any) => (
+    roles.includes(req.user?.role)
+      ? next()
+      : res.status(403).json({ error: 'Insufficient role' })
+  ),
 }));
 
 jest.mock('../../middleware/moduleAccess', () => ({
@@ -49,6 +53,7 @@ beforeEach(() => {
   connectMock.mockReset();
   auditMock.mockReset();
   auditMock.mockResolvedValue(undefined);
+  delete process.env.MIPS_UAT_RESET_ENABLED;
 });
 
 const profileRow = {
@@ -373,6 +378,78 @@ describe('MIPS readiness routes', () => {
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO mips_readiness_evidence'))).toBe(true);
     expect(client.query).toHaveBeenCalledWith('COMMIT');
     expect(client.release).toHaveBeenCalled();
+  });
+
+  it('keeps the synthetic UAT reset unavailable unless the server flag is explicit', async () => {
+    const response = await request(app)
+      .post('/api/mips/readiness/uat/reset?year=2026')
+      .set('Authorization', 'Bearer test-token')
+      .set('X-Test-Tenant', 'tenant-demo')
+      .send({ confirmation: 'RESET_SYNTHETIC_MIPS_UAT' });
+
+    expect(response.status).toBe(404);
+    expect(connectMock).not.toHaveBeenCalled();
+  });
+
+  it('restricts the synthetic UAT reset to demo-tenant administrators', async () => {
+    process.env.MIPS_UAT_RESET_ENABLED = '1';
+    const wrongTenant = await request(app)
+      .post('/api/mips/readiness/uat/reset?year=2026')
+      .set('Authorization', 'Bearer test-token')
+      .set('X-Test-Tenant', 'tenant-a')
+      .send({ confirmation: 'RESET_SYNTHETIC_MIPS_UAT' });
+    const wrongRole = await request(app)
+      .post('/api/mips/readiness/uat/reset?year=2026')
+      .set('Authorization', 'Bearer test-token')
+      .set('X-Test-Tenant', 'tenant-demo')
+      .set('X-Test-Role', 'provider')
+      .send({ confirmation: 'RESET_SYNTHETIC_MIPS_UAT' });
+
+    expect(wrongTenant.status).toBe(403);
+    expect(wrongRole.status).toBe(403);
+    expect(connectMock).not.toHaveBeenCalled();
+  });
+
+  it('deletes only uniquely tagged synthetic UAT itch records and audits the reset', async () => {
+    process.env.MIPS_UAT_RESET_ENABLED = '1';
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ evidence_count: '1', assessment_count: '2' }] })
+        .mockResolvedValueOnce({ rows: [] }),
+      release: jest.fn(),
+    };
+    connectMock.mockResolvedValueOnce(client);
+
+    const response = await request(app)
+      .post('/api/mips/readiness/uat/reset?year=2026')
+      .set('Authorization', 'Bearer test-token')
+      .set('X-Test-Tenant', 'tenant-demo')
+      .send({ confirmation: 'RESET_SYNTHETIC_MIPS_UAT' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      reset: true,
+      performanceYear: 2026,
+      deleted: { evidence: 1, assessments: 2 },
+      persistentWorkflowFixtures: 'preserved',
+    });
+    expect(client.query.mock.calls[1][1]).toEqual([
+      'tenant-demo',
+      2026,
+      '^uat_itch_2026_[0-9a-f]{12}$',
+      '^uat-[0-9a-f]{12}-itch-(baseline|followup)$',
+    ]);
+    expect(String(client.query.mock.calls[1][0])).toContain("source_type = 'itch_assessment'");
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+    expect(client.release).toHaveBeenCalled();
+    expect(auditMock).toHaveBeenCalledWith(
+      'tenant-demo',
+      'user-a',
+      'mips_synthetic_uat_reset',
+      'mips_uat_fixture',
+      'tenant-demo:2026',
+    );
   });
 
   it('labels preview as draft JSON-only and never submitted', async () => {

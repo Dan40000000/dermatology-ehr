@@ -11,6 +11,7 @@ const PERFORMANCE_YEAR = Number(process.env.MIPS_UAT_YEAR || 2026);
 const PACKET = process.env.MIPS_PILOT_PACKET || join(REPO_ROOT, 'PILOT_PACKET.md');
 const PATIENT_ID = process.env.MIPS_UAT_PATIENT_ID || '96d8dc52-97dc-48ec-a423-1b79065d0619';
 const ENCOUNTER_ID = process.env.MIPS_UAT_ENCOUNTER_ID || 'a690a67c-a76e-4ec8-8d14-4adefdfb1193';
+const RESET_SYNTHETIC_RECORDS = process.env.MIPS_UAT_RESET_SYNTHETIC === '1';
 
 const results = [];
 
@@ -126,6 +127,19 @@ async function login(label, credential) {
   return client;
 }
 
+async function resetSyntheticRecords(admin, phase) {
+  if (!RESET_SYNTHETIC_RECORDS) return;
+  const response = await admin.request(`/api/mips/readiness/uat/reset?year=${PERFORMANCE_YEAR}`, {
+    method: 'POST',
+    body: { confirmation: 'RESET_SYNTHETIC_MIPS_UAT' },
+  });
+  assert(response.status === 200, `${phase} synthetic UAT reset returned ${response.status}`);
+  assert(response.body?.reset === true, `${phase} synthetic UAT reset was not confirmed`);
+  console.log(
+    `PASS ${phase} fixture reset: removed ${response.body.deleted?.assessments || 0} assessment(s) and ${response.body.deleted?.evidence || 0} evidence row(s)`,
+  );
+}
+
 function evidenceArray(response) {
   assert(response.status === 200, `Evidence read returned ${response.status}`);
   assert(Array.isArray(response.body?.evidence), 'Evidence response did not contain an array');
@@ -156,6 +170,8 @@ async function main() {
   }
   pass('authentication', 'all seven synthetic workforce roles authenticated');
 
+  await resetSyntheticRecords(clients.admin, 'pre-run');
+  try {
   const profileRead = await clients.admin.request(`/api/mips/readiness/profile?year=${PERFORMANCE_YEAR}`);
   assert(profileRead.status === 200, `Profile read returned ${profileRead.status}`);
   const profile = profileRead.body?.profile;
@@ -416,8 +432,13 @@ async function main() {
 
   pass(
     '7 defect capture',
-    'results are suitable for the defect register; synthetic assessment records remain because no cleanup endpoint exists',
+    RESET_SYNTHETIC_RECORDS
+      ? 'results are suitable for the defect register; uniquely tagged synthetic assessment records are reset after the run'
+      : 'results are suitable for the defect register; synthetic assessment records remain unless reset mode is enabled',
   );
+  } finally {
+    await resetSyntheticRecords(clients.admin, 'post-run');
+  }
   console.log(JSON.stringify({ status: 'PASS', passed: results.length, results }, null, 2));
 }
 

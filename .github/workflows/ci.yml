@@ -180,6 +180,9 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Run MIPS Chromium qualification
+        run: npm run test:mips:browser:chromium
+
       - name: Run smoke suite
         id: smoke_run
         run: npm run test:e2e:smoke

@@ -30,15 +30,38 @@ describe('MipsQualityCaptureCard', () => {
     fireEvent.click(screen.getByText('Record named itch assessment (485/486)'));
     fireEvent.change(screen.getByLabelText('Assessment phase'), { target: { value: 'follow_up' } });
     fireEvent.change(screen.getByLabelText('Score (0–10)'), { target: { value: '3' } });
-    fireEvent.change(screen.getByLabelText('Assessment date'), { target: { value: '2026-09-02' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save itch assessment' }));
+    const assessmentDate = screen.getByLabelText('Assessment date');
+    fireEvent.change(assessmentDate, { target: { value: '2026-09-02' } });
+    assessmentDate.focus();
+    fireEvent.submit(assessmentDate.closest('form') as HTMLFormElement);
     await waitFor(() => expect(apiMocks.recordMipsItchAssessment).toHaveBeenCalled());
     expect(apiMocks.recordMipsItchAssessment.mock.calls[0][1]).toMatchObject({
       conditionCode: 'atopic_dermatitis', phase: 'follow_up', instrumentCode: 'practice_numeric_itch_scale',
       instrumentVersion: 'practice-v1', score: 3, scaleMin: 0, scaleMax: 10,
       assessmentDate: '2026-09-02', sourceRevision: 1,
     });
-    expect(screen.getByRole('status')).toHaveTextContent(/No reporting credit was awarded automatically/i);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(/No reporting credit was awarded automatically/i);
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toHaveAttribute('aria-atomic', 'true');
+    expect(status).not.toHaveAttribute('tabindex');
+    expect(document.activeElement).toBe(assessmentDate);
+  });
+
+  it('announces a capture error without moving focus to the status message', async () => {
+    apiMocks.recordMipsItchAssessment.mockRejectedValueOnce(new Error('Synthetic capture failure'));
+    render(<MipsQualityCaptureCard patientId="11111111-1111-4111-8111-111111111111" encounterId="22222222-2222-4222-8222-222222222222" />);
+    fireEvent.click(screen.getByText('Record named itch assessment (485/486)'));
+    fireEvent.change(screen.getByLabelText('Score (0–10)'), { target: { value: '3' } });
+    const assessmentDate = screen.getByLabelText('Assessment date');
+    fireEvent.change(assessmentDate, { target: { value: '2026-09-02' } });
+    assessmentDate.focus();
+
+    fireEvent.submit(assessmentDate.closest('form') as HTMLFormElement);
+
+    const status = await screen.findByRole('status');
+    await waitFor(() => expect(status).toHaveTextContent('Synthetic capture failure'));
+    expect(document.activeElement).toBe(assessmentDate);
   });
 
   it('requires explicit first-course confirmation and never derives classification from the drug name', async () => {

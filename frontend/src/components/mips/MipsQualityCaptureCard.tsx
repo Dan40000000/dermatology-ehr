@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveChronicTherapyEntry } from '../../api';
 import { recordMipsItchAssessment } from '../../api/mipsReadiness';
@@ -15,9 +15,12 @@ function newClientEventId(): string {
   return `mips-itch-${Math.random().toString(36).slice(2)}-${Date.now()}`;
 }
 
+function focusFirstInvalidField(form: HTMLFormElement): void {
+  window.requestAnimationFrame(() => form.querySelector<HTMLElement>(':invalid')?.focus());
+}
+
 export function MipsQualityCaptureCard({ patientId, encounterId, readOnly = false }: MipsQualityCaptureCardProps) {
   const { session, headers } = useAuth();
-  const messageRef = useRef<HTMLDivElement>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [savingItch, setSavingItch] = useState(false);
@@ -39,14 +42,14 @@ export function MipsQualityCaptureCard({ patientId, encounterId, readOnly = fals
   const announce = (nextMessage: string, nextError = '') => {
     setMessage(nextMessage);
     setError(nextError);
-    window.requestAnimationFrame(() => messageRef.current?.focus());
   };
 
-  const submitItch = async (event: FormEvent) => {
+  const submitItch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const score = Number(itch.score);
     if (!itch.assessmentDate || !itch.score || !Number.isFinite(score) || score < 0 || score > 10) {
       announce('Review the itch assessment fields.', 'Enter a 2026 assessment date and a score from 0 through 10.');
+      focusFirstInvalidField(event.currentTarget);
       return;
     }
     if (!session) return;
@@ -77,11 +80,12 @@ export function MipsQualityCaptureCard({ patientId, encounterId, readOnly = fals
     }
   };
 
-  const submitTherapy = async (event: FormEvent) => {
+  const submitTherapy = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!therapy.primaryDiagnosis.trim() || !therapy.medicationName.trim() || !therapy.medicationClass.trim()
       || !therapy.startDate || !therapy.firstCourseConfirmed) {
       announce('Review the therapy fields.', 'Diagnosis, medication, medication class, start date, and explicit first-course confirmation are required.');
+      focusFirstInvalidField(event.currentTarget);
       return;
     }
     if (!session) return;
@@ -115,7 +119,7 @@ export function MipsQualityCaptureCard({ patientId, encounterId, readOnly = fals
         <strong>Candidate only</strong>
       </div>
       <p>Record structured facts during care. These fields create review items; they do not calculate an official numerator or submit anything.</p>
-      <div ref={messageRef} className={error ? 'mips-capture-message mips-capture-message--error' : 'mips-capture-message'} role={error ? 'alert' : 'status'} tabIndex={-1}>
+      <div className={error ? 'mips-capture-message mips-capture-message--error' : 'mips-capture-message'} role="status" aria-live="polite" aria-atomic="true">
         {error || message}
       </div>
 

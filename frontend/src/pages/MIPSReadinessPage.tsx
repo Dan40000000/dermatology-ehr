@@ -119,6 +119,21 @@ type FieldName = keyof ProfileFormState | keyof EvidenceFormState | 'profile' | 
 type FieldErrors = Partial<Record<FieldName, string>>;
 type LoadResult = { ok: true } | { ok: false; message: string };
 
+const PROFILE_FIELD_LABELS: Partial<Record<FieldName, string>> = {
+  allowedCharges: 'Allowed Part B charges',
+  beneficiaries: 'Medicare beneficiaries',
+  coveredServices: 'Covered services',
+  selectedQualityMeasureIds: 'Quality measures',
+  selectedImprovementActivityIds: 'Improvement Activities',
+  qualityStartDate: 'Quality period start',
+  qualityEndDate: 'Quality period end',
+  chplId: 'CHPL identifier',
+  piStartDate: 'PI period start',
+  piEndDate: 'PI period end',
+  iaStartDate: 'IA period start',
+  iaEndDate: 'IA period end',
+};
+
 interface DisplayRow {
   id: string;
   category: MipsCategory;
@@ -465,6 +480,15 @@ function evaluationForEntry(category: MipsCategory, id: string, evaluations: Mip
 
 function errorDescription(name: FieldName): string {
   return `${String(name).replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}-error`;
+}
+
+function fieldHelpDescription(name: string): string {
+  return `${name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}-help`;
+}
+
+function profileFieldLabel(name: string): string {
+  return PROFILE_FIELD_LABELS[name as FieldName]
+    || name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function fieldControlId(name: string, firstQualityId?: string, firstIaId?: string): string {
@@ -995,9 +1019,9 @@ export default function MIPSReadinessPage() {
   };
 
   const renderFieldError = (name: FieldName) => <span id={errorDescription(name)} className="mips-field-error">{errors[name] || ''}</span>;
-  const inputAria = (name: FieldName) => ({
+  const inputAria = (name: FieldName, helpId?: string) => ({
     'aria-invalid': Boolean(errors[name]),
-    'aria-describedby': errorDescription(name),
+    'aria-describedby': [helpId, errorDescription(name)].filter(Boolean).join(' '),
   });
 
   const categories: MipsCategory[] = ['quality', 'cost', 'pi', 'ia'];
@@ -1059,7 +1083,7 @@ export default function MIPSReadinessPage() {
                 <strong>Review these profile fields:</strong>
                 <ul>
                   {Object.entries(errors).filter(([, message]) => message && message !== errors.profile).map(([field, message]) => (
-                    <li key={field}><a href={`#${fieldControlId(field, qualityCatalog[0]?.id, iaCatalog[0]?.id)}`} onClick={(event) => handleProfileErrorLink(event, field)}>{message}</a></li>
+                    <li key={field}><a href={`#${fieldControlId(field, qualityCatalog[0]?.id, iaCatalog[0]?.id)}`} onClick={(event) => handleProfileErrorLink(event, field)}><strong>{profileFieldLabel(field)}:</strong> {message}</a></li>
                   ))}
                 </ul>
               </div>
@@ -1067,18 +1091,18 @@ export default function MIPSReadinessPage() {
             <div className="mips-form-grid mips-form-grid--three">
               <div className="mips-field">
                 <label htmlFor="performance-year">Performance year</label>
-                <select id="performance-year" defaultValue={year} aria-describedby="performance-year-error" aria-invalid="false">
+                <select id="performance-year" defaultValue={year} aria-describedby="performance-year-help performance-year-error" aria-invalid="false">
                   <option value={PERFORMANCE_YEAR}>{PERFORMANCE_YEAR}</option>
                 </select>
-                <span className="mips-help">Only the versioned 2026 rules are available.</span>
+                <span id="performance-year-help" className="mips-help">Only the versioned 2026 rules are available.</span>
                 <span id="performance-year-error" className="mips-field-error" />
               </div>
               <div className="mips-field">
                 <label htmlFor="participation-option">Participation option</label>
-                <select id="participation-option" value={form.participationOption} onChange={(event) => handleProfileChange('participationOption', event.target.value as ProfileFormState['participationOption'])} {...inputAria('participationOption')}>
+                <select id="participation-option" value={form.participationOption} onChange={(event) => handleProfileChange('participationOption', event.target.value as ProfileFormState['participationOption'])} {...inputAria('participationOption', 'participation-option-help')}>
                   <option value="dermatological_care_mvp">Dermatological Care MVP (supported v1)</option>
                 </select>
-                <span className="mips-help">MVP v1 applies the four-quality-measure and one-IA configuration checks.</span>
+                <span id="participation-option-help" className="mips-help">MVP v1 applies the four-quality-measure and one-IA configuration checks.</span>
                 {renderFieldError('participationOption')}
               </div>
               <div className="mips-field">
@@ -1103,8 +1127,8 @@ export default function MIPSReadinessPage() {
                 ] as const).map(([field, label, help]) => (
                   <div className="mips-field" key={field}>
                     <label htmlFor={field}>{label}</label>
-                    <input id={field} type="number" inputMode="numeric" min={0} step={1} value={form[field]} onChange={(event) => handleProfileChange(field, event.target.value)} {...inputAria(field)} />
-                    <span className="mips-help">{help}; strict greater-than comparison.</span>
+                    <input id={field} type="number" inputMode="numeric" min={0} step={1} value={form[field]} onChange={(event) => handleProfileChange(field, event.target.value)} {...inputAria(field, fieldHelpDescription(field))} />
+                    <span id={fieldHelpDescription(field)} className="mips-help">{help}; strict greater-than comparison.</span>
                     {renderFieldError(field)}
                   </div>
                 ))}
@@ -1301,7 +1325,7 @@ export default function MIPSReadinessPage() {
               <div className="mips-field"><label htmlFor="evidence-observed-at">Observed date and time <span className="mips-optional">(optional)</span></label><input id="evidence-observed-at" type="datetime-local" value={evidenceForm.observedAt} onChange={(event) => handleEvidenceChange('observedAt', event.target.value)} /></div>
             </div>
             <div className="mips-form-grid mips-form-grid--three">
-              <div className="mips-field"><label htmlFor="evidence-status">Lifecycle status</label><select id="evidence-status" value={evidenceForm.status} onChange={(event) => handleEvidenceChange('status', event.target.value as EvidenceStatus)}>{EVIDENCE_STATUSES.map((status) => <option value={status} key={status}>{statusLabel(status)}</option>)}</select><span className="mips-help">New evidence cannot be verified here. Verification requires the separate review action with reviewer provenance.</span></div>
+              <div className="mips-field"><label htmlFor="evidence-status">Lifecycle status</label><select id="evidence-status" value={evidenceForm.status} onChange={(event) => handleEvidenceChange('status', event.target.value as EvidenceStatus)} aria-describedby="evidence-status-help">{EVIDENCE_STATUSES.map((status) => <option value={status} key={status}>{statusLabel(status)}</option>)}</select><span id="evidence-status-help" className="mips-help">New evidence cannot be verified here. Verification requires the separate review action with reviewer provenance.</span></div>
             </div>
 
             {(evidenceForm.evidenceType === 'data_completeness') && <fieldset className="mips-fieldset mips-fieldset--compact"><legend>Data completeness counts</legend><div className="mips-form-grid mips-form-grid--two"><div className="mips-field"><label htmlFor="complete-count">Complete records</label><input id="complete-count" type="number" min={0} step={1} value={evidenceForm.completeCount} onChange={(event) => handleEvidenceChange('completeCount', event.target.value)} aria-invalid={Boolean(errors.completeCount)} aria-describedby={errorDescription('completeCount')} required />{renderFieldError('completeCount')}</div><div className="mips-field"><label htmlFor="eligible-count">Eligible records</label><input id="eligible-count" type="number" min={0} step={1} value={evidenceForm.eligibleCount} onChange={(event) => handleEvidenceChange('eligibleCount', event.target.value)} aria-invalid={Boolean(errors.eligibleCount)} aria-describedby={errorDescription('eligibleCount')} required />{renderFieldError('eligibleCount')}</div></div></fieldset>}

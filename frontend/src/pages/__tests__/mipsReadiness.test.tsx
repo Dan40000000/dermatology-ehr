@@ -315,6 +315,12 @@ describe('MIPSReadinessPage', () => {
     expect(screen.getByLabelText('PI period start (180 days)')).toBeRequired();
     expect(screen.getByLabelText('IA period start (90 days)')).toBeRequired();
     expect(screen.getByText(/Required for readiness/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Performance year')).toHaveAttribute('aria-describedby', 'performance-year-help performance-year-error');
+    expect(screen.getByLabelText('Participation option')).toHaveAttribute('aria-describedby', 'participation-option-help participationoption-error');
+    expect(screen.getByLabelText('Allowed Part B charges ($)')).toHaveAttribute('aria-describedby', 'allowed-charges-help allowedcharges-error');
+    expect(screen.getByLabelText('Medicare beneficiaries')).toHaveAttribute('aria-describedby', 'beneficiaries-help beneficiaries-error');
+    expect(screen.getByLabelText('Covered services')).toHaveAttribute('aria-describedby', 'covered-services-help coveredservices-error');
+    expect(screen.getByLabelText('Lifecycle status')).toHaveAttribute('aria-describedby', 'evidence-status-help');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save practice profile' }));
     await waitFor(() => expect(screen.getByRole('alert', { name: '' })).toHaveTextContent(/Review these profile fields/i));
@@ -323,7 +329,9 @@ describe('MIPSReadinessPage', () => {
     expect(document.activeElement).toBe(summary);
     expect(screen.getByLabelText('Quality period start')).toHaveAttribute('aria-describedby', 'qualitystartdate-error');
     expect(screen.getByLabelText('Quality period start')).toHaveAttribute('aria-invalid', 'true');
-    fireEvent.click(within(summary).getByRole('link', { name: /Select at least 4 quality measures/i }));
+    const qualityErrorLink = within(summary).getByRole('link', { name: /Quality measures: Select at least 4 quality measures/i });
+    expect(within(summary).getByRole('link', { name: /Quality period start: Enter the quality performance period start date/i })).toBeInTheDocument();
+    fireEvent.click(qualityErrorLink);
     expect(document.activeElement).toBe(document.getElementById('quality-176'));
   });
 

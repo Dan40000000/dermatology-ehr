@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -7,6 +7,7 @@ import { useAccessControl } from '../../contexts/AccessControlContext';
 import { type ModuleKey } from '../../config/moduleAccess';
 import { canViewProfessionalFeedback } from '../../utils/feedbackAccess';
 import { getEffectiveRoles } from '../../utils/roles';
+import { useDialogFocusTrap } from '../../utils/focusTrap';
 
 interface DropdownItem {
   label: string;
@@ -92,6 +93,8 @@ const navItems: NavItem[] = [
       { label: 'Advanced Search', path: '/patients?advanced=true' },
       { label: 'Handout Library', path: '/handouts' },
       { label: 'Reports', path: '/patients/reports' },
+      { label: 'Lesion Tracking', path: '/lesion-tracking', module: 'body_diagram' },
+      { label: 'Body Diagram', path: '/body-diagram', module: 'body_diagram' },
     ]
   },
   {
@@ -336,6 +339,14 @@ const navItems: NavItem[] = [
     ]
   },
   {
+    label: 'MIPS Readiness',
+    path: '/mips-readiness',
+    module: 'quality',
+    dropdown: [
+      { label: 'Readiness Center', path: '/mips-readiness', module: 'quality' },
+    ],
+  },
+  {
     label: 'Claims / Clearinghouse',
     path: '/claims',
     activePaths: ['/claims', '/clearinghouse'],
@@ -411,7 +422,11 @@ export function MainNav() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+  const [dropdownActivePath, setDropdownActivePath] = useState<string | null>(null);
   const navItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const dropdownMenuRef = useRef<HTMLDivElement>(null);
+  const dropdownTriggerRef = useRef<HTMLElement | null>(null);
+  const returnFocusRef = useRef(false);
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const userRole = useMemo(() => getEffectiveRoles(user), [user]);
 
@@ -463,6 +478,101 @@ export function MainNav() {
     // Close when leaving dropdown
     setHoveredItem(null);
     setDropdownPos(null);
+  };
+
+  const openDropdown = (itemPath: string, trigger?: HTMLElement | null) => {
+    const item = filteredNavItems.find((candidate) => candidate.path === itemPath);
+    const element = navItemRefs.current.get(itemPath);
+    if (!item?.dropdown || !element) return;
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    dropdownTriggerRef.current = trigger || element.querySelector<HTMLElement>('.ema-nav-link');
+    const rect = element.getBoundingClientRect();
+    setDropdownPos({ top: rect.bottom, left: getDropdownLeft(rect) });
+    const firstVisibleItem = item.dropdown.find((dropdownItem) => {
+      if (dropdownItem.requiresFeedbackAccess && !canViewProfessionalFeedback(user)) return false;
+      return !dropdownItem.module || accessControl.canAccessModule(dropdownItem.module, userRole);
+    });
+    setDropdownActivePath(firstVisibleItem?.path || null);
+    setHoveredItem(itemPath);
+  };
+
+  const closeDropdown = (returnFocus = false) => {
+    setHoveredItem(null);
+    setDropdownPos(null);
+    setDropdownActivePath(null);
+    const trigger = dropdownTriggerRef.current;
+    if (returnFocus && trigger && document.activeElement !== trigger) {
+      window.setTimeout(() => {
+        returnFocusRef.current = true;
+        trigger.focus();
+        returnFocusRef.current = false;
+      }, 0);
+    }
+  };
+
+  const handleNavKeyDown = (event: ReactKeyboardEvent<HTMLElement>, item: NavItem) => {
+    if (!item.dropdown) return;
+    if (event.key === 'ArrowDown' || event.key === ' ' || event.key === 'Spacebar') {
+      event.preventDefault();
+      openDropdown(item.path, event.currentTarget);
+      window.setTimeout(() => dropdownMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus(), 0);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      openDropdown(item.path, event.currentTarget);
+      window.setTimeout(() => {
+        const items = dropdownMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
+        const lastItem = items?.[items.length - 1];
+        if (lastItem) {
+          setDropdownActivePath(lastItem.dataset.menuPath || null);
+          lastItem.focus();
+        }
+      }, 0);
+    } else if (event.key === 'Escape' && hoveredItem === item.path) {
+      event.preventDefault();
+      closeDropdown(true);
+    }
+  };
+
+  const handleNavBlur = (event: React.FocusEvent<HTMLElement>, itemPath: string) => {
+    const nextTarget = event.relatedTarget as Node | null;
+    window.setTimeout(() => {
+      const wrapper = navItemRefs.current.get(itemPath);
+      const inTrigger = Boolean(wrapper && nextTarget && wrapper.contains(nextTarget));
+      const inMenu = Boolean(dropdownMenuRef.current && nextTarget && dropdownMenuRef.current.contains(nextTarget));
+      if (!inTrigger && !inMenu && hoveredItem === itemPath) closeDropdown();
+    }, 0);
+  };
+
+  const handleDropdownKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const menuItems = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    if (!menuItems.length) return;
+    const activeIndex = Math.max(0, menuItems.indexOf(document.activeElement as HTMLElement));
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const nextIndex = event.key === 'ArrowDown'
+        ? (activeIndex + 1) % menuItems.length
+        : (activeIndex - 1 + menuItems.length) % menuItems.length;
+      const nextItem = menuItems[nextIndex];
+      if (nextItem) {
+        setDropdownActivePath(nextItem.dataset.menuPath || null);
+        nextItem.focus();
+      }
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      const nextItem = event.key === 'Home' ? menuItems[0] : menuItems[menuItems.length - 1];
+      if (nextItem) {
+        setDropdownActivePath(nextItem.dataset.menuPath || null);
+        nextItem.focus();
+      }
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeDropdown(true);
+    } else if (event.key === 'Tab') {
+      closeDropdown();
+    }
   };
 
   const loadUnreadCount = useCallback(async () => {
@@ -523,12 +633,18 @@ export function MainNav() {
                 to={item.path}
                 className={`ema-nav-link ${isActive(item) ? 'active' : ''}`}
                 aria-current={isActive(item) ? 'page' : undefined}
-                aria-haspopup={item.dropdown ? 'true' : undefined}
-                aria-expanded={item.dropdown && hoveredItem === item.path ? 'true' : 'false'}
+                aria-haspopup={item.dropdown ? 'menu' : undefined}
+                aria-expanded={item.dropdown ? (hoveredItem === item.path ? 'true' : 'false') : undefined}
+                onFocus={() => {
+                  if (returnFocusRef.current) return;
+                  if (item.dropdown) openDropdown(item.path);
+                }}
+                onKeyDown={(event) => handleNavKeyDown(event, item)}
+                onBlur={(event) => item.dropdown && handleNavBlur(event, item.path)}
               >
                 {item.label}
                 {item.dropdown && (
-                  <span className="dropdown-arrow">▼</span>
+                  <span className="dropdown-arrow" aria-hidden="true">▼</span>
                 )}
                 {item.path === '/mail' && unreadCount > 0 && (
                   <span
@@ -572,7 +688,9 @@ export function MainNav() {
             style={{ top: dropdownPos.top, left: dropdownPos.left }}
             onMouseEnter={handleDropdownEnter}
             onMouseLeave={handleDropdownLeave}
+            onKeyDown={handleDropdownKeyDown}
             role="menu"
+            ref={dropdownMenuRef}
           >
             {(() => {
               const sections = new Set(visibleDropdown.map(d => d.section).filter(Boolean));
@@ -588,7 +706,10 @@ export function MainNav() {
                           to={dropdownItem.path}
                           className="ema-nav-dropdown-item"
                           role="menuitem"
-                          onClick={() => setHoveredItem(null)}
+                          data-menu-path={dropdownItem.path}
+                          tabIndex={dropdownItem.path === dropdownActivePath ? 0 : -1}
+                          onFocus={() => setDropdownActivePath(dropdownItem.path)}
+                          onClick={() => closeDropdown()}
                         >
                           {dropdownItem.label}
                         </NavLink>
@@ -602,7 +723,10 @@ export function MainNav() {
                     to={dropdownItem.path}
                     className="ema-nav-dropdown-item"
                     role="menuitem"
-                    onClick={() => setHoveredItem(null)}
+                    data-menu-path={dropdownItem.path}
+                    tabIndex={dropdownItem.path === dropdownActivePath ? 0 : -1}
+                    onFocus={() => setDropdownActivePath(dropdownItem.path)}
+                    onClick={() => closeDropdown()}
                   >
                     {dropdownItem.label}
                   </NavLink>
@@ -622,5 +746,115 @@ export function MainNav() {
 
 // Mobile navigation with hamburger menu
 export function MobileNav() {
-  return null; // We'll implement mobile later if needed
+  const location = useLocation();
+  const { user } = useAuth();
+  const accessControl = useAccessControl();
+  const [isOpen, setIsOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const userRole = useMemo(() => getEffectiveRoles(user), [user]);
+  const visibleItems = navItems.filter((item) => {
+    const modules = Array.isArray(item.module) ? item.module : [item.module];
+    return modules.some((module) => accessControl.canAccessModule(module, userRole));
+  });
+
+  useDialogFocusTrap({
+    isOpen,
+    dialogRef: drawerRef,
+    onClose: () => setIsOpen(false),
+    closeOnEscape: true,
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isOpen]);
+
+  const isActive = (item: NavItem) => {
+    const paths = [item.path, ...(item.activePaths || [])];
+    if (paths.includes('/home')) return location.pathname === '/home' || location.pathname === '/';
+    return paths.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`));
+  };
+
+  return (
+    <div className="mobile-nav">
+      <button
+        ref={toggleRef}
+        type="button"
+        className="mobile-menu-btn"
+        aria-expanded={isOpen}
+        aria-controls="mobile-nav-drawer"
+        aria-label={isOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span aria-hidden="true" className="mobile-menu-icon"><span /><span /><span /></span>
+        <span className="mobile-menu-label">Menu</span>
+      </button>
+
+      {isOpen && (
+        <button
+          type="button"
+          className="mobile-nav-overlay"
+          aria-label="Close navigation menu"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+
+      <div
+        ref={drawerRef}
+        id="mobile-nav-drawer"
+        className={`mobile-nav-drawer${isOpen ? ' is-open' : ''}`}
+        role="dialog"
+        aria-modal={isOpen ? 'true' : undefined}
+        aria-labelledby="mobile-nav-drawer-title"
+        aria-hidden={!isOpen}
+      >
+        <nav aria-label="Mobile navigation" aria-hidden={!isOpen}>
+          <div className="mobile-nav-drawer-header">
+            <span id="mobile-nav-drawer-title" className="mobile-nav-title">Navigation</span>
+            {isOpen && (
+              <button type="button" className="mobile-nav-close" onClick={() => setIsOpen(false)} aria-label="Close navigation menu">×</button>
+            )}
+          </div>
+          {isOpen && (
+            <div className="mobile-nav-links">
+              {visibleItems.map((item) => (
+                <div key={item.path} className="mobile-nav-item">
+                  <NavLink
+                    to={item.path}
+                    className={`mobile-nav-link${isActive(item) ? ' active' : ''}`}
+                    aria-current={isActive(item) ? 'page' : undefined}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    {item.label}
+                  </NavLink>
+                  {item.dropdown && (
+                    <details className="mobile-nav-submenu">
+                      <summary>More {item.label} options</summary>
+                      <div className="mobile-nav-submenu-items">
+                        {item.dropdown.map((dropdownItem) => (
+                          <NavLink
+                            key={dropdownItem.path}
+                            to={dropdownItem.path}
+                            className="mobile-nav-submenu-link"
+                            onClick={() => setIsOpen(false)}
+                          >
+                            {dropdownItem.label}
+                          </NavLink>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </nav>
+      </div>
+    </div>
+  );
 }

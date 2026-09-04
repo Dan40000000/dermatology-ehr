@@ -294,6 +294,20 @@ describe('ToastContext', () => {
     expect(errorToast).toHaveClass('toast', 'error');
   });
 
+  it('announces errors assertively and other notifications politely', () => {
+    const { result } = renderHook(() => useToast(), {
+      wrapper: ({ children }) => <ToastProvider>{children}</ToastProvider>,
+    });
+
+    act(() => {
+      result.current.showError('Payment failed');
+      result.current.showSuccess('Payment recorded');
+    });
+
+    expect(screen.getByRole('alert')).toHaveAttribute('aria-live', 'assertive');
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+  });
+
   it('should dismiss toast on click if not persistent', async () => {
     const user = userEvent.setup({ delay: null });
 

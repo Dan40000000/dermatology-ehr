@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Modal } from '../ui/Modal';
 import type { Provider } from '../../types';
+import {
+  getDateKeyInPracticeTimeZone,
+  getDayOfWeekForDateKey,
+  getPracticeDateTime,
+  getTimePartsInPracticeTimeZone,
+  ISO_DATE_PATTERN,
+} from '../../utils/practiceDateTime';
 
 interface TimeBlockModalProps {
   isOpen: boolean;
@@ -14,6 +21,7 @@ interface TimeBlockModalProps {
     date?: string;
     startTime?: string;
   };
+  practiceTimeZone?: string | null;
 }
 
 export interface TimeBlockFormData {
@@ -57,6 +65,7 @@ export function TimeBlockModal({
   providers,
   timeBlock,
   initialData,
+  practiceTimeZone,
 }: TimeBlockModalProps) {
   const [formData, setFormData] = useState<TimeBlockFormData>({
     providerId: '',
@@ -82,6 +91,8 @@ export function TimeBlockModal({
         // Edit mode
         const startDate = new Date(timeBlock.startTime);
         const endDate = new Date(timeBlock.endTime);
+        const startParts = getTimePartsInPracticeTimeZone(startDate, practiceTimeZone);
+        const endParts = getTimePartsInPracticeTimeZone(endDate, practiceTimeZone);
         const recurrencePattern =
           typeof timeBlock.recurrencePattern === 'string'
             ? timeBlock.recurrencePattern
@@ -97,15 +108,9 @@ export function TimeBlockModal({
           title: timeBlock.title,
           blockType: timeBlock.blockType as TimeBlockFormData['blockType'],
           description: timeBlock.description || '',
-          date: startDate.toISOString().split('T')[0],
-          startTime: `${startDate.getHours().toString().padStart(2, '0')}:${startDate
-            .getMinutes()
-            .toString()
-            .padStart(2, '0')}`,
-          endTime: `${endDate.getHours().toString().padStart(2, '0')}:${endDate
-            .getMinutes()
-            .toString()
-            .padStart(2, '0')}`,
+          date: getDateKeyInPracticeTimeZone(startDate, practiceTimeZone),
+          startTime: `${startParts.hour.toString().padStart(2, '0')}:${startParts.minute.toString().padStart(2, '0')}`,
+          endTime: `${endParts.hour.toString().padStart(2, '0')}:${endParts.minute.toString().padStart(2, '0')}`,
           isRecurring: timeBlock.isRecurring || false,
           recurrencePattern: recurrencePattern || 'weekly',
           recurrenceEndDate,
@@ -125,7 +130,7 @@ export function TimeBlockModal({
           title: '',
           blockType: 'blocked',
           description: '',
-          date: new Date().toISOString().split('T')[0],
+          date: getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone),
           startTime: '09:00',
           endTime: '10:00',
           isRecurring: false,
@@ -135,7 +140,7 @@ export function TimeBlockModal({
       }
       setErrors({});
     }
-  }, [isOpen, timeBlock, initialData, providers]);
+  }, [isOpen, timeBlock, initialData, providers, practiceTimeZone]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -143,6 +148,9 @@ export function TimeBlockModal({
     if (!formData.providerId) newErrors.providerId = 'Provider is required';
     if (!formData.title) newErrors.title = 'Title is required';
     if (!formData.date) newErrors.date = 'Date is required';
+    else if (!ISO_DATE_PATTERN.test(formData.date) || getDayOfWeekForDateKey(formData.date) === null) {
+      newErrors.date = 'Enter a valid date';
+    }
     if (!formData.startTime) newErrors.startTime = 'Start time is required';
     if (!formData.endTime) newErrors.endTime = 'End time is required';
 
@@ -160,9 +168,9 @@ export function TimeBlockModal({
 
     // Validate recurrence end date
     if (formData.isRecurring && formData.recurrenceEndDate) {
-      const blockDate = new Date(formData.date);
-      const endDate = new Date(formData.recurrenceEndDate);
-      if (endDate <= blockDate) {
+      if (!ISO_DATE_PATTERN.test(formData.recurrenceEndDate) || getDayOfWeekForDateKey(formData.recurrenceEndDate) === null) {
+        newErrors.recurrenceEndDate = 'Enter a valid recurrence end date';
+      } else if (formData.recurrenceEndDate <= formData.date) {
         newErrors.recurrenceEndDate = 'Recurrence end date must be after the start date';
       }
     }
@@ -220,6 +228,9 @@ export function TimeBlockModal({
       const displayStr = `${hour % 12 || 12}:${minute.toString().padStart(2, '0')} ${
         hour < 12 ? 'AM' : 'PM'
       }`;
+      if (formData.date && !getPracticeDateTime(formData.date, timeStr, practiceTimeZone)) {
+        continue;
+      }
       timeOptions.push({ value: timeStr, label: displayStr });
     }
   }

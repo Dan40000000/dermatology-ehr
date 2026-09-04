@@ -9,6 +9,8 @@
 import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
+import { safeErrorCode, sanitizeLogValue } from '../utils/phiRedaction';
+import { assertSyntheticVendorMockAllowed } from '../services/vendorMockGuard';
 
 // ============================================================================
 // Types
@@ -103,7 +105,7 @@ export function decryptCredentials(encryptedStr: string): Record<string, any> {
 
     return JSON.parse(decrypted);
   } catch (error) {
-    logger.error('Failed to decrypt credentials', { error });
+    logger.error('Failed to decrypt credentials', { errorCode: safeErrorCode(error) });
     throw new Error('Failed to decrypt integration credentials');
   }
 }
@@ -130,6 +132,9 @@ export abstract class BaseAdapter {
     this.tenantId = options.tenantId;
     this.config = options.config || null;
     this.useMock = options.useMock ?? (process.env.NODE_ENV !== 'production');
+    if (this.useMock) {
+      assertSyntheticVendorMockAllowed('External integration');
+    }
     this.correlationId = crypto.randomUUID();
   }
 
@@ -184,7 +189,7 @@ export abstract class BaseAdapter {
       logger.error('Failed to load integration config', {
         tenantId: this.tenantId,
         integrationType: this.getIntegrationType(),
-        error,
+        errorCode: safeErrorCode(error),
       });
       return null;
     }
@@ -204,8 +209,10 @@ export abstract class BaseAdapter {
    * Log an integration API call
    */
   protected async logIntegration(entry: Omit<IntegrationLogEntry, 'tenantId' | 'integrationType'>): Promise<void> {
+    let logEntry: IntegrationLogEntry | undefined;
+
     try {
-      const logEntry: IntegrationLogEntry = {
+      logEntry = {
         tenantId: this.tenantId,
         integrationType: this.getIntegrationType(),
         provider: entry.provider || this.getProvider(),
@@ -225,17 +232,28 @@ export abstract class BaseAdapter {
           logEntry.direction,
           logEntry.endpoint,
           logEntry.method,
-          logEntry.request ? JSON.stringify(this.sanitizeForLog(logEntry.request)) : null,
-          logEntry.response ? JSON.stringify(this.sanitizeForLog(logEntry.response)) : null,
+          logEntry.request === undefined || logEntry.request === null
+            ? null
+            : JSON.stringify(this.sanitizeForLog(logEntry.request)),
+          logEntry.response === undefined || logEntry.response === null
+            ? null
+            : JSON.stringify(this.sanitizeForLog(logEntry.response)),
           logEntry.status,
           logEntry.statusCode,
-          logEntry.errorMessage,
+          logEntry.errorMessage === undefined ? undefined : safeErrorCode(logEntry.errorMessage),
           logEntry.durationMs,
           logEntry.correlationId,
         ]
       );
     } catch (error) {
-      logger.error('Failed to log integration call', { error });
+      logger.error('Failed to log integration call', {
+        errorCode: safeErrorCode(error),
+        correlationId: logEntry?.correlationId || entry.correlationId || this.correlationId,
+        integrationType: logEntry?.integrationType,
+        provider: logEntry?.provider,
+        status: logEntry?.status,
+        statusCode: logEntry?.statusCode,
+      });
     }
   }
 
@@ -243,7 +261,8 @@ export abstract class BaseAdapter {
    * Sanitize data for logging (remove sensitive information)
    */
   protected sanitizeForLog(data: any): any {
-    if (!data) return data;
+    const sanitizedData = sanitizeLogValue(data);
+    if (!sanitizedData) return sanitizedData;
 
     const sensitiveKeys = [
       'password', 'apiKey', 'api_key', 'secret', 'token', 'authorization',
@@ -274,7 +293,7 @@ export abstract class BaseAdapter {
       return sanitized;
     };
 
-    return sanitize(data);
+    return sanitize(sanitizedData);
   }
 
   /**
@@ -309,7 +328,9 @@ export abstract class BaseAdapter {
           attempt: attempt + 1,
           maxRetries: retryOpts.maxRetries,
           delay,
-          error: error.message,
+          statusCode,
+          correlationId: this.correlationId,
+          errorCode: safeErrorCode(error),
         });
 
         await this.sleep(delay);
@@ -346,7 +367,10 @@ export abstract class BaseAdapter {
         [this.config.id]
       );
     } catch (error) {
-      logger.error('Failed to update last sync timestamp', { error });
+      logger.error('Failed to update last sync timestamp', {
+        errorCode: safeErrorCode(error),
+        correlationId: this.correlationId,
+      });
     }
   }
 

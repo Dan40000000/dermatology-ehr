@@ -7,7 +7,7 @@ import {
 } from '../utils/aiPhiGuard';
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from '../utils/externalAiGate';
 import { meteredOpenAiFetch } from '../utils/openAiSpendGuard';
-import { redactValue } from '../utils/phiRedaction';
+import { redactValue, safeErrorCode } from '../utils/phiRedaction';
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
@@ -86,6 +86,9 @@ interface AskClinicalCopilotInput {
 }
 
 function toSafeErrorMessage(error: unknown): string {
+  if (process.env.NODE_ENV !== 'test') {
+    return safeErrorCode(error);
+  }
   if (error instanceof Error) {
     return redactValue(error.message);
   }
@@ -93,6 +96,19 @@ function toSafeErrorMessage(error: unknown): string {
     return redactValue(error);
   }
   return 'Unknown error';
+}
+
+function isSyntheticAiRuntime(): boolean {
+  const nodeEnv = String(process.env.NODE_ENV || 'development').trim().toLowerCase();
+  if (nodeEnv === 'production') {
+    return false;
+  }
+  if (nodeEnv === 'test' || nodeEnv === 'development' || nodeEnv === 'demo') {
+    return true;
+  }
+
+  const mode = String(process.env.CLINICAL_AI_MODE || process.env.AI_MODE || '').trim().toLowerCase();
+  return mode === 'mock' || mode === 'demo';
 }
 
 function clampText(value: unknown, max = 3000): string | undefined {
@@ -335,6 +351,7 @@ async function askOpenAI(input: AskClinicalCopilotInput): Promise<ClinicalCopilo
     },
     body: JSON.stringify({
       model,
+      store: false,
       temperature: 0.2,
       max_tokens: 1800,
       response_format: { type: 'json_object' },
@@ -580,10 +597,20 @@ export async function askClinicalCopilot(input: AskClinicalCopilotInput): Promis
     if (error instanceof AiPhiBlockError) {
       throw error;
     }
-    logger.warn('Clinical copilot provider failed, falling back to mock', {
+    logger.warn('Clinical copilot provider failed', {
       error: toSafeErrorMessage(error),
     });
+
+    if (isSyntheticAiRuntime()) {
+      return buildMockResult(input.question, input.context);
+    }
+
+    throw new Error('Clinical copilot provider is unavailable');
   }
 
-  return buildMockResult(input.question, input.context);
+  if (isSyntheticAiRuntime()) {
+    return buildMockResult(input.question, input.context);
+  }
+
+  throw new Error('Clinical copilot provider is unavailable');
 }

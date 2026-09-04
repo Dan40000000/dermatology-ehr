@@ -180,7 +180,10 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
       <Modal isOpen={showModal} title="Select Pharmacy" onClose={() => setShowModal(false)} size="lg">
         <div style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+            <label htmlFor="pharmacy-search-term" className="sr-only">Search pharmacies</label>
             <input
+              id="pharmacy-search-term"
+              name="pharmacySearch"
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -331,8 +334,10 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
       >
         <div className="modal-form">
           <div className="form-field">
-            <label>Pharmacy Name *</label>
+            <label htmlFor="new-pharmacy-name">Pharmacy Name *</label>
             <input
+              id="new-pharmacy-name"
+              name="name"
               type="text"
               value={newPharmacy.name}
               onChange={(e) => setNewPharmacy({ ...newPharmacy, name: e.target.value })}
@@ -340,8 +345,10 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
             />
           </div>
           <div className="form-field">
-            <label>Phone</label>
+            <label htmlFor="new-pharmacy-phone">Phone</label>
             <input
+              id="new-pharmacy-phone"
+              name="phone"
               type="tel"
               value={newPharmacy.phone}
               onChange={(e) => setNewPharmacy({ ...newPharmacy, phone: e.target.value })}
@@ -349,8 +356,10 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
             />
           </div>
           <div className="form-field">
-            <label>Street Address</label>
+            <label htmlFor="new-pharmacy-street">Street Address</label>
             <input
+              id="new-pharmacy-street"
+              name="street"
               type="text"
               value={newPharmacy.street}
               onChange={(e) => setNewPharmacy({ ...newPharmacy, street: e.target.value })}
@@ -359,16 +368,20 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
           </div>
           <div className="form-row">
             <div className="form-field">
-              <label>City</label>
+              <label htmlFor="new-pharmacy-city">City</label>
               <input
+                id="new-pharmacy-city"
+                name="city"
                 type="text"
                 value={newPharmacy.city}
                 onChange={(e) => setNewPharmacy({ ...newPharmacy, city: e.target.value })}
               />
             </div>
             <div className="form-field">
-              <label>State</label>
+              <label htmlFor="new-pharmacy-state">State</label>
               <input
+                id="new-pharmacy-state"
+                name="state"
                 type="text"
                 value={newPharmacy.state}
                 onChange={(e) => setNewPharmacy({ ...newPharmacy, state: e.target.value })}
@@ -377,8 +390,10 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
               />
             </div>
             <div className="form-field">
-              <label>ZIP</label>
+              <label htmlFor="new-pharmacy-zip">ZIP</label>
               <input
+                id="new-pharmacy-zip"
+                name="zip"
                 type="text"
                 value={newPharmacy.zip}
                 onChange={(e) => setNewPharmacy({ ...newPharmacy, zip: e.target.value })}
@@ -387,8 +402,10 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
             </div>
           </div>
           <div className="form-field">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label htmlFor="new-pharmacy-preferred" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <input
+                id="new-pharmacy-preferred"
+                name="isPreferred"
                 type="checkbox"
                 checked={newPharmacy.isPreferred}
                 onChange={(e) =>

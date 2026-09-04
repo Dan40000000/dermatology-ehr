@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import { env } from "../config/env";
 import config from "../config";
+import { logger } from "../lib/logger";
+import { safeErrorCode } from "../utils/phiRedaction";
 import { scanBuffer } from "./virusScan";
 import { putObject } from "./s3";
 
@@ -69,8 +71,9 @@ export async function saveFile(file: Express.Multer.File): Promise<StoredFile> {
       }
       if (!warnedS3UploadFallback) {
         warnedS3UploadFallback = true;
-        // eslint-disable-next-line no-console
-        console.warn(`⚠️  S3 upload failed (${error?.message || "unknown error"}); falling back to local storage in non-production mode.`);
+        logger.warn("S3 upload failed; falling back to local storage in synthetic runtime", {
+          errorCode: safeErrorCode(error),
+        });
       }
       return saveFileLocal(file, buffer);
     }
@@ -81,8 +84,7 @@ export async function saveFile(file: Express.Multer.File): Promise<StoredFile> {
 
   if (env.storageProvider === "s3" && !warnedLocalFallback) {
     warnedLocalFallback = true;
-    // eslint-disable-next-line no-console
-    console.warn("⚠️  STORAGE_PROVIDER=s3 but bucket not configured; falling back to local storage.");
+    logger.warn("S3 storage is not configured; local fallback is limited to synthetic runtime");
   }
   return saveFileLocal(file, buffer);
 }

@@ -5,6 +5,7 @@
 
 import twilio, { Twilio } from 'twilio';
 import { logger } from '../lib/logger';
+import { assertVendorBaaEnabled } from './vendorMockGuard';
 import { formatPhoneE164, validateAndFormatPhone } from '../utils/phone';
 import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
 
@@ -133,6 +134,7 @@ export class TwilioService {
    */
   async sendSMS(params: SendSMSParams): Promise<SendSMSResult> {
     try {
+      assertVendorBaaEnabled('Twilio SMS', 'TWILIO_BAA_ENABLED');
       assertSmsContentSafe(params.body);
 
       // Validate and format phone numbers
@@ -233,6 +235,7 @@ export class TwilioService {
    */
   async placeVoiceCall(params: PlaceVoiceCallParams): Promise<PlaceVoiceCallResult> {
     try {
+      assertVendorBaaEnabled('Twilio voice', 'TWILIO_BAA_ENABLED');
       const toPhone = validateAndFormatPhone(params.to);
       const fromPhone = validateAndFormatPhone(params.from);
       const safeMessage = escapeForTwiml(params.message);

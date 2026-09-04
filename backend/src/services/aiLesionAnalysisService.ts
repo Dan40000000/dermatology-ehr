@@ -1,9 +1,10 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
-import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
+import { isClinicalAiProviderAllowed, isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 import { meteredOpenAiFetch } from "../utils/openAiSpendGuard";
+import { safeErrorCode } from "../utils/phiRedaction";
 
 /**
  * AI Lesion Analysis Service
@@ -115,6 +116,9 @@ export interface ProviderFeedback {
 }
 
 function toSafeErrorMessage(error: unknown): string {
+  if (process.env.NODE_ENV !== "test") {
+    return safeErrorCode(error);
+  }
   if (error instanceof Error) {
     return error.message;
   }
@@ -132,7 +136,20 @@ function logAILesionAnalysisError(message: string, error: unknown): void {
   });
 }
 
-class AILesionAnalysisService {
+function isSyntheticAiRuntime(): boolean {
+  const nodeEnv = String(process.env.NODE_ENV || "development").trim().toLowerCase();
+  if (nodeEnv === "production") {
+    return false;
+  }
+  if (nodeEnv === "test" || nodeEnv === "development" || nodeEnv === "demo") {
+    return true;
+  }
+
+  const mode = String(process.env.CLINICAL_AI_MODE || process.env.AI_MODE || "").trim().toLowerCase();
+  return mode === "mock" || mode === "demo";
+}
+
+export class AILesionAnalysisService {
   private anthropicApiKey: string | undefined;
   private openaiApiKey: string | undefined;
   private modelVersion = "claude-vision-v1.0";
@@ -635,7 +652,18 @@ class AILesionAnalysisService {
     rawResponse: object;
   }> {
     // Only send patient images to external vision models when a HIPAA/BAA-covered mode is explicitly enabled.
-    if (this.anthropicApiKey && isHipaaClinicalAiEnabled()) {
+    const anthropicAllowed = Boolean(
+      this.anthropicApiKey
+      && isClinicalAiProviderAllowed("anthropic", this.anthropicApiKey)
+      && isHipaaClinicalAiEnabled()
+    );
+    const openAiAllowed = Boolean(
+      this.openaiApiKey
+      && isClinicalAiProviderAllowed("openai", this.openaiApiKey)
+      && isHipaaClinicalAiEnabled()
+    );
+
+    if (anthropicAllowed) {
       return await this.analyzeWithClaude(imageUrl, analysisType);
     }
     if (this.anthropicApiKey) {
@@ -643,15 +671,18 @@ class AILesionAnalysisService {
     }
 
     // Only send patient images to OpenAI when a HIPAA/BAA-covered mode is explicitly enabled.
-    if (this.openaiApiKey && isHipaaClinicalAiEnabled()) {
+    if (openAiAllowed) {
       return await this.analyzeWithOpenAI(imageUrl, analysisType, tenantId, userId, imageId);
     }
     if (this.openaiApiKey) {
       logger.warn("OpenAI lesion image analysis skipped because HIPAA/BAA mode is not enabled");
     }
 
-    // Otherwise, return mock analysis
-    return this.getMockAnalysis(analysisType);
+    if (isSyntheticAiRuntime()) {
+      return this.getMockAnalysis(analysisType);
+    }
+
+    throw new Error("AI lesion analysis provider is unavailable");
   }
 
   /**
@@ -711,7 +742,10 @@ class AILesionAnalysisService {
       return this.normalizeAIResponse(analysisResult, data);
     } catch (error) {
       logAILesionAnalysisError("Claude Vision API Error", error);
-      return this.getMockAnalysis(analysisType);
+      if (isSyntheticAiRuntime()) {
+        return this.getMockAnalysis(analysisType);
+      }
+      throw error;
     }
   }
 
@@ -737,6 +771,7 @@ class AILesionAnalysisService {
         },
         body: JSON.stringify({
           model,
+          store: false,
           messages: [
             { role: "system", content: systemPrompt },
             {
@@ -774,7 +809,10 @@ class AILesionAnalysisService {
       return this.normalizeAIResponse(analysisResult, data);
     } catch (error) {
       logAILesionAnalysisError("OpenAI Vision API Error", error);
-      return this.getMockAnalysis(analysisType);
+      if (isSyntheticAiRuntime()) {
+        return this.getMockAnalysis(analysisType);
+      }
+      throw error;
     }
   }
 
@@ -953,7 +991,11 @@ CRITICAL NOTES:
     recommendations: string[];
     rawResponse: object;
   }> {
-    // Mock comparison for now - would integrate with AI API
+    if (!isSyntheticAiRuntime()) {
+      throw new Error("AI image comparison provider is unavailable");
+    }
+
+    // Mock comparison for test/development/demo runtimes until a provider is integrated.
     return {
       overallChangeScore: 0.15,
       changeClassification: "stable",

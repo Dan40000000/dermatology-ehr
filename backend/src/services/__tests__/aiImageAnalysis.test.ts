@@ -25,6 +25,26 @@ jest.mock('crypto', () => ({
 
 const queryMock = pool.query as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
+const originalAiEnvironment = {
+  nodeEnv: process.env.NODE_ENV,
+  openAiApiKey: process.env.OPENAI_API_KEY,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  hipaaAiEnabled: process.env.HIPAA_AI_ENABLED,
+  openAiCallsEnabled: process.env.OPENAI_API_CALLS_ENABLED,
+  openAiBaaEnabled: process.env.OPENAI_BAA_ENABLED,
+  openAiApprovedEndpoints: process.env.OPENAI_BAA_APPROVED_ENDPOINTS,
+  openAiApprovedModels: process.env.OPENAI_BAA_APPROVED_MODELS,
+  clinicalAiMode: process.env.CLINICAL_AI_MODE,
+  aiMode: process.env.AI_MODE,
+};
+
+function restoreEnvironmentValue(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 // Mock global fetch
 global.fetch = jest.fn();
@@ -37,7 +57,6 @@ describe('AIImageAnalysisService', () => {
   const analyzedBy = 'user-123';
 
   beforeEach(() => {
-    service = new AIImageAnalysisService();
     jest.clearAllMocks();
     queryMock.mockReset();
     (global.fetch as jest.Mock).mockReset();
@@ -45,6 +64,26 @@ describe('AIImageAnalysisService', () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.HIPAA_AI_ENABLED;
+    delete process.env.OPENAI_API_CALLS_ENABLED;
+    delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+    delete process.env.OPENAI_BAA_APPROVED_MODELS;
+    delete process.env.CLINICAL_AI_MODE;
+    delete process.env.AI_MODE;
+    service = new AIImageAnalysisService();
+  });
+
+  afterEach(() => {
+    restoreEnvironmentValue('NODE_ENV', originalAiEnvironment.nodeEnv);
+    restoreEnvironmentValue('OPENAI_API_KEY', originalAiEnvironment.openAiApiKey);
+    restoreEnvironmentValue('ANTHROPIC_API_KEY', originalAiEnvironment.anthropicApiKey);
+    restoreEnvironmentValue('HIPAA_AI_ENABLED', originalAiEnvironment.hipaaAiEnabled);
+    restoreEnvironmentValue('OPENAI_API_CALLS_ENABLED', originalAiEnvironment.openAiCallsEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_ENABLED', originalAiEnvironment.openAiBaaEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_ENDPOINTS', originalAiEnvironment.openAiApprovedEndpoints);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_MODELS', originalAiEnvironment.openAiApprovedModels);
+    restoreEnvironmentValue('CLINICAL_AI_MODE', originalAiEnvironment.clinicalAiMode);
+    restoreEnvironmentValue('AI_MODE', originalAiEnvironment.aiMode);
   });
 
   describe('analyzeSkinLesion', () => {
@@ -91,6 +130,17 @@ describe('AIImageAnalysisService', () => {
 
       expect(analysisId).toBe('analysis-uuid-123');
       expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should fail closed in production when no provider is configured', async () => {
+      process.env.NODE_ENV = 'production';
+      service = new AIImageAnalysisService();
+
+      await expect(
+        service.analyzeSkinLesion(photoId, imageUrl, tenantId, analyzedBy)
+      ).rejects.toThrow('Failed to analyze image');
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(queryMock).not.toHaveBeenCalled();
     });
 
     it('should use OpenAI when API key is available', async () => {
@@ -151,6 +201,24 @@ describe('AIImageAnalysisService', () => {
       const analysisId = await service.analyzeSkinLesion(photoId, imageUrl, tenantId, analyzedBy);
 
       expect(analysisId).toBe('analysis-uuid-123');
+    });
+
+    it('should fail closed in production when the provider request fails', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.OPENAI_API_KEY = 'sk-production-test-key';
+      process.env.OPENAI_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_BAA_ENABLED = 'true';
+      process.env.OPENAI_BAA_APPROVED_ENDPOINTS = '/v1/chat/completions';
+      process.env.OPENAI_BAA_APPROVED_MODELS = 'gpt-4o-mini';
+      service = new AIImageAnalysisService();
+
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('provider down'));
+
+      await expect(
+        service.analyzeSkinLesion(photoId, imageUrl, tenantId, analyzedBy)
+      ).rejects.toThrow('Failed to analyze image');
+      expect(global.fetch).toHaveBeenCalled();
+      expect(queryMock).not.toHaveBeenCalled();
     });
 
     it('should handle invalid OpenAI response', async () => {

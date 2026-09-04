@@ -50,7 +50,7 @@ describe('security middleware', () => {
     expect(res.setHeader).toHaveBeenCalledWith('X-Content-Type-Options', 'nosniff');
     expect(res.setHeader).toHaveBeenCalledWith('X-Frame-Options', 'DENY');
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    expect(res.setHeader).toHaveBeenCalledWith('X-HIPAA-Compliant', 'true');
+    expect(res.setHeader).not.toHaveBeenCalledWith('X-HIPAA-Compliant', 'true');
     expect(next).toHaveBeenCalled();
   });
 

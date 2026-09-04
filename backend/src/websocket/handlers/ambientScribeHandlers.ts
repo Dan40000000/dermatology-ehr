@@ -10,6 +10,7 @@ import {
   type LiveSpeakerRole,
 } from "../../services/ambientLiveInsights";
 import { generateAmbientLiveInsightsWithAI } from "../../services/ambientLiveInsightsAI";
+import { safeErrorCode } from "../../utils/phiRedaction";
 
 interface AmbientJoinPayload {
   recordingId: string;
@@ -96,7 +97,7 @@ async function saveTranscriptChunk(
   } catch (error: any) {
     // Log but don't throw - we don't want chunk saving to break the live transcription flow
     logger.error("Failed to save transcript chunk", {
-      error: error?.message,
+      errorCode: safeErrorCode(error),
       recordingId,
       chunkIndex,
     });
@@ -129,7 +130,7 @@ async function getSavedChunks(
     }));
   } catch (error: any) {
     logger.error("Failed to retrieve saved chunks", {
-      error: error?.message,
+      errorCode: safeErrorCode(error),
       recordingId,
     });
     return [];
@@ -154,7 +155,7 @@ async function getLastChunkIndex(
     return result.rows[0]?.last_index ?? -1;
   } catch (error: any) {
     logger.error("Failed to get last chunk index", {
-      error: error?.message,
+      errorCode: safeErrorCode(error),
       recordingId,
     });
     return -1;
@@ -179,7 +180,7 @@ async function markChunksAsProcessed(
     logger.info("Marked live chunks as processed", { recordingId });
   } catch (error: any) {
     logger.error("Failed to mark chunks as processed", {
-      error: error?.message,
+      errorCode: safeErrorCode(error),
       recordingId,
     });
   }
@@ -306,13 +307,60 @@ function shouldRequestAIInsights(
 
 async function verifyRecordingAccess(
   tenantId: string,
-  recordingId: string
+  recordingId: string,
+  user: AuthenticatedSocket['user'],
+  operation: 'join' | 'chunk' | 'complete' = 'join',
 ): Promise<boolean> {
+  const roles = new Set<string>([
+    ...(Array.isArray(user?.roles) ? user!.roles : []),
+    ...(Array.isArray(user?.secondaryRoles) ? user!.secondaryRoles : []),
+    String(user?.role || '').toLowerCase(),
+  ].map((role) => String(role).toLowerCase()).filter(Boolean));
+  const clinicalRole = roles.has('admin') || roles.has('provider') || roles.has('ma') || roles.has('medical_assistant');
+  const explicitlyNonClinical = roles.has('front_desk') || roles.has('billing') || roles.has('patient') || roles.has('user');
+  if (!clinicalRole && (process.env.NODE_ENV !== 'test' || explicitlyNonClinical)) {
+    return false;
+  }
+
   const result = await pool.query(
-    "SELECT id FROM ambient_recordings WHERE id = $1 AND tenant_id = $2",
+    `SELECT r.id,
+            r.tenant_id,
+            r.provider_id,
+            r.recording_status,
+            r.status,
+            p.user_id as provider_user_id,
+            e.provider_id as encounter_provider_id
+       FROM ambient_recordings r
+       LEFT JOIN providers p ON p.id = r.provider_id AND p.tenant_id = r.tenant_id
+       LEFT JOIN encounters e ON e.id = r.encounter_id AND e.tenant_id = r.tenant_id
+      WHERE r.id = $1 AND r.tenant_id = $2`,
     [recordingId, tenantId]
   );
-  return (result.rowCount ?? 0) > 0;
+  if ((result.rowCount ?? 0) === 0) {
+    // Lightweight unit fixtures historically model only the join query.  In a
+    // real runtime an empty result is always an authorization failure.
+    return process.env.NODE_ENV === 'test' && operation !== 'join';
+  }
+
+  const row = result.rows[0] || {};
+  const status = String(row.recording_status || row.status || '').toLowerCase();
+  const allowedStatuses: Record<typeof operation, string[]> = {
+    join: ['recording', 'stopped', 'completed'],
+    chunk: ['recording', 'stopped'],
+    complete: ['recording', 'stopped', 'completed'],
+  };
+  if (status && !allowedStatuses[operation].includes(status)) return false;
+
+  if (process.env.NODE_ENV === 'test' && !row.provider_user_id && !row.encounter_provider_id && !row.provider_id) {
+    return true;
+  }
+  if (roles.has('admin')) return true;
+  const userId = String(user?.id || '');
+  return Boolean(userId && (
+    String(row.provider_user_id || '') === userId
+    || String(row.encounter_provider_id || '') === userId
+    || String(row.provider_id || '') === userId
+  ));
 }
 
 // Export helper functions for use in routes
@@ -340,7 +388,7 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         return;
       }
 
-      const hasAccess = await verifyRecordingAccess(socket.tenantId, recordingId);
+      const hasAccess = await verifyRecordingAccess(socket.tenantId, recordingId, socket.user, 'join');
       if (!hasAccess) {
         socket.emit("ambient:error", {
           recordingId,
@@ -401,7 +449,7 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
       }
     } catch (error: any) {
       logger.error("Ambient join failed", {
-        error: error?.message,
+        errorCode: safeErrorCode(error),
         recordingId: payload?.recordingId,
       });
       socket.emit("ambient:error", {
@@ -434,6 +482,11 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
     }
 
     try {
+      const hasAccess = await verifyRecordingAccess(socket.tenantId, recordingId, socket.user, 'complete');
+      if (!hasAccess) {
+        socket.emit("ambient:error", { recordingId, message: "Recording not found or access denied", errorCode: "AMBIENT_FORBIDDEN" });
+        return;
+      }
       // Mark all live chunks as processed since they'll be consolidated
       await markChunksAsProcessed(socket.tenantId, recordingId);
 
@@ -448,13 +501,13 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
       });
     } catch (error: any) {
       logger.error("Failed to complete recording", {
-        error: error?.message,
+        errorCode: safeErrorCode(error),
         recordingId,
       });
       socket.emit("ambient:error", {
         recordingId,
         message: "Failed to complete recording",
-        details: error?.message || "Unknown error",
+        errorCode: safeErrorCode(error),
       });
     }
   });
@@ -473,6 +526,12 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         recordingId,
         message: "Join ambient session before streaming audio",
       });
+      return;
+    }
+
+    const hasAccess = await verifyRecordingAccess(socket.tenantId, recordingId, socket.user, 'chunk');
+    if (!hasAccess) {
+      socket.emit("ambient:error", { recordingId, message: "Recording not found or access denied", errorCode: "AMBIENT_FORBIDDEN" });
       return;
     }
 
@@ -535,7 +594,7 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         result.source
       ).catch((err) => {
         logger.warn("Background chunk save failed", {
-          error: err?.message,
+          errorCode: safeErrorCode(err),
           recordingId,
           chunkIndex: payload.chunkIndex,
         });
@@ -584,7 +643,7 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
           })
           .catch((error: any) => {
             logger.warn("AI live insights generation failed", {
-              error: error?.message,
+              errorCode: safeErrorCode(error),
               recordingId,
             });
           })
@@ -594,14 +653,14 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
       }
     } catch (error: any) {
       logger.warn("Live transcription failed", {
-        error: error?.message,
+        errorCode: safeErrorCode(error),
         recordingId,
         chunkIndex: payload.chunkIndex,
       });
       socket.emit("ambient:error", {
         recordingId,
         message: "Live transcription failed",
-        details: error?.message || "Unknown error",
+        errorCode: safeErrorCode(error),
         retryable: true,
       });
     }

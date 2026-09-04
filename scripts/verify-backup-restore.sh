@@ -57,7 +57,7 @@ case "$BACKUP_PATH" in
     openssl enc -d -aes-256-cbc -pbkdf2 \
       -in "$BACKUP_PATH" \
       -out "$COMPRESSED_PATH" \
-      -k "$BACKUP_ENCRYPTION_KEY"
+    -pass env:BACKUP_ENCRYPTION_KEY
     ;;
   *.sql.gz)
     cp "$BACKUP_PATH" "$COMPRESSED_PATH"

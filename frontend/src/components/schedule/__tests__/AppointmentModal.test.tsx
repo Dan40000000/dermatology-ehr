@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { AppointmentModal } from '../AppointmentModal';
+import { getPracticeDateTime } from '../../../utils/practiceDateTime';
 
 vi.mock('../../ui/Modal', () => ({
   Modal: ({
@@ -32,10 +33,7 @@ const appointmentTypes = [
 ];
 
 const toLocalIso = (date: string, time: string): string => {
-  const [hour, minute] = time.split(':').map(Number);
-  const dateValue = new Date(`${date}T00:00:00`);
-  dateValue.setHours(hour, minute, 0, 0);
-  return dateValue.toISOString();
+  return getPracticeDateTime(date, time, 'America/Denver')!.toISOString();
 };
 
 describe('AppointmentModal', () => {
@@ -145,5 +143,49 @@ describe('AppointmentModal', () => {
       expect(optionValues).toContain('13:00');
       expect(optionValues).not.toContain('09:00');
     });
+  });
+
+  it('blocks a slot occupied across the repeated DST fall-back hour', async () => {
+    render(
+      <AppointmentModal
+        isOpen
+        onClose={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        patients={patients as any}
+        providers={providers as any}
+        locations={locations as any}
+        appointmentTypes={appointmentTypes as any}
+        practiceTimeZone="America/Denver"
+        initialData={{
+          patientId: 'patient-1',
+          providerId: 'provider-1',
+          locationId: 'loc-1',
+          date: '2026-11-01',
+          time: '01:30',
+        }}
+        availability={[
+          { id: 'avail-fallback', tenantId: 'tenant-1', providerId: 'provider-1', dayOfWeek: 0, startTime: '01:30', endTime: '02:00', createdAt: '2026-01-01' } as any,
+        ]}
+        appointments={[
+          {
+            id: 'appt-fallback',
+            tenantId: 'tenant-1',
+            patientId: 'patient-1',
+            providerId: 'provider-1',
+            locationId: 'loc-1',
+            appointmentTypeId: 'type-1',
+            scheduledStart: '2026-11-01T07:30:00.000Z',
+            scheduledEnd: '2026-11-01T08:30:00.000Z',
+            status: 'scheduled',
+            createdAt: '2026-01-01',
+          } as any,
+        ]}
+        timeBlocks={[]}
+      />
+    );
+
+    const timeSelect = screen.getByLabelText(/Time/i);
+    await waitFor(() => expect(timeSelect).toBeDisabled());
+    expect(within(timeSelect).queryByRole('option', { name: '1:30 AM' })).not.toBeInTheDocument();
   });
 });

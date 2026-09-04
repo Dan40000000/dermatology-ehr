@@ -3,14 +3,27 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { requireModuleAccess } from '../middleware/moduleAccess';
 import { rateLimit } from '../middleware/rateLimit';
 import { auditLog } from '../services/audit';
-import { mipsService } from '../services/mipsService';
+import { MipsReferenceValidationError, mipsService } from '../services/mipsService';
 import { logger } from '../lib/logger';
+import { MIPS_SUBMISSION_NOT_CONFIGURED } from '../services/mipsReadinessEngine';
 
 export const mipsRouter = Router();
 
+// MIPS reporting is a reporting/compliance surface.  Keep clinical capture
+// roles out of these legacy endpoints; those workflows have their own
+// narrowly-scoped routes.
+const MIPS_REPORTING_ROLES = ['admin', 'provider', 'manager', 'compliance_officer'];
+
 mipsRouter.use(rateLimit({ windowMs: 60_000, max: 100 }));
+mipsRouter.use(requireAuth, requireRoles(MIPS_REPORTING_ROLES), requireModuleAccess('quality'));
+
+function boundedPercentage(numerator: number, denominator: number): number {
+  if (denominator <= 0 || !Number.isFinite(numerator) || !Number.isFinite(denominator)) return 0;
+  return Math.min(100, Math.max(0, (numerator / denominator) * 100));
+}
 
 // ============================================================================
 // QUALITY MEASURES
@@ -192,6 +205,9 @@ mipsRouter.post('/patient/:patientId/measure', requireAuth, async (req: AuthedRe
       status: result,
     });
   } catch (err) {
+    if (err instanceof MipsReferenceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    }
     logger.error('Error recording patient measure:', err);
     res.status(500).json({ error: 'Failed to record patient measure' });
   }
@@ -207,7 +223,8 @@ mipsRouter.post('/patient/:patientId/measure', requireAuth, async (req: AuthedRe
 mipsRouter.get('/provider/:providerId/dashboard', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
-    const providerId = req.params.providerId === 'me' ? req.user!.id : String(req.params.providerId);
+    const requestedProviderId = req.params.providerId === 'me' ? req.user!.id : String(req.params.providerId);
+    const providerId = (await mipsService.resolveProviderId(tenantId, requestedProviderId))!;
     const { year } = req.query;
 
     const reportingYear = year ? parseInt(year as string) : new Date().getFullYear();
@@ -224,7 +241,7 @@ mipsRouter.get('/provider/:providerId/dashboard', requireAuth, async (req: Authe
         qm.measure_name,
         qm.high_priority,
         qm.benchmark_data,
-        COUNT(*) FILTER (WHERE pms.status IN ('met', 'not_met')) as denominator_count,
+        COUNT(*) FILTER (WHERE pms.status IN ('met', 'not_met', 'eligible', 'excluded')) as denominator_count,
         COUNT(*) FILTER (WHERE pms.status = 'met') as numerator_count,
         COUNT(*) FILTER (WHERE pms.status = 'excluded') as exclusion_count
       FROM quality_measures qm
@@ -244,8 +261,8 @@ mipsRouter.get('/provider/:providerId/dashboard', requireAuth, async (req: Authe
       const numerator = parseInt(row.numerator_count) || 0;
       const denominator = parseInt(row.denominator_count) || 0;
       const exclusions = parseInt(row.exclusion_count) || 0;
-      const adjustedDenom = denominator - exclusions;
-      const rate = adjustedDenom > 0 ? (numerator / adjustedDenom) * 100 : 0;
+      const adjustedDenom = Math.max(0, denominator - exclusions);
+      const rate = boundedPercentage(numerator, adjustedDenom);
       const benchmark = row.benchmark_data?.national_average || 75;
 
       return {
@@ -265,7 +282,11 @@ mipsRouter.get('/provider/:providerId/dashboard', requireAuth, async (req: Authe
     // Get care gaps count
     const gapsResult = await pool.query(
       `SELECT COUNT(*) as count FROM quality_gaps
-       WHERE tenant_id = $1 AND provider_id = $2 AND status = 'open'`,
+       WHERE tenant_id = $1
+         AND provider_id = (
+           SELECT user_id FROM providers WHERE tenant_id = $1 AND id = $2
+         )
+         AND status = 'open'`,
       [tenantId, providerId]
     );
 
@@ -297,6 +318,9 @@ mipsRouter.get('/provider/:providerId/dashboard', requireAuth, async (req: Authe
       patientCount: parseInt(patientCountResult.rows[0]?.count) || 0,
     });
   } catch (err) {
+    if (err instanceof MipsReferenceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    }
     logger.error('Error fetching provider dashboard:', err);
     res.status(500).json({ error: 'Failed to fetch provider dashboard' });
   }
@@ -308,7 +332,8 @@ mipsRouter.get('/provider/:providerId/dashboard', requireAuth, async (req: Authe
 mipsRouter.get('/provider/:providerId/report', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
-    const providerId = req.params.providerId === 'me' ? req.user!.id : String(req.params.providerId);
+    const requestedProviderId = req.params.providerId === 'me' ? req.user!.id : String(req.params.providerId);
+    const providerId = (await mipsService.resolveProviderId(tenantId, requestedProviderId))!;
     const { year } = req.query;
 
     const reportingYear = year ? parseInt(year as string) : new Date().getFullYear();
@@ -319,6 +344,9 @@ mipsRouter.get('/provider/:providerId/report', requireAuth, async (req: AuthedRe
 
     res.json(report);
   } catch (err) {
+    if (err instanceof MipsReferenceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    }
     logger.error('Error generating MIPS report:', err);
     res.status(500).json({ error: 'Failed to generate MIPS report' });
   }
@@ -457,6 +485,9 @@ mipsRouter.post('/encounter/:encounterId/evaluate', requireAuth, async (req: Aut
       alerts,
     });
   } catch (err) {
+    if (err instanceof MipsReferenceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    }
     logger.error('Error evaluating encounter measures:', err);
     res.status(500).json({ error: 'Failed to evaluate encounter measures' });
   }
@@ -627,79 +658,15 @@ mipsRouter.post('/alerts/:alertId/dismiss', requireAuth, async (req: AuthedReque
 // ============================================================================
 
 /**
- * POST /api/mips/submit - Submit MIPS data
+ * POST /api/mips/submit - Submission transport is intentionally disabled.
+ * This endpoint must never create a legacy mips_submissions row or fabricate
+ * a CMS/registry confirmation number.
  */
-const submitSchema = z.object({
-  year: z.number().min(2020).max(2099),
-  quarter: z.number().min(1).max(4).optional(),
-  providerId: z.string().optional(),
-  submissionType: z.enum(['quality', 'pi', 'ia', 'cost', 'final', 'interim']).optional(),
-});
-
-mipsRouter.post('/submit', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
-  try {
-    const parsed = submitSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.format() });
-    }
-
-    const tenantId = req.user!.tenantId;
-    const userId = req.user!.id;
-    const { year, quarter, providerId, submissionType } = parsed.data;
-
-    // Generate report
-    const report = await mipsService.generateMIPSReport(tenantId, providerId, year);
-
-    // Create submission record
-    const confirmationNumber = `MIPS-${year}${quarter ? `-Q${quarter}` : ''}-${report.reportId.substring(0, 8).toUpperCase()}`;
-
-    await pool.query(
-      `INSERT INTO mips_submissions (
-        id, tenant_id, provider_id, submission_year, submission_quarter,
-        submission_type, status, quality_score, pi_score, ia_score, cost_score,
-        final_score, submission_data, submitted_at, submitted_by, confirmation_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'submitted', $7, $8, $9, $10, $11, $12, NOW(), $13, $14)`,
-      [
-        report.reportId,
-        tenantId,
-        providerId || null,
-        year,
-        quarter || null,
-        submissionType || 'final',
-        report.qualityScore,
-        report.piScore,
-        report.iaScore,
-        report.costScore,
-        report.finalScore,
-        JSON.stringify({
-          measures: report.qualityMeasures,
-          recommendations: report.recommendations,
-          careGapCount: report.careGapCount,
-        }),
-        userId,
-        confirmationNumber,
-      ]
-    );
-
-    await auditLog(tenantId, userId, 'mips_data_submitted', 'mips_submissions', report.reportId);
-
-    res.json({
-      success: true,
-      submissionId: report.reportId,
-      confirmationNumber,
-      scores: {
-        quality: report.qualityScore,
-        pi: report.piScore,
-        ia: report.iaScore,
-        cost: report.costScore,
-        final: report.finalScore,
-        paymentAdjustment: report.paymentAdjustment,
-      },
-    });
-  } catch (err) {
-    logger.error('Error submitting MIPS data:', err);
-    res.status(500).json({ error: 'Failed to submit MIPS data' });
-  }
+mipsRouter.post('/submit', requireAuth, requireRoles(['admin']), (_req: AuthedRequest, res) => {
+  return res.status(501).json({
+    success: false,
+    ...MIPS_SUBMISSION_NOT_CONFIGURED,
+  });
 });
 
 /**
@@ -772,16 +739,19 @@ mipsRouter.get('/score-history', requireAuth, async (req: AuthedRequest, res) =>
   try {
     const tenantId = req.user!.tenantId;
     const { year, providerId } = req.query;
+    const validatedProviderId = providerId
+      ? await mipsService.resolveProviderId(tenantId, String(providerId))
+      : undefined;
 
     const result = await pool.query(
       `SELECT * FROM mips_score_history
        WHERE tenant_id = $1
          AND reporting_year = $2
-         ${providerId ? 'AND provider_id = $3' : 'AND provider_id IS NULL'}
+         ${validatedProviderId ? 'AND provider_id = $3' : 'AND provider_id IS NULL'}
        ORDER BY calculation_date DESC
        LIMIT 50`,
-      providerId
-        ? [tenantId, year || new Date().getFullYear(), providerId]
+      validatedProviderId
+        ? [tenantId, year || new Date().getFullYear(), validatedProviderId]
         : [tenantId, year || new Date().getFullYear()]
     );
 
@@ -799,6 +769,9 @@ mipsRouter.get('/score-history', requireAuth, async (req: AuthedRequest, res) =>
       })),
     });
   } catch (err) {
+    if (err instanceof MipsReferenceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    }
     logger.error('Error fetching score history:', err);
     res.status(500).json({ error: 'Failed to fetch score history' });
   }

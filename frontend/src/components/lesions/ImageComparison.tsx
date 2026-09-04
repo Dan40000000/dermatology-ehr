@@ -12,11 +12,9 @@ import {
   Tooltip,
   Card,
   CardMedia,
-  CardContent
+  CardContent,
+  TextField
 } from '@mui/material';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import {
   ZoomIn as ZoomInIcon,
   ZoomOut as ZoomOutIcon,
@@ -139,14 +137,18 @@ const ImageComparison: React.FC<ImageComparisonProps> = ({ lesionId }) => {
     <Box>
       {/* Date Selection */}
       <Paper sx={{ p: 2, mb: 3 }}>
-        <LocalizationProvider dateAdapter={AdapterDateFns}>
-          <Grid container spacing={2} alignItems="center">
+        <Grid container spacing={2} alignItems="center">
             <Grid item xs={5}>
-              <DatePicker
+              <TextField
+                type="date"
                 label="Earlier Date"
-                value={date1}
-                onChange={(newValue) => newValue && setDate1(newValue)}
-                slotProps={{ textField: { fullWidth: true, size: 'small' } }}
+                value={format(date1, 'yyyy-MM-dd')}
+                onChange={(event) => {
+                  if (event.target.value) setDate1(new Date(`${event.target.value}T00:00:00`));
+                }}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
               />
             </Grid>
             <Grid item xs={2} textAlign="center">
@@ -157,15 +159,19 @@ const ImageComparison: React.FC<ImageComparisonProps> = ({ lesionId }) => {
               </Tooltip>
             </Grid>
             <Grid item xs={5}>
-              <DatePicker
+              <TextField
+                type="date"
                 label="Later Date"
-                value={date2}
-                onChange={(newValue) => newValue && setDate2(newValue)}
-                slotProps={{ textField: { fullWidth: true, size: 'small' } }}
+                value={format(date2, 'yyyy-MM-dd')}
+                onChange={(event) => {
+                  if (event.target.value) setDate2(new Date(`${event.target.value}T00:00:00`));
+                }}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
               />
             </Grid>
           </Grid>
-        </LocalizationProvider>
       </Paper>
 
       {/* Size Change Summary */}

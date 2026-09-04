@@ -12,7 +12,7 @@ ENV VITE_USE_PRESIGN=$VITE_USE_PRESIGN
 ENV VITE_ENABLE_LOCAL_DEMO=$VITE_ENABLE_LOCAL_DEMO
 
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --no-audit --no-fund
 
 COPY . .
 RUN npm run build
@@ -21,7 +21,7 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 
-RUN npm install -g serve@14.2.4
+RUN npm install -g serve@14.2.4 --no-audit --no-fund
 
 COPY --from=build /app/dist ./dist
 

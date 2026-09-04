@@ -22,6 +22,11 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
 
   try {
     const decoded = jwt.verify(token, env.jwtSecret) as AuthenticatedRequestUser;
+    const tokenStatus = String((decoded as any).status || '').toLowerCase();
+    if ((decoded as any).isActive === false || (decoded as any).deactivatedAt || (decoded as any).roleRevoked === true
+      || tokenStatus === 'deactivated' || tokenStatus === 'disabled') {
+      return res.status(401).json({ error: "Account is inactive" });
+    }
     const tenantId = req.header(env.tenantHeader);
     if (!tenantId || tenantId !== decoded.tenantId) {
       return res.status(403).json({ error: "Invalid tenant" });

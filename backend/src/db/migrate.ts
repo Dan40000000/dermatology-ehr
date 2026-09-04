@@ -16053,6 +16053,12 @@ Consider age-appropriate treatments and include family counseling points.',
     ALTER TABLE appointment_types ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE patients ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE;
+    -- Quarantine seeded workforce credentials before any fixture rows are
+    -- created.  These columns are introduced here as well as in the later
+    -- hardening migration so this active migration path never creates a
+    -- login-capable shared workforce account.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_reset BOOLEAN NOT NULL DEFAULT FALSE;
 
     UPDATE providers
     SET is_test_data = TRUE,
@@ -16108,7 +16114,9 @@ Consider age-appropriate treatments and include family counseling points.',
         full_name = credentials.full_name,
         role = credentials.role,
         password_hash = '$2b$12$gU3jZZKNPnWeUkufWCHCG.w6/jHq98Anh1tKB/THI4tPha1QmqwtK',
-        is_test_data = FALSE
+        is_test_data = TRUE,
+        is_active = FALSE,
+        force_password_reset = TRUE
     FROM (VALUES
       ('u-admin', 'admin@demo.practice', 'Admin User', 'admin'),
       ('u-owner', 'owner@demo.practice', 'Practice Owner', 'admin'),
@@ -16129,14 +16137,16 @@ Consider age-appropriate treatments and include family counseling points.',
         OR lower(target.email) = credentials.email
       );
 
-    INSERT INTO users (id, tenant_id, email, full_name, role, password_hash, is_test_data)
+    INSERT INTO users (id, tenant_id, email, full_name, role, password_hash, is_test_data, is_active, force_password_reset)
     SELECT credentials.id,
            'tenant-demo',
            credentials.email,
            credentials.full_name,
            credentials.role,
            '$2b$12$gU3jZZKNPnWeUkufWCHCG.w6/jHq98Anh1tKB/THI4tPha1QmqwtK',
-           FALSE
+           TRUE,
+           FALSE,
+           TRUE
     FROM (VALUES
       ('u-owner', 'owner@demo.practice', 'Practice Owner', 'admin'),
       ('u-ma', 'ma@demo.practice', 'Medical Assistant', 'ma'),
@@ -16255,6 +16265,1497 @@ Consider age-appropriate treatments and include family counseling points.',
       AND tenant_id = 'tenant-demo';
     `,
   },
+  {
+    name: "228_security_hardening",
+    sql: `
+    -- Fail-closed workforce account lifecycle controls.  Seeded credentials
+    -- are retained only as quarantined synthetic fixtures and cannot log in.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS is_test_data BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS force_password_reset BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS role_version INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS deactivation_reason TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_users_tenant_active
+      ON users(tenant_id, is_active);
+
+    UPDATE users
+       SET is_test_data = TRUE,
+           is_active = FALSE,
+           force_password_reset = TRUE,
+           deactivated_at = COALESCE(deactivated_at, NOW()),
+           deactivation_reason = COALESCE(deactivation_reason, 'seeded_fixture_requires_controlled_reset')
+     WHERE tenant_id = 'tenant-demo'
+       AND id IN (
+         'u-admin', 'u-owner', 'u-provider', 'u-ma', 'u-front', 'u-billing',
+         'u-nurse', 'u-manager', 'u-scheduler', 'u-compliance', 'u-staff', 'u-hr'
+       );
+
+    ALTER TABLE audit_log
+      ADD COLUMN IF NOT EXISTS record_hash TEXT,
+      ADD COLUMN IF NOT EXISTS previous_hash TEXT;
+    CREATE INDEX IF NOT EXISTS idx_audit_log_hash ON audit_log(record_hash);
+
+    CREATE OR REPLACE FUNCTION calculate_audit_hash(
+      p_id TEXT,
+      p_tenant_id TEXT,
+      p_user_id TEXT,
+      p_action TEXT,
+      p_resource_type TEXT,
+      p_resource_id TEXT,
+      p_created_at TIMESTAMPTZ,
+      p_previous_hash TEXT
+    ) RETURNS TEXT AS $$
+    BEGIN
+      RETURN encode(
+        sha256(
+          (COALESCE(p_id, '') || '|' ||
+           COALESCE(p_tenant_id, '') || '|' ||
+           COALESCE(p_user_id, '') || '|' ||
+           COALESCE(p_action, '') || '|' ||
+           COALESCE(p_resource_type, '') || '|' ||
+           COALESCE(p_resource_id, '') || '|' ||
+           COALESCE(to_char(p_created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), '') || '|' ||
+           COALESCE(p_previous_hash, 'genesis'))::bytea
+        ),
+        'hex'
+      );
+    END;
+    $$ LANGUAGE plpgsql IMMUTABLE;
+
+    CREATE OR REPLACE FUNCTION set_audit_record_hash()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      -- The trigger is authoritative for direct SQL writers.  Locking and
+      -- overwriting caller-supplied values prevents a concurrent writer or a
+      -- privileged client from forking or bypassing the tenant hash chain.
+      PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id, 0));
+      SELECT record_hash
+        INTO NEW.previous_hash
+        FROM audit_log
+       WHERE tenant_id = NEW.tenant_id
+         AND record_hash IS NOT NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1;
+      NEW.record_hash := calculate_audit_hash(
+        NEW.id,
+        NEW.tenant_id,
+        NEW.user_id,
+        NEW.action,
+        NEW.resource_type,
+        NEW.resource_id,
+        COALESCE(NEW.created_at, NOW()),
+        NEW.previous_hash
+      );
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS audit_record_hash_trigger ON audit_log;
+    CREATE TRIGGER audit_record_hash_trigger
+      BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION set_audit_record_hash();
+
+    CREATE TABLE IF NOT EXISTS audit_integrity_checkpoints (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      table_name TEXT NOT NULL,
+      checkpoint_date DATE NOT NULL,
+      record_count BIGINT NOT NULL,
+      checksum TEXT NOT NULL,
+      first_record_id TEXT,
+      last_record_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      verified_at TIMESTAMPTZ,
+      verification_status TEXT,
+      UNIQUE (tenant_id, table_name, checkpoint_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_retention_policy (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      table_name TEXT NOT NULL,
+      retention_years INTEGER NOT NULL DEFAULT 6,
+      archive_after_years INTEGER NOT NULL DEFAULT 2,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tenant_id, table_name)
+    );
+
+    INSERT INTO audit_retention_policy (id, tenant_id, table_name, retention_years, archive_after_years)
+    VALUES (gen_random_uuid()::text, 'default', 'audit_log', 6, 2)
+    ON CONFLICT (tenant_id, table_name)
+    DO UPDATE SET retention_years = GREATEST(audit_retention_policy.retention_years, 6),
+                  updated_at = NOW();
+    `,
+  },
+  {
+    name: "229_fhir_hl7_interoperability_schema",
+    sql: `
+    -- The deployed application runs this embedded migration list. Keep the
+    -- FHIR OAuth and HL7 queue schema here instead of relying on standalone
+    -- SQL files that are not copied into the production image.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS fhir_oauth_tokens (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      client_id TEXT NOT NULL,
+      client_secret TEXT NOT NULL,
+      access_token TEXT NOT NULL UNIQUE,
+      refresh_token TEXT,
+      scope TEXT,
+      patient_id TEXT,
+      user_id TEXT,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      client_name TEXT,
+      redirect_uris TEXT,
+      last_used_at TIMESTAMPTZ
+    );
+
+    ALTER TABLE fhir_oauth_tokens
+      ADD COLUMN IF NOT EXISTS patient_id TEXT,
+      ADD COLUMN IF NOT EXISTS user_id TEXT,
+      ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_tenant ON fhir_oauth_tokens(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_access ON fhir_oauth_tokens(access_token);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_client ON fhir_oauth_tokens(client_id);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_expires ON fhir_oauth_tokens(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_fhir_tokens_patient ON fhir_oauth_tokens(patient_id);
+
+    CREATE OR REPLACE FUNCTION update_fhir_oauth_tokens_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = CURRENT_TIMESTAMP;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_update_fhir_oauth_tokens_updated_at ON fhir_oauth_tokens;
+    CREATE TRIGGER trigger_update_fhir_oauth_tokens_updated_at
+      BEFORE UPDATE ON fhir_oauth_tokens
+      FOR EACH ROW EXECUTE FUNCTION update_fhir_oauth_tokens_updated_at();
+
+    DELETE FROM fhir_oauth_tokens
+     WHERE client_id ILIKE '%demo%'
+        OR client_name ILIKE '%demo%';
+
+    CREATE TABLE IF NOT EXISTS hl7_messages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      message_type TEXT NOT NULL,
+      message_control_id TEXT NOT NULL,
+      sending_application TEXT,
+      sending_facility TEXT,
+      receiving_application TEXT,
+      receiving_facility TEXT,
+      raw_message TEXT NOT NULL,
+      parsed_data JSONB,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error_message TEXT,
+      processed_at TIMESTAMPTZ,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      next_retry_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT hl7_messages_status_check
+        CHECK (status IN ('pending', 'processing', 'processed', 'failed'))
+    );
+
+    ALTER TABLE hl7_messages
+      ADD COLUMN IF NOT EXISTS message_control_id TEXT,
+      ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 3;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM hl7_messages WHERE message_control_id IS NULL) THEN
+        ALTER TABLE hl7_messages ALTER COLUMN message_control_id SET NOT NULL;
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'hl7_messages_status_check'
+      ) THEN
+        ALTER TABLE hl7_messages
+          ADD CONSTRAINT hl7_messages_status_check
+          CHECK (status IN ('pending', 'processing', 'processed', 'failed'));
+      END IF;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_tenant ON hl7_messages(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_status ON hl7_messages(status);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_type ON hl7_messages(message_type);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_control_id ON hl7_messages(message_control_id);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_created ON hl7_messages(created_at);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_tenant_status ON hl7_messages(tenant_id, status);
+    CREATE INDEX IF NOT EXISTS idx_hl7_messages_retry
+      ON hl7_messages(status, next_retry_at)
+      WHERE status = 'pending' AND next_retry_at IS NOT NULL;
+
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS external_id TEXT;
+    ALTER TABLE appointments
+      ADD COLUMN IF NOT EXISTS external_id TEXT,
+      ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+    ALTER TABLE providers ADD COLUMN IF NOT EXISTS external_id TEXT;
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS external_id TEXT;
+    ALTER TABLE documents
+      ADD COLUMN IF NOT EXISTS metadata JSONB,
+      ADD COLUMN IF NOT EXISTS content JSONB;
+
+    CREATE INDEX IF NOT EXISTS idx_patients_external_id
+      ON patients(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_appointments_external_id
+      ON appointments(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_providers_external_id
+      ON providers(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_locations_external_id
+      ON locations(tenant_id, external_id) WHERE external_id IS NOT NULL;
+    `,
+  },
+  {
+    name: "230_mips_readiness_2026",
+    sql: `
+    -- Narrow, tenant-scoped MIPS 2026 readiness foundation.  These tables
+    -- intentionally do not alter the legacy quality/MIPS tables because the
+    -- live submission transport is not configured.
+    CREATE TABLE IF NOT EXISTS mips_readiness_profiles (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      performance_year INTEGER NOT NULL CHECK (performance_year = 2026),
+      selected_quality_measure_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      selected_cost_measure_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      selected_ia_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      category_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      eligibility_inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_readiness_profiles_quality_ids_array
+        CHECK (jsonb_typeof(selected_quality_measure_ids) = 'array'),
+      CONSTRAINT mips_readiness_profiles_cost_ids_array
+        CHECK (jsonb_typeof(selected_cost_measure_ids) = 'array'),
+      CONSTRAINT mips_readiness_profiles_ia_ids_array
+        CHECK (jsonb_typeof(selected_ia_ids) = 'array'),
+      CONSTRAINT mips_readiness_profiles_category_config_object
+        CHECK (jsonb_typeof(category_config) = 'object'),
+      CONSTRAINT mips_readiness_profiles_eligibility_object
+        CHECK (jsonb_typeof(eligibility_inputs) = 'object'),
+      CONSTRAINT mips_readiness_profiles_tenant_year_unique
+        UNIQUE (tenant_id, performance_year)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_profiles_tenant
+      ON mips_readiness_profiles(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_profiles_tenant_year
+      ON mips_readiness_profiles(tenant_id, performance_year);
+
+    CREATE TABLE IF NOT EXISTS mips_readiness_evidence (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      performance_year INTEGER NOT NULL CHECK (performance_year = 2026),
+      category TEXT NOT NULL CHECK (category IN ('quality', 'cost', 'pi', 'ia')),
+      measure_id TEXT,
+      evidence_type TEXT NOT NULL CHECK (length(btrim(evidence_type)) > 0),
+      source_type TEXT NOT NULL CHECK (length(btrim(source_type)) > 0),
+      source_id TEXT NOT NULL CHECK (length(btrim(source_id)) > 0),
+      observed_at TIMESTAMPTZ,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable')),
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_readiness_evidence_metadata_object
+        CHECK (jsonb_typeof(metadata) = 'object')
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_tenant_year
+      ON mips_readiness_evidence(tenant_id, performance_year);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_tenant_category
+      ON mips_readiness_evidence(tenant_id, performance_year, category);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_tenant_measure
+      ON mips_readiness_evidence(tenant_id, performance_year, measure_id)
+      WHERE measure_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_source
+      ON mips_readiness_evidence(tenant_id, source_type, source_id);
+    CREATE INDEX IF NOT EXISTS idx_mips_readiness_evidence_status
+      ON mips_readiness_evidence(tenant_id, performance_year, status);
+    `,
+  },
+  {
+    name: "231_mips_readiness_evidence_status_hardening",
+    sql: `
+    -- 230 was introduced with permissive lifecycle values in some deployed
+    -- environments.  Normalize those values before enforcing the narrow
+    -- review lifecycle used by the deterministic readiness engine.
+    ALTER TABLE mips_readiness_evidence
+      DROP CONSTRAINT IF EXISTS mips_readiness_evidence_status_check;
+
+    UPDATE mips_readiness_evidence
+       SET status = CASE
+         WHEN status IN ('present', 'met', 'complete') THEN 'candidate'
+         WHEN status IN ('invalid', 'not_met') THEN 'rejected'
+         WHEN status IN ('unknown', 'action_needed') THEN 'pending'
+         ELSE status
+       END
+     WHERE status NOT IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable');
+
+    ALTER TABLE mips_readiness_evidence
+      ADD CONSTRAINT mips_readiness_evidence_status_check
+      CHECK (status IN ('candidate', 'needs_review', 'verified', 'rejected', 'pending', 'missing', 'not_applicable'));
+    `,
+  },
+  {
+    name: "232_mips_workflow_automation",
+    sql: `
+    -- Workflow automation produces reviewable candidates only.  A human must
+    -- verify a candidate before the readiness engine can treat it as met.
+    ALTER TABLE mips_readiness_evidence
+      ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'manual',
+      ADD COLUMN IF NOT EXISTS automation_rule_id TEXT,
+      ADD COLUMN IF NOT EXISTS automation_key TEXT,
+      ADD COLUMN IF NOT EXISTS source_revision BIGINT,
+      ADD COLUMN IF NOT EXISTS reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+    ALTER TABLE mips_readiness_evidence
+      DROP CONSTRAINT IF EXISTS mips_readiness_evidence_origin_check;
+    ALTER TABLE mips_readiness_evidence
+      ADD CONSTRAINT mips_readiness_evidence_origin_check
+      CHECK (origin IN ('manual', 'automation'));
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mips_readiness_evidence_automation_key
+      ON mips_readiness_evidence(tenant_id, performance_year, automation_key)
+      WHERE automation_key IS NOT NULL;
+
+    ALTER TABLE chronic_therapy_registry
+      ADD COLUMN IF NOT EXISTS mips_therapy_classification TEXT,
+      ADD COLUMN IF NOT EXISTS mips_first_course BOOLEAN;
+
+    CREATE TABLE IF NOT EXISTS mips_itch_assessments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      condition_code TEXT NOT NULL CHECK (condition_code IN ('atopic_dermatitis', 'psoriasis')),
+      instrument_code TEXT NOT NULL CHECK (length(btrim(instrument_code)) > 0),
+      instrument_version TEXT NOT NULL DEFAULT 'practice_defined' CHECK (length(btrim(instrument_version)) > 0),
+      score NUMERIC NOT NULL,
+      scale_min NUMERIC NOT NULL DEFAULT 0,
+      scale_max NUMERIC NOT NULL,
+      assessment_date DATE NOT NULL,
+      phase TEXT NOT NULL CHECK (phase IN ('baseline', 'follow_up')),
+      client_event_id TEXT NOT NULL CHECK (length(btrim(client_event_id)) > 0),
+      source_revision INTEGER NOT NULL DEFAULT 1 CHECK (source_revision > 0),
+      assessed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_itch_assessments_scale_check
+        CHECK (scale_max > scale_min AND score >= scale_min AND score <= scale_max),
+      CONSTRAINT mips_itch_assessments_tenant_event_unique
+        UNIQUE (tenant_id, client_event_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_itch_assessments_patient
+      ON mips_itch_assessments(tenant_id, patient_id, condition_code, instrument_code, assessment_date);
+
+    CREATE TABLE IF NOT EXISTS mips_automation_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      performance_year INTEGER NOT NULL CHECK (performance_year = 2026),
+      status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'partial', 'failed')),
+      triggered_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      connector_summary JSONB NOT NULL DEFAULT '[]'::jsonb,
+      candidates_created INTEGER NOT NULL DEFAULT 0,
+      candidates_updated INTEGER NOT NULL DEFAULT 0,
+      candidates_unchanged INTEGER NOT NULL DEFAULT 0,
+      candidates_stale INTEGER NOT NULL DEFAULT 0,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMPTZ,
+      CONSTRAINT mips_automation_runs_summary_array
+        CHECK (jsonb_typeof(connector_summary) = 'array')
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_automation_runs_tenant_year
+      ON mips_automation_runs(tenant_id, performance_year, started_at DESC);
+    `,
+  },
+  {
+    name: "233_biopsy_tracking_runtime",
+    sql: `
+    -- Runtime biopsy tracking schema.  This intentionally uses the active
+    -- application's TEXT identifiers and canonical lesions/lab_interfaces
+    -- tables instead of the historical UUID/body-marking definitions.
+    CREATE TABLE IF NOT EXISTS biopsies (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      lesion_id TEXT REFERENCES lesions(id) ON DELETE SET NULL,
+
+      specimen_id TEXT NOT NULL,
+      specimen_type TEXT NOT NULL,
+      specimen_size TEXT,
+      body_location TEXT NOT NULL,
+      body_location_code TEXT,
+      location_laterality TEXT,
+      location_details TEXT,
+      clinical_description TEXT,
+      clinical_history TEXT,
+      differential_diagnoses TEXT[],
+      indication TEXT,
+
+      status TEXT NOT NULL DEFAULT 'ordered',
+      ordered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      collected_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      received_by_lab_at TIMESTAMPTZ,
+      resulted_at TIMESTAMPTZ,
+      reviewed_at TIMESTAMPTZ,
+      closed_at TIMESTAMPTZ,
+
+      ordering_provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+      collecting_provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+      reviewing_provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+
+      path_lab TEXT NOT NULL,
+      path_lab_id TEXT REFERENCES lab_interfaces(id) ON DELETE SET NULL,
+      path_lab_case_number TEXT,
+      path_lab_contact TEXT,
+      special_stains TEXT[],
+      send_for_cultures BOOLEAN NOT NULL DEFAULT false,
+      send_for_immunofluorescence BOOLEAN NOT NULL DEFAULT false,
+      send_for_molecular_testing BOOLEAN NOT NULL DEFAULT false,
+      special_instructions TEXT,
+
+      pathology_diagnosis TEXT,
+      pathology_report TEXT,
+      pathology_gross_description TEXT,
+      pathology_microscopic_description TEXT,
+      pathology_comment TEXT,
+      malignancy_type TEXT,
+      malignancy_subtype TEXT,
+      margins TEXT,
+      margin_distance_mm NUMERIC(10, 2),
+      margin_details TEXT,
+      breslow_depth_mm NUMERIC(10, 3),
+      clark_level TEXT,
+      mitotic_rate INTEGER,
+      ulceration BOOLEAN,
+      sentinel_node_indicated BOOLEAN NOT NULL DEFAULT false,
+      diagnosis_code TEXT,
+      diagnosis_description TEXT,
+      snomed_code TEXT,
+
+      follow_up_action TEXT,
+      follow_up_interval TEXT,
+      follow_up_notes TEXT,
+      reexcision_required BOOLEAN NOT NULL DEFAULT false,
+      reexcision_scheduled_date DATE,
+      patient_notified BOOLEAN NOT NULL DEFAULT false,
+      patient_notified_at TIMESTAMPTZ,
+      patient_notified_method TEXT,
+      patient_notification_notes TEXT,
+
+      turnaround_time_days INTEGER,
+      is_overdue BOOLEAN NOT NULL DEFAULT false,
+      overdue_alert_sent_at TIMESTAMPTZ,
+      requisition_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+      pathology_report_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+      photo_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      procedure_code TEXT,
+      billed BOOLEAN NOT NULL DEFAULT false,
+      billing_date DATE,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TIMESTAMPTZ,
+      deleted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+
+      CONSTRAINT biopsies_tenant_specimen_unique UNIQUE (tenant_id, specimen_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      alert_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'medium',
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      acknowledged_at TIMESTAMPTZ,
+      acknowledged_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      resolved_at TIMESTAMPTZ,
+      resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      resolution_notes TEXT,
+      notification_sent BOOLEAN NOT NULL DEFAULT false,
+      notification_sent_at TIMESTAMPTZ,
+      notification_method TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_specimen_tracking (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      event_timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      event_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      location TEXT,
+      custody_person TEXT,
+      specimen_quality TEXT,
+      quality_notes TEXT,
+      shipping_method TEXT,
+      tracking_number TEXT,
+      shipped_to TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_status_history (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      old_status TEXT,
+      new_status TEXT NOT NULL,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      changed_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      notes TEXT,
+      system_generated BOOLEAN NOT NULL DEFAULT false,
+      CONSTRAINT biopsy_status_history_status_change
+        CHECK (old_status IS DISTINCT FROM new_status)
+    );
+
+    CREATE TABLE IF NOT EXISTS biopsy_review_checklists (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      biopsy_id TEXT NOT NULL REFERENCES biopsies(id) ON DELETE CASCADE,
+      reviewed_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      pathology_report_reviewed BOOLEAN NOT NULL DEFAULT false,
+      diagnosis_coded BOOLEAN NOT NULL DEFAULT false,
+      patient_notification_completed BOOLEAN NOT NULL DEFAULT false,
+      follow_up_scheduled BOOLEAN NOT NULL DEFAULT false,
+      documentation_complete BOOLEAN NOT NULL DEFAULT false,
+      staging_documented BOOLEAN,
+      treatment_plan_created BOOLEAN,
+      specialist_referral_made BOOLEAN,
+      review_completed BOOLEAN NOT NULL DEFAULT false,
+      review_completed_at TIMESTAMPTZ,
+      review_notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Tenant-first indexes keep every clinical query scoped before its
+    -- patient/specimen/status dimensions.  IF NOT EXISTS makes a retry safe.
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_patient
+      ON biopsies(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_encounter
+      ON biopsies(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_lesion
+      ON biopsies(tenant_id, lesion_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_status
+      ON biopsies(tenant_id, status);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_ordering_provider
+      ON biopsies(tenant_id, ordering_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_reviewing_provider
+      ON biopsies(tenant_id, reviewing_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_ordered_at
+      ON biopsies(tenant_id, ordered_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_resulted_at
+      ON biopsies(tenant_id, resulted_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_overdue
+      ON biopsies(tenant_id, is_overdue, status)
+      WHERE is_overdue = true AND status NOT IN ('reviewed', 'closed');
+    CREATE INDEX IF NOT EXISTS idx_biopsies_tenant_malignancy
+      ON biopsies(tenant_id, malignancy_type)
+      WHERE malignancy_type IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_biopsies_tenant_specimen_id
+      ON biopsies(tenant_id, specimen_id);
+
+    CREATE INDEX IF NOT EXISTS idx_biopsy_alerts_tenant_biopsy
+      ON biopsy_alerts(tenant_id, biopsy_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_alerts_tenant_status
+      ON biopsy_alerts(tenant_id, status, severity)
+      WHERE status = 'active';
+    CREATE INDEX IF NOT EXISTS idx_biopsy_alerts_tenant_type
+      ON biopsy_alerts(tenant_id, alert_type);
+
+    CREATE INDEX IF NOT EXISTS idx_biopsy_specimen_tracking_tenant_biopsy
+      ON biopsy_specimen_tracking(tenant_id, biopsy_id, event_timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_status_history_tenant_biopsy
+      ON biopsy_status_history(tenant_id, biopsy_id, changed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_status_history_tenant_actor
+      ON biopsy_status_history(tenant_id, changed_by);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_review_checklists_tenant_biopsy
+      ON biopsy_review_checklists(tenant_id, biopsy_id);
+    CREATE INDEX IF NOT EXISTS idx_biopsy_review_checklists_tenant_incomplete
+      ON biopsy_review_checklists(tenant_id, review_completed)
+      WHERE review_completed = false;
+    `,
+  },
+  {
+    name: "234_mips_legacy_integrity",
+    sql: `
+    -- Legacy MIPS routes/services are still mounted alongside the 2026
+    -- readiness flow.  Keep this forward-only compatibility migration in the
+    -- embedded migration list so a startup-only bootstrap has the same schema
+    -- as an existing deployment that ran the historical SQL files.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    -- Forward-migration recovery ledger. If an old deployment contains
+    -- duplicate rows that prevent a required NULL-safe unique target, retain
+    -- every displaced full row before consolidation. The source/id/reason
+    -- key makes retries idempotent and the tenant column keeps recovery
+    -- records scoped for audit/retention controls.
+    CREATE TABLE IF NOT EXISTS mips_integrity_duplicate_archive (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+      source_table TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      row_data JSONB NOT NULL,
+      archived_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT mips_integrity_duplicate_archive_source_key
+        UNIQUE NULLS NOT DISTINCT (tenant_id, source_table, source_id, reason)
+    );
+    ALTER TABLE mips_integrity_duplicate_archive
+      DROP CONSTRAINT IF EXISTS mips_integrity_duplicate_archive_source_key;
+    ALTER TABLE mips_integrity_duplicate_archive
+      ADD CONSTRAINT mips_integrity_duplicate_archive_source_key
+      UNIQUE NULLS NOT DISTINCT (tenant_id, source_table, source_id, reason);
+    CREATE INDEX IF NOT EXISTS idx_mips_integrity_duplicate_archive_tenant
+      ON mips_integrity_duplicate_archive(tenant_id, archived_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mips_integrity_duplicate_archive_source
+      ON mips_integrity_duplicate_archive(source_table, source_id);
+
+    -- quality_measures was originally created with measure_code.  The mounted
+    -- legacy MIPS service uses the newer measure_id/benchmark/points names.
+    ALTER TABLE quality_measures
+      ADD COLUMN IF NOT EXISTS measure_id TEXT,
+      ADD COLUMN IF NOT EXISTS benchmark_data JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS weight NUMERIC(6,2) DEFAULT 10,
+      ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 10,
+      ADD COLUMN IF NOT EXISTS cms_measure_id TEXT;
+
+    UPDATE quality_measures
+       SET measure_id = COALESCE(measure_id, measure_code),
+           benchmark_data = COALESCE(benchmark_data, '{}'::jsonb),
+           weight = COALESCE(weight, 10),
+           points = COALESCE(points, 10)
+     WHERE measure_id IS NULL
+        OR benchmark_data IS NULL
+        OR weight IS NULL
+        OR points IS NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_measures_measure_id
+      ON quality_measures(measure_id)
+      WHERE measure_id IS NOT NULL;
+
+    -- patient_measure_status is the active table name used by mipsService.
+    -- The historical table did not include the service's status projection or
+    -- a conflict target for encounter-scoped upserts.
+    ALTER TABLE patient_measure_status
+      ADD COLUMN IF NOT EXISTS status_date DATE,
+      ADD COLUMN IF NOT EXISTS documentation_data JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS performance_met BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS source_data JSONB DEFAULT '{}'::jsonb;
+
+    UPDATE patient_measure_status
+       SET status_date = COALESCE(
+             status_date,
+             CASE
+               WHEN EXTRACT(YEAR FROM completed_date)::INTEGER = reporting_year
+                 THEN completed_date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM updated_at)::INTEGER = reporting_year
+                 THEN updated_at::date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM created_at)::INTEGER = reporting_year
+                 THEN created_at::date
+             END,
+             CASE
+               WHEN reporting_year BETWEEN 1900 AND 9999
+                 THEN make_date(reporting_year, 12, 31)
+             END,
+             completed_date,
+             updated_at::date,
+             created_at::date,
+             CURRENT_DATE
+           ),
+           documentation_data = COALESCE(documentation_data, '{}'::jsonb),
+           performance_met = COALESCE(status = 'met', false),
+           source_data = COALESCE(source_data, '{}'::jsonb)
+     WHERE status_date IS NULL
+        OR documentation_data IS NULL
+        OR performance_met IS DISTINCT FROM COALESCE(status = 'met', false)
+        OR source_data IS NULL;
+
+    ALTER TABLE patient_measure_status
+      ALTER COLUMN status_date SET DEFAULT CURRENT_DATE,
+      ALTER COLUMN documentation_data SET DEFAULT '{}'::jsonb,
+      ALTER COLUMN performance_met SET DEFAULT false,
+      ALTER COLUMN source_data SET DEFAULT '{}'::jsonb;
+
+    ALTER TABLE patient_measure_status
+      ADD COLUMN IF NOT EXISTS reporting_year INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER;
+
+    UPDATE patient_measure_status
+       SET reporting_year = COALESCE(reporting_year, EXTRACT(YEAR FROM status_date)::INTEGER, EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER)
+     WHERE reporting_year IS NULL;
+
+    ALTER TABLE patient_measure_status
+      ALTER COLUMN reporting_year SET DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER;
+
+    -- The inline 112 definition typed documentation as JSONB, while the
+    -- active service contract accepts plain clinical documentation text.
+    -- Preserve JSON objects as JSON text and unwrap JSON strings so existing
+    -- rows remain readable after the type is made compatible with inserts.
+    DO $$
+    DECLARE documentation_type TEXT;
+    BEGIN
+      SELECT data_type
+        INTO documentation_type
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'patient_measure_status'
+         AND column_name = 'documentation';
+
+      IF documentation_type = 'jsonb' THEN
+        ALTER TABLE patient_measure_status
+          ALTER COLUMN documentation TYPE TEXT
+          USING CASE
+            WHEN documentation IS NULL THEN NULL
+            WHEN jsonb_typeof(documentation) = 'string' THEN documentation #>> '{}'
+            ELSE documentation::text
+          END;
+      END IF;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_status_tenant_patient
+      ON patient_measure_status(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_status_tenant_measure_date
+      ON patient_measure_status(tenant_id, measure_id, status_date);
+    -- Consolidate any pre-existing duplicate status projections before making
+    -- the tenant/patient/measure key NULL-safe. Archive every displaced full
+    -- row first, then keep the newest deterministic row.
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT pms.tenant_id, 'patient_measure_status', pms.id,
+           'duplicate_patient_measure_status', to_jsonb(pms)
+      FROM patient_measure_status pms
+      JOIN ranked_status duplicate_status ON pms.ctid = duplicate_status.ctid
+     WHERE duplicate_status.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    DELETE FROM patient_measure_status pms
+     USING ranked_status duplicate_status
+     WHERE pms.ctid = duplicate_status.ctid
+       AND duplicate_status.row_number > 1;
+
+    DROP INDEX IF EXISTS idx_patient_measure_status_tenant_patient_measure_encounter;
+    CREATE UNIQUE INDEX idx_patient_measure_status_tenant_patient_measure_encounter
+      ON patient_measure_status(tenant_id, patient_id, measure_id, reporting_year, encounter_id)
+      NULLS NOT DISTINCT;
+
+    -- The original inline table has the catalog-shaped IA columns only. Add
+    -- the tenant-scoped attestation projection consumed by the mounted
+    -- /mips/ia and /quality/ia routes. start_date remains nullable for old
+    -- catalog rows; the NULL-safe unique target below still allows only one
+    -- tenant/catalog row when a legacy row has no start date.
+    ALTER TABLE ia_activities
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS activity_name TEXT,
+      ADD COLUMN IF NOT EXISTS activity_description TEXT,
+      ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'ia',
+      ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 10,
+      ADD COLUMN IF NOT EXISTS is_attested BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS attestation_date DATE,
+      ADD COLUMN IF NOT EXISTS attestation_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS start_date DATE,
+      ADD COLUMN IF NOT EXISTS end_date DATE,
+      ADD COLUMN IF NOT EXISTS documentation JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS evidence_files JSONB DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS attestation_status TEXT DEFAULT 'not_started',
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+    UPDATE ia_activities
+       SET activity_name = COALESCE(activity_name, title),
+           activity_description = COALESCE(activity_description, description),
+           category = COALESCE(category, 'ia'),
+           points = COALESCE(points, 10),
+           is_attested = COALESCE(is_attested, false),
+           documentation = COALESCE(documentation, '{}'::jsonb),
+           evidence_files = COALESCE(evidence_files, '[]'::jsonb),
+           attestation_status = COALESCE(attestation_status, 'not_started'),
+           updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+     WHERE activity_name IS NULL
+        OR activity_description IS NULL
+        OR category IS NULL
+        OR points IS NULL
+        OR is_attested IS NULL
+        OR documentation IS NULL
+        OR evidence_files IS NULL
+        OR attestation_status IS NULL
+        OR updated_at IS NULL;
+
+    -- 112 declared activity_id globally unique, which prevents a tenant's
+    -- attestation row from sharing a catalog activity id. Replace that
+    -- historical target with the tenant/start-date target used by both
+    -- attestation services. The DROP INDEX fallback covers deployments that
+    -- materialized the old unique target as a standalone index.
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'ia_activities'::regclass
+          AND conname = 'ia_activities_activity_id_key'
+      ) THEN
+        ALTER TABLE ia_activities DROP CONSTRAINT ia_activities_activity_id_key;
+      END IF;
+    END $$;
+    DROP INDEX IF EXISTS ia_activities_activity_id_key;
+    WITH ranked_ia AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM ia_activities
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT ia.tenant_id, 'ia_activities', ia.id,
+           'duplicate_ia_activity', to_jsonb(ia)
+      FROM ia_activities ia
+      JOIN ranked_ia duplicate_ia ON ia.ctid = duplicate_ia.ctid
+     WHERE duplicate_ia.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_ia AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM ia_activities
+    )
+    DELETE FROM ia_activities ia
+     USING ranked_ia duplicate_ia
+     WHERE ia.ctid = duplicate_ia.ctid
+       AND duplicate_ia.row_number > 1;
+
+    DROP INDEX IF EXISTS idx_ia_activities_tenant_activity_start;
+    CREATE UNIQUE INDEX idx_ia_activities_tenant_activity_start
+      ON ia_activities(tenant_id, activity_id, start_date)
+      NULLS NOT DISTINCT;
+    CREATE INDEX IF NOT EXISTS idx_ia_activities_tenant
+      ON ia_activities(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_ia_activities_tenant_attestation
+      ON ia_activities(tenant_id, is_attested, start_date);
+
+    -- PI tracking was referenced by the legacy service/routes but never
+    -- created by the embedded migration list.
+    CREATE TABLE IF NOT EXISTS promoting_interoperability_tracking (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      measure_name TEXT NOT NULL,
+      numerator INTEGER NOT NULL DEFAULT 0,
+      denominator INTEGER NOT NULL DEFAULT 0,
+      performance_rate NUMERIC(6,2) NOT NULL DEFAULT 0,
+      is_required BOOLEAN NOT NULL DEFAULT true,
+      threshold NUMERIC(6,2) NOT NULL DEFAULT 1,
+      tracking_period_start DATE NOT NULL,
+      tracking_period_end DATE NOT NULL,
+      attestation_status BOOLEAN NOT NULL DEFAULT false,
+      exclusion_applied BOOLEAN NOT NULL DEFAULT false,
+      exclusion_reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT promoting_interoperability_tracking_tenant_measure_period_unique
+        UNIQUE (tenant_id, measure_name, tracking_period_start)
+    );
+    ALTER TABLE promoting_interoperability_tracking
+      ADD COLUMN IF NOT EXISTS is_required BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS threshold NUMERIC(6,2) DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS attestation_status BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS exclusion_applied BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS exclusion_reason TEXT,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_promoting_interoperability_tenant_measure_period
+      ON promoting_interoperability_tracking(tenant_id, measure_name, tracking_period_start);
+    CREATE INDEX IF NOT EXISTS idx_promoting_interoperability_tenant_period
+      ON promoting_interoperability_tracking(tenant_id, tracking_period_start, tracking_period_end);
+
+    -- Improvement-activity attestations are distinct from the global IA
+    -- catalog above and are used by qualityMeasuresService.
+    CREATE TABLE IF NOT EXISTS improvement_activities (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      activity_id TEXT NOT NULL,
+      activity_name TEXT NOT NULL,
+      activity_description TEXT,
+      weight TEXT NOT NULL,
+      category TEXT DEFAULT 'ia',
+      subcategory TEXT,
+      points INTEGER NOT NULL DEFAULT 10,
+      is_attested BOOLEAN NOT NULL DEFAULT false,
+      attestation_date DATE,
+      attestation_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      start_date DATE,
+      end_date DATE,
+      documentation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      evidence_files JSONB NOT NULL DEFAULT '[]'::jsonb,
+      attestation_status TEXT NOT NULL DEFAULT 'not_started',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT improvement_activities_tenant_activity_start_unique
+        UNIQUE NULLS NOT DISTINCT (tenant_id, activity_id, start_date)
+    );
+    ALTER TABLE improvement_activities
+      DROP CONSTRAINT IF EXISTS improvement_activities_tenant_activity_start_unique;
+    DROP INDEX IF EXISTS idx_improvement_activities_tenant_activity_start;
+    ALTER TABLE improvement_activities
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    WITH ranked_improvement AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM improvement_activities
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT ia.tenant_id, 'improvement_activities', ia.id,
+           'duplicate_improvement_activity', to_jsonb(ia)
+      FROM improvement_activities ia
+      JOIN ranked_improvement duplicate_improvement ON ia.ctid = duplicate_improvement.ctid
+     WHERE duplicate_improvement.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_improvement AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, activity_id, start_date
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM improvement_activities
+    )
+    DELETE FROM improvement_activities ia
+     USING ranked_improvement duplicate_improvement
+     WHERE ia.ctid = duplicate_improvement.ctid
+       AND duplicate_improvement.row_number > 1;
+    CREATE UNIQUE INDEX idx_improvement_activities_tenant_activity_start
+      ON improvement_activities(tenant_id, activity_id, start_date)
+      NULLS NOT DISTINCT;
+    CREATE INDEX IF NOT EXISTS idx_improvement_activities_tenant_attestation
+      ON improvement_activities(tenant_id, attestation_status, start_date);
+
+    -- QRDA generation is currently disabled at the HTTP boundary, but the
+    -- service method remains available to internal callers and needs its
+    -- durable report table on startup-only bootstraps.
+    CREATE TABLE IF NOT EXISTS qrda_reports (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      report_type TEXT NOT NULL,
+      reporting_year INTEGER NOT NULL,
+      reporting_period TEXT NOT NULL,
+      generated_by TEXT,
+      patient_count INTEGER NOT NULL DEFAULT 0,
+      measure_count INTEGER NOT NULL DEFAULT 0,
+      summary_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_qrda_reports_tenant_year
+      ON qrda_reports(tenant_id, reporting_year, created_at DESC);
+
+    -- Recalculate writes this composite target, but 017 only supplied
+    -- non-unique dimension indexes. NULLS NOT DISTINCT keeps practice-level
+    -- (provider_id IS NULL) recalculation idempotent as well.
+    WITH ranked_performance AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, provider_id, measure_id, reporting_period_start, reporting_period_end
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM measure_performance
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT mp.tenant_id, 'measure_performance', mp.id,
+           'duplicate_measure_performance', to_jsonb(mp)
+      FROM measure_performance mp
+      JOIN ranked_performance duplicate_performance ON mp.ctid = duplicate_performance.ctid
+     WHERE duplicate_performance.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_performance AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, provider_id, measure_id, reporting_period_start, reporting_period_end
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM measure_performance
+    )
+    DELETE FROM measure_performance mp
+     USING ranked_performance duplicate_performance
+     WHERE mp.ctid = duplicate_performance.ctid
+       AND duplicate_performance.row_number > 1;
+    DROP INDEX IF EXISTS idx_measure_performance_tenant_provider_measure_period;
+    CREATE UNIQUE INDEX idx_measure_performance_tenant_provider_measure_period
+      ON measure_performance(tenant_id, provider_id, measure_id, reporting_period_start, reporting_period_end)
+      NULLS NOT DISTINCT;
+
+    -- Existing 079/112 SQL files created these compatibility fields with
+    -- different names.  Add the route/service names without rewriting data.
+    ALTER TABLE mips_submissions
+      ADD COLUMN IF NOT EXISTS submission_date TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS quality_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS pi_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS ia_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS cost_category_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS payment_adjustment_percent NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS quality_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS pi_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS ia_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS cost_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS final_score NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS payment_adjustment NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS response_data JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS notes TEXT;
+
+    UPDATE mips_submissions
+       SET submitted_at = COALESCE(submitted_at, submission_date),
+           quality_score = COALESCE(quality_score, quality_category_score),
+           pi_score = COALESCE(pi_score, pi_category_score),
+           ia_score = COALESCE(ia_score, ia_category_score),
+           cost_score = COALESCE(cost_score, cost_category_score),
+           payment_adjustment = COALESCE(payment_adjustment, payment_adjustment_percent),
+           response_data = COALESCE(response_data, '{}'::jsonb)
+     WHERE submitted_at IS NULL
+        OR quality_score IS NULL
+        OR pi_score IS NULL
+        OR ia_score IS NULL
+        OR cost_score IS NULL
+        OR payment_adjustment IS NULL
+        OR response_data IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_mips_submissions_tenant_year
+      ON mips_submissions(tenant_id, submission_year);
+
+    -- Encounter checklist consumed by mipsService.
+    CREATE TABLE IF NOT EXISTS encounter_measure_checklist (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      encounter_id TEXT NOT NULL REFERENCES encounters(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+      measure_id TEXT NOT NULL REFERENCES quality_measures(id) ON DELETE CASCADE,
+      measure_code TEXT NOT NULL,
+      measure_name TEXT NOT NULL,
+      is_applicable BOOLEAN NOT NULL DEFAULT true,
+      is_completed BOOLEAN NOT NULL DEFAULT false,
+      completion_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (completion_status IN ('pending', 'met', 'not_met', 'excluded', 'not_applicable')),
+      completion_notes TEXT,
+      required_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      completed_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      prompted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT encounter_measure_checklist_tenant_encounter_measure_unique
+        UNIQUE (tenant_id, encounter_id, measure_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_encounter_measure_checklist_tenant_encounter
+      ON encounter_measure_checklist(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_encounter_measure_checklist_tenant_patient
+      ON encounter_measure_checklist(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_encounter_measure_checklist_tenant_measure
+      ON encounter_measure_checklist(tenant_id, measure_id);
+
+    -- Historical score snapshots used by generateMIPSReport and the score
+    -- history endpoint.
+    CREATE TABLE IF NOT EXISTS mips_score_history (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+      calculation_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      reporting_year INTEGER NOT NULL,
+      quality_score NUMERIC(5,2),
+      pi_score NUMERIC(5,2),
+      ia_score NUMERIC(5,2),
+      cost_score NUMERIC(5,2),
+      final_score NUMERIC(5,2),
+      quality_weight NUMERIC(5,2) NOT NULL DEFAULT 30.00,
+      pi_weight NUMERIC(5,2) NOT NULL DEFAULT 25.00,
+      ia_weight NUMERIC(5,2) NOT NULL DEFAULT 15.00,
+      cost_weight NUMERIC(5,2) NOT NULL DEFAULT 30.00,
+      estimated_payment_adjustment NUMERIC(5,2),
+      measure_details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_score_history_tenant_year
+      ON mips_score_history(tenant_id, reporting_year, calculation_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_mips_score_history_tenant_provider
+      ON mips_score_history(tenant_id, provider_id, calculation_date DESC);
+
+    -- Patient-level tracking used by the mounted quality-measures routes.
+    CREATE TABLE IF NOT EXISTS patient_measure_tracking (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      measure_id TEXT NOT NULL REFERENCES quality_measures(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      provider_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      is_denominator_eligible BOOLEAN NOT NULL DEFAULT false,
+      performance_met BOOLEAN NOT NULL DEFAULT false,
+      exclusion_applied BOOLEAN NOT NULL DEFAULT false,
+      exclusion_reason TEXT,
+      numerator_met BOOLEAN NOT NULL DEFAULT false,
+      denominator_met BOOLEAN NOT NULL DEFAULT false,
+      tracking_period_start DATE NOT NULL,
+      tracking_period_end DATE NOT NULL,
+      evaluated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      evaluation_method TEXT NOT NULL DEFAULT 'automatic',
+      evaluation_notes TEXT,
+      source_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT patient_measure_tracking_tenant_patient_measure_period_encounter_unique
+        UNIQUE NULLS NOT DISTINCT (tenant_id, patient_id, measure_id, tracking_period_start, encounter_id)
+    );
+
+    -- Replace any historical ordinary unique target with the NULL-safe form
+    -- so optional encounter IDs still upsert deterministically.
+    ALTER TABLE patient_measure_tracking
+      DROP CONSTRAINT IF EXISTS patient_measure_tracking_tenant_patient_measure_period_encounter_unique;
+    DROP INDEX IF EXISTS idx_patient_measure_tracking_tenant_patient_measure_period_encounter;
+    ALTER TABLE patient_measure_tracking
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    WITH ranked_tracking AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, tracking_period_start, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_tracking
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT pmt.tenant_id, 'patient_measure_tracking', pmt.id,
+           'duplicate_patient_measure_tracking', to_jsonb(pmt)
+      FROM patient_measure_tracking pmt
+      JOIN ranked_tracking duplicate_tracking ON pmt.ctid = duplicate_tracking.ctid
+     WHERE duplicate_tracking.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_tracking AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, tracking_period_start, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_tracking
+    )
+    DELETE FROM patient_measure_tracking pmt
+     USING ranked_tracking duplicate_tracking
+     WHERE pmt.ctid = duplicate_tracking.ctid
+       AND duplicate_tracking.row_number > 1;
+    CREATE UNIQUE INDEX idx_patient_measure_tracking_tenant_patient_measure_period_encounter
+      ON patient_measure_tracking(tenant_id, patient_id, measure_id, tracking_period_start, encounter_id)
+      NULLS NOT DISTINCT;
+
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_patient
+      ON patient_measure_tracking(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_measure_period
+      ON patient_measure_tracking(tenant_id, measure_id, tracking_period_start, tracking_period_end);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_encounter
+      ON patient_measure_tracking(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_tracking_tenant_provider
+      ON patient_measure_tracking(tenant_id, provider_id);
+
+    -- The inline 112 table used abbreviated alert/gap names.  These aliases
+    -- keep the mounted services tenant-safe and executable after startup-only
+    -- bootstrap while preserving the historical columns for compatibility.
+    ALTER TABLE measure_alerts
+      ADD COLUMN IF NOT EXISTS alert_priority TEXT DEFAULT 'medium',
+      ADD COLUMN IF NOT EXISTS alert_title TEXT,
+      ADD COLUMN IF NOT EXISTS recommended_action TEXT,
+      ADD COLUMN IF NOT EXISTS is_dismissed BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS is_resolved BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS dismissed_by TEXT,
+      ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS dismiss_reason TEXT,
+      ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS resolution_encounter_id TEXT,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+    UPDATE measure_alerts
+       SET alert_priority = COALESCE(alert_priority, priority, 'medium'),
+           alert_title = COALESCE(alert_title, alert_type),
+           is_dismissed = COALESCE(is_dismissed, status IN ('dismissed', 'closed')),
+           is_resolved = COALESCE(is_resolved, status IN ('resolved', 'closed'))
+     WHERE alert_priority IS NULL
+        OR alert_title IS NULL
+        OR is_dismissed IS NULL
+        OR is_resolved IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_measure_alerts_tenant_status
+      ON measure_alerts(tenant_id, is_dismissed, is_resolved, alert_priority);
+
+    ALTER TABLE quality_gaps
+      ADD COLUMN IF NOT EXISTS gap_reason TEXT,
+      ADD COLUMN IF NOT EXISTS recommended_action TEXT,
+      ADD COLUMN IF NOT EXISTS resolution_method TEXT,
+      ADD COLUMN IF NOT EXISTS resolution_encounter_id TEXT,
+      ADD COLUMN IF NOT EXISTS outreach_attempts INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS last_outreach_date TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_outreach_method TEXT;
+
+    UPDATE quality_gaps
+       SET gap_reason = COALESCE(gap_reason, gap_description),
+           outreach_attempts = COALESCE(outreach_attempts, 0)
+     WHERE gap_reason IS NULL
+        OR outreach_attempts IS NULL;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+       WHERE status = 'open'
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT qg.tenant_id, 'quality_gaps', qg.id,
+           'duplicate_quality_gap', to_jsonb(qg)
+      FROM quality_gaps qg
+      JOIN ranked_gaps duplicate_gap ON qg.ctid = duplicate_gap.ctid
+     WHERE duplicate_gap.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+       WHERE status = 'open'
+    )
+    DELETE FROM quality_gaps qg
+     USING ranked_gaps duplicate_gap
+     WHERE qg.ctid = duplicate_gap.ctid
+       AND duplicate_gap.row_number > 1;
+
+    ALTER TABLE quality_gaps
+      DROP CONSTRAINT IF EXISTS quality_gaps_tenant_id_patient_id_measure_id_status_key;
+    DROP INDEX IF EXISTS idx_quality_gaps_tenant_patient_measure_open;
+    CREATE UNIQUE INDEX idx_quality_gaps_tenant_patient_measure_open
+      ON quality_gaps(tenant_id, patient_id, measure_id)
+      WHERE status = 'open';
+    CREATE INDEX IF NOT EXISTS idx_quality_gaps_tenant_provider_status
+      ON quality_gaps(tenant_id, provider_id, status);
+    `,
+  },
+  {
+    name: "235_mips_history_integrity_followup",
+    sql: `
+    -- Forward repair for any deployment that recorded the initial form of
+    -- migration 234 before its year/history corrections were added.
+    ALTER TABLE measure_alerts
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+    DROP INDEX IF EXISTS idx_patient_measure_status_tenant_patient_measure_encounter;
+
+    -- The first 234 migration archived rows before consolidating its old
+    -- yearless key. Restore only a missing reporting-year projection, keeping
+    -- the newest archived candidate for each annual identity.
+    WITH archived_status AS (
+      SELECT jsonb_populate_record(NULL::patient_measure_status, archive.row_data) AS status_row
+        FROM mips_integrity_duplicate_archive archive
+       WHERE archive.source_table = 'patient_measure_status'
+         AND archive.reason = 'duplicate_patient_measure_status'
+    ),
+    ranked_restore AS (
+      SELECT status_row,
+             ROW_NUMBER() OVER (
+               PARTITION BY
+                 (status_row).tenant_id,
+                 (status_row).patient_id,
+                 (status_row).measure_id,
+                 (status_row).reporting_year,
+                 (status_row).encounter_id
+               ORDER BY (status_row).updated_at DESC NULLS LAST,
+                        (status_row).created_at DESC NULLS LAST,
+                        (status_row).id DESC
+             ) AS restore_rank
+        FROM archived_status
+    )
+    INSERT INTO patient_measure_status
+    SELECT (candidate.status_row).*
+      FROM ranked_restore candidate
+     WHERE candidate.restore_rank = 1
+       AND NOT EXISTS (
+         SELECT 1
+           FROM patient_measure_status live_status
+          WHERE live_status.tenant_id = (candidate.status_row).tenant_id
+            AND live_status.patient_id = (candidate.status_row).patient_id
+            AND live_status.measure_id = (candidate.status_row).measure_id
+            AND live_status.reporting_year = (candidate.status_row).reporting_year
+            AND live_status.encounter_id IS NOT DISTINCT FROM (candidate.status_row).encounter_id
+       )
+    ON CONFLICT (id) DO NOTHING;
+
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT pms.tenant_id, 'patient_measure_status', pms.id,
+           'duplicate_patient_measure_status', to_jsonb(pms)
+      FROM patient_measure_status pms
+      JOIN ranked_status duplicate_status ON pms.ctid = duplicate_status.ctid
+     WHERE duplicate_status.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_status AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id, reporting_year, encounter_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM patient_measure_status
+    )
+    DELETE FROM patient_measure_status pms
+     USING ranked_status duplicate_status
+     WHERE pms.ctid = duplicate_status.ctid
+       AND duplicate_status.row_number > 1;
+
+    UPDATE patient_measure_status
+       SET status_date = COALESCE(
+             CASE
+               WHEN EXTRACT(YEAR FROM completed_date)::INTEGER = reporting_year
+                 THEN completed_date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM updated_at)::INTEGER = reporting_year
+                 THEN updated_at::date
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM created_at)::INTEGER = reporting_year
+                 THEN created_at::date
+             END,
+             CASE
+               WHEN reporting_year BETWEEN 1900 AND 9999
+                 THEN make_date(reporting_year, 12, 31)
+             END,
+             status_date,
+             CURRENT_DATE
+           ),
+           performance_met = COALESCE(status = 'met', false)
+     WHERE status_date IS NULL
+        OR EXTRACT(YEAR FROM status_date)::INTEGER IS DISTINCT FROM reporting_year
+        OR performance_met IS DISTINCT FROM COALESCE(status = 'met', false);
+
+    CREATE UNIQUE INDEX idx_patient_measure_status_tenant_patient_measure_encounter
+      ON patient_measure_status(tenant_id, patient_id, measure_id, reporting_year, encounter_id)
+      NULLS NOT DISTINCT;
+
+    -- Recover closed episodes removed by the old all-status deduplication.
+    -- Open duplicates remain archived and are consolidated below.
+    ALTER TABLE quality_gaps
+      DROP CONSTRAINT IF EXISTS quality_gaps_tenant_id_patient_id_measure_id_status_key;
+    DROP INDEX IF EXISTS idx_quality_gaps_tenant_patient_measure_open;
+    WITH archived_gaps AS (
+      SELECT jsonb_populate_record(NULL::quality_gaps, archive.row_data) AS gap_row
+        FROM mips_integrity_duplicate_archive archive
+       WHERE archive.source_table = 'quality_gaps'
+         AND archive.reason = 'duplicate_quality_gap'
+    )
+    INSERT INTO quality_gaps
+    SELECT (candidate.gap_row).*
+      FROM archived_gaps candidate
+     WHERE (candidate.gap_row).status <> 'open'
+       AND NOT EXISTS (
+         SELECT 1 FROM quality_gaps live_gap WHERE live_gap.id = (candidate.gap_row).id
+       )
+    ON CONFLICT (id) DO NOTHING;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+       WHERE status = 'open'
+    )
+    INSERT INTO mips_integrity_duplicate_archive (tenant_id, source_table, source_id, reason, row_data)
+    SELECT qg.tenant_id, 'quality_gaps', qg.id,
+           'duplicate_quality_gap', to_jsonb(qg)
+      FROM quality_gaps qg
+      JOIN ranked_gaps duplicate_gap ON qg.ctid = duplicate_gap.ctid
+     WHERE duplicate_gap.row_number > 1
+    ON CONFLICT (tenant_id, source_table, source_id, reason) DO NOTHING;
+
+    WITH ranked_gaps AS (
+      SELECT ctid,
+             ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, patient_id, measure_id
+               ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS row_number
+        FROM quality_gaps
+       WHERE status = 'open'
+    )
+    DELETE FROM quality_gaps qg
+     USING ranked_gaps duplicate_gap
+     WHERE qg.ctid = duplicate_gap.ctid
+       AND duplicate_gap.row_number > 1;
+
+    CREATE UNIQUE INDEX idx_quality_gaps_tenant_patient_measure_open
+      ON quality_gaps(tenant_id, patient_id, measure_id)
+      WHERE status = 'open';
+    `,
+  },
 
 ];
 
@@ -16269,26 +17770,38 @@ async function ensureMigrationsTable() {
 
 async function run() {
   await ensureMigrationsTable();
-  for (const m of migrations) {
-    const existing = await pool.query("select 1 from migrations where name = $1", [m.name]);
-    if (existing.rowCount) {
-      // eslint-disable-next-line no-console
-      console.log(`Skipping ${m.name}`);
-      continue;
+  const client = await pool.connect();
+  try {
+    for (const m of migrations) {
+      await client.query("begin");
+      try {
+        // Serialize migration decisions across application instances. The
+        // transaction-scoped lock is released automatically on commit or
+        // rollback and every statement below uses this same connection.
+        await client.query("select pg_advisory_xact_lock(hashtext($1))", ["derm_app_migrations"]);
+
+        const existing = await client.query("select 1 from migrations where name = $1", [m.name]);
+        if (existing.rowCount) {
+          await client.query("commit");
+          // eslint-disable-next-line no-console
+          console.log(`Skipping ${m.name}`);
+          continue;
+        }
+
+        // eslint-disable-next-line no-console
+        console.log(`Applying ${m.name}...`);
+        await client.query(m.sql);
+        await client.query("insert into migrations(name) values ($1)", [m.name]);
+        await client.query("commit");
+        // eslint-disable-next-line no-console
+        console.log(`Applied ${m.name}`);
+      } catch (err) {
+        await client.query("rollback");
+        throw err;
+      }
     }
-    // eslint-disable-next-line no-console
-    console.log(`Applying ${m.name}...`);
-    await pool.query("begin");
-    try {
-      await pool.query(m.sql);
-      await pool.query("insert into migrations(name) values ($1)", [m.name]);
-      await pool.query("commit");
-      // eslint-disable-next-line no-console
-      console.log(`Applied ${m.name}`);
-    } catch (err) {
-      await pool.query("rollback");
-      throw err;
-    }
+  } finally {
+    client.release();
   }
 }
 

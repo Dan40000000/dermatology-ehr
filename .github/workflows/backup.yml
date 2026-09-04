@@ -6,14 +6,23 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch: # Allow manual trigger
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   backup:
     name: Backup Production Database
     runs-on: ubuntu-latest
     environment: production
+    env:
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      BACKUP_RETENTION_DAYS: 90
+      BACKUP_ENCRYPTION_ENABLED: 'true'
+      POSTGRES_CLIENT_MAJOR: '18'
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: restore_verifier
           POSTGRES_PASSWORD: restore_verifier_password
@@ -29,17 +38,57 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Validate production backup configuration
+        shell: bash
+        env:
+          AWS_BACKUP_ROLE_ARN: ${{ secrets.AWS_BACKUP_ROLE_ARN }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_BUCKET: ${{ secrets.BACKUP_BUCKET }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          BACKUP_KMS_KEY_ID: ${{ secrets.BACKUP_KMS_KEY_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in AWS_BACKUP_ROLE_ARN AWS_REGION DATABASE_URL BACKUP_BUCKET BACKUP_ENCRYPTION_KEY; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Production backup configuration is incomplete. Missing GitHub environment secret(s): ${missing[*]}"
+            exit 1
+          fi
+
+          if ! [[ "${BACKUP_RETENTION_DAYS:-}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::BACKUP_RETENTION_DAYS must be configured as a positive integer"
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_BACKUP_ROLE_ARN }}
+          role-session-name: dermatology-ehr-production-backup
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Install PostgreSQL client
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y ca-certificates curl
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y "postgresql-client-${POSTGRES_CLIENT_MAJOR}"
+          echo "/usr/lib/postgresql/${POSTGRES_CLIENT_MAJOR}/bin" >> "$GITHUB_PATH"
+          "/usr/lib/postgresql/${POSTGRES_CLIENT_MAJOR}/bin/pg_dump" --version
 
       - name: Run backup script
         run: |
@@ -49,7 +98,8 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           BACKUP_BUCKET: ${{ secrets.BACKUP_BUCKET }}
           BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
-          BACKUP_RETENTION_DAYS: 90
+          BACKUP_KMS_KEY_ID: ${{ secrets.BACKUP_KMS_KEY_ID }}
+          BACKUP_ENCRYPTION_ENABLED: ${{ env.BACKUP_ENCRYPTION_ENABLED }}
           BACKUP_KEEP_LOCAL: true
 
       - name: Verify backup
@@ -79,17 +129,17 @@ jobs:
           BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
 
       - name: Notify on failure
-        if: failure()
+        if: ${{ failure() && env.SLACK_WEBHOOK != '' }}
         uses: 8398a7/action-slack@v3
         with:
           status: failure
           text: 'Database backup failed!'
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          webhook_url: ${{ env.SLACK_WEBHOOK }}
 
       - name: Notify on success
-        if: success()
+        if: ${{ success() && env.SLACK_WEBHOOK != '' }}
         uses: 8398a7/action-slack@v3
         with:
           status: success
           text: 'Database backup completed successfully'
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          webhook_url: ${{ env.SLACK_WEBHOOK }}

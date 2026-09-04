@@ -289,7 +289,7 @@ describe('ClinicalInboxPage', () => {
     );
 
     await screen.findByText('Refill request: Tretinoin 0.025% cream');
-    fireEvent.click(screen.getByRole('button', { name: /Rx \/ ePA/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Rx \/ ePA/ }));
 
     const workList = screen.getByLabelText('Clinical inbox work list');
     expect(within(workList).getByText('Refill request: Tretinoin 0.025% cream')).toBeInTheDocument();
@@ -313,7 +313,7 @@ describe('ClinicalInboxPage', () => {
     );
 
     await screen.findByText('Portal rash question');
-    fireEvent.click(screen.getByRole('button', { name: /Rx \/ ePA/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Rx \/ ePA/ }));
 
     const detailPanel = screen.getByLabelText('Clinical inbox selected item');
     expect(within(detailPanel).getByText('Refill request: Tretinoin 0.025% cream')).toBeInTheDocument();

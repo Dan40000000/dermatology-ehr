@@ -91,4 +91,91 @@ describe('stagingReadinessCheck', () => {
 
     expect(report.checks.find((item) => item.id === 'env:mode')?.status).toBe('warn');
   });
+
+  it('blocks production-like readiness while PHI vendor BAAs remain review-needed', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+      },
+      { skipDb: true }
+    );
+
+    const vendorCheck = report.checks.find((item) => item.id === 'vendor:baa-inventory');
+    expect(vendorCheck?.status).toBe('fail');
+    expect(vendorCheck?.detail).toContain('OpenAI: status=REVIEW_NEEDED');
+    expect(vendorCheck?.detail).not.toContain('Railway: status=REVIEW_NEEDED');
+  });
+
+  it('accepts a positive policy-defined backup retention window without claiming HIPAA mandates six years of backups', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        BACKUP_RETENTION_DAYS: '90',
+      },
+      { skipDb: true }
+    );
+
+    const retentionCheck = report.checks.find((item) => item.id === 'backup:retention');
+    expect(retentionCheck?.status).toBe('pass');
+    expect(retentionCheck?.detail).toContain('BACKUP_RETENTION_DAYS=90');
+    expect(retentionCheck?.detail).not.toContain('2190');
+  });
+
+  it('blocks production-like readiness when no backup retention window is configured', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+      },
+      { skipDb: true }
+    );
+
+    const retentionCheck = report.checks.find((item) => item.id === 'backup:retention');
+    expect(retentionCheck?.status).toBe('fail');
+    expect(retentionCheck?.remediation).toContain('medical-record law');
+  });
+
+  it('blocks the legacy vendor mock override in production-like readiness', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        ALLOW_VENDOR_MOCK_FALLBACKS: 'true',
+      },
+      { skipDb: true }
+    );
+
+    const mockCheck = report.checks.find((item) => item.id === 'runtime:mocks');
+    expect(mockCheck?.status).toBe('fail');
+    expect(mockCheck?.detail).toContain('ALLOW_VENDOR_MOCK_FALLBACKS');
+  });
+
+  it('requires exact endpoint and model evidence when the OpenAI BAA gate is enabled', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        OPENAI_BAA_ENABLED: 'true',
+      },
+      { skipDb: true }
+    );
+
+    const scopeCheck = report.checks.find((item) => item.id === 'openai:baa-scope');
+    expect(scopeCheck?.status).toBe('fail');
+    expect(scopeCheck?.detail).toContain('OPENAI_BAA_APPROVED_ENDPOINTS');
+    expect(scopeCheck?.detail).toContain('OPENAI_BAA_APPROVED_MODELS');
+  });
+
+  it('blocks a raw-audio switch that is outside the attested OpenAI endpoint scope', async () => {
+    const report = await generateReadinessReport(
+      {
+        NODE_ENV: 'production',
+        OPENAI_BAA_ENABLED: 'true',
+        OPENAI_BAA_APPROVED_ENDPOINTS: '/v1/chat/completions',
+        OPENAI_BAA_APPROVED_MODELS: 'gpt-4o-mini',
+        OPENAI_RAW_AUDIO_ALLOWED: 'true',
+      },
+      { skipDb: true }
+    );
+
+    expect(report.checks.find((item) => item.id === 'openai:baa-scope')?.status).toBe('pass');
+    expect(report.checks.find((item) => item.id === 'openai:raw-audio-scope')?.status).toBe('fail');
+  });
 });

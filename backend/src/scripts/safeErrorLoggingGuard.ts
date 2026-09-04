@@ -14,7 +14,10 @@ type BaselineFile = {
   fingerprints: string[];
 };
 
-const RAW_ERROR_LOG_PATTERN = /console\.error\([^\n]*\b(err|error)\b/;
+// Guard every runtime console sink for raw error/reason/message/stack values.
+// This intentionally covers warn/log/info/debug as well as error: providers
+// and database clients frequently put PHI in non-error log levels.
+const RAW_ERROR_LOG_PATTERN = /console\.(?:error|warn|log|info|debug)\s*\([^\n]*(?:\berr(?:or)?\b|\breason\b|\bmessage\b|\bstack\b|\bexception\b|JSON\.stringify)\b/i;
 const EXCLUDED_SEGMENTS = ["/__tests__/", "/tests/"];
 
 const args = new Set(process.argv.slice(2));
@@ -22,10 +25,7 @@ const writeBaseline = args.has("--write-baseline");
 
 const backendRoot = path.resolve(__dirname, "../..");
 const baselinePath = path.join(backendRoot, "compliance", "safe-error-logging-baseline.json");
-const scanRoots = [
-  path.join(backendRoot, "src", "routes"),
-  path.join(backendRoot, "src", "services"),
-];
+const scanRoots = [path.join(backendRoot, "src")];
 
 function normalizeRelPath(absolutePath: string): string {
   return path.relative(backendRoot, absolutePath).split(path.sep).join("/");
@@ -33,6 +33,10 @@ function normalizeRelPath(absolutePath: string): string {
 
 function isScannableFile(absolutePath: string): boolean {
   if (!absolutePath.endsWith(".ts")) {
+    return false;
+  }
+
+  if (absolutePath.endsWith(path.join('scripts', 'safeErrorLoggingGuard.ts'))) {
     return false;
   }
 
@@ -155,12 +159,12 @@ function main(): void {
 
   if (newlyIntroduced.length === 0) {
     console.log(
-      `safeErrorLoggingGuard: no new raw console.error(error/err) patterns (current matches: ${violations.length}).`,
+      `safeErrorLoggingGuard: no new raw console error/reason/message patterns (current matches: ${violations.length}).`,
     );
     return;
   }
 
-  console.error("safeErrorLoggingGuard: new raw console.error(error/err) patterns detected:");
+  console.error("safeErrorLoggingGuard: new raw console error/reason/message patterns detected:");
   newlyIntroduced.forEach((item) => {
     console.error(`- ${item.relPath}:${item.line} ${item.snippet}`);
   });

@@ -14,6 +14,7 @@ import {
 } from '../api';
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatPhoneDisplay } from '../utils/phone';
+import { filterChronicTherapyBySourceId } from '../utils/mipsSourceTraceability';
 import {
   DEFAULT_RECALL_SMS_TEMPLATE,
   estimateSmsSegments,
@@ -78,6 +79,7 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
   const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<RegistryType>('dashboard');
+  const sourceIdFilter = searchParams.get('sourceId')?.trim() || '';
 
   // Dashboard data
   const [dashboard, setDashboard] = useState<any>(null);
@@ -230,6 +232,8 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
       loadAlerts();
     }
   }, [activeTab, loadDashboard, loadMelanoma, loadPsoriasis, loadAcne, loadChronicTherapy, loadAlerts]);
+
+  const visibleChronicTherapyPatients = filterChronicTherapyBySourceId(chronicTherapyPatients, sourceIdFilter);
 
   const formatDate = (dateStr: string | null | undefined) => {
     if (!dateStr) return '--';
@@ -1073,12 +1077,19 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
       {/* Chronic Therapy Registry Tab */}
       {activeTab === 'chronic_therapy' && (
         <div style={{ padding: '1.5rem' }}>
+          {sourceIdFilter && (
+            <p className="muted" role="status" aria-live="polite">
+              {visibleChronicTherapyPatients.length > 0
+                ? `Showing chronic therapy source ${sourceIdFilter}.`
+                : `No chronic therapy record matched source ${sourceIdFilter}. Check tenant access and return to the MIPS candidate.`}
+            </p>
+          )}
           {loading ? (
             <p className="muted">Loading chronic therapy registry...</p>
-          ) : chronicTherapyPatients.length === 0 ? (
+          ) : visibleChronicTherapyPatients.length === 0 ? (
             <EmptyState
-              title="No patients on chronic therapy"
-              description="Patients on long-term systemic therapy will appear here."
+              title={sourceIdFilter ? 'No chronic therapy source found' : 'No patients on chronic therapy'}
+              description={sourceIdFilter ? 'The source may be unavailable to this tenant or no longer active.' : 'Patients on long-term systemic therapy will appear here.'}
             />
           ) : (
             <div className="table-container">
@@ -1098,7 +1109,7 @@ export function RegistryPage({ embedded = false, queryParamName = 'tab' }: Regis
                   </tr>
                 </thead>
                 <tbody>
-                  {chronicTherapyPatients.map((patient) => {
+                  {visibleChronicTherapyPatients.map((patient) => {
                     const daysUntil = getDaysUntil(patient.next_lab_due);
                     const isOverdue = daysUntil !== null && daysUntil < 0;
                     const isDueSoon = daysUntil !== null && daysUntil >= 0 && daysUntil <= 14;

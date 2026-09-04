@@ -154,24 +154,24 @@ const LesionCard: React.FC<LesionCardProps> = ({
       <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 2 }}>
         <Box>
           <Tooltip title="View Timeline">
-            <IconButton size="small" onClick={onViewTimeline} color="primary">
+            <IconButton size="small" onClick={onViewTimeline} color="primary" aria-label={`View timeline for ${lesion.bodyLocationDescription}`}>
               <TimelineIcon />
             </IconButton>
           </Tooltip>
           <Tooltip title="Compare Images">
-            <IconButton size="small" onClick={onCompare} color="primary">
+            <IconButton size="small" onClick={onCompare} color="primary" aria-label={`Compare images for ${lesion.bodyLocationDescription}`}>
               <CompareIcon />
             </IconButton>
           </Tooltip>
         </Box>
         <Box>
           <Tooltip title="Record ABCDE Score">
-            <IconButton size="small" onClick={onRecordABCDE} color="secondary">
+            <IconButton size="small" onClick={onRecordABCDE} color="secondary" aria-label={`Record ABCDE score for ${lesion.bodyLocationDescription}`}>
               <AssessmentIcon />
             </IconButton>
           </Tooltip>
           <Tooltip title="Record Measurements">
-            <IconButton size="small" onClick={onRecordMeasurement} color="secondary">
+            <IconButton size="small" onClick={onRecordMeasurement} color="secondary" aria-label={`Record measurements for ${lesion.bodyLocationDescription}`}>
               <MeasureIcon />
             </IconButton>
           </Tooltip>

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { canAccessModule, getModuleForPath } from '../moduleAccess';
+import {
+  canAccessMipsReportingWithSettings,
+  canAccessModule,
+  getModuleForPath,
+} from '../moduleAccess';
 
 describe('moduleAccess', () => {
   it('allows admin to access admin module', () => {
@@ -36,6 +40,22 @@ describe('moduleAccess', () => {
 
   it('denies front desk access to quality', () => {
     expect(canAccessModule('front_desk', 'quality')).toBe(false);
+  });
+
+  it.each(['admin', 'provider', 'manager', 'compliance_officer'])('keeps default MIPS reporting access for %s', (role) => {
+    expect(canAccessMipsReportingWithSettings(role)).toBe(true);
+  });
+
+  it('requires the tenant quality permission when a reporting role is removed', () => {
+    expect(canAccessMipsReportingWithSettings('provider', { quality: ['admin', 'manager', 'compliance_officer'] })).toBe(false);
+  });
+
+  it('does not let tenant quality settings grant MIPS reporting to MA', () => {
+    expect(canAccessMipsReportingWithSettings('ma', { quality: ['admin', 'ma'] })).toBe(false);
+  });
+
+  it.each(['nurse', 'billing', 'front_desk', 'staff'])('keeps unauthorized role %s out of MIPS reporting', (role) => {
+    expect(canAccessMipsReportingWithSettings(role, { quality: ['admin', role] })).toBe(false);
   });
 
   it('allows access when any effective role matches', () => {

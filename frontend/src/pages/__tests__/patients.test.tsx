@@ -147,19 +147,19 @@ describe('PatientsPage', () => {
     expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1');
 
     expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next patient search results page' }));
     expect(window.scrollTo).toHaveBeenCalled();
     await waitFor(() => expect(screen.getByText(/Page 2 of 2/)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId('export-buttons')).toHaveAttribute('data-count', '5'));
-    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous patient search results page' }));
     await waitFor(() => expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument());
 
-    const lastNameHeader = screen.getByRole('columnheader', { name: /Last Name/ });
+    const lastNameHeader = screen.getByRole('button', { name: /Sort by Last Name/ });
     fireEvent.click(lastNameHeader);
     const sortedRowLastName = screen.getAllByRole('row')[1];
     expect(within(sortedRowLastName).getByText('Zulu')).toBeInTheDocument();
 
-    const firstNameHeader = screen.getByRole('columnheader', { name: /First Name/ });
+    const firstNameHeader = screen.getByRole('button', { name: /Sort by First Name/ });
     fireEvent.click(firstNameHeader);
     const sortedRowAsc = screen.getAllByRole('row')[1];
     expect(within(sortedRowAsc).getByText('Zulu')).toBeInTheDocument();
@@ -275,7 +275,7 @@ describe('PatientsPage', () => {
     const lastNameHeader = screen.getByRole('columnheader', { name: /Last Name/ });
     fireEvent.click(lastNameHeader);
 
-    const mrnHeader = screen.getByRole('columnheader', { name: /MRN/ });
+    const mrnHeader = screen.getByRole('button', { name: /Sort by MRN/ });
     fireEvent.click(mrnHeader);
     await waitFor(() =>
       expect(within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Cara' })).toBeInTheDocument()
@@ -286,7 +286,7 @@ describe('PatientsPage', () => {
       expect(within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Delta' })).toBeInTheDocument()
     );
 
-    const firstNameHeader = screen.getByRole('columnheader', { name: /First Name/ });
+    const firstNameHeader = screen.getByRole('button', { name: /Sort by First Name/ });
     fireEvent.click(firstNameHeader);
     fireEvent.click(firstNameHeader);
     fireEvent.click(firstNameHeader);
@@ -294,28 +294,28 @@ describe('PatientsPage', () => {
       expect(within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Delta' })).toBeInTheDocument()
     );
 
-    const dobHeader = screen.getByRole('columnheader', { name: /DOB/ });
+    const dobHeader = screen.getByRole('button', { name: /Sort by DOB/ });
     fireEvent.click(dobHeader);
     fireEvent.click(dobHeader);
     await waitFor(() =>
       expect(within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Alpha' })).toBeInTheDocument()
     );
 
-    const phoneHeader = screen.getByRole('columnheader', { name: /Phone/ });
+    const phoneHeader = screen.getByRole('button', { name: /Sort by Phone/ });
     fireEvent.click(phoneHeader);
     fireEvent.click(phoneHeader);
     await waitFor(() =>
       expect(within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Beta' })).toBeInTheDocument()
     );
 
-    const emailHeader = screen.getByRole('columnheader', { name: /Email/ });
+    const emailHeader = screen.getByRole('button', { name: /Sort by Email/ });
     fireEvent.click(emailHeader);
     fireEvent.click(emailHeader);
     await waitFor(() =>
       expect(within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Beta' })).toBeInTheDocument()
     );
 
-    const lastVisitHeader = screen.getByRole('columnheader', { name: /Last Visit/ });
+    const lastVisitHeader = screen.getByRole('button', { name: /Sort by Last Visit/ });
     fireEvent.click(lastVisitHeader);
     fireEvent.click(lastVisitHeader);
     await waitFor(() =>
@@ -343,7 +343,7 @@ describe('PatientsPage', () => {
     expect(screen.getByText(/Page 1 of 6/)).toBeInTheDocument();
     expect(screen.getByText('...')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Page 3' }));
     await waitFor(() => expect(screen.getByText(/Page 3 of 6/)).toBeInTheDocument());
 
     fireEvent.change(screen.getByPlaceholderText('First name'), { target: { value: 'First' } });

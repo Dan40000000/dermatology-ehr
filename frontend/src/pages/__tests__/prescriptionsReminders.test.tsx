@@ -202,9 +202,7 @@ describe('PrescriptionsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /New Prescription/i }));
 
     const modalScope = within(await screen.findByTestId('modal-new-prescription'));
-    const selects = modalScope.getAllByRole('combobox');
-
-    fireEvent.change(selects[0], { target: { value: 'patient-1' } });
+    fireEvent.change(modalScope.getByLabelText('Patient selection'), { target: { value: 'patient-1' } });
     fireEvent.change(modalScope.getByPlaceholderText('Search or type medication name...'), {
       target: { value: 'Tretinoin 0.025% cream' },
     });

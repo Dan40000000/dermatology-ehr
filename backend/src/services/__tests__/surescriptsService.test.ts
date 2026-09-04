@@ -24,8 +24,14 @@ jest.mock("crypto", () => ({
 
 const queryMock = pool.query as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
+const originalEnv = process.env;
 
 beforeEach(() => {
+  process.env = { ...originalEnv, NODE_ENV: "test" };
+  delete process.env.DEPLOYMENT_ENV;
+  delete process.env.APP_ENV;
+  delete process.env.RAILWAY_ENVIRONMENT;
+  delete process.env.ALLOW_VENDOR_MOCK_FALLBACKS;
   queryMock.mockReset();
   loggerMock.error.mockReset();
   jest.useFakeTimers();
@@ -36,7 +42,36 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+afterAll(() => {
+  process.env = originalEnv;
+});
+
 describe("surescriptsService", () => {
+  it("blocks every synthetic Surescripts operation in production", async () => {
+    process.env.NODE_ENV = "production";
+
+    await expect(surescriptsService.sendNewRx("rx-1", "NCPDP1", {})).rejects.toThrow(
+      /mock adapter is disabled in production/i
+    );
+    await expect(surescriptsService.getRxHistory("patient-1", "tenant-1")).rejects.toThrow(
+      /mock adapter is disabled in production/i
+    );
+    await expect(surescriptsService.checkFormulary("Drug")).rejects.toThrow(
+      /mock adapter is disabled in production/i
+    );
+    await expect(surescriptsService.getPatientBenefits("patient-1", "tenant-1")).rejects.toThrow(
+      /mock adapter is disabled in production/i
+    );
+    await expect(surescriptsService.cancelRx("rx-1", "trans-1", "reason")).rejects.toThrow(
+      /mock adapter is disabled in production/i
+    );
+    await expect(surescriptsService.checkDrugInteractions("Drug", [])).rejects.toThrow(
+      /mock adapter is disabled in production/i
+    );
+
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("sendNewRx logs success and returns message id", async () => {
     const randomSpy = jest.spyOn(Math, "random");
     randomSpy.mockReturnValueOnce(0.1).mockReturnValueOnce(0.01);

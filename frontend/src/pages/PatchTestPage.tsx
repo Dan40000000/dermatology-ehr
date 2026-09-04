@@ -54,9 +54,6 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { closeDialogByExplicitAction } from '../utils/dialogClose';
-import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format, addHours } from 'date-fns';
 import toast from 'react-hot-toast';
 import { useReactToPrint } from 'react-to-print';
@@ -409,8 +406,7 @@ const PatchTestPage: React.FC = () => {
   }
 
   return (
-    <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Box sx={{ p: 3 }}>
+    <Box sx={{ p: 3 }}>
         {/* Header */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -830,13 +826,20 @@ const PatchTestPage: React.FC = () => {
                 <StepContent>
                   <Grid container spacing={2}>
                     <Grid item xs={12} md={6}>
-                      <DateTimePicker
+                      <TextField
+                        type="datetime-local"
                         label="Application Date/Time"
-                        value={newSessionData.applicationDate}
-                        onChange={(date) =>
-                          date && setNewSessionData({ ...newSessionData, applicationDate: date })
-                        }
-                        slotProps={{ textField: { fullWidth: true } }}
+                        value={format(newSessionData.applicationDate, "yyyy-MM-dd'T'HH:mm")}
+                        onChange={(event) => {
+                          if (event.target.value) {
+                            setNewSessionData({
+                              ...newSessionData,
+                              applicationDate: new Date(event.target.value),
+                            });
+                          }
+                        }}
+                        fullWidth
+                        InputLabelProps={{ shrink: true }}
                       />
                     </Grid>
                     <Grid item xs={12} md={6}>
@@ -875,8 +878,7 @@ const PatchTestPage: React.FC = () => {
             </Button>
           </DialogActions>
         </Dialog>
-      </Box>
-    </LocalizationProvider>
+    </Box>
   );
 };
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -992,6 +992,23 @@ export function ClinicalInboxPage() {
     );
   }
 
+  const queueTabs = Object.keys(QUEUE_LABELS) as InboxQueue[];
+  const handleQueueTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? queueTabs.length - 1
+        : event.key === 'ArrowRight'
+          ? (index + 1) % queueTabs.length
+          : (index - 1 + queueTabs.length) % queueTabs.length;
+    const nextQueue = queueTabs[nextIndex];
+    if (!nextQueue) return;
+    setActiveQueue(nextQueue);
+    window.setTimeout(() => document.getElementById(`clinical-inbox-tab-${nextQueue}`)?.focus(), 0);
+  };
+
   return (
     <div className="clinical-inbox-page">
       <section className="clinical-inbox-hero">
@@ -1052,12 +1069,19 @@ export function ClinicalInboxPage() {
         </button>
       </section>
 
-      {warnings.length > 0 && (
-        <div className="clinical-inbox-warning" role="status">
-          <AlertTriangle size={18} />
-          Some sources could not be loaded: {warnings.join(', ')}.
-        </div>
-      )}
+      <div
+        className={warnings.length > 0 ? 'clinical-inbox-warning' : 'sr-only'}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {warnings.length > 0 && (
+          <>
+            <AlertTriangle size={18} />
+            Some sources could not be loaded: {warnings.join(', ')}.
+          </>
+        )}
+      </div>
 
       <section className="clinical-inbox-shell">
         <aside className="clinical-inbox-list-panel" aria-label="Clinical inbox work list">
@@ -1120,13 +1144,18 @@ export function ClinicalInboxPage() {
           </div>
 
           <div className="clinical-inbox-tabs" role="tablist" aria-label="Clinical inbox queues">
-            {(Object.keys(QUEUE_LABELS) as InboxQueue[]).map((queue) => (
+            {queueTabs.map((queue, index) => (
               <button
                 key={queue}
                 type="button"
+                id={`clinical-inbox-tab-${queue}`}
+                role="tab"
+                aria-selected={activeQueue === queue}
+                aria-controls="clinical-inbox-panel"
+                tabIndex={activeQueue === queue ? 0 : -1}
                 className={activeQueue === queue ? 'active' : ''}
                 onClick={() => setActiveQueue(queue)}
-                aria-pressed={activeQueue === queue}
+                onKeyDown={(event) => handleQueueTabKeyDown(event, index)}
               >
                 {QUEUE_LABELS[queue]}
                 <span>{queueCounts[queue]}</span>
@@ -1134,6 +1163,12 @@ export function ClinicalInboxPage() {
             ))}
           </div>
 
+          <div
+            id="clinical-inbox-panel"
+            role="tabpanel"
+            aria-labelledby={`clinical-inbox-tab-${activeQueue}`}
+            tabIndex={0}
+          >
           {loading ? (
             <div className="clinical-inbox-loading">
               {[1, 2, 3, 4, 5].map((key) => <Skeleton key={key} height={92} />)}
@@ -1197,9 +1232,10 @@ export function ClinicalInboxPage() {
               ))}
             </div>
           )}
+          </div>
         </aside>
 
-        <main className="clinical-inbox-detail-panel" aria-label="Clinical inbox selected item">
+        <section className="clinical-inbox-detail-panel" aria-label="Clinical inbox selected item">
           {!selectedItem ? (
             <div className="clinical-inbox-empty">
               <Inbox size={36} />
@@ -1347,7 +1383,7 @@ export function ClinicalInboxPage() {
               </div>
             </>
           )}
-        </main>
+        </section>
       </section>
     </div>
   );
@@ -1401,9 +1437,13 @@ function ReplyBox({
   onInternalNoteChange?: (value: boolean) => void;
   allowWorkflowActions?: boolean;
 }) {
+  const replyId = useId();
+
   return (
     <div className="clinical-inbox-reply-box">
+      <label htmlFor={replyId}>Reply or internal note</label>
       <textarea
+        id={replyId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder="Write the reply or internal note..."

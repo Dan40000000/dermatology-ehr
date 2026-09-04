@@ -6,14 +6,14 @@
 
 This dermatology EHR now includes a complete AI-powered clinical documentation system that reduces note-taking time by 87-90%. Record your patient encounter, and let AI handle the rest.
 
-## Quick Demo (Works Immediately)
+## Synthetic Test Demo
 
 1. Navigate to: **http://localhost:5173/ambient-scribe**
 2. Click **"New Recording"**
 3. Record or use demo mode
 4. Watch AI generate structured SOAP notes
 
-**No setup required** - works with realistic mock data out of the box!
+**No external provider setup required for tests** - explicit synthetic mode can use mock data. Clinical/staging/production runtimes fail closed when an approved provider is unavailable.
 
 ## Features
 
@@ -24,11 +24,11 @@ This dermatology EHR now includes a complete AI-powered clinical documentation s
 - 📊 **ICD-10 & CPT** code suggestions
 - 💊 **Medication & allergy** extraction
 - ✍️ **Edit & review** workflow with audit trail
-- 🔒 **HIPAA compliant** with encryption and consent
+- 🔒 **HIPAA-aligned engineering controls** for encryption and consent; not a legal compliance attestation
 
 ## 5-Minute Setup (Optional - for Production)
 
-Want to use real AI instead of mocks? Just add API keys:
+Using external AI requires more than API keys: explicitly enable the provider, verify the account/configuration, and attach the required BAA evidence before any PHI flow.
 
 ### 1. Get API Keys
 

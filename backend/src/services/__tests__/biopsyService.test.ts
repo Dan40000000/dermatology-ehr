@@ -2,6 +2,7 @@ import { BiopsyService } from "../biopsyService";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
 import { getTableColumns } from "../../db/schema";
+import type { QueryExecutor } from "../../lib/repository/types";
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -48,12 +49,71 @@ beforeEach(() => {
 
 describe("BiopsyService", () => {
   it("generateSpecimenId returns formatted id", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ count: "0" }] });
+    const executor = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] }),
+      release: jest.fn(),
+    } as unknown as QueryExecutor;
     const id = await BiopsyService.generateSpecimenId({
       tenantId: "tenant-1",
       date: new Date(2025, 0, 2, 12),
-    });
+    }, executor);
     expect(id).toBe("BX-20250102-001");
+    expect(executor.query).toHaveBeenCalledTimes(2);
+    expect((executor.query as jest.Mock).mock.calls[0][0]).toContain("pg_advisory_xact_lock");
+    expect((executor.query as jest.Mock).mock.calls[0][1]).toEqual([
+      "biopsy-specimen:tenant-1:20250102",
+    ]);
+  });
+
+  it("generateSpecimenId uses the provided transaction executor", async () => {
+    const executor = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [
+          { specimen_id: "BX-20250102-001" },
+          { specimen_id: "BX-20250102-003" },
+          { specimen_id: "BX-20250102-legacy" },
+        ] }),
+      release: jest.fn(),
+    } as unknown as QueryExecutor;
+    const id = await BiopsyService.generateSpecimenId({
+      tenantId: "tenant-1",
+      date: new Date(2025, 0, 2, 12),
+    }, executor);
+
+    expect(id).toBe("BX-20250102-004");
+    expect(executor.query).toHaveBeenCalledTimes(2);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("generateSpecimenId advances past gaps and deleted-row suffixes", async () => {
+    const executor = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [
+          { specimen_id: "BX-20250102-001" },
+          { specimen_id: "BX-20250102-004" },
+        ] }),
+      release: jest.fn(),
+    } as unknown as QueryExecutor;
+
+    await expect(BiopsyService.generateSpecimenId({
+      tenantId: "tenant-1",
+      date: new Date(2025, 0, 2, 12),
+    }, executor)).resolves.toBe("BX-20250102-005");
+    expect((executor.query as jest.Mock).mock.calls[1][1]).toEqual([
+      "tenant-1",
+      "BX-20250102-%",
+    ]);
+  });
+
+  it("generateSpecimenId requires a transaction client", async () => {
+    await expect(BiopsyService.generateSpecimenId({ tenantId: "tenant-1" }, {
+      query: jest.fn(),
+    } as unknown as QueryExecutor)).rejects.toThrow("active transaction client");
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("calculateTurnaroundTime handles missing dates", () => {
@@ -80,6 +140,8 @@ describe("BiopsyService", () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "bio-1" }] });
     const result = await BiopsyService.getOverdueBiopsies("tenant-1");
     expect(result).toHaveLength(1);
+    expect(String(queryMock.mock.calls[0][0])).toContain("b.sent_at < NOW() - INTERVAL '7 days'");
+    expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.id = pr.user_id");
   });
 
   it("getPendingReviewBiopsies returns rows", async () => {
@@ -102,8 +164,23 @@ describe("BiopsyService", () => {
 
   it("updateLesionStatusForBiopsy updates marking", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "mark-1" }] });
-    const result = await BiopsyService.updateLesionStatusForBiopsy("lesion-1", "bio-1");
+    const result = await BiopsyService.updateLesionStatusForBiopsy("lesion-1", "bio-1", "tenant-1");
     expect(result.id).toBe("mark-1");
+    expect(String(queryMock.mock.calls[0][0])).toContain("UPDATE lesions");
+  });
+
+  it("updateLesionStatusForBiopsy uses the provided transaction executor", async () => {
+    const executor = { query: jest.fn().mockResolvedValue({ rows: [{ id: "mark-1" }] }) } as unknown as QueryExecutor;
+    const result = await BiopsyService.updateLesionStatusForBiopsy(
+      "lesion-1",
+      "bio-1",
+      "tenant-1",
+      executor,
+    );
+
+    expect(result.id).toBe("mark-1");
+    expect(executor.query).toHaveBeenCalledTimes(1);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("createAlert inserts alert", async () => {
@@ -152,6 +229,10 @@ describe("BiopsyService", () => {
       recipientType: "provider",
     });
     expect(logger.info).toHaveBeenCalled();
+    expect((logger.info as jest.Mock).mock.calls[0][0]).toContain("delivery not attempted");
+    expect((logger.info as jest.Mock).mock.calls[0][1]).not.toHaveProperty("recipient");
+    expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.email as provider_email");
+    expect(String(queryMock.mock.calls[0][0])).toContain("provider_user.id = pr.user_id");
   });
 
   it("validateBiopsyData returns errors for invalid data", () => {
@@ -170,6 +251,19 @@ describe("BiopsyService", () => {
       eventType: "sent",
     });
     expect(result.id).toBe("track-1");
+    expect(String(queryMock.mock.calls[0][0])).toContain("b.tenant_id");
+  });
+
+  it("trackSpecimen uses the provided transaction executor", async () => {
+    const executor = { query: jest.fn().mockResolvedValue({ rows: [{ id: "track-1" }] }) } as unknown as QueryExecutor;
+    const result = await BiopsyService.trackSpecimen({
+      biopsyId: "bio-1",
+      eventType: "sent",
+    }, executor);
+
+    expect(result.id).toBe("track-1");
+    expect(executor.query).toHaveBeenCalledTimes(1);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("getQualityMetrics returns metrics", async () => {
@@ -186,5 +280,7 @@ describe("BiopsyService", () => {
       providerId: "prov-1",
     });
     expect(result).toHaveLength(1);
+    expect(String(queryMock.mock.calls[0][0])).not.toContain("patient_name");
+    expect(String(queryMock.mock.calls[0][0])).not.toContain("p.dob");
   });
 });

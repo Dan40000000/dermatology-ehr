@@ -50,6 +50,7 @@ import {
   createEncounter,
   updateEncounterStatus,
   generateAiNoteDraft,
+  applyAmbientNoteToEncounter,
   createOrder,
   updateOrderStatus,
   updateOrderResult,
@@ -111,6 +112,28 @@ describe('api.ts', () => {
       'x-tenant-id': tenantId,
     });
     expect(options?.body).toBe(JSON.stringify({ email: 'user@example.com', password: 'secret' }));
+  });
+
+  it('serializes selected ambient note sections and fill-empty mode', async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({
+      success: true,
+      encounterId: 'enc-1',
+      appliedSections: ['hpi'],
+      skippedSections: ['plan'],
+    }));
+
+    await applyAmbientNoteToEncounter(tenantId, token, 'note-1', {
+      sections: ['hpi', 'plan'],
+      mode: 'fill_empty',
+      applyStructuredActions: true,
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options?.body).toBe(JSON.stringify({
+      sections: ['hpi', 'plan'],
+      mode: 'fill_empty',
+      applyStructuredActions: true,
+    }));
   });
 
   it('surfaces login errors', async () => {

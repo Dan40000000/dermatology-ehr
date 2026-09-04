@@ -1,6 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Modal } from '../ui/Modal';
 import type { Appointment, Provider, Availability } from '../../types';
+import {
+  formatDateTimeInPracticeTimeZone,
+  getDateKeyInPracticeTimeZone,
+  getDayOfWeekForDateKey,
+  getPracticeDateKey,
+  getPracticeDateTime,
+  getTimePartsInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
 
 interface RescheduleModalProps {
   isOpen: boolean;
@@ -10,6 +18,7 @@ interface RescheduleModalProps {
   providers: Provider[];
   availability: Availability[];
   appointments: Appointment[];
+  practiceTimeZone?: string | null;
 }
 
 export interface RescheduleFormData {
@@ -32,6 +41,7 @@ export function RescheduleModal({
   providers,
   availability,
   appointments,
+  practiceTimeZone,
 }: RescheduleModalProps) {
   const [formData, setFormData] = useState<RescheduleFormData>({
     providerId: '',
@@ -46,14 +56,15 @@ export function RescheduleModal({
   useEffect(() => {
     if (isOpen && appointment) {
       const startDate = new Date(appointment.scheduledStart);
+      const { hour, minute } = getTimePartsInPracticeTimeZone(startDate, practiceTimeZone);
       setFormData({
         providerId: appointment.providerId,
-        date: startDate.toISOString().split('T')[0],
-        time: `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`,
+        date: getDateKeyInPracticeTimeZone(startDate, practiceTimeZone),
+        time: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
       });
       setErrors({});
     }
-  }, [isOpen, appointment]);
+  }, [isOpen, appointment, practiceTimeZone]);
 
   // Get the appointment duration in minutes
   const appointmentDuration = useMemo(() => {
@@ -69,8 +80,9 @@ export function RescheduleModal({
   };
 
   // Check if a provider is available on a given date
-  const isProviderAvailableOnDate = (providerId: string, date: Date): boolean => {
-    const dayOfWeek = date.getDay();
+  const isProviderAvailableOnDate = (providerId: string, dateKey: string): boolean => {
+    const dayOfWeek = getDayOfWeekForDateKey(dateKey);
+    if (dayOfWeek === null) return false;
     const providerAvail = getProviderAvailabilityForDay(providerId, dayOfWeek);
     return providerAvail.length > 0;
   };
@@ -78,15 +90,16 @@ export function RescheduleModal({
   // Get next 30 days for date selection
   const availableDates = useMemo(() => {
     const dates: { date: string; label: string; dayOfWeek: number; available: boolean }[] = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayKey = getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone);
+    const [todayYear, todayMonth, todayDay] = todayKey.split('-').map(Number);
+    const today = new Date(todayYear, todayMonth - 1, todayDay, 12);
 
     for (let i = 0; i < 30; i++) {
       const date = new Date(today);
       date.setDate(date.getDate() + i);
-      const dateStr = date.toISOString().split('T')[0];
-      const dayOfWeek = date.getDay();
-      const available = isProviderAvailableOnDate(formData.providerId, date);
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const dayOfWeek = getDayOfWeekForDateKey(dateStr) ?? date.getDay();
+      const available = isProviderAvailableOnDate(formData.providerId, dateStr);
 
       dates.push({
         date: dateStr,
@@ -97,28 +110,26 @@ export function RescheduleModal({
     }
 
     return dates;
-  }, [formData.providerId, availability]);
+  }, [formData.providerId, availability, practiceTimeZone]);
 
   // Get available time slots for selected provider and date
   const availableTimeSlots = useMemo((): TimeSlot[] => {
     if (!formData.providerId || !formData.date) return [];
 
-    const selectedDate = new Date(formData.date + 'T00:00:00');
-    const dayOfWeek = selectedDate.getDay();
+    const dayOfWeek = getDayOfWeekForDateKey(formData.date);
+    if (dayOfWeek === null) return [];
     const providerAvail = getProviderAvailabilityForDay(formData.providerId, dayOfWeek);
 
     if (providerAvail.length === 0) return [];
 
     // Get all appointments for this provider on this date (excluding current appointment)
-    const dayStart = new Date(formData.date + 'T00:00:00');
-    const dayEnd = new Date(formData.date + 'T23:59:59');
-
     const existingAppointments = appointments.filter(a => {
       if (appointment && a.id === appointment.id) return false; // Exclude current appointment
       if (a.providerId !== formData.providerId) return false;
       if (a.status === 'cancelled') return false;
-      const apptStart = new Date(a.scheduledStart);
-      return apptStart >= dayStart && apptStart <= dayEnd;
+      const startDateKey = getPracticeDateKey(a.scheduledStart, practiceTimeZone);
+      const endDateKey = getPracticeDateKey(a.scheduledEnd, practiceTimeZone);
+      return Boolean(startDateKey && endDateKey && startDateKey <= formData.date && endDateKey >= formData.date);
     });
 
     const slotsMap = new Map<string, TimeSlot>();
@@ -147,10 +158,13 @@ export function RescheduleModal({
         const displayLabel = `${currentHour % 12 || 12}:${currentMin.toString().padStart(2, '0')} ${currentHour < 12 ? 'AM' : 'PM'}`;
 
         // Check if this slot conflicts with existing appointments
-        const slotStart = new Date(`${formData.date}T${timeStr}:00`);
-        const slotEnd = new Date(slotStart.getTime() + appointmentDuration * 60000);
+        const slotStart = getPracticeDateTime(formData.date, timeStr, practiceTimeZone);
+        const slotEnd = slotStart
+          ? new Date(slotStart.getTime() + appointmentDuration * 60000)
+          : null;
 
         const hasConflict = existingAppointments.some(a => {
+          if (!slotStart || !slotEnd) return true;
           const apptStart = new Date(a.scheduledStart);
           const apptEnd = new Date(a.scheduledEnd);
           // Overlap if: slotStart < apptEnd AND slotEnd > apptStart
@@ -158,8 +172,8 @@ export function RescheduleModal({
         });
 
         // Check if slot ends after provider availability ends
-        const availEndTime = new Date(`${formData.date}T${avail.endTime}:00`);
-        const slotExceedsAvailability = slotEnd > availEndTime;
+        const availEndTime = getPracticeDateTime(formData.date, avail.endTime, practiceTimeZone);
+        const slotExceedsAvailability = !slotEnd || !availEndTime || slotEnd > availEndTime;
 
         slotsMap.set(timeStr, {
           time: timeStr,
@@ -178,7 +192,7 @@ export function RescheduleModal({
 
     // Convert Map to array and sort by time
     return Array.from(slotsMap.values()).sort((a, b) => a.time.localeCompare(b.time));
-  }, [formData.providerId, formData.date, appointments, appointment, appointmentDuration, availability]);
+  }, [formData.providerId, formData.date, appointments, appointment, appointmentDuration, availability, practiceTimeZone]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -250,7 +264,7 @@ export function RescheduleModal({
             <div style={{ marginBottom: '0.25rem' }}><strong>Patient:</strong> {appointment.patientName}</div>
             <div style={{ marginBottom: '0.25rem' }}><strong>Type:</strong> {appointment.appointmentTypeName}</div>
             <div style={{ marginBottom: '0.25rem' }}><strong>Provider:</strong> {appointment.providerName}</div>
-            <div><strong>Current Time:</strong> {new Date(appointment.scheduledStart).toLocaleString()}</div>
+            <div><strong>Current Time:</strong> {formatDateTimeInPracticeTimeZone(appointment.scheduledStart, practiceTimeZone)}</div>
           </div>
         </div>
 

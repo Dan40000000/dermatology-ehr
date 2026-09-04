@@ -26,6 +26,7 @@ import {
   AmbientTranscriptionAdapter,
   createAmbientTranscriptionAdapter,
   hasAmbientTranscriptionCredentials,
+  isAmbientTranscriptionProviderExplicitlyMock,
   resolveAmbientTranscriptionProviderFromEnv,
 } from '../integrations/ambientTranscriptionAdapter';
 
@@ -590,6 +591,16 @@ export class IntegrationService {
   }
 
   async getAmbientTranscriptionAdapter(): Promise<AmbientTranscriptionAdapter> {
+    if (isAmbientTranscriptionProviderExplicitlyMock()) {
+      const adapter = createAmbientTranscriptionAdapter(
+        this.tenantId,
+        'mock',
+        true
+      );
+      this.adapters.set('ambient_transcription', adapter);
+      return adapter;
+    }
+
     if (!this.adapters.has('ambient_transcription')) {
       const config = await getIntegrationConfig(this.tenantId, 'ambient_transcription');
       const envProvider = resolveAmbientTranscriptionProviderFromEnv();

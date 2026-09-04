@@ -1,6 +1,6 @@
 # Security Documentation
 
-**Dermatology EHR System - HIPAA Compliant**
+**Dermatology EHR System - Security and HIPAA-Aligned Engineering Controls**
 
 Last Updated: 2025-12-08
 
@@ -17,7 +17,7 @@ Last Updated: 2025-12-08
 
 ## Security Overview
 
-This dermatology EHR system is designed to be HIPAA-compliant and implements multiple layers of security to protect sensitive patient health information (PHI).
+This dermatology EHR system implements layered safeguards intended to support a HIPAA-aligned deployment. This document is an engineering description, not a legal certification. An organization must separately verify its risk analysis, policies, workforce controls, vendor agreements, incident response, backups, and production configuration before handling PHI.
 
 ### Compliance Standards
 

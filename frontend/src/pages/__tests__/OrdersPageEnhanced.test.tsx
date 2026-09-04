@@ -339,7 +339,7 @@ describe('OrdersPageEnhanced', () => {
     fireEvent.click(newOrderButton);
 
     // Fill form
-    const patientSelect = screen.getByLabelText('Patient *');
+    const patientSelect = screen.getByLabelText('Patient selection');
     fireEvent.change(patientSelect, { target: { value: 'patient-1' } });
 
     const detailsInput = screen.getByPlaceholderText('Enter order details...');

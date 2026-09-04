@@ -9,6 +9,7 @@
 import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
+import { assertSyntheticVendorMockAllowed } from './vendorMockGuard';
 
 export interface NCPDPScriptMessage {
   messageId: string;
@@ -130,6 +131,8 @@ export async function sendNewRx(
   pharmacyNcpdp: string,
   prescriptionData: any
 ): Promise<{ success: boolean; messageId: string; error?: string }> {
+  assertSyntheticVendorMockAllowed('Surescripts prescription transmission');
+
   // Simulate network delay
   await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
 
@@ -187,6 +190,8 @@ export async function sendNewRx(
  * Simulates Surescripts RxHistoryRequest
  */
 export async function getRxHistory(patientId: string, tenantId: string): Promise<RxHistoryResponse> {
+  assertSyntheticVendorMockAllowed('Surescripts prescription history');
+
   const messageId = `RXHIST-${crypto.randomUUID()}`;
 
   // Simulate network delay
@@ -262,6 +267,8 @@ export async function checkFormulary(
   payerId?: string,
   ndc?: string
 ): Promise<FormularyCheckResponse> {
+  assertSyntheticVendorMockAllowed('Surescripts formulary check');
+
   const messageId = `FORM-${crypto.randomUUID()}`;
 
   // Simulate network delay
@@ -285,6 +292,8 @@ export async function getPatientBenefits(
   patientId: string,
   tenantId: string
 ): Promise<PatientBenefitsResponse | null> {
+  assertSyntheticVendorMockAllowed('Surescripts pharmacy benefits');
+
   const messageId = `ELIG-${crypto.randomUUID()}`;
 
   // Simulate network delay
@@ -441,6 +450,8 @@ export async function cancelRx(
   transmissionId: string,
   reason: string
 ): Promise<{ success: boolean; messageId: string }> {
+  assertSyntheticVendorMockAllowed('Surescripts prescription cancellation');
+
   const messageId = `CANCEL-${crypto.randomUUID()}`;
 
   // Simulate network delay
@@ -487,6 +498,8 @@ export async function checkDrugInteractions(
   medicationName: string,
   patientCurrentMeds: string[]
 ): Promise<Array<{ severity: string; description: string; medication: string }>> {
+  assertSyntheticVendorMockAllowed('Surescripts interaction check');
+
   // Simulate network delay
   await new Promise(resolve => setTimeout(resolve, Math.random() * 400 + 200));
 

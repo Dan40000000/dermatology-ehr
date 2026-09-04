@@ -1496,7 +1496,7 @@ patientsRouter.get("/:id/biopsies", requireAuth, requireModuleAccess("labs"), as
     const result = await pool.query(
       `SELECT b.id, b.patient_id as "patientId", b.encounter_id as "encounterId",
               b.lesion_id as "lesionId", b.specimen_type as "specimenType",
-              b.specimen_number as "specimenNumber", b.body_location as "bodyLocation",
+              b.specimen_id as "specimenNumber", b.body_location as "bodyLocation",
               b.clinical_description as "clinicalDescription", b.status,
               b.ordered_at as "orderedAt", b.collected_at as "collectedAt",
               b.sent_at as "sentAt", b.received_by_lab_at as "receivedByLabAt",

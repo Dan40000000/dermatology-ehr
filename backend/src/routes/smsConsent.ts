@@ -22,10 +22,13 @@ import {
   buildSMSConsentRequestText,
   getSMSPracticeBranding,
 } from '../services/smsConsentText';
+import { assertSyntheticVendorMockAllowed } from '../services/vendorMockGuard';
 
 const router = Router();
 
 function buildMockSmsResult(body: string) {
+  assertSyntheticVendorMockAllowed('SMS consent messaging');
+
   const hasUnicode = /[^\x00-\x7F]/.test(body);
   const segmentLength = hasUnicode ? 70 : 160;
   return {

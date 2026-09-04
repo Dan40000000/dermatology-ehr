@@ -103,7 +103,7 @@ export function LoginPage() {
         Back
       </Link>
 
-      <main className="pvp-main">
+      <main className="pvp-main" aria-labelledby="login-heading">
         {/* Wordmark */}
         <div className="pvp-wordmark">
           <div className="pvp-icon-wrap">
@@ -112,7 +112,7 @@ export function LoginPage() {
               <path d="M7 8.5h10M7 12h10M7 15.5h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
             </svg>
           </div>
-          <h1 className="pvp-title">Provider Login</h1>
+          <h1 id="login-heading" className="pvp-title">Provider Login</h1>
           <div className="pvp-divider">
             <span className="pvp-divider-line" />
             <span className="pvp-divider-diamond" />
@@ -183,7 +183,7 @@ export function LoginPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="pvp-form">
+            <form onSubmit={handleSubmit} className="pvp-form" aria-busy={isLoading}>
               <div className={`pvp-field ${focusedField === 'tenantId' ? 'pvp-field--focused' : ''} ${tenantId ? 'pvp-field--filled' : ''}`}>
                 <label htmlFor="pvp-tenant">{t('auth:login.practiceId')}</label>
                 <div className="pvp-input-wrap">
@@ -248,15 +248,15 @@ export function LoginPage() {
                     type="button"
                     className="pvp-toggle-pw"
                     onClick={() => setShowPassword((v) => !v)}
-                    tabIndex={-1}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
                 </div>
               </div>
 
-              <button type="submit" disabled={isLoading} className="pvp-submit-btn">
+              <button type="submit" disabled={isLoading} className="pvp-submit-btn" aria-busy={isLoading}>
                 {isLoading ? (
                   <>
                     <span className="pvp-spinner" />
@@ -273,6 +273,10 @@ export function LoginPage() {
                 )}
               </button>
             </form>
+
+            <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+              {isLoading ? 'Signing in. Please wait.' : error ? 'Sign in failed.' : ''}
+            </div>
 
             {SHOW_DEMO_TOOLS && <div className="pvp-creds">
               <div className="pvp-creds-header">Beta test credentials — click to fill</div>

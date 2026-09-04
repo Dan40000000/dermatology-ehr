@@ -10,6 +10,7 @@ import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
 import { assertSmsContentSafe, normalizeSmsTemplateForMinimumNecessary } from '../utils/smsPrivacyGuard';
 import { getPracticeTimeZone } from '../lib/practiceTimeZone';
 import crypto from 'crypto';
+import { assertSyntheticVendorMockAllowed } from './vendorMockGuard';
 
 export interface AppointmentToRemind {
   appointmentId: string;
@@ -329,6 +330,7 @@ async function sendAppointmentReminder(
 
     let result: ReminderSendResult;
     if (tenant.is_test_mode) {
+      assertSyntheticVendorMockAllowed('Appointment reminder SMS');
       result = {
         sid: `mock_sms_${crypto.randomUUID()}`,
         status: 'sent',
@@ -439,6 +441,10 @@ async function sendAppointmentVoiceReminder(
     const formattedTime = formatReminderTime(appointmentDate);
 
     const voiceMessage = `Hello ${appointment.patientFirstName || appointment.patientName.split(/\s+/)[0] || 'there'}. This is a reminder from your dermatology clinic. You have an appointment on ${formattedDate} at ${formattedTime}. If you need to reschedule, please call ${appointment.clinicPhone}.`;
+
+    if (tenant.is_test_mode) {
+      assertSyntheticVendorMockAllowed('Appointment reminder call');
+    }
 
     const callResult = tenant.is_test_mode
       ? {

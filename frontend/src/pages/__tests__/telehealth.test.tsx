@@ -220,9 +220,9 @@ describe('TelehealthPage', () => {
     const modal = await screen.findByTestId('modal-create-new-telehealth-session');
     const selects = within(modal).getAllByRole('combobox');
 
-    fireEvent.change(selects[0], { target: { value: '10' } });
-    fireEvent.change(selects[1], { target: { value: '1' } });
-    fireEvent.change(selects[2], { target: { value: 'CA' } });
+    fireEvent.change(within(modal).getByLabelText('Patient selection'), { target: { value: '10' } });
+    fireEvent.change(selects[2], { target: { value: '1' } });
+    fireEvent.change(selects[3], { target: { value: 'CA' } });
     fireEvent.click(within(modal).getByRole('button', { name: 'Create Session' }));
 
     await waitFor(() =>

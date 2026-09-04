@@ -7,6 +7,7 @@
 import { pool } from '../db/pool';
 import { getTableColumns } from '../db/schema';
 import { logger } from '../lib/logger';
+import { isPoolClient, type QueryExecutor } from '../lib/repository/types';
 
 interface BiopsySpecimenIdParams {
   tenantId: string;
@@ -178,8 +179,19 @@ export class BiopsyService {
    * Generate unique specimen ID in format: BX-YYYYMMDD-XXX
    * Critical for specimen tracking and chain of custody
    */
-  static async generateSpecimenId(params: BiopsySpecimenIdParams): Promise<string> {
+  static async generateSpecimenId(
+    params: BiopsySpecimenIdParams,
+    executor: QueryExecutor,
+  ): Promise<string> {
     const { tenantId, date = new Date() } = params;
+
+    // The identifier is allocated immediately before the biopsy insert.  It
+    // must therefore be calculated and consumed by the same transaction
+    // client; a pool-level query would release the advisory lock before the
+    // caller inserts the row and reintroduce the collision this method avoids.
+    if (!executor || !isPoolClient(executor)) {
+      throw new Error('generateSpecimenId requires an active transaction client');
+    }
 
     // Format date as YYYYMMDD
     const year = date.getFullYear();
@@ -187,19 +199,43 @@ export class BiopsyService {
     const day = String(date.getDate()).padStart(2, '0');
     const dateStr = `${year}${month}${day}`;
 
-    // Get count of biopsies created today for this tenant
-    const countResult = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM biopsies
-       WHERE tenant_id = $1
-         AND DATE(ordered_at) = DATE($2)`,
-      [tenantId, date]
+    // Serialize allocations for this tenant/date for the lifetime of the
+    // caller's transaction.  The key includes the date so independent clinic
+    // days do not block one another unnecessarily.
+    await executor.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`biopsy-specimen:${tenantId}:${dateStr}`],
     );
 
-    const count = parseInt(countResult.rows[0].count) + 1;
-    const sequenceStr = String(count).padStart(3, '0');
+    // COUNT(*) is not an allocator: gaps from deleted rows or non-canonical
+    // legacy IDs can cause it to reuse an existing specimen number.  Read the
+    // canonical IDs and continue from the largest suffix instead.
+    const specimenResult = await executor.query<{ specimen_id: string }>(
+      `SELECT specimen_id
+         FROM biopsies
+        WHERE tenant_id = $1
+          AND specimen_id LIKE $2`,
+      [tenantId, `BX-${dateStr}-%`],
+    );
 
-    return `BX-${dateStr}-${sequenceStr}`;
+    const specimenPrefix = `BX-${dateStr}-`;
+    const suffixPattern = new RegExp(`^${specimenPrefix}(\\d+)$`);
+    let maxSuffix = 0;
+    for (const row of specimenResult.rows) {
+      const match = suffixPattern.exec(String(row.specimen_id || ''));
+      if (!match) continue;
+      const suffix = Number.parseInt(match[1]!, 10);
+      if (Number.isSafeInteger(suffix) && suffix > maxSuffix) {
+        maxSuffix = suffix;
+      }
+    }
+
+    const nextSuffix = maxSuffix + 1;
+    if (!Number.isSafeInteger(nextSuffix)) {
+      throw new Error(`Specimen ID sequence exhausted for tenant ${tenantId} on ${dateStr}`);
+    }
+
+    return `BX-${dateStr}-${String(nextSuffix).padStart(3, '0')}`;
   }
 
   /**
@@ -235,20 +271,28 @@ export class BiopsyService {
    * Used for safety alerts and dashboard
    */
   static async getOverdueBiopsies(tenantId: string) {
+    const overdueExpression = `(
+      b.sent_at IS NOT NULL
+      AND b.resulted_at IS NULL
+      AND b.status NOT IN ('resulted', 'reviewed', 'closed')
+      AND b.sent_at < NOW() - INTERVAL '7 days'
+    )`;
     const query = `
       SELECT
         b.*,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         ${providerDisplayName('pr')} as ordering_provider_name,
-        pr.email as ordering_provider_email,
+        provider_user.email as ordering_provider_email,
+        ${overdueExpression} as is_overdue,
         EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_overdue
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers pr ON b.ordering_provider_id = pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
+      LEFT JOIN users provider_user
+        ON provider_user.id = pr.user_id AND provider_user.tenant_id = pr.tenant_id
       WHERE b.tenant_id = $1
-        AND b.is_overdue = true
-        AND b.status NOT IN ('resulted', 'reviewed', 'closed')
+        AND ${overdueExpression}
         AND b.deleted_at IS NULL
       ORDER BY b.sent_at ASC
     `;
@@ -271,8 +315,8 @@ export class BiopsyService {
         ${providerDisplayName('pr')} as ordering_provider_name,
         EXTRACT(DAY FROM (NOW() - b.resulted_at))::INTEGER as days_since_result
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers pr ON b.ordering_provider_id = pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
       WHERE b.tenant_id = $1
         AND b.status = 'resulted'
         AND b.deleted_at IS NULL
@@ -310,7 +354,14 @@ export class BiopsyService {
     }
 
     const statusExpr = biopsyColumns.has('status') ? 'b.status' : `'ordered'::text`;
-    const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
+    const isOverdueExpr = biopsyColumns.has('sent_at')
+      ? `(COALESCE(b.is_overdue, false) OR (
+          b.sent_at IS NOT NULL
+          AND b.resulted_at IS NULL
+          AND ${statusExpr} NOT IN ('resulted', 'reviewed', 'closed')
+          AND b.sent_at < NOW() - INTERVAL '7 days'
+        ))`
+      : booleanExpr(biopsyColumns, 'is_overdue', false);
     const malignancyExpr = textExpr(biopsyColumns, 'malignancy_type');
     const patientNotifiedExpr = booleanExpr(biopsyColumns, 'patient_notified', false);
     const turnaroundExpr = numberExpr(biopsyColumns, 'turnaround_time_days');
@@ -362,13 +413,13 @@ export class BiopsyService {
       return emptySafetyCommandCenter(now);
     }
 
-    if (!patientColumns.has('id')) {
+    if (!patientColumns.has('id') || !patientColumns.has('tenant_id')) {
       return emptySafetyCommandCenter(now);
     }
 
     const hasOrderingProvider = biopsyColumns.has('ordering_provider_id');
     const hasReviewingProvider = biopsyColumns.has('reviewing_provider_id');
-    const canJoinProviders = providerColumns.has('id');
+    const canJoinProviders = providerColumns.has('id') && providerColumns.has('tenant_id');
 
     if (providerId && !hasOrderingProvider) {
       return emptySafetyCommandCenter(now);
@@ -391,13 +442,20 @@ export class BiopsyService {
     const statusExpr = biopsyColumns.has('status') ? 'b.status' : `'ordered'::text`;
     const malignancyExpr = textExpr(biopsyColumns, 'malignancy_type');
     const patientNotifiedExpr = booleanExpr(biopsyColumns, 'patient_notified', false);
-    const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
+    const isOverdueExpr = biopsyColumns.has('sent_at')
+      ? `(COALESCE(b.is_overdue, false) OR (
+          b.sent_at IS NOT NULL
+          AND b.resulted_at IS NULL
+          AND ${statusExpr} NOT IN ('resulted', 'reviewed', 'closed')
+          AND b.sent_at < NOW() - INTERVAL '7 days'
+        ))`
+      : booleanExpr(biopsyColumns, 'is_overdue', false);
     const deletedFilter = biopsyColumns.has('deleted_at') ? 'AND b.deleted_at IS NULL' : '';
     const orderingProviderJoin = hasOrderingProvider && canJoinProviders
-      ? 'LEFT JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id'
+      ? 'LEFT JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id AND ordering_pr.tenant_id = b.tenant_id'
       : '';
     const reviewingProviderJoin = hasReviewingProvider && canJoinProviders
-      ? 'LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id'
+      ? 'LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id AND reviewing_pr.tenant_id = b.tenant_id'
       : '';
     const orderingProviderNameExpr = hasOrderingProvider && canJoinProviders
       ? providerNameExpr('ordering_pr', providerColumns)
@@ -405,8 +463,8 @@ export class BiopsyService {
     const reviewingProviderNameExpr = hasReviewingProvider && canJoinProviders
       ? providerNameExpr('reviewing_pr', providerColumns)
       : 'NULL::text';
-    const activeAlertCountExpr = alertColumns.has('biopsy_id') && alertColumns.has('status')
-      ? `(SELECT COUNT(*)::INTEGER FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.status = 'active')`
+    const activeAlertCountExpr = alertColumns.has('biopsy_id') && alertColumns.has('tenant_id') && alertColumns.has('status')
+      ? `(SELECT COUNT(*)::INTEGER FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.tenant_id = b.tenant_id AND ba.status = 'active')`
       : '0::INTEGER';
 
     const query = `
@@ -435,7 +493,7 @@ export class BiopsyService {
         EXTRACT(DAY FROM (NOW() - ${reviewedAtExpr}))::INTEGER as days_since_review,
         ${activeAlertCountExpr} as active_alert_count
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
       ${orderingProviderJoin}
       ${reviewingProviderJoin}
       WHERE b.tenant_id = $1
@@ -631,18 +689,27 @@ export class BiopsyService {
   /**
    * Update lesion status when biopsy is performed
    */
-  static async updateLesionStatusForBiopsy(lesionId: string, biopsyId: string) {
+  static async updateLesionStatusForBiopsy(
+    lesionId: string,
+    biopsyId: string,
+    tenantId: string,
+    executor: QueryExecutor = pool,
+  ) {
     const query = `
-      UPDATE patient_body_markings
+      UPDATE lesions
       SET status = 'biopsied',
+          biopsy_performed = true,
+          biopsy_date = COALESCE(biopsy_date, CURRENT_DATE),
           description = COALESCE(description, '') ||
-            E'\nBiopsy performed: ' || (SELECT specimen_id FROM biopsies WHERE id = $1),
+            E'\nBiopsy performed: ' || (
+              SELECT specimen_id FROM biopsies WHERE id = $1 AND tenant_id = $3
+            ),
           updated_at = NOW()
-      WHERE id = $2
+      WHERE id = $2 AND tenant_id = $3
       RETURNING *
     `;
 
-    const result = await pool.query(query, [biopsyId, lesionId]);
+    const result = await executor.query(query, [biopsyId, lesionId, tenantId]);
     return result.rows[0];
   }
 
@@ -684,8 +751,11 @@ export class BiopsyService {
   }
 
   /**
-   * Send notifications for biopsy events
-   * Integrates with notification system (email, SMS, in-app)
+   * Build a notification intent for a biopsy event.
+   *
+   * Delivery is intentionally not attempted here.  Keeping this boundary
+   * explicit prevents a local workflow action from being mistaken for a
+   * patient/provider message that was actually sent.
    */
   static async sendNotification(params: BiopsyNotificationParams): Promise<void> {
     const { biopsyId, tenantId, type, recipientType } = params;
@@ -698,10 +768,12 @@ export class BiopsyService {
         p.email as patient_email,
         p.phone as patient_phone,
         ${providerDisplayName('pr')} as provider_name,
-        pr.email as provider_email
+        provider_user.email as provider_email
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers pr ON b.ordering_provider_id = pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers pr ON b.ordering_provider_id = pr.id AND pr.tenant_id = b.tenant_id
+      LEFT JOIN users provider_user
+        ON provider_user.id = pr.user_id AND provider_user.tenant_id = pr.tenant_id
       WHERE b.id = $1 AND b.tenant_id = $2
     `;
 
@@ -712,43 +784,17 @@ export class BiopsyService {
 
     const biopsy = biopsyResult.rows[0];
 
-    // Build notification content based on type
-    let subject = '';
-    let message = '';
-
-    switch (type) {
-      case 'result_available':
-        subject = `Biopsy Result Available: ${biopsy.specimen_id}`;
-        message = `Pathology results are now available for biopsy ${biopsy.specimen_id} (Patient: ${biopsy.patient_name}). Please review and take appropriate action.`;
-        break;
-
-      case 'overdue':
-        subject = `URGENT: Overdue Biopsy Result - ${biopsy.specimen_id}`;
-        message = `Biopsy ${biopsy.specimen_id} (Patient: ${biopsy.patient_name}) was sent ${biopsy.days_overdue} days ago and no result has been received. Please follow up with pathology lab.`;
-        break;
-
-      case 'malignancy':
-        subject = `CRITICAL: Malignancy Detected - ${biopsy.specimen_id}`;
-        message = `Malignancy detected in biopsy ${biopsy.specimen_id} (Patient: ${biopsy.patient_name}). Diagnosis: ${biopsy.malignancy_type}. Immediate review and follow-up required.`;
-        break;
-
-      case 'followup_required':
-        subject = `Follow-up Required: ${biopsy.specimen_id}`;
-        message = `Biopsy ${biopsy.specimen_id} requires follow-up action: ${biopsy.follow_up_action}. Patient: ${biopsy.patient_name}.`;
-        break;
-    }
-
-    // Log notification (actual implementation would integrate with notification service)
-    logger.info('Biopsy notification', {
+    // Record only a delivery-neutral intent.  Do not log the generated
+    // message, patient name, or recipient address because this is not a
+    // delivery service and logs must not become a PHI sink.
+    logger.info('Biopsy notification intent recorded; delivery not attempted', {
       biopsyId,
       type,
       recipientType,
-      subject,
-      recipient: recipientType === 'provider' ? biopsy.provider_email : biopsy.patient_email
     });
 
-    // TODO: Integrate with actual notification service (email/SMS/in-app)
-    // This would call services like Twilio, SendGrid, or internal notification system
+    // Future delivery integration requires its own audited, BAA-covered
+    // channel and delivery status before this boundary can change.
   }
 
   /**
@@ -802,11 +848,12 @@ export class BiopsyService {
     custodyPerson?: string;
     specimenQuality?: string;
     notes?: string;
-  }) {
+  }, executor: QueryExecutor = pool) {
     const { biopsyId, eventType, eventBy, location, custodyPerson, specimenQuality, notes } = params;
 
     const query = `
       INSERT INTO biopsy_specimen_tracking (
+        tenant_id,
         biopsy_id,
         event_type,
         event_by,
@@ -814,11 +861,22 @@ export class BiopsyService {
         custody_person,
         specimen_quality,
         notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      )
+      SELECT
+        b.tenant_id,
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7
+      FROM biopsies b
+      WHERE b.id = $1
       RETURNING *
     `;
 
-    const result = await pool.query(query, [
+    const result = await executor.query(query, [
       biopsyId,
       eventType,
       eventBy || null,
@@ -914,33 +972,22 @@ export class BiopsyService {
       SELECT
         b.specimen_id,
         b.ordered_at,
-        b.collected_at,
-        b.sent_at,
-        b.resulted_at,
-        b.reviewed_at,
         b.status,
         p.mrn,
-        p.first_name || ' ' || p.last_name as patient_name,
-        p.dob as date_of_birth,
         b.body_location,
         b.specimen_type,
-        b.clinical_description,
         b.pathology_diagnosis,
         b.malignancy_type,
         b.diagnosis_code,
-        b.diagnosis_description,
         b.margins,
         b.follow_up_action,
         b.patient_notified,
         b.turnaround_time_days,
         ${providerDisplayName('ordering_pr')} as ordering_provider,
-        ${providerDisplayName('reviewing_pr')} as reviewing_provider,
-        b.path_lab,
-        b.path_lab_case_number
+        b.path_lab
       FROM biopsies b
-      JOIN patients p ON b.patient_id = p.id
-      JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id
-      LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id
+      JOIN patients p ON b.patient_id = p.id AND p.tenant_id = b.tenant_id
+      JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id AND ordering_pr.tenant_id = b.tenant_id
       WHERE b.tenant_id = $1
         AND b.deleted_at IS NULL
         ${filterQuery}

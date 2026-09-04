@@ -33,6 +33,8 @@ const MOCK_FLAG_KEYS = [
   'USE_MOCK_SLACK',
   'USE_MOCK_TEAMS',
   'USE_MOCK_CLAMAV',
+  'ALLOW_VENDOR_MOCK_FALLBACKS',
+  'CRM_STRIPE_MOCK_CHECKOUT',
 ];
 
 function parseBool(value: string | undefined, fallback = false): boolean {
@@ -125,6 +127,8 @@ type EvidenceFileRule = {
   maxAgeDays: number;
 };
 
+const VENDOR_BAA_INVENTORY_PATH = 'compliance/evidence/vendor-baa-inventory.csv';
+
 const EVIDENCE_FILE_RULES: EvidenceFileRule[] = [
   { relativePath: 'compliance/evidence/vendor-baa-inventory.csv', maxAgeDays: 180 },
   { relativePath: 'compliance/evidence/hipaa-risk-analysis-latest.md', maxAgeDays: 365 },
@@ -154,8 +158,129 @@ function daysSince(date: Date, now = new Date()): number {
   return Math.floor((now.getTime() - date.getTime()) / millisInDay);
 }
 
+type VendorBaaRow = Record<string, string>;
+
+/**
+ * Parse the small evidence CSV without relying on a runtime CSV dependency.
+ * Quoted fields (including escaped double quotes) and CRLF input are handled so
+ * a comma in a vendor note cannot make an inventory entry appear compliant.
+ */
+function parseEvidenceCsv(contents: string): VendorBaaRow[] {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let field = '';
+  let quoted = false;
+
+  for (let index = 0; index < contents.length; index += 1) {
+    const character = contents[index];
+    if (quoted) {
+      if (character === '"') {
+        if (contents[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += character;
+      }
+      continue;
+    }
+
+    if (character === '"' && field.length === 0) {
+      quoted = true;
+    } else if (character === ',') {
+      record.push(field);
+      field = '';
+    } else if (character === '\n' || character === '\r') {
+      if (character === '\r' && contents[index + 1] === '\n') index += 1;
+      record.push(field);
+      field = '';
+      if (record.some((value) => value.trim().length > 0)) records.push(record);
+      record = [];
+    } else {
+      field += character;
+    }
+  }
+
+  if (quoted) throw new Error('Unclosed quoted field');
+  if (field.length > 0 || record.length > 0) {
+    record.push(field);
+    if (record.some((value) => value.trim().length > 0)) records.push(record);
+  }
+
+  if (records.length < 2) throw new Error('CSV header or rows are missing');
+  const headers = records.shift()!.map((header) => header.trim().replace(/^\uFEFF/, '').toLowerCase());
+  const requiredHeaders = ['vendor', 'handles_phi', 'baa_required', 'baa_status', 'artifact_link'];
+  const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
+  if (missingHeaders.length > 0) {
+    throw new Error(`CSV is missing required columns: ${missingHeaders.join(', ')}`);
+  }
+
+  return records.map((values) => headers.reduce<VendorBaaRow>((row, header, index) => {
+    row[header] = (values[index] || '').trim();
+    return row;
+  }, {}));
+}
+
+function isAffirmative(value: string | undefined): boolean {
+  return /^(?:yes|true|1)$/i.test((value || '').trim());
+}
+
+function evaluateVendorBaaInventory(contents: string, productionLike: boolean): ReadinessCheck {
+  try {
+    const rows = parseEvidenceCsv(contents);
+    const incomplete: string[] = [];
+
+    rows.forEach((row) => {
+      // "potentially" is intentionally treated as PHI-capable: a vendor does
+      // not avoid BAA review merely by using a softer inventory label.
+      const handlesPhi = isAffirmative(row.handles_phi) || /^potentially$/i.test(row.handles_phi || '');
+      if (!handlesPhi || !isAffirmative(row.baa_required)) return;
+
+      const status = (row.baa_status || '').trim().toUpperCase();
+      const hasVerifiedStatus = status === 'VERIFIED' || status === 'ACTIVE';
+      const artifact = (row.artifact_link || '').trim();
+      const hasArtifact = artifact.length > 0 && !/^(?:tbd|todo|pending|none|n\/a|not provided)$/i.test(artifact);
+      if (!hasVerifiedStatus || !hasArtifact) {
+        const reasons = [
+          hasVerifiedStatus ? '' : `status=${status || '(missing)'} (expected VERIFIED or ACTIVE)`,
+          hasArtifact ? '' : 'artifact_link is missing or a placeholder',
+        ].filter(Boolean);
+        incomplete.push(`${row.vendor || '(unnamed vendor)'}: ${reasons.join('; ')}`);
+      }
+    });
+
+    if (incomplete.length > 0) {
+      return check(
+        'vendor:baa-inventory',
+        productionLike ? 'fail' : 'warn',
+        'PHI vendor BAA evidence',
+        `Incomplete BAA evidence for ${incomplete.length} PHI-capable vendor(s): ${incomplete.join(' | ')}`,
+        'For every PHI-capable vendor requiring a BAA, record an explicitly VERIFIED or ACTIVE status and a nonempty evidence/artifact reference before production-like launch.'
+      );
+    }
+
+    return check(
+      'vendor:baa-inventory',
+      'pass',
+      'PHI vendor BAA evidence',
+      'Every PHI-capable vendor marked as requiring a BAA has an explicit VERIFIED/ACTIVE status and evidence reference.'
+    );
+  } catch (error) {
+    return check(
+      'vendor:baa-inventory',
+      productionLike ? 'fail' : 'warn',
+      'PHI vendor BAA evidence',
+      'Vendor BAA inventory could not be parsed safely.',
+      'Fix the CSV schema and provide explicit BAA status plus artifact references for every PHI-capable vendor.'
+    );
+  }
+}
+
 function evaluateEvidenceFiles(repoRoot: string, env: NodeJS.ProcessEnv): ReadinessCheck[] {
   const checks: ReadinessCheck[] = [];
+  const productionLike = isProductionLike(inferEnvironment(env));
   const now = new Date();
   const overrideMaxAgeDays = parseNumber(env.EVIDENCE_MAX_AGE_DAYS, 0);
 
@@ -176,6 +301,9 @@ function evaluateEvidenceFiles(repoRoot: string, env: NodeJS.ProcessEnv): Readin
     }
 
     const contents = fs.readFileSync(fullPath, 'utf8');
+    if (relativePath === VENDOR_BAA_INVENTORY_PATH) {
+      checks.push(evaluateVendorBaaInventory(contents, productionLike));
+    }
     if (/TODO|TBD|PENDING/i.test(contents)) {
       checks.push(
         check(
@@ -262,7 +390,17 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
   const storageProvider = (env.STORAGE_PROVIDER || 'local').toLowerCase();
   const auditRetentionDays = parseNumber(env.AUDIT_LOG_RETENTION_DAYS, 0);
   const backupEnabled = parseBool(env.BACKUP_ENABLED);
+  const backupRetentionDays = parseNumber(env.BACKUP_RETENTION_DAYS, 0);
+  const backupEncryptionEnabled = parseBool(env.BACKUP_ENCRYPTION_ENABLED)
+    || parseBool(env.BACKUP_ENCRYPTED)
+    || Boolean((env.BACKUP_KMS_KEY_ID || env.AWS_BACKUP_KMS_KEY_ID || '').trim());
+  const backupDurable = storageProvider === 's3' && (env.BACKUP_BUCKET || env.AWS_S3_BUCKET || '').trim().length > 0;
+  const restoreEvidence = (env.BACKUP_RESTORE_VERIFIED_AT || env.BACKUP_RESTORE_EVIDENCE_URL || '').trim();
   const virusScanEnabled = parseBool(env.VIRUS_SCAN_ENABLED);
+  const openAiBaaEnabled = parseBool(env.OPENAI_BAA_ENABLED);
+  const openAiApprovedEndpoints = splitOrigins(env.OPENAI_BAA_APPROVED_ENDPOINTS);
+  const openAiApprovedModels = splitOrigins(env.OPENAI_BAA_APPROVED_MODELS);
+  const openAiRawAudioAllowed = parseBool(env.OPENAI_RAW_AUDIO_ALLOWED);
 
   if (productionLike) {
     checks.push(
@@ -431,6 +569,59 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
           'Mock service flags disabled',
           `Enabled mock flags: ${mockFlagsEnabled.join(', ')}`,
           'Disable all mock flags before staging/prod deployment.'
+      )
+  );
+
+  if (openAiBaaEnabled) {
+    const missingScopeEvidence = [
+      openAiApprovedEndpoints.length === 0 ? 'OPENAI_BAA_APPROVED_ENDPOINTS' : '',
+      openAiApprovedModels.length === 0 ? 'OPENAI_BAA_APPROVED_MODELS' : '',
+    ].filter(Boolean);
+    checks.push(
+      missingScopeEvidence.length === 0
+        ? check(
+            'openai:baa-scope',
+            'pass',
+            'OpenAI BAA endpoint/model scope',
+            `Attested endpoints: ${openAiApprovedEndpoints.join(', ')}; models: ${openAiApprovedModels.join(', ')}.`
+          )
+        : check(
+            'openai:baa-scope',
+            productionLike ? 'fail' : 'warn',
+            'OpenAI BAA endpoint/model scope',
+            `OpenAI BAA is enabled without exact scope evidence: ${missingScopeEvidence.join(', ')}.`,
+            'Populate the endpoint and model allowlists only from the executed OpenAI BAA/Healthcare Addendum and organization provisioning evidence.'
+          )
+    );
+  } else {
+    checks.push(
+      check(
+        'openai:baa-scope',
+        'pass',
+        'OpenAI BAA endpoint/model scope',
+        'OpenAI BAA activation is disabled; PHI-capable OpenAI calls remain blocked.'
+      )
+    );
+  }
+
+  const rawAudioScopeIsValid = !openAiRawAudioAllowed
+    || (openAiBaaEnabled && openAiApprovedEndpoints.includes('/v1/audio/transcriptions'));
+  checks.push(
+    rawAudioScopeIsValid
+      ? check(
+          'openai:raw-audio-scope',
+          'pass',
+          'OpenAI raw-audio scope',
+          openAiRawAudioAllowed
+            ? 'Raw audio is separately enabled and /v1/audio/transcriptions is in the attested endpoint allowlist.'
+            : 'OpenAI raw-audio processing is disabled.'
+        )
+      : check(
+          'openai:raw-audio-scope',
+          productionLike ? 'fail' : 'warn',
+          'OpenAI raw-audio scope',
+          'OPENAI_RAW_AUDIO_ALLOWED is enabled without both BAA activation and an attested /v1/audio/transcriptions endpoint.',
+          'Keep OpenAI raw audio disabled when AWS HealthScribe is the approved scribe path, or add exact OpenAI audio endpoint evidence before activation.'
         )
   );
 
@@ -468,7 +659,7 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
       ? check('backup:enabled', 'pass', 'Backup schedule enabled', 'BACKUP_ENABLED=true.')
       : check(
           'backup:enabled',
-          productionLike ? 'warn' : 'warn',
+          productionLike ? 'fail' : 'warn',
           'Backup schedule enabled',
           'BACKUP_ENABLED is false.',
           'Enable encrypted backups and verify restore runbooks.'
@@ -476,14 +667,55 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
   );
 
   checks.push(
-    (env.BACKUP_BUCKET || '').trim().length > 0
-      ? check('backup:bucket', 'pass', 'Backup bucket configured', `BACKUP_BUCKET=${env.BACKUP_BUCKET}`)
+    backupDurable
+      ? check('backup:bucket', 'pass', 'Durable backup storage configured', 'Encrypted object-storage backup target is configured.')
       : check(
           'backup:bucket',
-          productionLike ? 'warn' : 'warn',
-          'Backup bucket configured',
-          'BACKUP_BUCKET is missing.',
+          productionLike ? 'fail' : 'warn',
+          'Durable backup storage configured',
+          'A durable S3 backup target is missing.',
           'Configure an encrypted backup bucket with restricted IAM access.'
+        )
+  );
+
+  checks.push(
+    backupEncryptionEnabled
+      ? check('backup:encryption', 'pass', 'Backup encryption enabled', 'Backup encryption/KMS evidence is configured.')
+      : check(
+          'backup:encryption',
+          productionLike ? 'fail' : 'warn',
+          'Backup encryption enabled',
+          'No backup encryption or KMS evidence is configured.',
+          'Set BACKUP_ENCRYPTION_ENABLED=true for AWS-managed KMS encryption or provide a customer-managed BACKUP_KMS_KEY_ID.'
+        )
+  );
+
+  checks.push(
+    backupRetentionDays > 0
+      ? check(
+          'backup:retention',
+          'pass',
+          'Backup retention window',
+          `BACKUP_RETENTION_DAYS=${backupRetentionDays}. Confirm this value matches the approved data-retention and disaster-recovery policy.`
+        )
+      : check(
+          'backup:retention',
+          productionLike ? 'fail' : 'warn',
+          'Backup retention window',
+          'BACKUP_RETENTION_DAYS is missing or not a positive number.',
+          'Set a positive retention window approved through the risk analysis, applicable medical-record law, customer contracts, and disaster-recovery policy. HIPAA\'s six-year rule applies to required compliance documentation, not automatically to every database backup.'
+        )
+  );
+
+  checks.push(
+    restoreEvidence
+      ? check('backup:restore-evidence', 'pass', 'Backup restore evidence', 'A recent backup restore verification reference is configured.')
+      : check(
+          'backup:restore-evidence',
+          productionLike ? 'fail' : 'warn',
+          'Backup restore evidence',
+          'No backup restore verification evidence is configured.',
+          'Run a restore drill and set BACKUP_RESTORE_VERIFIED_AT or BACKUP_RESTORE_EVIDENCE_URL.'
         )
   );
 
@@ -492,7 +724,7 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
       ? check('uploads:virus-scan', 'pass', 'Virus scanning enabled', 'VIRUS_SCAN_ENABLED=true.')
       : check(
           'uploads:virus-scan',
-          productionLike ? 'warn' : 'warn',
+          productionLike ? 'fail' : 'warn',
           'Virus scanning enabled',
           'VIRUS_SCAN_ENABLED is false.',
           'Enable malware scanning for uploaded files in staging/prod.'

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, type KeyboardEvent } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -1041,6 +1041,7 @@ export function PatientDetailPage() {
   if (loading) {
     return (
       <div className="patient-detail-page">
+        <h1 className="sr-only">Patient Chart</h1>
         <Skeleton variant="card" height={140} />
         <div style={{ marginTop: '1rem' }}>
           <Skeleton variant="card" height={40} />
@@ -1060,7 +1061,7 @@ export function PatientDetailPage() {
           padding: '2rem',
           textAlign: 'center'
         }}>
-          <h3 style={{ color: '#374151', marginBottom: '0.5rem' }}>Patient Not Found</h3>
+          <h1 style={{ color: '#374151', marginBottom: '0.5rem' }}>Patient Not Found</h1>
           <p style={{ color: '#6b7280', marginBottom: '1rem' }}>The requested patient could not be found.</p>
           <button
             type="button"
@@ -1095,8 +1096,25 @@ export function PatientDetailPage() {
     { id: 'timeline', label: 'Timeline', icon: '', count: encounters.length + appointments.length + documents.length + photos.length + referrals.length },
   ].filter((tab) => canViewClinicalPatientData || !CLINICAL_PATIENT_TABS.has(tab.id));
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? tabs.length - 1
+        : event.key === 'ArrowRight'
+          ? (index + 1) % tabs.length
+          : (index - 1 + tabs.length) % tabs.length;
+    const nextTab = tabs[nextIndex];
+    if (!nextTab) return;
+    setActiveTab(nextTab.id);
+    window.setTimeout(() => document.getElementById(`patient-tab-${nextTab.id}`)?.focus(), 0);
+  };
+
   return (
     <div className="patient-detail-page">
+      <h1 className="sr-only">Patient Chart: {patient.lastName}, {patient.firstName}</h1>
       {/* Patient Banner */}
       <PatientBanner
         patient={patient}
@@ -1143,7 +1161,7 @@ export function PatientDetailPage() {
           <span className="icon"></span>
           Face Sheet
         </button>
-        <button type="button" className="ema-action-btn">
+        <button type="button" className="ema-action-btn" onClick={() => setActiveTab('rx-history')}>
           <span className="icon"></span>
           Prescriptions
         </button>
@@ -1287,9 +1305,9 @@ export function PatientDetailPage() {
       </Modal>
 
       {/* Section Header */}
-      <div className="ema-section-header">
+      <h2 className="ema-section-header">
         Patient Chart - {patient.lastName}, {patient.firstName}
-      </div>
+      </h2>
 
       {/* Tabs - EMA Style */}
       <div style={{
@@ -1301,12 +1319,18 @@ export function PatientDetailPage() {
         whiteSpace: 'nowrap',
         WebkitOverflowScrolling: 'touch',
         scrollbarWidth: 'thin',
-      }}>
-        {tabs.map((tab) => (
+      }} role="tablist" aria-label="Patient chart sections">
+        {tabs.map((tab, index) => (
           <button
             key={tab.id}
+            id={`patient-tab-${tab.id}`}
             type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls={`patient-tabpanel-${tab.id}`}
+            tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
             style={{
               padding: '0.75rem 1.5rem',
               background: activeTab === tab.id ? '#ffffff' : 'transparent',
@@ -1342,7 +1366,13 @@ export function PatientDetailPage() {
       </div>
 
       {/* Tab Content */}
-      <div style={{ background: '#ffffff', padding: '1.5rem' }}>
+      <div
+        id={`patient-tabpanel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`patient-tab-${activeTab}`}
+        tabIndex={0}
+        style={{ background: '#ffffff', padding: '1.5rem' }}
+      >
         {activeTab === 'overview' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
             {/* Body Diagram Section - Enhanced Anatomical View */}
@@ -1359,9 +1389,9 @@ export function PatientDetailPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               {/* Vitals Summary */}
               <div>
-                <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+                <h3 className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
                   Latest Vitals
-                </div>
+                </h3>
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(4, 1fr)',
@@ -1444,9 +1474,9 @@ export function PatientDetailPage() {
 
               {/* Recent Activity */}
               <div>
-                <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+                <h3 className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
                   Recent Activity
-                </div>
+                </h3>
                 {encounters.length === 0 && appointments.length === 0 ? (
                   <div style={{
                     background: '#f9fafb',
@@ -1463,7 +1493,15 @@ export function PatientDetailPage() {
                     {encounters.slice(0, 3).map((enc) => (
                       <div
                         key={enc.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open encounter from ${new Date(enc.createdAt).toLocaleDateString()}`}
                         onClick={() => handleViewEncounter(enc.id)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return;
+                          event.preventDefault();
+                          handleViewEncounter(enc.id);
+                        }}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -1526,9 +1564,9 @@ export function PatientDetailPage() {
               {/* AI Scribe Snapshot */}
               {patient && canViewClinicalPatientData && (
                 <div>
-                  <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+                  <h3 className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
                     AI Scribe Snapshot
-                  </div>
+                  </h3>
                   <PatientScribeSnapshot
                     patientId={patient.id}
                     patientName={`${patient.firstName} ${patient.lastName}`}
@@ -1552,9 +1590,9 @@ export function PatientDetailPage() {
 
               {/* Quick Actions */}
               <div>
-                <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+                <h3 className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
                   Quick Actions
-                </div>
+                </h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
                   {[
                     { label: 'New Encounter', icon: '', onClick: handleStartEncounter },
@@ -1596,7 +1634,7 @@ export function PatientDetailPage() {
         {activeTab === 'encounters' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <div className="ema-section-header">Encounters</div>
+              <h3 className="ema-section-header">Encounters</h3>
               <button type="button" className="ema-action-btn" onClick={handleStartEncounter}>
                 <span className="icon">+</span>
                 New Encounter
@@ -1620,14 +1658,15 @@ export function PatientDetailPage() {
               </div>
             ) : (
               <table className="ema-table">
+                <caption className="sr-only">Patient encounters</caption>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Chief Complaint</th>
-                    <th>Provider</th>
-                    <th>Status</th>
-                    <th>Assessment/Plan</th>
-                    <th>Actions</th>
+                    <th scope="col">Date</th>
+                    <th scope="col">Chief Complaint</th>
+                    <th scope="col">Provider</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Assessment/Plan</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1675,7 +1714,7 @@ export function PatientDetailPage() {
         {activeTab === 'appointments' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <div className="ema-section-header">Appointments</div>
+              <h3 className="ema-section-header">Appointments</h3>
               <button type="button" className="ema-action-btn" onClick={() => navigate('/schedule')}>
                 <span className="icon">+</span>
                 Schedule
@@ -1998,8 +2037,10 @@ export function PatientDetailPage() {
         <div className="modal-form">
           <div className="form-row">
             <div className="form-field">
-              <label>Body Location</label>
+              <label htmlFor="patient-photo-body-location">Body Location</label>
               <select
+                id="patient-photo-body-location"
+                name="bodyLocation"
                 value={photoUploadForm.bodyLocation}
                 onChange={(e) =>
                   setPhotoUploadForm((prev) => ({ ...prev, bodyLocation: e.target.value }))
@@ -2015,8 +2056,10 @@ export function PatientDetailPage() {
             </div>
 
             <div className="form-field">
-              <label>Type</label>
+              <label htmlFor="patient-photo-type">Type</label>
               <select
+                id="patient-photo-type"
+                name="photoType"
                 value={photoUploadForm.photoType}
                 onChange={(e) =>
                   setPhotoUploadForm((prev) => ({
@@ -2035,8 +2078,10 @@ export function PatientDetailPage() {
           </div>
 
           <div className="form-field">
-            <label>Description</label>
+            <label htmlFor="patient-photo-description">Description</label>
             <textarea
+              id="patient-photo-description"
+              name="description"
               value={photoUploadForm.description}
               onChange={(e) =>
                 setPhotoUploadForm((prev) => ({ ...prev, description: e.target.value }))
@@ -2047,8 +2092,10 @@ export function PatientDetailPage() {
           </div>
 
           <div className="form-field">
-            <label>Photo *</label>
+            <label htmlFor="patient-photo-file">Photo *</label>
             <input
+              id="patient-photo-file"
+              name="photo"
               ref={photoFileInputRef}
               type="file"
               accept="image/*"
@@ -2056,10 +2103,13 @@ export function PatientDetailPage() {
               style={{ display: 'none' }}
             />
             <input
+              id="patient-photo-camera"
+              name="cameraPhoto"
               ref={photoCameraInputRef}
               type="file"
               accept="image/*"
               capture="environment"
+              aria-label="Take photo with camera"
               onChange={handleProfilePhotoFileSelect}
               style={{ display: 'none' }}
             />
@@ -2171,7 +2221,7 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
   return (
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <div className="ema-section-header">Patient Demographics</div>
+        <h3 className="ema-section-header">Patient Demographics</h3>
         <button type="button" className="ema-action-btn" onClick={onEdit}>
           <span className="icon"></span>
           Edit Demographics
@@ -2369,7 +2419,7 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
   return (
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <div className="ema-section-header">Insurance Information</div>
+        <h3 className="ema-section-header">Insurance Information</h3>
         <button type="button" className="ema-action-btn" onClick={onEdit}>
           <span className="icon"></span>
           Edit Insurance
@@ -2483,7 +2533,7 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <div className="ema-section-header">Orders</div>
+        <h3 className="ema-section-header">Orders</h3>
         <button type="button" className="ema-action-btn" onClick={onOpenOrders}>
           <span className="icon"></span>
           Open Orders
@@ -2507,16 +2557,17 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
         </div>
       ) : (
         <table className="ema-table">
+          <caption className="sr-only">Patient orders</caption>
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Details</th>
-              <th>Result</th>
-              <th>Flag</th>
-              <th>Provider</th>
+              <th scope="col">Date</th>
+              <th scope="col">Type</th>
+              <th scope="col">Status</th>
+              <th scope="col">Priority</th>
+              <th scope="col">Details</th>
+              <th scope="col">Result</th>
+              <th scope="col">Flag</th>
+              <th scope="col">Provider</th>
             </tr>
           </thead>
           <tbody>
@@ -2582,7 +2633,7 @@ function ReferralsTab({
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <div className="ema-section-header">Referrals</div>
+        <h3 className="ema-section-header">Referrals</h3>
         <button type="button" className="ema-action-btn" onClick={onOpenReferrals}>
           <span className="icon">+</span>
           Open Referrals
@@ -2607,14 +2658,15 @@ function ReferralsTab({
         </div>
       ) : (
         <table className="ema-table">
+          <caption className="sr-only">Patient referrals</caption>
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Direction</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Provider / Organization</th>
-              <th>Reason</th>
+              <th scope="col">Date</th>
+              <th scope="col">Direction</th>
+              <th scope="col">Status</th>
+              <th scope="col">Priority</th>
+              <th scope="col">Provider / Organization</th>
+              <th scope="col">Reason</th>
             </tr>
           </thead>
           <tbody>
@@ -2676,7 +2728,7 @@ function MedicalHistoryTab({
 
   return (
     <div style={{ maxWidth: '1200px' }}>
-      <div className="ema-section-header" style={{ marginBottom: '1.5rem' }}>Medical History</div>
+      <h3 className="ema-section-header" style={{ marginBottom: '1.5rem' }}>Medical History</h3>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         {/* Allergies */}
@@ -2967,9 +3019,9 @@ function ClinicalSummaryPreview({
 
   return (
     <div>
-      <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+      <h3 className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
         Diagnoses & Recalls
-      </div>
+      </h3>
       <div style={{
         background: diagnoses.length || recalls.length ? '#f8fafc' : '#f9fafb',
         border: diagnoses.length || recalls.length ? '1px solid #bae6fd' : '1px dashed #d1d5db',
@@ -3086,9 +3138,9 @@ function ClinicalSummaryTab({
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem' }}>
         <div>
-          <div className="ema-section-header" style={{ marginBottom: '0.25rem' }}>
+          <h3 className="ema-section-header" style={{ marginBottom: '0.25rem' }}>
             Diagnoses & Recalls
-          </div>
+          </h3>
           <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
             Encounter diagnoses, melanoma surveillance recalls, and follow-up timing for this patient.
           </div>
@@ -3362,7 +3414,7 @@ function DocumentsTab({
   return (
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <div className="ema-section-header">Documents</div>
+        <h3 className="ema-section-header">Documents</h3>
         <button type="button" className="ema-action-btn" onClick={onUpload}>
           <span className="icon"></span>
           Upload Document
@@ -3386,13 +3438,14 @@ function DocumentsTab({
         </div>
       ) : (
         <table className="ema-table">
+          <caption className="sr-only">Patient documents</caption>
           <thead>
             <tr>
-              <th>Title</th>
-              <th>Category</th>
-              <th>Date Uploaded</th>
-              <th>Uploaded By</th>
-              <th>Actions</th>
+              <th scope="col">Title</th>
+              <th scope="col">Category</th>
+              <th scope="col">Date Uploaded</th>
+              <th scope="col">Uploaded By</th>
+              <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -3467,7 +3520,7 @@ function PhotosTab({
   return (
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <div className="ema-section-header">Clinical Photos</div>
+        <h3 className="ema-section-header">Clinical Photos</h3>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button type="button" className="ema-action-btn" onClick={onOpenWorkbench}>
             Imaging Workbench
@@ -3499,7 +3552,15 @@ function PhotosTab({
           {photos.map((photo) => (
             <div
               key={photo.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`View clinical photo from ${photo.bodyLocation || 'unknown location'}, ${new Date(photo.createdAt).toLocaleDateString()}`}
               onClick={() => onView(photo)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onView(photo);
+              }}
               style={{
                 background: '#fff',
                 border: '1px solid #e5e7eb',
@@ -3518,7 +3579,7 @@ function PhotosTab({
               <div style={{ aspectRatio: '1', overflow: 'hidden', background: '#f3f4f6' }}>
                 <img
                   src={getPhotoUrl(photo)}
-                  alt={photo.description || 'Patient photo'}
+                  alt={photo.description || `Clinical photo of ${photo.bodyLocation || 'patient lesion'}`}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               </div>
@@ -3562,9 +3623,9 @@ function AccessNeedsPreview({
 
   return (
     <div>
-      <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+      <h3 className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
         Access Needs
-      </div>
+      </h3>
       <div style={{
         background: hasNeeds ? '#eff6ff' : '#f9fafb',
         border: hasNeeds ? '1px solid #93c5fd' : '1px solid #e5e7eb',
@@ -3633,7 +3694,7 @@ function AccessibilityTab({ patient, onEdit }: { patient: Patient; onEdit: () =>
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
         <div>
-          <div className="ema-section-header">Access Needs & Accommodations</div>
+          <h3 className="ema-section-header">Access Needs & Accommodations</h3>
           <div style={{ color: '#6b7280', fontSize: '0.875rem', marginTop: '0.35rem' }}>
             Documentation for requested communication support, accessible room setup, mobility assistance, service animal access, and companion communication.
           </div>
@@ -3820,10 +3881,12 @@ function EditDemographicsModal({
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+            <label htmlFor="edit-demographics-first-name" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
               First Name
             </label>
             <input
+              id="edit-demographics-first-name"
+              name="firstName"
               type="text"
               value={formData.firstName}
               onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
@@ -3832,10 +3895,12 @@ function EditDemographicsModal({
             />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+            <label htmlFor="edit-demographics-last-name" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
               Last Name
             </label>
             <input
+              id="edit-demographics-last-name"
+              name="lastName"
               type="text"
               value={formData.lastName}
               onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
@@ -3844,10 +3909,12 @@ function EditDemographicsModal({
             />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+            <label htmlFor="edit-demographics-dob" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
               Date of Birth
             </label>
             <input
+              id="edit-demographics-dob"
+              name="dob"
               type="date"
               value={formData.dob}
               onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
@@ -3855,10 +3922,12 @@ function EditDemographicsModal({
             />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+            <label htmlFor="edit-demographics-sex" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
               Sex
             </label>
             <select
+              id="edit-demographics-sex"
+              name="sex"
               value={formData.sex}
               onChange={(e) => setFormData({ ...formData, sex: e.target.value })}
               style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
@@ -3870,10 +3939,12 @@ function EditDemographicsModal({
             </select>
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+            <label htmlFor="edit-demographics-phone" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
               Phone
             </label>
             <input
+              id="edit-demographics-phone"
+              name="phone"
               type="tel"
               value={formData.phone}
               onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
@@ -3881,10 +3952,12 @@ function EditDemographicsModal({
             />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+            <label htmlFor="edit-demographics-email" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
               Email
             </label>
             <input
+              id="edit-demographics-email"
+              name="email"
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -3897,10 +3970,12 @@ function EditDemographicsModal({
           <h3 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem', color: '#374151' }}>Address</h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', marginBottom: '1rem' }}>
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+              <label htmlFor="edit-demographics-address" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                 Street Address
               </label>
               <input
+                id="edit-demographics-address"
+                name="address"
                 type="text"
                 value={formData.address}
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
@@ -3909,10 +3984,12 @@ function EditDemographicsModal({
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+                <label htmlFor="edit-demographics-city" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                   City
                 </label>
                 <input
+                  id="edit-demographics-city"
+                  name="city"
                   type="text"
                   value={formData.city}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
@@ -3920,10 +3997,12 @@ function EditDemographicsModal({
                 />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+                <label htmlFor="edit-demographics-state" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                   State
                 </label>
                 <input
+                  id="edit-demographics-state"
+                  name="state"
                   type="text"
                   value={formData.state}
                   onChange={(e) => setFormData({ ...formData, state: e.target.value })}
@@ -3932,10 +4011,12 @@ function EditDemographicsModal({
                 />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+                <label htmlFor="edit-demographics-zip" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                   ZIP
                 </label>
                 <input
+                  id="edit-demographics-zip"
+                  name="zip"
                   type="text"
                   value={formData.zip}
                   onChange={(e) => setFormData({ ...formData, zip: e.target.value })}
@@ -3951,10 +4032,12 @@ function EditDemographicsModal({
           <PharmacySearch selectedPharmacy={selectedPharmacy} onSelect={handlePharmacySelect} />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+              <label htmlFor="edit-demographics-pharmacy-name" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                 Pharmacy Name
               </label>
               <input
+                id="edit-demographics-pharmacy-name"
+                name="pharmacyName"
                 type="text"
                 value={formData.pharmacyName}
                 onChange={(e) => setFormData({ ...formData, pharmacyName: e.target.value, pharmacyId: '', pharmacyNcpdp: '' })}
@@ -3963,10 +4046,12 @@ function EditDemographicsModal({
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+              <label htmlFor="edit-demographics-pharmacy-phone" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                 Pharmacy Phone
               </label>
               <input
+                id="edit-demographics-pharmacy-phone"
+                name="pharmacyPhone"
                 type="tel"
                 value={formData.pharmacyPhone}
                 onChange={(e) => setFormData({ ...formData, pharmacyPhone: e.target.value })}
@@ -3974,10 +4059,12 @@ function EditDemographicsModal({
               />
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+              <label htmlFor="edit-demographics-pharmacy-address" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                 Pharmacy Address
               </label>
               <input
+                id="edit-demographics-pharmacy-address"
+                name="pharmacyAddress"
                 type="text"
                 value={formData.pharmacyAddress}
                 onChange={(e) => setFormData({ ...formData, pharmacyAddress: e.target.value })}
@@ -4135,8 +4222,10 @@ function EditAccessibilityModal({
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem' }}>
               {ACCESSIBILITY_COMMUNICATION_OPTIONS.map((option) => (
-                <label key={option.value} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                <label key={option.value} htmlFor={`edit-accessibility-communication-${option.value}`} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
                   <input
+                    id={`edit-accessibility-communication-${option.value}`}
+                    name="communicationSupport"
                     type="checkbox"
                     checked={(formData.communicationSupport || []).includes(option.value)}
                     onChange={() => toggleArrayValue('communicationSupport', option.value)}
@@ -4146,34 +4235,41 @@ function EditAccessibilityModal({
               ))}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
-              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
-                <span>
+              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                <label htmlFor="edit-accessibility-interpreter-needed">
                   <input
+                    id="edit-accessibility-interpreter-needed"
+                    name="interpreterNeeded"
                     type="checkbox"
                     checked={!!formData.interpreterNeeded}
                     onChange={(event) => setBoolean('interpreterNeeded', event.target.checked)}
                     style={{ marginRight: '0.5rem' }}
                   />
                   Interpreter needed
-                </span>
+                </label>
+                <label htmlFor="edit-accessibility-interpreter-language">Interpreter language or modality</label>
                 <input
+                  id="edit-accessibility-interpreter-language"
+                  name="interpreterLanguage"
                   type="text"
                   value={formData.interpreterLanguage || ''}
                   onChange={(event) => setText('interpreterLanguage', event.target.value)}
                   placeholder="Language or modality"
                   style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
                 />
-              </label>
-              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
-                Sensory considerations
+              </div>
+              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                <label htmlFor="edit-accessibility-sensory">Sensory considerations</label>
                 <input
+                  id="edit-accessibility-sensory"
+                  name="sensoryConsiderations"
                   type="text"
                   value={formData.sensoryConsiderations || ''}
                   onChange={(event) => setText('sensoryConsiderations', event.target.value)}
                   placeholder="Example: low-stimulation room, dim lights"
                   style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
                 />
-              </label>
+              </div>
             </div>
           </section>
 
@@ -4182,32 +4278,40 @@ function EditAccessibilityModal({
               Mobility, Room, and Equipment
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem', marginBottom: '0.75rem' }}>
-              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+              <label htmlFor="edit-accessibility-mobility" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
                 <input
+                  id="edit-accessibility-mobility"
+                  name="mobilityAssistance"
                   type="checkbox"
                   checked={!!formData.mobilityAssistance}
                   onChange={(event) => setBoolean('mobilityAssistance', event.target.checked)}
                 />
                 Mobility or transfer assistance requested
               </label>
-              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+              <label htmlFor="edit-accessibility-room" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
                 <input
+                  id="edit-accessibility-room"
+                  name="accessibleRoomRequired"
                   type="checkbox"
                   checked={!!formData.accessibleRoomRequired}
                   onChange={(event) => setBoolean('accessibleRoomRequired', event.target.checked)}
                 />
                 Accessible room required
               </label>
-              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+              <label htmlFor="edit-accessibility-service-animal" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
                 <input
+                  id="edit-accessibility-service-animal"
+                  name="serviceAnimal"
                   type="checkbox"
                   checked={!!formData.serviceAnimal}
                   onChange={(event) => setBoolean('serviceAnimal', event.target.checked)}
                 />
                 Service animal may accompany patient
               </label>
-              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+              <label htmlFor="edit-accessibility-extended-visit" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
                 <input
+                  id="edit-accessibility-extended-visit"
+                  name="extendedVisit"
                   type="checkbox"
                   checked={!!formData.extendedVisit}
                   onChange={(event) => setBoolean('extendedVisit', event.target.checked)}
@@ -4215,9 +4319,11 @@ function EditAccessibilityModal({
                 Extended visit time
               </label>
             </div>
-            <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151', maxWidth: '240px', marginBottom: '0.75rem' }}>
-              Extra minutes
+            <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151', maxWidth: '240px', marginBottom: '0.75rem' }}>
+              <label htmlFor="edit-accessibility-extra-minutes">Extra minutes</label>
               <input
+                id="edit-accessibility-extra-minutes"
+                name="extraVisitMinutes"
                 type="number"
                 min={0}
                 max={240}
@@ -4225,11 +4331,13 @@ function EditAccessibilityModal({
                 onChange={(event) => setFormData((current) => ({ ...current, extraVisitMinutes: Number(event.target.value) || undefined }))}
                 style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
               />
-            </label>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem' }}>
               {ACCESSIBILITY_EQUIPMENT_OPTIONS.map((option) => (
-                <label key={option.value} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                <label key={option.value} htmlFor={`edit-accessibility-equipment-${option.value}`} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
                   <input
+                    id={`edit-accessibility-equipment-${option.value}`}
+                    name="accessibleEquipment"
                     type="checkbox"
                     checked={(formData.accessibleEquipment || []).includes(option.value)}
                     onChange={() => toggleArrayValue('accessibleEquipment', option.value)}
@@ -4245,56 +4353,66 @@ function EditAccessibilityModal({
               Support Person / Companion
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem' }}>
-              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
-                Name
+              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                <label htmlFor="edit-accessibility-support-name">Name</label>
                 <input
+                  id="edit-accessibility-support-name"
+                  name="supportPersonName"
                   type="text"
                   value={formData.supportPerson?.name || ''}
                   onChange={(event) => updateSupportPerson('name', event.target.value)}
                   style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
                 />
-              </label>
-              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
-                Relationship
+              </div>
+              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                <label htmlFor="edit-accessibility-support-relationship">Relationship</label>
                 <input
+                  id="edit-accessibility-support-relationship"
+                  name="supportPersonRelationship"
                   type="text"
                   value={formData.supportPerson?.relationship || ''}
                   onChange={(event) => updateSupportPerson('relationship', event.target.value)}
                   style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
                 />
-              </label>
-              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
-                Phone
+              </div>
+              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                <label htmlFor="edit-accessibility-support-phone">Phone</label>
                 <input
+                  id="edit-accessibility-support-phone"
+                  name="supportPersonPhone"
                   type="tel"
                   value={formData.supportPerson?.phone || ''}
                   onChange={(event) => updateSupportPerson('phone', event.target.value)}
                   style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
                 />
-              </label>
-              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
-                Companion communication needs
+              </div>
+              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                <label htmlFor="edit-accessibility-support-communication">Companion communication needs</label>
                 <input
+                  id="edit-accessibility-support-communication"
+                  name="supportPersonCommunicationNeeds"
                   type="text"
                   value={formData.supportPerson?.communicationNeeds || ''}
                   onChange={(event) => updateSupportPerson('communicationNeeds', event.target.value)}
                   placeholder="Example: large print, interpreter"
                   style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
                 />
-              </label>
+              </div>
             </div>
           </section>
 
-          <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
-            Staff notes
+          <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+            <label htmlFor="edit-accessibility-notes">Staff notes</label>
             <textarea
+              id="edit-accessibility-notes"
+              name="notes"
               value={formData.notes || ''}
               onChange={(event) => setText('notes', event.target.value)}
               rows={3}
               placeholder="Document patient-requested accommodation details, staff prep notes, or review context."
               style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px', resize: 'vertical' }}
             />
-          </label>
+          </div>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
@@ -4423,8 +4541,10 @@ function EditInsuranceModal({
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.85rem' }}>
               <div>
-                <label style={labelStyle}>Insurance Carrier</label>
+                <label htmlFor="edit-insurance-carrier" style={labelStyle}>Insurance Carrier</label>
                 <input
+                  id="edit-insurance-carrier"
+                  name="insurance"
                   type="text"
                   value={formData.insurance}
                   onChange={(event) => updateField('insurance', event.target.value)}
@@ -4433,8 +4553,10 @@ function EditInsuranceModal({
                 />
               </div>
               <div>
-                <label style={labelStyle}>Payer ID</label>
+                <label htmlFor="edit-insurance-payer-id" style={labelStyle}>Payer ID</label>
                 <input
+                  id="edit-insurance-payer-id"
+                  name="insurancePayerId"
                   type="text"
                   value={formData.insurancePayerId}
                   onChange={(event) => updateField('insurancePayerId', event.target.value)}
@@ -4443,8 +4565,10 @@ function EditInsuranceModal({
                 />
               </div>
               <div>
-                <label style={labelStyle}>Member ID</label>
+                <label htmlFor="edit-insurance-member-id" style={labelStyle}>Member ID</label>
                 <input
+                  id="edit-insurance-member-id"
+                  name="insuranceId"
                   type="text"
                   value={formData.insuranceId}
                   onChange={(event) => updateField('insuranceId', event.target.value)}
@@ -4453,8 +4577,10 @@ function EditInsuranceModal({
                 />
               </div>
               <div>
-                <label style={labelStyle}>Group Number</label>
+                <label htmlFor="edit-insurance-group-number" style={labelStyle}>Group Number</label>
                 <input
+                  id="edit-insurance-group-number"
+                  name="insuranceGroupNumber"
                   type="text"
                   value={formData.insuranceGroupNumber}
                   onChange={(event) => updateField('insuranceGroupNumber', event.target.value)}
@@ -4476,8 +4602,10 @@ function EditInsuranceModal({
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.85rem' }}>
               <div>
-                <label style={labelStyle}>RxBIN</label>
+                <label htmlFor="edit-insurance-rx-bin" style={labelStyle}>RxBIN</label>
                 <input
+                  id="edit-insurance-rx-bin"
+                  name="rxBin"
                   type="text"
                   value={formData.rxBin}
                   onChange={(event) => updateField('rxBin', event.target.value)}
@@ -4486,8 +4614,10 @@ function EditInsuranceModal({
                 />
               </div>
               <div>
-                <label style={labelStyle}>RxPCN</label>
+                <label htmlFor="edit-insurance-rx-pcn" style={labelStyle}>RxPCN</label>
                 <input
+                  id="edit-insurance-rx-pcn"
+                  name="rxPcn"
                   type="text"
                   value={formData.rxPcn}
                   onChange={(event) => updateField('rxPcn', event.target.value)}
@@ -4496,8 +4626,10 @@ function EditInsuranceModal({
                 />
               </div>
               <div>
-                <label style={labelStyle}>Rx Group</label>
+                <label htmlFor="edit-insurance-rx-group" style={labelStyle}>Rx Group</label>
                 <input
+                  id="edit-insurance-rx-group"
+                  name="rxGroup"
                   type="text"
                   value={formData.rxGroup}
                   onChange={(event) => updateField('rxGroup', event.target.value)}
@@ -4775,9 +4907,9 @@ function TimelineTab({
 
   return (
     <div style={{ maxWidth: '1200px' }}>
-      <div className="ema-section-header" style={{ marginBottom: '1.5rem' }}>
+      <h3 className="ema-section-header" style={{ marginBottom: '1.5rem' }}>
         Patient Timeline
-      </div>
+      </h3>
 
       {/* Filter Controls */}
       <div style={{

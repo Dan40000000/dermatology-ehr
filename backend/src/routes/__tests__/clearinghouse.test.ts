@@ -50,13 +50,22 @@ app.use('/api/clearinghouse', clearinghouseRouter);
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
 const billingMock = billingService as jest.Mocked<typeof billingService>;
+const originalEnv = process.env;
 
 beforeEach(() => {
+  process.env = { ...originalEnv, NODE_ENV: 'test' };
+  delete process.env.DEPLOYMENT_ENV;
+  delete process.env.APP_ENV;
+  delete process.env.RAILWAY_ENVIRONMENT;
   queryMock.mockReset();
   auditMock.mockReset();
   billingMock.submitClaim.mockReset();
   billingMock.submitClaim.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+});
+
+afterAll(() => {
+  process.env = originalEnv;
 });
 
 describe('Clearinghouse Routes - Claim Submission', () => {
@@ -136,6 +145,19 @@ describe('Clearinghouse Routes - Claim Submission', () => {
       expect(res.body).toHaveProperty('controlNumber');
       expect(['accepted', 'rejected', 'pending']).toContain(res.body.status);
       expect(auditMock).toHaveBeenCalled();
+    });
+
+    it('fails closed in production before reading or mutating a claim', async () => {
+      process.env.NODE_ENV = 'production';
+
+      const res = await request(app)
+        .post('/api/clearinghouse/submit-claim')
+        .send({ claimId: '11111111-1111-4111-8111-111111111111' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/not configured/i);
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(billingMock.submitClaim).not.toHaveBeenCalled();
     });
 
     it('should handle database errors', async () => {

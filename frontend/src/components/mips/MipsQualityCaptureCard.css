@@ -1,0 +1,30 @@
+.mips-capture-card { margin-top: 1rem; padding: 1rem; border: 1px solid #647c8d; border-radius: 0.75rem; background: #f7fbfd; color: #16324f; }
+.mips-capture-card__heading { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+.mips-capture-card__heading span { color: #0f5c78; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.mips-capture-card__heading h3 { margin: 0.18rem 0 0; }
+.mips-capture-card__heading > strong { padding: 0.35rem 0.55rem; border: 1px solid #765713; border-radius: 0.4rem; color: #765713; background: #fffaf0; font-size: 0.76rem; }
+.mips-capture-card > p { color: #425466; }
+.mips-capture-message { min-height: 1.25rem; margin-bottom: 0.55rem; color: #047857; font-weight: 650; }
+.mips-capture-message--error { color: #b91c1c; }
+.mips-capture-message:focus-visible { outline: 3px solid #005a78; outline-offset: 2px; }
+.mips-capture-card details { margin-top: 0.65rem; border: 1px solid #647c8d; border-radius: 0.55rem; background: #fff; }
+.mips-capture-card summary { min-height: 2.75rem; padding: 0.72rem; color: #084b63; font-weight: 750; cursor: pointer; }
+.mips-capture-card summary:focus-visible,
+.mips-capture-card input:focus-visible,
+.mips-capture-card select:focus-visible,
+.mips-capture-card button:focus-visible { outline: 3px solid #005a78; outline-offset: 2px; }
+.mips-capture-card fieldset { margin: 0; padding: 0.9rem; border: 0; border-top: 1px solid #dce5eb; }
+.mips-capture-card legend { padding-top: 0.8rem; font-weight: 750; }
+.mips-capture-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
+.mips-capture-grid label { display: grid; gap: 0.3rem; min-width: 0; font-weight: 700; }
+.mips-capture-grid label span { color: #425466; font-size: 0.8rem; font-weight: 500; }
+.mips-capture-grid input,
+.mips-capture-grid select { width: 100%; min-height: 2.65rem; padding: 0.5rem 0.6rem; border: 1px solid #647c8d; border-radius: 0.4rem; background: #fff; color: #16324f; font: inherit; }
+.mips-capture-confirm { display: flex; gap: 0.55rem; align-items: flex-start; margin-top: 0.85rem; font-weight: 700; line-height: 1.4; }
+.mips-capture-confirm input { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; margin-top: 0.1rem; accent-color: #0f5c78; }
+.mips-capture-help { color: #425466; font-size: 0.82rem; line-height: 1.45; }
+.mips-capture-card button { min-height: 2.75rem; padding: 0.55rem 0.85rem; border: 1px solid #084b63; border-radius: 0.45rem; background: #0f5c78; color: #fff; font: inherit; font-weight: 750; cursor: pointer; }
+.mips-capture-card button:disabled { opacity: 0.6; cursor: not-allowed; }
+@media (max-width: 850px) { .mips-capture-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .mips-capture-grid { grid-template-columns: 1fr; } .mips-capture-card__heading { flex-direction: column; } .mips-capture-card button { width: 100%; } }
+@media (forced-colors: active) { .mips-capture-card, .mips-capture-card details, .mips-capture-grid input, .mips-capture-grid select, .mips-capture-card button { border-color: currentColor; forced-color-adjust: auto; } }

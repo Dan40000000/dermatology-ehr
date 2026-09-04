@@ -59,14 +59,11 @@ describe('sentry helpers', () => {
   });
 
   it('skips init when DSN is missing', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const { initSentry } = await loadSentry({ monitoring: { sentryDsn: '' } });
 
     initSentry();
 
     expect(sentryMock.init).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
   });
 
   it('returns null in beforeSend for test environment', async () => {
@@ -119,12 +116,12 @@ describe('sentry helpers', () => {
     expect(redacted.request.headers.cookie).toBe('[Redacted]');
     expect(redacted.request.headers['x-api-key']).toBe('[Redacted]');
     expect(redacted.request.query_string).toBe('[Redacted]');
-    expect(redacted.request.data).toEqual({ redacted: { ssn: '123-45-6789' } });
+    expect(redacted.request.data).toEqual({ redacted: { ssn: 'redacted:123-45-6789' } });
     expect(redacted.exception.values[0].value).toBe('redacted:SSN 123-45-6789');
     expect(redacted.exception.values[0].stacktrace.frames[0].vars.ssn).toBe('[Redacted]');
     expect(redacted.breadcrumbs[0].message).toBe('redacted:SSN 123');
-    expect(redacted.contexts.user).toEqual({ redacted: { ssn: '123-45-6789' } });
-    expect(redacted.extra).toEqual({ redacted: { ssn: '123-45-6789' } });
+    expect(redacted.contexts.user).toEqual({ redacted: { ssn: 'redacted:123-45-6789' } });
+    expect(redacted.extra).toEqual({ redacted: { ssn: 'redacted:123-45-6789' } });
   });
 
   it('captures exceptions with redacted context', async () => {
@@ -133,7 +130,7 @@ describe('sentry helpers', () => {
     captureException(new Error('boom'), { ssn: '123-45-6789' });
 
     expect(sentryMock.setContext).toHaveBeenCalledWith('custom', {
-      redacted: { ssn: '123-45-6789' },
+      redacted: { ssn: 'redacted:123-45-6789' },
     });
     expect(sentryMock.captureException).toHaveBeenCalled();
     const capturedError = sentryMock.captureException.mock.calls[0][0];
@@ -149,7 +146,7 @@ describe('sentry helpers', () => {
       message: 'redacted:SSN 123',
       category: 'test',
       level: 'info',
-      data: { redacted: { ssn: '123-45-6789' } },
+      data: { redacted: { ssn: 'redacted:123-45-6789' } },
     });
   });
 

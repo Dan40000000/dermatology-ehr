@@ -32,14 +32,14 @@ Current known limits:
 - **Browser-based recording** using MediaRecorder API
 - **Real-time audio visualization** with waveform display
 - **Patient consent workflow** (verbal, written, or electronic)
-- **HIPAA-compliant** encrypted storage
+- **Encrypted-storage support** intended for a HIPAA-aligned deployment; verify production configuration and vendor agreements separately
 - **Automatic PHI detection** and masking
 
 ### 2. AI Transcription
 - **Configurable ambient transcription provider** with support for OpenAI transcription models, AWS HealthScribe, and vendor adapter scaffolding
 - **Speaker diarization/inference** to differentiate doctor vs patient when provider output supports it
 - **Timestamp-aligned segments** for context
-- **Falls back to mock** if API keys not configured
+- **Fails closed outside explicit synthetic tests** if an approved transcription provider is unavailable
 - **Live transcription** over WebSocket when enabled
 
 ### 3. Clinical Note Generation

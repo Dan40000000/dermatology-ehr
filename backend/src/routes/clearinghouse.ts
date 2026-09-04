@@ -6,6 +6,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { billingService } from "../services/billingService";
+import { assertSyntheticVendorMockAllowed } from "../services/vendorMockGuard";
 
 const submitClaimSchema = z.object({
   claimId: z.string().min(1),
@@ -83,6 +84,12 @@ export const clearinghouseRouter = Router();
 clearinghouseRouter.post("/submit-claim", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = submitClaimSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  try {
+    assertSyntheticVendorMockAllowed("Clearinghouse claim submission");
+  } catch {
+    return res.status(503).json({ error: "Live clearinghouse submission is not configured" });
+  }
 
   const tenantId = req.user!.tenantId;
   const { claimId, batchId } = parsed.data;

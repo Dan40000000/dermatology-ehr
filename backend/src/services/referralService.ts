@@ -15,6 +15,7 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { auditLog } from './audit';
 import crypto from 'crypto';
+import { assertSyntheticVendorMockAllowed } from './vendorMockGuard';
 
 // =====================================================
 // TYPES & INTERFACES
@@ -335,6 +336,8 @@ export class ReferralService {
     data: ProviderUpdateData,
     userId: string
   ): Promise<string> {
+    assertSyntheticVendorMockAllowed(`Referral ${data.channel} communication`);
+
     const communicationId = crypto.randomUUID();
 
     // Log the communication

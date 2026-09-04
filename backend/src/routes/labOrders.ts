@@ -483,19 +483,37 @@ router.post('/:id/submit', async (req: AuthedRequest, res: Response) => {
       }
     );
 
-    // Send HL7 message (mock)
+    // Send HL7 message through the configured transport adapter. A transport
+    // failure must leave the order unsent; an ACK is only authoritative when
+    // the adapter reports success.
     const sendResult = await HL7Service.sendHL7Message(
       hl7Message,
       order.api_endpoint || 'mock://lab-interface',
       order.vendor_name
     );
 
+    if (!sendResult.success) {
+      const transportError = sendResult.error || 'HL7 transport failed';
+      await pool.query(
+        `UPDATE lab_orders
+         SET status = $1, transmission_status = $2, transmission_error = $3, updated_at = NOW()
+         WHERE id = $4 AND tenant_id = $5`,
+        ['pending', 'error', transportError, id, req.user!.tenantId]
+      );
+
+      logger.warn('Lab order was not transmitted', { orderId: id, vendor: order.vendor_name });
+      return res.status(502).json({
+        success: false,
+        error: transportError,
+      });
+    }
+
     // Update order status
     await pool.query(
       `UPDATE lab_orders
       SET status = $1, hl7_sent_at = NOW(), hl7_message_id = $2
-      WHERE id = $3`,
-      ['sent', sendResult.acknowledgment?.substring(0, 50), id]
+      WHERE id = $3 AND tenant_id = $4`,
+      ['sent', sendResult.acknowledgment?.substring(0, 50), id, req.user!.tenantId]
     );
 
     logger.info('Lab order submitted', { orderId: id, vendor: order.vendor_name });

@@ -383,9 +383,9 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
     <>
       <header className="ema-header" role="banner">
         <div className="ema-header-left">
-          <h1 className="ema-brand">
+          <div className="ema-brand">
             Dermatology DEMO<br />Office
-          </h1>
+          </div>
         </div>
 
         <div className="ema-header-center">
@@ -444,7 +444,7 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
             <LanguageSwitcher />
             {user && (
               <div className="ema-user-info" role="group" aria-label="User information">
-                <span className="ema-user-name" aria-label={`Logged in as ${user.fullName}`}>
+                <span className="ema-user-name">
                   {user.fullName}
                 </span>
                 <label htmlFor="role-select" className="sr-only">User role</label>

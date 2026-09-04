@@ -417,9 +417,10 @@ input, select, textarea {
 }
 
 input:focus, select:focus, textarea:focus {
-  outline: none;
-  border-color: var(--primary-500);
-  box-shadow: 0 0 0 3px var(--primary-100);
+  outline: 3px solid #075985;
+  outline-offset: 2px;
+  border-color: #075985;
+  box-shadow: none;
 }
 
 input:disabled, select:disabled, textarea:disabled {
@@ -2556,6 +2557,7 @@ pre {
 
 .modal-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
@@ -2984,6 +2986,15 @@ pre {
   background: transparent;
 }
 
+.calendar-slot[role="button"]:focus-visible,
+.calendar-appointment[role="button"]:focus-visible,
+.month-view-day[role="button"]:focus-visible,
+.month-view-appointment[role="button"]:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: -2px;
+  z-index: 200;
+}
+
 .calendar-appointment {
   position: absolute;
   top: 0;
@@ -3331,6 +3342,35 @@ pre {
   justify-content: space-between;
 }
 
+.month-view-day-open {
+  align-self: flex-start;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--gray-700);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.month-view-day-open:hover,
+.month-view-day-open:focus-visible {
+  background: var(--primary-50);
+  color: var(--primary-700);
+  outline: 2px solid var(--primary-600);
+  outline-offset: 1px;
+}
+
+.month-view-day.today .month-view-day-open {
+  color: var(--primary-700);
+  font-weight: 700;
+}
+
 .month-view-day-count {
   background: var(--primary-600);
   color: var(--white);
@@ -3395,8 +3435,10 @@ pre {
   font-weight: 600;
   padding: 0.25rem 0.375rem;
   text-align: center;
+  width: 100%;
   cursor: pointer;
   background: var(--primary-100);
+  border: 0;
   border-radius: 3px;
   transition: all 0.15s ease;
 }
@@ -8853,9 +8895,13 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  border: 0;
+  margin: 0;
+  padding: 0;
 }
 
-.claims-page .status-actions label {
+.claims-page .status-actions legend {
+  padding: 0;
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--gray-600);
@@ -10739,11 +10785,42 @@ pre {
 /* === EMA Action Buttons Row === */
 .ema-action-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
   background: #ffffff;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.encounter-section-switcher {
+  flex-wrap: wrap;
+}
+
+.encounter-exam-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .ema-action-bar,
+  .modal-footer,
+  .encounter-section-switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ema-action-bar > *,
+  .modal-footer > *,
+  .encounter-section-switcher > * {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .encounter-exam-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ema-action-btn {
@@ -10785,6 +10862,7 @@ pre {
   background: #e0f2fe;
   color: #0369a1;
   padding: 0.625rem 1rem;
+  margin: 0;
   font-size: 0.9375rem;
   font-weight: 600;
   border-left: 4px solid #0284c7;
@@ -10808,6 +10886,13 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+fieldset.ema-filter-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .ema-filter-label {
@@ -10874,9 +10959,31 @@ pre {
   color: #374151;
   background: #f9fafb;
   border-bottom: 2px solid #e5e7eb;
-  cursor: pointer;
   user-select: none;
   white-space: nowrap;
+}
+
+.ema-table-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 36px;
+  margin: -0.35rem -0.5rem;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ema-table-sort-button:hover,
+.ema-table-sort-button:focus-visible {
+  background: #e5e7eb;
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
 }
 
 .ema-table th:hover {
@@ -10904,8 +11011,9 @@ pre {
 }
 
 .ema-table td a {
-  color: #3b82f6;
-  text-decoration: none;
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
 }
 
 .ema-table td a:hover {
@@ -10914,8 +11022,9 @@ pre {
 
 /* Patient name link styling like ModMed */
 .ema-patient-link {
-  color: #3b82f6;
-  text-decoration: none;
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
   font-weight: 500;
 }
 
@@ -12150,11 +12259,138 @@ pre {
   accent-color: #3b82f6;
 }
 
-/* Hide old navigation elements */
+/* The mobile navigation is rendered by MainNav and is hidden until the
+   responsive breakpoint. Keep the drawer out of the accessibility tree while
+   closed and expose a generous, keyboard-friendly hit area when open. */
 .mobile-menu-btn,
 .mobile-nav-overlay,
 .mobile-nav-drawer {
-  display: none !important;
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-nav {
+    display: block;
+    position: relative;
+    z-index: 1100;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    overflow: visible;
+    background: transparent;
+    transform: none;
+    transition: none;
+  }
+
+  .mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 44px;
+    min-width: 44px;
+    margin: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgba(255,255,255,0.35);
+    border-radius: var(--radius-sm, 0.375rem);
+    background: var(--primary-700, #1e3a8a);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .mobile-menu-icon {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .mobile-menu-icon span {
+    display: block;
+    width: 22px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+
+  .mobile-menu-label { font-weight: 600; }
+
+  .mobile-nav-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1198;
+    border: 0;
+    background: rgba(15, 23, 42, 0.62);
+    opacity: 1;
+    pointer-events: auto;
+    transition: none;
+    cursor: pointer;
+  }
+
+  .mobile-nav-drawer {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 1199;
+    width: min(88vw, 360px);
+    overflow-y: auto;
+    padding-bottom: 2rem;
+    background: #fff;
+    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.28);
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+  }
+
+  .mobile-nav-drawer.is-open { transform: translateX(0); }
+  .mobile-nav-drawer[aria-hidden="true"] { visibility: hidden; pointer-events: none; }
+  .mobile-nav-drawer[aria-hidden="false"] { visibility: visible; pointer-events: auto; }
+
+  .mobile-nav-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 56px;
+    padding: 0.75rem 1rem;
+    color: #fff;
+    background: #1e3a8a;
+  }
+
+  .mobile-nav-title { font-size: 1.125rem; font-weight: 700; }
+  .mobile-nav-close {
+    min-width: 44px;
+    min-height: 44px;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 1.75rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .mobile-nav-item { border-bottom: 1px solid #e5e7eb; }
+  .mobile-nav-link,
+  .mobile-nav-submenu summary,
+  .mobile-nav-submenu-link {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.75rem 1rem;
+    color: #1f2937;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .mobile-nav-link.active { color: #1e3a8a; background: #dbeafe; }
+  .mobile-nav-submenu { border-top: 1px solid #f3f4f6; }
+  .mobile-nav-submenu summary { justify-content: space-between; color: #475569; font-size: 0.875rem; font-weight: 500; }
+  .mobile-nav-submenu-items { padding: 0 0 0.5rem 1rem; }
+  .mobile-nav-submenu-link { min-height: 40px; padding-block: 0.5rem; font-size: 0.875rem; font-weight: 500; }
+}
+
+@media (min-width: 769px) {
+  .mobile-nav { display: none; }
 }
 
 /* Footer adjustments */
@@ -12430,8 +12666,8 @@ pre {
 }
 
 .ema-pagination-btn.active {
-  background: #3b82f6;
-  border-color: #3b82f6;
+  background: #1d4ed8;
+  border-color: #1d4ed8;
   color: #ffffff;
   font-weight: 600;
 }

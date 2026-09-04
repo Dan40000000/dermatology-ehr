@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
 import type { CSSProperties } from 'react';
 import { formatDateOnly } from '../../utils/dateOnly';
 import './PatientLookupSelect.css';
@@ -144,8 +144,12 @@ export function PatientLookupSelect({
   const generatedId = useId();
   const inputId = id ? `${id}-search` : `${generatedId}-patient-search`;
   const selectId = id || `${generatedId}-patient-select`;
+  const labelId = `${inputId}-label`;
+  const listboxId = `${inputId}-listbox`;
+  const statusId = `${inputId}-status`;
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
 
   const normalizedPatients = useMemo(
     () =>
@@ -204,14 +208,60 @@ export function PatientLookupSelect({
         ? selectedPatient.name
         : '';
   const hasSelectedPatientValue = Boolean(value) && (!includeAllOption || value !== allValue);
+  const includesAllResult = includeAllOption && Boolean(query) && allLabel.toLowerCase().includes(search.toLowerCase());
 
   const shouldShowResults =
     !disabled &&
     !loading &&
-    filteredPatients.length > 0 &&
+    (filteredPatients.length > 0 || includesAllResult) &&
     (Boolean(query) || focused || (showInitialResults && !includeAllOption && !value));
 
   const visibleResults = filteredPatients.slice(0, maxResults);
+  const resultCount = visibleResults.length + (includesAllResult ? 1 : 0);
+  const getResultId = (index: number) => `${listboxId}-option-${index}`;
+  const effectiveActiveIndex = shouldShowResults && resultCount > 0
+    ? Math.min(Math.max(activeIndex, 0), resultCount - 1)
+    : -1;
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!shouldShowResults && resultCount > 0) setFocused(true);
+      if (resultCount > 0) {
+        setActiveIndex((current) => event.key === 'ArrowDown'
+          ? (current + 1 + resultCount) % resultCount
+          : (current - 1 + resultCount) % resultCount);
+      }
+      return;
+    }
+    if (event.key === 'Home' && resultCount > 0) {
+      event.preventDefault();
+      setActiveIndex(0);
+      return;
+    }
+    if (event.key === 'End' && resultCount > 0) {
+      event.preventDefault();
+      setActiveIndex(resultCount - 1);
+      return;
+    }
+    if (event.key === 'Enter' && effectiveActiveIndex >= 0) {
+      event.preventDefault();
+      if (includesAllResult && effectiveActiveIndex === 0) {
+        handleChange(allValue);
+      } else {
+        const patient = visibleResults[effectiveActiveIndex - (includesAllResult ? 1 : 0)];
+        if (patient) handleChange(patient.id);
+      }
+      setFocused(false);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setFocused(false);
+      setActiveIndex(-1);
+    }
+  };
+
   const visibleSelectOptions = useMemo(() => {
     const options = filteredPatients.slice(0, maxSelectOptions);
     if (selectedPatient && !options.some((patient) => patient.id === selectedPatient.id)) {
@@ -226,7 +276,7 @@ export function PatientLookupSelect({
       style={style}
     >
       {label && (
-        <label className={`patient-lookup__label ${labelClassName}`.trim()} htmlFor={hideSelect ? inputId : selectId}>
+        <label id={labelId} className={`patient-lookup__label ${labelClassName}`.trim()} htmlFor={inputId}>
           {label}
           {required && <span className="patient-lookup__required"> *</span>}
         </label>
@@ -238,12 +288,26 @@ export function PatientLookupSelect({
           type="text"
           className={`patient-lookup__search ${inputClassName}`.trim()}
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          onFocus={() => setFocused(true)}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setActiveIndex(0);
+          }}
+          onFocus={() => {
+            setFocused(true);
+            setActiveIndex(0);
+          }}
           onBlur={() => window.setTimeout(() => setFocused(false), 120)}
+          onKeyDown={handleSearchKeyDown}
           placeholder={loading ? 'Loading patients...' : searchPlaceholder}
           disabled={disabled || loading}
-          aria-label={`Search ${label.toLowerCase()}`}
+          role="combobox"
+          aria-labelledby={label ? labelId : undefined}
+          aria-label={label ? `Search ${label.toLowerCase()}` : 'Search patients'}
+          aria-autocomplete="list"
+          aria-expanded={shouldShowResults}
+          aria-controls={shouldShowResults ? listboxId : undefined}
+          aria-activedescendant={effectiveActiveIndex >= 0 ? getResultId(effectiveActiveIndex) : undefined}
+          aria-describedby={helperText ? `${statusId} ${inputId}-helper` : statusId}
           autoComplete="off"
         />
         {hasSelectedPatientValue && !disabled && !required && (
@@ -262,36 +326,47 @@ export function PatientLookupSelect({
       )}
 
       {shouldShowResults && (
-        <div className="patient-lookup__results" role="list" aria-label={`${label} search results`}>
-          {includeAllOption && query && allLabel.toLowerCase().includes(search.toLowerCase()) && (
+        <div id={listboxId} className="patient-lookup__results" role="listbox" aria-label={`${label} search results`}>
+          {includesAllResult && (
             <button
               type="button"
-              className={`patient-lookup__result ${value === allValue ? 'is-selected' : ''}`}
+              id={getResultId(0)}
+              role="option"
+              tabIndex={-1}
+              aria-selected={value === allValue}
+              className={`patient-lookup__result ${value === allValue ? 'is-selected' : ''} ${effectiveActiveIndex === 0 ? 'is-active' : ''}`}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => handleChange(allValue)}
+              onClick={() => { handleChange(allValue); setFocused(false); }}
             >
               <span>{allLabel}</span>
             </button>
           )}
-          {visibleResults.map((patient) => (
-            <button
-              key={patient.id}
-              type="button"
-              className={`patient-lookup__result ${patient.id === value ? 'is-selected' : ''}`}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => handleChange(patient.id)}
-            >
-              <span className="patient-lookup__result-name">{patient.name}</span>
-              <span className="patient-lookup__result-meta">
-                {patient.dateOfBirth ? `DOB ${formatDate(patient.dateOfBirth)}` : patient.mrn ? `MRN ${patient.mrn}` : ''}
-              </span>
-            </button>
-          ))}
+          {visibleResults.map((patient, index) => {
+            const optionIndex = index + (includesAllResult ? 1 : 0);
+            return (
+              <button
+                key={patient.id}
+                type="button"
+                id={getResultId(optionIndex)}
+                role="option"
+                tabIndex={-1}
+                aria-selected={patient.id === value}
+                className={`patient-lookup__result ${patient.id === value ? 'is-selected' : ''} ${effectiveActiveIndex === optionIndex ? 'is-active' : ''}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => { handleChange(patient.id); setFocused(false); }}
+              >
+                <span className="patient-lookup__result-name">{patient.name}</span>
+                <span className="patient-lookup__result-meta">
+                  {patient.dateOfBirth ? `DOB ${formatDate(patient.dateOfBirth)}` : patient.mrn ? `MRN ${patient.mrn}` : ''}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
 
       {!loading && query && filteredPatients.length === 0 && (
-        <div className="patient-lookup__empty">{emptyLabel}</div>
+        <div className="patient-lookup__empty" role="status" aria-live="polite">{emptyLabel}</div>
       )}
 
       {!hideSelect && (
@@ -302,6 +377,7 @@ export function PatientLookupSelect({
           disabled={disabled || loading}
           required={required}
           className={`patient-lookup__select ${selectClassName}`.trim()}
+          aria-label={`${label} selection`}
         >
           {includeAllOption && <option value={allValue}>{allLabel}</option>}
           {!includeAllOption && <option value="">{loading ? 'Loading patients...' : placeholder}</option>}
@@ -315,7 +391,10 @@ export function PatientLookupSelect({
         </select>
       )}
 
-      {helperText && <div className="patient-lookup__helper">{helperText}</div>}
+      <div id={statusId} className="sr-only" role="status" aria-live="polite">
+        {loading ? 'Loading patients' : shouldShowResults ? `${resultCount} patient${resultCount === 1 ? '' : 's'} available` : ''}
+      </div>
+      {helperText && <div id={`${inputId}-helper`} className="patient-lookup__helper">{helperText}</div>}
     </div>
   );
 }

@@ -206,8 +206,8 @@ describe('DocumentsPage', () => {
     const uploadModal = await screen.findByTestId('modal-upload-document');
     const uploadScope = within(uploadModal);
     const selects = uploadScope.getAllByRole('combobox');
-    fireEvent.change(selects[0], { target: { value: 'patient-1' } });
-    fireEvent.change(selects[1], { target: { value: 'lab-result' } });
+    fireEvent.change(uploadScope.getByLabelText('Patient selection'), { target: { value: 'patient-1' } });
+    fireEvent.change(selects[2], { target: { value: 'lab-result' } });
     fireEvent.change(uploadScope.getByPlaceholderText('Document title'), { target: { value: 'New Lab' } });
     fireEvent.change(uploadScope.getByPlaceholderText('Optional description...'), { target: { value: 'Uploaded' } });
 
@@ -272,10 +272,10 @@ describe('DocumentsPage', () => {
     );
 
     await screen.findByText('Document Management');
-    const patientLookup = screen.getByRole('textbox', { name: 'Search patient filter' });
+    const patientLookup = screen.getByLabelText('Patient filter');
     fireEvent.focus(patientLookup);
     fireEvent.change(patientLookup, { target: { value: 'Ana' } });
-    fireEvent.click(screen.getByRole('button', { name: /Derm, Ana/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Derm, Ana/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Lab Result Templates' }));
 
     await waitFor(() =>

@@ -27,6 +27,16 @@ export interface HL7Message {
   raw: string;
 }
 
+/** Message types implemented by the processor and queue. */
+export const SUPPORTED_HL7_MESSAGE_TYPES = new Set([
+  "ADT^A04",
+  "ADT^A08",
+  "SIU^S12",
+  "SIU^S13",
+  "SIU^S15",
+  "ORU^R01",
+]);
+
 export interface MSHSegment {
   fieldSeparator: string;
   encodingCharacters: string;
@@ -262,9 +272,22 @@ export function parseHL7Message(rawMessage: string): HL7Message {
     throw new Error("Invalid HL7 message: MSH segment is required");
   }
 
+  const messageType = segments.MSH.messageType || "";
+  const messageControlId = segments.MSH.messageControlId || "";
+
+  // MSH-10 is the sender's idempotency/control key. Never invent one: a
+  // missing value must be rejected before an ACK or queue write can occur.
+  if (messageType && !messageControlId) {
+    throw new Error("Invalid HL7 message: MSH-10 message control ID is required");
+  }
+
+  if (messageType && !SUPPORTED_HL7_MESSAGE_TYPES.has(messageType)) {
+    throw new Error(`Unsupported HL7 message type: ${messageType}`);
+  }
+
   return {
-    messageType: segments.MSH.messageType || '',
-    messageControlId: segments.MSH.messageControlId || crypto.randomUUID(),
+    messageType,
+    messageControlId,
     sendingApplication: segments.MSH.sendingApplication,
     sendingFacility: segments.MSH.sendingFacility,
     receivingApplication: segments.MSH.receivingApplication,
@@ -617,6 +640,14 @@ export function validateHL7Message(message: HL7Message): { valid: boolean; error
 
   if (!message.segments.MSH) {
     errors.push("MSH segment is required");
+  }
+
+  if (message.segments.MSH && !message.segments.MSH.messageControlId) {
+    errors.push("MSH-10 message control ID is required");
+  }
+
+  if (message.messageType && !SUPPORTED_HL7_MESSAGE_TYPES.has(message.messageType)) {
+    errors.push(`Unsupported message type: ${message.messageType}`);
   }
 
   // Validate message type specific requirements

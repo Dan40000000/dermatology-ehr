@@ -35,14 +35,20 @@ test.describe('Schedule Write Smoke', () => {
 
       const listResponse = await fetch('/api/appointments');
       const listPayload = await listResponse.json() as { appointments?: Array<{ scheduledStart?: string; status?: string }> };
+      const summaryResponse = await fetch('/api/command-center/summary');
+      const summaryPayload = await summaryResponse.json() as { practiceTimeZone?: string };
       const updatedAppointment = listPayload.appointments?.find((item) => item.status === 'checked_in');
       const formattedLabel = updatedAppointment?.scheduledStart
-        ? new Date(updatedAppointment.scheduledStart).toLocaleString('en-US', {
-            month: 'short',
+        ? new Intl.DateTimeFormat('en-US', {
+            timeZone: summaryPayload.practiceTimeZone || 'America/Denver',
+            weekday: 'long',
+            month: 'long',
             day: 'numeric',
-            hour: '2-digit',
+            year: 'numeric',
+            hour: 'numeric',
             minute: '2-digit',
-          })
+            hour12: true,
+          }).format(new Date(updatedAppointment.scheduledStart))
         : '';
 
       return {

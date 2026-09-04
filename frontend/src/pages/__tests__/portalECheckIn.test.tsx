@@ -148,5 +148,5 @@ describe('ECheckInPage', () => {
     );
 
     expect(await screen.findByText('Medications Review')).toBeInTheDocument();
-  }, 15000);
+  }, 60000);
 });

@@ -222,8 +222,6 @@ textarea[aria-invalid="true"]:focus {
 
 /* === Accessible Modals === */
 [role="dialog"][aria-modal="true"]:not(.modal) {
-  position: fixed;
-  inset: 0;
   z-index: 999;
 }
 

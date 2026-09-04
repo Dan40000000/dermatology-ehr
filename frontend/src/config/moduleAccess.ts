@@ -112,6 +112,11 @@ const PATIENT_ACCESS_ROLES: Role[] = [
   'compliance_officer',
 ];
 
+// MIPS reporting is intentionally narrower than the tenant-configurable
+// quality module. Tenant settings may remove one of these roles, but may not
+// grant reporting access to a clinical capture-only role such as MA.
+export const MIPS_REPORTING_ROLES: Role[] = ['admin', 'provider', 'manager', 'compliance_officer'];
+
 export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
   home: [...PATIENT_ACCESS_ROLES, ...BASIC_WORKFORCE_ROLES],
   schedule: PATIENT_ACCESS_ROLES,
@@ -306,6 +311,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/referrals', module: 'referrals' },
   { path: '/protocols', module: 'protocols' },
   { path: '/help', module: 'help' },
+  { path: '/mips-readiness', module: 'quality' },
   { path: '/quality', module: 'quality' },
   { path: '/reports', module: 'reports' },
   { path: '/analytics', module: 'analytics' },
@@ -320,6 +326,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/documents', module: 'documents' },
   { path: '/photos', module: 'photos' },
   { path: '/body-diagram', module: 'body_diagram' },
+  { path: '/lesion-tracking', module: 'body_diagram' },
   { path: '/handouts', module: 'handouts' },
   { path: '/mail', module: 'mail' },
   { path: '/direct', module: 'direct' },
@@ -440,6 +447,18 @@ export function canAccessModuleWithSettings(
   if (roles.length === 0) return false;
   const access = resolveModuleAccess(settings);
   return roles.some((candidate) => access[moduleKey].includes(candidate));
+}
+
+export function canAccessMipsReportingWithSettings(
+  role: Role | Role[] | undefined,
+  settings?: ModuleAccessSettings | null,
+): boolean {
+  if (!role) return false;
+  const roles = (Array.isArray(role) ? role : [role])
+    .map(normalizeAccessRole)
+    .filter((candidate): candidate is Role => Boolean(candidate));
+  if (roles.length === 0 || !roles.some((candidate) => MIPS_REPORTING_ROLES.includes(candidate))) return false;
+  return canAccessModuleWithSettings(roles, 'quality', settings);
 }
 
 export function canAccessCommandCenterSection(

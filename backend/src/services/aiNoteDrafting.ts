@@ -1,10 +1,10 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
-import { deidentifyTextForExternalAi } from "../utils/aiPhiGuard";
+import { deidentifyTextForExternalAi, isClinicalAiProviderAllowed } from "../utils/aiPhiGuard";
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 import { meteredOpenAiFetch, OpenAiSpendGuardError } from "../utils/openAiSpendGuard";
-import { redactValue } from "../utils/phiRedaction";
+import { redactValue, safeErrorCode } from "../utils/phiRedaction";
 
 /**
  * AI Note Drafting Service
@@ -25,7 +25,27 @@ interface NoteDraftRequest {
   priorEncounterIds?: string[];
 }
 
-interface NoteDraft {
+export type QuickNoteSection =
+  | "chiefComplaint"
+  | "hpi"
+  | "ros"
+  | "exam"
+  | "assessmentPlan";
+
+export interface NoteSectionEvidence {
+  source: "chief_complaint" | "brief_notes";
+  excerpt: string;
+}
+
+export interface NoteSectionReview {
+  status: "drafted" | "not_documented";
+  confidence: number;
+  evidence: NoteSectionEvidence[];
+}
+
+export type QuickNoteSectionReview = Record<QuickNoteSection, NoteSectionReview>;
+
+export interface NoteDraft {
   chiefComplaint: string;
   hpi: string;
   ros: string;
@@ -33,9 +53,78 @@ interface NoteDraft {
   assessmentPlan: string;
   confidenceScore: number;
   suggestions: any[];
+  sectionReview: QuickNoteSectionReview;
+}
+
+const QUICK_NOTE_SECTIONS: QuickNoteSection[] = [
+  "chiefComplaint",
+  "hpi",
+  "ros",
+  "exam",
+  "assessmentPlan",
+];
+
+type QuickNoteSource = NoteSectionEvidence["source"];
+
+function normalizeEvidenceForComparison(value: string): string {
+  return value.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function normalizeDocumentedContent(value: unknown): string {
+  const content = toSafeString(value);
+  if (!content || /^(not documented|not available|n\/a|none)$/i.test(content)) {
+    return "";
+  }
+  return content;
+}
+
+function getQuickSourceText(source: QuickNoteSource, inputs: {
+  chiefComplaint?: string;
+  briefNotes?: string;
+}): string {
+  return source === "chief_complaint"
+    ? toSafeString(inputs.chiefComplaint)
+    : toSafeString(inputs.briefNotes);
+}
+
+function validateQuickEvidence(
+  rawEvidence: unknown,
+  inputs: { chiefComplaint?: string; briefNotes?: string },
+): NoteSectionEvidence[] {
+  if (!Array.isArray(rawEvidence)) {
+    return [];
+  }
+
+  const validated: NoteSectionEvidence[] = [];
+  const seen = new Set<string>();
+  for (const item of rawEvidence) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Record<string, unknown>;
+    const source = candidate.source;
+    if (source !== "chief_complaint" && source !== "brief_notes") continue;
+    const excerpt = toSafeString(candidate.excerpt);
+    if (!excerpt) continue;
+
+    const normalizedExcerpt = normalizeEvidenceForComparison(excerpt);
+    const normalizedSource = normalizeEvidenceForComparison(getQuickSourceText(source, inputs));
+    if (!normalizedSource || !normalizedSource.includes(normalizedExcerpt)) continue;
+
+    const key = `${source}:${normalizedExcerpt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    validated.push({
+      source,
+      excerpt: excerpt.slice(0, 1000),
+    });
+  }
+
+  return validated.slice(0, 8);
 }
 
 function toSafeErrorMessage(error: unknown): string {
+  if (process.env.NODE_ENV !== "test") {
+    return safeErrorCode(error);
+  }
   if (error instanceof Error) {
     return String(redactValue(error.message));
   }
@@ -49,6 +138,15 @@ function toSafeErrorMessage(error: unknown): string {
 
 function toSafeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeConfidence(value: unknown, fallback = 0.5): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return Math.max(0, Math.min(1, fallback));
+  }
+  const normalized = numeric > 1 && numeric <= 100 ? numeric / 100 : numeric;
+  return Math.max(0, Math.min(1, normalized));
 }
 
 function escapeRegExp(value: string): string {
@@ -100,6 +198,19 @@ function logAINoteDraftingError(message: string, error: unknown): void {
   });
 }
 
+function isSyntheticAiRuntime(): boolean {
+  const nodeEnv = String(process.env.NODE_ENV || "development").trim().toLowerCase();
+  if (nodeEnv === "production") {
+    return false;
+  }
+  if (nodeEnv === "test" || nodeEnv === "development" || nodeEnv === "demo") {
+    return true;
+  }
+
+  const mode = String(process.env.CLINICAL_AI_MODE || process.env.AI_MODE || "").trim().toLowerCase();
+  return mode === "mock" || mode === "demo";
+}
+
 export class AINoteDraftingService {
   private openaiApiKey: string | undefined;
   private anthropicApiKey: string | undefined;
@@ -144,7 +255,14 @@ export class AINoteDraftingService {
       );
 
       // Generate draft using AI
-      if (this.openaiApiKey) {
+      const openAiAllowed = Boolean(
+        this.openaiApiKey && isClinicalAiProviderAllowed("openai", this.openaiApiKey)
+      );
+      const anthropicAllowed = Boolean(
+        this.anthropicApiKey && isClinicalAiProviderAllowed("anthropic", this.anthropicApiKey)
+      );
+
+      if (openAiAllowed) {
         return await this.generateWithOpenAI(
           request,
           tenantId,
@@ -153,7 +271,7 @@ export class AINoteDraftingService {
           template,
           priorNotes
         );
-      } else if (this.anthropicApiKey) {
+      } else if (anthropicAllowed) {
         return await this.generateWithAnthropic(
           request,
           patientContext,
@@ -161,10 +279,11 @@ export class AINoteDraftingService {
           template,
           priorNotes
         );
-      } else {
-        // Return mock draft for development
+      } else if (isSyntheticAiRuntime()) {
         return this.getMockDraft(request, template);
       }
+
+      throw new Error("AI note drafting provider is unavailable");
     } catch (error) {
       logAINoteDraftingError("Note draft generation error", error);
       if (error instanceof Error) {
@@ -210,11 +329,37 @@ export class AINoteDraftingService {
   private async getProviderWritingStyle(providerId: string, tenantId: string) {
     const result = await pool.query(
       `select
-        soap_note
-       from encounters
-       where provider_id = $1 and tenant_id = $2
-       and soap_note is not null
-       order by encounter_date desc
+        concat_ws(E'\\n\\n',
+          case when nullif(trim(e.chief_complaint), '') is not null
+            then 'Chief Complaint: ' || trim(e.chief_complaint) end,
+          case when nullif(trim(e.hpi), '') is not null
+            then 'HPI: ' || trim(e.hpi) end,
+          case when nullif(trim(e.ros), '') is not null
+            then 'ROS: ' || trim(e.ros) end,
+          case when nullif(trim(e.exam), '') is not null
+            then 'Exam: ' || trim(e.exam) end,
+          case when nullif(trim(e.assessment_plan), '') is not null
+            then 'Assessment and Plan: ' || trim(e.assessment_plan) end
+        ) as soap_note,
+        coalesce(e.updated_at, e.created_at) as encounter_date
+       from encounters e
+       join providers p
+         on p.id = e.provider_id
+        and p.tenant_id = e.tenant_id
+       join users u
+         on u.id = p.user_id
+        and u.tenant_id = p.tenant_id
+       where u.id = $1
+         and e.tenant_id = $2
+         and e.status in ('final', 'signed', 'locked', 'finalized', 'completed', 'closed')
+         and (
+           nullif(trim(e.chief_complaint), '') is not null
+           or nullif(trim(e.hpi), '') is not null
+           or nullif(trim(e.ros), '') is not null
+           or nullif(trim(e.exam), '') is not null
+           or nullif(trim(e.assessment_plan), '') is not null
+         )
+       order by coalesce(e.updated_at, e.created_at) desc
        limit 10`,
       [providerId, tenantId]
     );
@@ -231,24 +376,41 @@ export class AINoteDraftingService {
     tenantId: string
   ) {
     if (encounterIds.length === 0) {
-      // Get last 3 encounters if not specified
-      const result = await pool.query(
-        `select soap_note, encounter_date, chief_complaint
-         from encounters
-         where patient_id = $1 and tenant_id = $2
-         and soap_note is not null
-         order by encounter_date desc
-         limit 3`,
-        [patientId, tenantId]
-      );
-      return result.rows;
+      // Do not silently import recent chart history into a current-encounter
+      // draft. Callers must explicitly opt in to prior encounter IDs.
+      return [];
     }
 
     const result = await pool.query(
-      `select soap_note, encounter_date, chief_complaint
-       from encounters
-       where id = any($1) and tenant_id = $2`,
-      [encounterIds, tenantId]
+      `select
+        concat_ws(E'\\n\\n',
+          case when nullif(trim(e.chief_complaint), '') is not null
+            then 'Chief Complaint: ' || trim(e.chief_complaint) end,
+          case when nullif(trim(e.hpi), '') is not null
+            then 'HPI: ' || trim(e.hpi) end,
+          case when nullif(trim(e.ros), '') is not null
+            then 'ROS: ' || trim(e.ros) end,
+          case when nullif(trim(e.exam), '') is not null
+            then 'Exam: ' || trim(e.exam) end,
+          case when nullif(trim(e.assessment_plan), '') is not null
+            then 'Assessment and Plan: ' || trim(e.assessment_plan) end
+        ) as soap_note,
+        coalesce(e.updated_at, e.created_at) as encounter_date,
+        e.chief_complaint
+       from encounters e
+       where e.id = any($1)
+         and e.tenant_id = $2
+         and e.patient_id = $3
+         and e.status in ('final', 'signed', 'locked', 'finalized', 'completed', 'closed')
+         and (
+           nullif(trim(e.chief_complaint), '') is not null
+           or nullif(trim(e.hpi), '') is not null
+           or nullif(trim(e.ros), '') is not null
+           or nullif(trim(e.exam), '') is not null
+           or nullif(trim(e.assessment_plan), '') is not null
+         )
+       order by coalesce(e.updated_at, e.created_at) desc`,
+      [encounterIds, tenantId, patientId]
     );
     return result.rows;
   }
@@ -276,11 +438,12 @@ export class AINoteDraftingService {
       },
       body: JSON.stringify({
         model,
+        store: false,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: 0.7,
+        temperature: 0.2,
         max_tokens: 2000,
       }),
     }, {
@@ -305,7 +468,10 @@ export class AINoteDraftingService {
     const content = data.choices[0].message.content;
 
     // Parse structured response
-    return this.parseNoteDraft(content);
+    return this.parseNoteDraft(content, {
+      chiefComplaint: sanitizePromptTextForModel(request.chiefComplaint, patientContext),
+      briefNotes: sanitizePromptTextForModel(request.briefNotes, patientContext),
+    });
   }
 
   /**
@@ -348,22 +514,35 @@ export class AINoteDraftingService {
 
     const content = data.content[0].text;
 
-    return this.parseNoteDraft(content);
+    return this.parseNoteDraft(content, {
+      chiefComplaint: sanitizePromptTextForModel(request.chiefComplaint, patientContext),
+      briefNotes: sanitizePromptTextForModel(request.briefNotes, patientContext),
+    });
   }
 
   /**
    * Build system prompt for AI
    */
   private buildSystemPrompt(providerStyle: any[], template: any): string {
-    let prompt = `You are an expert dermatology clinical documentation assistant. Your role is to help providers create accurate, professional, and comprehensive clinical notes.
+    let prompt = `You are an expert dermatology clinical documentation assistant. Your role is to help providers create accurate, professional, problem-oriented clinical note drafts from the current encounter inputs.
 
 Guidelines:
 1. Use clear, professional medical terminology
-2. Be concise yet thorough
+2. Be concise and include only clinically relevant facts supported by the current encounter inputs
 3. Follow SOAP note format
-4. Include relevant dermatological examination details
+4. Include dermatological examination details only when they are explicitly supported
 5. Document findings objectively
-6. Provide actionable assessment and plan`;
+6. Provide an actionable assessment and plan only when supported by the current encounter inputs
+
+SOURCE AND SAFETY RULES:
+- Use only facts in the current Chief Complaint and Provider Brief Notes supplied with this request.
+- Omit small talk, scheduling, billing, administrative, and other nonclinical conversation.
+- Never invent normal ROS, normal examination findings, a diagnosis, medication, order, procedure, consent, code, or follow-up.
+- Templates and provider style affect wording and structure only; they are not clinical evidence and must not add facts.
+- Use an empty string for every unsupported section.
+- Keep the Assessment/Plan problem-oriented when the current inputs support a problem and plan.
+- Every drafted section must include evidence quoted exactly from the current Chief Complaint or Provider Brief Notes (case-insensitive, whitespace-normalized matching is used for validation).
+- If a section has no exact supporting evidence, preserve it only as a low-confidence draft for clinician review (confidence at most 0.5); it is never safe for automatic application.`;
 
     if (providerStyle && providerStyle.length > 0) {
       const sanitizedStyleSamples = providerStyle
@@ -390,7 +569,14 @@ ${sanitizedTemplate}`;
   "hpi": "string",
   "ros": "string",
   "exam": "string",
-  "assessmentPlan": "string"
+  "assessmentPlan": "string",
+  "sectionReview": {
+    "chiefComplaint": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "chief_complaint|brief_notes", "excerpt": "exact source excerpt" }] },
+    "hpi": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "chief_complaint|brief_notes", "excerpt": "exact source excerpt" }] },
+    "ros": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "chief_complaint|brief_notes", "excerpt": "exact source excerpt" }] },
+    "exam": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "chief_complaint|brief_notes", "excerpt": "exact source excerpt" }] },
+    "assessmentPlan": { "status": "drafted|not_documented", "confidence": 0.0, "evidence": [{ "source": "chief_complaint|brief_notes", "excerpt": "exact source excerpt" }] }
+  }
 }`;
 
     return prompt;
@@ -414,17 +600,17 @@ Age/Sex: ${age}/${sex}
 
     const medicalHistory = sanitizePromptTextForModel(patientContext.medical_history, patientContext);
     if (medicalHistory) {
-      prompt += `\nMedical History: ${medicalHistory}`;
+      prompt += `\nReference history (do not document unless explicitly confirmed in current inputs): ${medicalHistory}`;
     }
 
     const allergies = sanitizePromptTextForModel(patientContext.allergies, patientContext);
     if (allergies) {
-      prompt += `\nAllergies: ${allergies}`;
+      prompt += `\nReference allergies (do not document unless explicitly confirmed in current inputs): ${allergies}`;
     }
 
     const medications = sanitizePromptTextForModel(patientContext.current_medications, patientContext);
     if (medications) {
-      prompt += `\nCurrent Medications: ${medications}`;
+      prompt += `\nReference medications (do not document unless explicitly confirmed in current inputs): ${medications}`;
     }
 
     if (request.chiefComplaint) {
@@ -436,7 +622,7 @@ Age/Sex: ${age}/${sex}
     }
 
     if (priorNotes && priorNotes.length > 0) {
-      prompt += `\n\nRecent Visit Context:`;
+      prompt += `\n\nRecent Visit Context (style/reference only; do not import facts unless explicitly confirmed in current inputs):`;
       priorNotes.forEach((note, index) => {
         const priorComplaint = sanitizePromptTextForModel(note?.chief_complaint || "", patientContext);
         if (priorComplaint) {
@@ -445,7 +631,7 @@ Age/Sex: ${age}/${sex}
       });
     }
 
-    prompt += `\n\nPlease generate a comprehensive dermatology note based on this information.`;
+    prompt += `\n\nPlease generate a problem-oriented dermatology note using only the current encounter inputs. Leave unsupported sections empty.`;
 
     return prompt;
   }
@@ -453,25 +639,30 @@ Age/Sex: ${age}/${sex}
   /**
    * Parse AI response into structured note draft
    */
-  private parseNoteDraft(aiResponse: string): NoteDraft {
+  private parseNoteDraft(
+    aiResponse: string,
+    sourceInputs: { chiefComplaint?: string; briefNotes?: string } = {},
+  ): NoteDraft {
     try {
       // Try to extract JSON from response
       const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          chiefComplaint: parsed.chiefComplaint || "",
-          hpi: parsed.hpi || "",
-          ros: parsed.ros || "",
-          exam: parsed.exam || "",
-          assessmentPlan: parsed.assessmentPlan || "",
-          confidenceScore: 0.85,
-          suggestions: [],
-        };
+        return this.buildReviewedDraft(
+          {
+            chiefComplaint: normalizeDocumentedContent(parsed?.chiefComplaint),
+            hpi: normalizeDocumentedContent(parsed?.hpi),
+            ros: normalizeDocumentedContent(parsed?.ros),
+            exam: normalizeDocumentedContent(parsed?.exam),
+            assessmentPlan: normalizeDocumentedContent(parsed?.assessmentPlan),
+          },
+          parsed?.sectionReview,
+          sourceInputs,
+        );
       }
 
       // Fallback: parse as structured text
-      return this.parsePlainTextNote(aiResponse);
+      return this.parsePlainTextNote(aiResponse, sourceInputs);
     } catch (error) {
       logAINoteDraftingError("Failed to parse AI response", error);
       throw new Error("Invalid AI response format");
@@ -481,15 +672,16 @@ Age/Sex: ${age}/${sex}
   /**
    * Parse plain text note into sections
    */
-  private parsePlainTextNote(text: string): NoteDraft {
+  private parsePlainTextNote(
+    text: string,
+    sourceInputs: { chiefComplaint?: string; briefNotes?: string } = {},
+  ): NoteDraft {
     const sections = {
       chiefComplaint: "",
       hpi: "",
       ros: "",
       exam: "",
       assessmentPlan: "",
-      confidenceScore: 0.75,
-      suggestions: [],
     };
 
     // Simple pattern matching for SOAP sections
@@ -499,13 +691,62 @@ Age/Sex: ${age}/${sex}
     const examMatch = text.match(/(?:Exam|Physical Exam)[:\n]+(.*?)(?=\n\n|Assessment|$)/is);
     const apMatch = text.match(/(?:Assessment|A\/P|Assessment and Plan)[:\n]+(.*?)$/is);
 
-    if (ccMatch && ccMatch[1]) sections.chiefComplaint = ccMatch[1].trim();
-    if (hpiMatch && hpiMatch[1]) sections.hpi = hpiMatch[1].trim();
-    if (rosMatch && rosMatch[1]) sections.ros = rosMatch[1].trim();
-    if (examMatch && examMatch[1]) sections.exam = examMatch[1].trim();
-    if (apMatch && apMatch[1]) sections.assessmentPlan = apMatch[1].trim();
+    if (ccMatch && ccMatch[1]) sections.chiefComplaint = normalizeDocumentedContent(ccMatch[1]);
+    if (hpiMatch && hpiMatch[1]) sections.hpi = normalizeDocumentedContent(hpiMatch[1]);
+    if (rosMatch && rosMatch[1]) sections.ros = normalizeDocumentedContent(rosMatch[1]);
+    if (examMatch && examMatch[1]) sections.exam = normalizeDocumentedContent(examMatch[1]);
+    if (apMatch && apMatch[1]) sections.assessmentPlan = normalizeDocumentedContent(apMatch[1]);
 
-    return sections;
+    return this.buildReviewedDraft(sections, undefined, sourceInputs);
+  }
+
+  private buildReviewedDraft(
+    sections: Record<QuickNoteSection, string>,
+    rawSectionReview: unknown,
+    sourceInputs: { chiefComplaint?: string; briefNotes?: string },
+  ): NoteDraft {
+    const review: Partial<QuickNoteSectionReview> = {};
+
+    for (const section of QUICK_NOTE_SECTIONS) {
+      const content = normalizeDocumentedContent(sections[section]);
+      const rawReview = rawSectionReview && typeof rawSectionReview === "object"
+        ? (rawSectionReview as Record<string, unknown>)[section]
+        : undefined;
+      const rawReviewObject = rawReview && typeof rawReview === "object"
+        ? rawReview as Record<string, unknown>
+        : {};
+      const evidence = validateQuickEvidence(rawReviewObject.evidence, sourceInputs);
+      let confidence = content
+        ? normalizeConfidence(rawReviewObject.confidence, 0.5)
+        : 0;
+
+      // A non-empty section without source-validated evidence is retained as a
+      // reviewable draft but may not be treated as an auto-fill candidate.
+      if (content && evidence.length === 0) {
+        confidence = Math.min(confidence, 0.5);
+      }
+
+      review[section] = {
+        status: content ? "drafted" : "not_documented",
+        confidence,
+        evidence,
+      };
+    }
+
+    const sectionReview = review as QuickNoteSectionReview;
+    const documentedConfidenceValues = QUICK_NOTE_SECTIONS
+      .filter((section) => sectionReview[section].status === "drafted")
+      .map((section) => sectionReview[section].confidence)
+      .filter((value) => Number.isFinite(value));
+
+    return {
+      ...sections,
+      confidenceScore: documentedConfidenceValues.length > 0
+        ? Number((documentedConfidenceValues.reduce((sum, value) => sum + value, 0) / documentedConfidenceValues.length).toFixed(4))
+        : 0,
+      suggestions: [],
+      sectionReview,
+    };
   }
 
   /**
@@ -526,34 +767,58 @@ Age/Sex: ${age}/${sex}
   /**
    * Mock draft for development
    */
-  private getMockDraft(request: NoteDraftRequest, template: any): NoteDraft {
-    const baseTemplate = template || {
-      chiefComplaint: request.chiefComplaint || "Skin concern",
-      hpi: "Patient presents with [condition]. Duration: [time]. Associated symptoms: [symptoms]. Aggravating factors: [factors]. Prior treatments: [treatments].",
-      ros: "Constitutional: No fever, weight loss\nSkin: As described in HPI\nOther systems reviewed and negative except as noted",
-      exam: "Skin Exam:\n- Location: [location]\n- Morphology: [description]\n- Distribution: [pattern]\n- Size: [measurements]",
-      assessmentPlan: "Assessment:\n1. [Diagnosis]\n\nPlan:\n1. [Treatment]\n2. Follow-up in [timeframe]\n3. Patient education provided",
-    };
+  private getMockDraft(request: NoteDraftRequest, _template: any): NoteDraft {
+    // The synthetic runtime must exercise the same source-boundary as a live
+    // provider. Templates are formatting guidance only and may not contribute
+    // clinical facts to a draft.
+    const chiefComplaint = normalizeDocumentedContent(request.chiefComplaint);
+    const hpi = normalizeDocumentedContent(request.briefNotes);
+    const sectionReview = {} as QuickNoteSectionReview;
 
+    for (const section of QUICK_NOTE_SECTIONS) {
+      const content = section === "chiefComplaint"
+        ? chiefComplaint
+        : section === "hpi"
+          ? hpi
+          : "";
+      const evidence: NoteSectionEvidence[] = content
+        ? [{
+            source: section === "chiefComplaint" ? "chief_complaint" : "brief_notes",
+            excerpt: content,
+          }]
+        : [];
+      sectionReview[section] = {
+        status: content ? "drafted" : "not_documented",
+        confidence: content ? 0.9 : 0,
+        evidence,
+      };
+    }
+
+    const documentedCount = [chiefComplaint, hpi].filter(Boolean).length;
+    const suggestions = [] as any[];
+    if (chiefComplaint) {
+      suggestions.push({
+        section: "hpi",
+        suggestion: "Add onset, duration, or severity only if discussed in the encounter.",
+        confidence: 0.5,
+      });
+    }
+    if (hpi) {
+      suggestions.push({
+        section: "exam",
+        suggestion: "Add observed findings only if documented by the clinician.",
+        confidence: 0.5,
+      });
+    }
     return {
-      chiefComplaint: baseTemplate.chiefComplaint || request.chiefComplaint || "",
-      hpi: baseTemplate.hpi || "",
-      ros: baseTemplate.ros || "",
-      exam: baseTemplate.exam || "",
-      assessmentPlan: baseTemplate.assessmentPlan || "",
-      confidenceScore: 0.7,
-      suggestions: [
-        {
-          section: "hpi",
-          suggestion: "Consider adding onset timeline",
-          confidence: 0.8,
-        },
-        {
-          section: "exam",
-          suggestion: "Document lesion measurements",
-          confidence: 0.85,
-        },
-      ],
+      chiefComplaint,
+      hpi,
+      ros: "",
+      exam: "",
+      assessmentPlan: "",
+      confidenceScore: documentedCount > 0 ? 0.9 : 0,
+      suggestions,
+      sectionReview,
     };
   }
 
@@ -593,6 +858,10 @@ Age/Sex: ${age}/${sex}
       return [];
     }
 
+    if (!isSyntheticAiRuntime()) {
+      return [];
+    }
+
     const providerId = encounterResult.rows[0].provider_id;
 
     // Get common phrases from provider's past notes in this section
@@ -606,8 +875,7 @@ Age/Sex: ${age}/${sex}
       [providerId, tenantId]
     );
 
-    // In production, use ML to extract and rank relevant phrases
-    // For now, return common dermatology phrases based on section
+    // Synthetic suggestions are limited to test/development/demo runtimes.
     return this.getCommonPhrases(section);
   }
 

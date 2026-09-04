@@ -13,6 +13,7 @@ import * as productSalesService from "../services/productSalesService";
 import { getIntegrationService } from "../services/integrationService";
 import config from "../config";
 import { respondToEstimate, recordEstimateEvent } from "../services/costEstimator";
+import { assertSyntheticVendorMockAllowed } from "../services/vendorMockGuard";
 
 export const patientPortalDataRouter = Router();
 
@@ -407,6 +408,9 @@ patientPortalDataRouter.post("/store/checkout-session", async (req: PatientPorta
     const integrationService = getIntegrationService(tenantId);
     const paymentAdapter = await integrationService.getPaymentAdapter();
     const useMockCheckout = paymentAdapter.isMockMode() || !paymentAdapter.hasStripeCredentials();
+    if (useMockCheckout) {
+      assertSyntheticVendorMockAllowed("Patient portal Stripe checkout");
+    }
 
     const sale = await productSalesService.createSale(
       tenantId,

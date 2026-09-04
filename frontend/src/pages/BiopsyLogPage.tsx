@@ -47,10 +47,11 @@ import {
 import { closeDialogByExplicitAction } from '../utils/dialogClose';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import BiopsyResultReview from '../components/Biopsy/BiopsyResultReview';
 import { useAuth } from '../contexts/AuthContext';
 import { API_BASE_URL, createTask } from '../api';
+import { biopsyMatchesSearch } from '../utils/mipsSourceTraceability';
 
 type Severity = 'low' | 'medium' | 'high' | 'critical';
 type QueueTab = 'critical' | 'pendingResults' | 'pendingReview' | 'pendingNotification' | 'treatmentFollowUp' | 'all';
@@ -212,13 +213,15 @@ function MetricCard({
 const BiopsyLogPage: React.FC = () => {
   const navigate = useNavigate();
   const { session, headers } = useAuth();
+  const [searchParams] = useSearchParams();
+  const initialSearchTerm = searchParams.get('search')?.trim() || searchParams.get('sourceId')?.trim() || '';
   const [commandCenter, setCommandCenter] = useState<CommandCenterResponse | null>(null);
   const [metrics, setMetrics] = useState<QualityMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
-  const [selectedQueue, setSelectedQueue] = useState<QueueTab>('critical');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedQueue, setSelectedQueue] = useState<QueueTab>(initialSearchTerm ? 'all' : 'critical');
+  const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
   const [statusFilter, setStatusFilter] = useState('all');
   const [malignancyFilter, setMalignancyFilter] = useState('all');
   const [startDate, setStartDate] = useState('');
@@ -270,19 +273,7 @@ const BiopsyLogPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
 
     if (term) {
-      rows = rows.filter((biopsy) =>
-        [
-          biopsy.specimen_id,
-          biopsy.patient_name,
-          biopsy.mrn,
-          biopsy.body_location,
-          biopsy.pathology_diagnosis,
-          biopsy.path_lab,
-          biopsy.loop_status,
-        ]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(term)),
-      );
+      rows = rows.filter((biopsy) => biopsyMatchesSearch(biopsy, term));
     }
 
     if (statusFilter !== 'all') {

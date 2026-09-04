@@ -15,6 +15,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { AudioVisualizer } from './AudioVisualizer';
 import { LiveScribeInsightsPanel, type AmbientLiveInsightsPayload } from './LiveScribeInsightsPanel';
+import { useDialogFocusTrap } from '../utils/focusTrap';
 import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor';
 import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import {
@@ -83,6 +84,25 @@ export function AmbientRecorder({
   const streamRef = useRef<MediaStream | null>(null);
   const chunkIndexRef = useRef(0);
   const silenceMonitorRef = useRef<SilenceMonitor | null>(null);
+  const consentDialogRef = useRef<HTMLDivElement>(null);
+  const continueDialogRef = useRef<HTMLDivElement>(null);
+
+  useDialogFocusTrap({
+    isOpen: recordingState === 'consent',
+    dialogRef: consentDialogRef,
+    onClose: () => setRecordingState('idle'),
+    closeOnEscape: true,
+  });
+  useDialogFocusTrap({
+    isOpen: showContinuePrompt,
+    dialogRef: continueDialogRef,
+    onClose: () => {
+      setShowContinuePrompt(false);
+      setPromptReason(null);
+      silenceMonitorRef.current?.resetTimer();
+    },
+    closeOnEscape: true,
+  });
 
   const MAX_RECORDING_SECONDS = 30 * 60;
   const SILENCE_PROMPT_SECONDS = 5 * 60;
@@ -392,6 +412,7 @@ export function AmbientRecorder({
       }}
     >
       <div
+        ref={continueDialogRef}
         style={{
           background: 'white',
           borderRadius: '16px',
@@ -400,8 +421,12 @@ export function AmbientRecorder({
           boxShadow: '0 24px 60px rgba(15, 23, 42, 0.25)',
           border: '1px solid #e2e8f0'
         }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ambient-continue-title"
+        tabIndex={-1}
       >
-        <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>
+        <h3 id="ambient-continue-title" style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>
           Continue recording?
         </h3>
         <p style={{ fontSize: '14px', color: '#475569', marginBottom: '16px' }}>
@@ -411,6 +436,7 @@ export function AmbientRecorder({
         </p>
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
           <button
+            type="button"
             onClick={() => {
               setShowContinuePrompt(false);
               setPromptReason(null);
@@ -429,6 +455,7 @@ export function AmbientRecorder({
             Continue
           </button>
           <button
+            type="button"
             onClick={() => {
               setShowContinuePrompt(false);
               setPromptReason(null);
@@ -501,8 +528,8 @@ export function AmbientRecorder({
         {/* Consent Modal */}
         {recordingState === 'consent' && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Patient Consent Required</h3>
+            <div ref={consentDialogRef} className="bg-white rounded-lg p-6 max-w-md w-full mx-4" role="dialog" aria-modal="true" aria-labelledby="ambient-consent-title" tabIndex={-1}>
+              <h3 id="ambient-consent-title" className="text-lg font-semibold text-gray-900 mb-4">Patient Consent Required</h3>
               <div className="mb-4">
                 <p className="text-sm text-gray-600 mb-3">
                   Recording conversation with <strong>{patientName}</strong>
@@ -520,8 +547,9 @@ export function AmbientRecorder({
                   </label>
                 </div>
                 <div className="mt-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Consent Method</label>
+                  <label htmlFor="ambient-consent-method-compact" className="block text-sm font-medium text-gray-700 mb-1">Consent Method</label>
                   <select
+                    id="ambient-consent-method-compact"
                     value={consentMethod}
                     onChange={(e) => setConsentMethod(e.target.value as any)}
                     className="w-full px-3 py-2 border border-gray-300 rounded"
@@ -681,8 +709,8 @@ export function AmbientRecorder({
       {/* Consent Modal */}
         {recordingState === 'consent' && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-8 max-w-lg w-full mx-4">
-            <h3 className="text-2xl font-bold text-gray-900 mb-6">Patient Consent Required</h3>
+            <div ref={consentDialogRef} className="bg-white rounded-lg p-8 max-w-lg w-full mx-4" role="dialog" aria-modal="true" aria-labelledby="ambient-consent-full-title" tabIndex={-1}>
+            <h3 id="ambient-consent-full-title" className="text-2xl font-bold text-gray-900 mb-6">Patient Consent Required</h3>
 
             <div className="mb-6">
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
@@ -713,8 +741,9 @@ export function AmbientRecorder({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Consent Method</label>
+                <label htmlFor="ambient-consent-method-full" className="block text-sm font-medium text-gray-700 mb-2">Consent Method</label>
                 <select
+                  id="ambient-consent-method-full"
                   value={consentMethod}
                   onChange={(e) => setConsentMethod(e.target.value as any)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"

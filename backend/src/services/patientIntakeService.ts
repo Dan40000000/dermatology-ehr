@@ -18,6 +18,7 @@ import { logger } from '../lib/logger';
 import crypto from 'crypto';
 import { smsWorkflowService } from './smsWorkflowService';
 import { verifyPatientEligibility } from './eligibilityService';
+import { assertSyntheticVendorMockAllowed } from './vendorMockGuard';
 
 // ============================================
 // TYPE DEFINITIONS
@@ -234,6 +235,8 @@ class PatientIntakeService {
     linkUrl: string,
     clinicName: string
   ): Promise<void> {
+    assertSyntheticVendorMockAllowed('Patient intake email');
+
     // In production, integrate with email service (SendGrid, SES, etc.)
     logger.info('Sending pre-registration email', {
       email: patient.email,
@@ -250,6 +253,8 @@ class PatientIntakeService {
     clinicName: string
   ): Promise<void> {
     try {
+      assertSyntheticVendorMockAllowed('Patient intake SMS');
+
       const message = `Hi ${patient.first_name}! Please complete your pre-registration for ${clinicName}: ${linkUrl}`;
       // Use SMS workflow service if available
       logger.info('Pre-registration SMS queued', { patientId, phone: patient.cell_phone });

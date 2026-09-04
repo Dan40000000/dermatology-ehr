@@ -9,6 +9,9 @@ const originalEnv = process.env;
 describe("healthcare workflow service provider guards", () => {
   beforeEach(() => {
     process.env = { ...originalEnv };
+    delete process.env.DEPLOYMENT_ENV;
+    delete process.env.APP_ENV;
+    delete process.env.RAILWAY_ENVIRONMENT;
     delete process.env.ALLOW_VENDOR_MOCK_FALLBACKS;
   });
 
@@ -32,12 +35,23 @@ describe("healthcare workflow service provider guards", () => {
     expect(() => getPriorAuthService("covermymeds")).toThrow(/only mock scaffolding is implemented/i);
   });
 
-  it("allows non-mock provider fallback only when explicitly acknowledged", () => {
+  it("blocks explicit mock providers in production", () => {
+    process.env.NODE_ENV = "production";
+
+    expect(() => getEligibilityService("mock")).toThrow(/mock adapter is disabled in production/i);
+    expect(() => getPrescribingService("mock")).toThrow(/mock adapter is disabled in production/i);
+    expect(() => getPriorAuthService("mock")).toThrow(/mock adapter is disabled in production/i);
+  });
+
+  it("does not allow the legacy mock flag to bypass production guards", () => {
     process.env.NODE_ENV = "production";
     process.env.ALLOW_VENDOR_MOCK_FALLBACKS = "true";
 
-    expect(() => getEligibilityService("surescripts")).not.toThrow();
-    expect(() => getPrescribingService("surescripts")).not.toThrow();
-    expect(() => getPriorAuthService("surescripts")).not.toThrow();
+    expect(() => getEligibilityService("surescripts")).toThrow(/only mock scaffolding is implemented/i);
+    expect(() => getPrescribingService("surescripts")).toThrow(/only mock scaffolding is implemented/i);
+    expect(() => getPriorAuthService("surescripts")).toThrow(/only mock scaffolding is implemented/i);
+    expect(() => getEligibilityService("mock")).toThrow(/mock adapter is disabled in production/i);
+    expect(() => getPrescribingService("mock")).toThrow(/mock adapter is disabled in production/i);
+    expect(() => getPriorAuthService("mock")).toThrow(/mock adapter is disabled in production/i);
   });
 });

@@ -1,5 +1,7 @@
 import { logger } from '../../lib/logger';
 import * as ambientAI from '../ambientAI';
+import { getIntegrationConfig } from '../../integrations/baseAdapter';
+import * as ambientAdapterModule from '../../integrations/ambientTranscriptionAdapter';
 import fs from 'fs/promises';
 
 jest.mock('../../lib/logger', () => ({
@@ -9,6 +11,11 @@ jest.mock('../../lib/logger', () => ({
     error: jest.fn(),
     debug: jest.fn(),
   },
+}));
+
+jest.mock('../../integrations/baseAdapter', () => ({
+  ...jest.requireActual('../../integrations/baseAdapter'),
+  getIntegrationConfig: jest.fn(),
 }));
 
 jest.mock('fs/promises');
@@ -31,10 +38,20 @@ describe('AmbientAI Service', () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_TRANSCRIBE_MODEL;
+    delete process.env.OPENAI_API_CALLS_ENABLED;
+    delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.ALLOW_EXTERNAL_AI_IN_TEST;
     delete process.env.OPENAI_NOTE_MODEL;
     delete process.env.HIPAA_AI_ENABLED;
     delete process.env.ANTHROPIC_NOTE_MODEL;
     delete process.env.AMBIENT_NOTE_PROVIDER_PRIORITY;
+    delete process.env.ABRIDGE_API_KEY;
+    delete process.env.ABRIDGE_API_CALLS_ENABLED;
+    delete process.env.ABRIDGE_BAA_ENABLED;
+    delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+    delete process.env.AMBIENT_TRANSCRIPTION_PROVIDER;
+    (getIntegrationConfig as jest.Mock).mockReset();
+    (getIntegrationConfig as jest.Mock).mockResolvedValue(null);
     process.env.AMBIENT_AI_MOCK_DELAY_MS = '0';
   });
 
@@ -110,9 +127,11 @@ describe('AmbientAI Service', () => {
       );
     });
 
-    it('does not send raw audio to OpenAI unless HIPAA mode is enabled', async () => {
-      process.env.OPENAI_API_KEY = 'test-openai-key';
+    it('does not send raw audio to OpenAI without provider BAA attestation', async () => {
+      process.env.OPENAI_API_KEY = 'live-openai-key';
       process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
+      process.env.OPENAI_API_CALLS_ENABLED = 'true';
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
 
       const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
 
@@ -121,6 +140,133 @@ describe('AmbientAI Service', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         'OpenAI raw-audio transcription skipped because HIPAA/BAA mode is not enabled'
       );
+    });
+
+    it('does not create a live database-configured adapter while provider API calls are disabled', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-1',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'abridge',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
+    it('does not cross vendors when an explicit environment provider is disabled', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'abridge';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'false';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
+    it('does not reinterpret an explicit database mock provider as a live provider', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-mock',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'mock',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
+    it('does not reinterpret an explicit environment mock provider as live when credentials exist', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
+    });
+
+    it('treats explicit environment mock as a global kill switch over an active database provider', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-live-under-kill-switch',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'abridge',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds, {
+        tenantId: 'tenant-123',
+      });
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.segments.length).toBeGreaterThan(0);
+      adapterFactory.mockRestore();
     });
 
     it('should fallback to mock when OpenAI transcription fails', async () => {
@@ -187,6 +333,91 @@ describe('AmbientAI Service', () => {
 
       const lastSegment = result.segments[result.segments.length - 1];
       expect(lastSegment.end).toBeLessThanOrEqual(100 + 50);
+    });
+  });
+
+  describe('transcribeLiveAudioChunk', () => {
+    it('does not cross vendors when a database-selected provider is disabled', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.ABRIDGE_BAA_ENABLED = 'false';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'false';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-disabled-live',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'abridge',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeLiveAudioChunk(
+        Buffer.from('synthetic-audio'),
+        'audio/webm',
+        0,
+        { tenantId: 'tenant-123' }
+      );
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.source).toBe('mock');
+      adapterFactory.mockRestore();
+    });
+
+    it('does not fall through from an explicit database mock provider to live OpenAI', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      (getIntegrationConfig as jest.Mock).mockResolvedValue({
+        id: 'ambient-config-mock-live',
+        tenantId: 'tenant-123',
+        integrationType: 'ambient_transcription',
+        provider: 'mock',
+        config: { environment: 'production' },
+        credentialsEncrypted: 'encrypted-db-credential',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      });
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeLiveAudioChunk(
+        Buffer.from('synthetic-audio'),
+        'audio/webm',
+        0,
+        { tenantId: 'tenant-123' }
+      );
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.source).toBe('mock');
+      adapterFactory.mockRestore();
+    });
+
+    it('does not fall through from an explicit environment mock provider to live credentials', async () => {
+      process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+      process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+      process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+      process.env.ABRIDGE_BAA_ENABLED = 'true';
+      process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_API_KEY = 'live-openai-key';
+      process.env.HIPAA_AI_ENABLED = 'true';
+      const adapterFactory = jest.spyOn(ambientAdapterModule, 'createAmbientTranscriptionAdapter');
+
+      const result = await ambientAI.transcribeLiveAudioChunk(
+        Buffer.from('synthetic-audio'),
+        'audio/webm',
+        0,
+        { tenantId: 'tenant-123' }
+      );
+
+      expect(adapterFactory).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(result.source).toBe('mock');
+      adapterFactory.mockRestore();
     });
   });
 
@@ -768,8 +999,91 @@ describe('AmbientAI Service', () => {
       expect(prompt).toContain('Medical Dermatology');
       expect(prompt).toContain('Known allergies: Penicillin');
       expect(prompt).toContain('Only document facts supported by the transcript or supplied visit context.');
-      expect(prompt).toContain('If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return "Not documented" or an empty list as appropriate');
+      expect(prompt).toContain('If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return an empty string or empty list as appropriate');
       expect(prompt).toContain('Do not create a normal review of systems or normal physical exam for systems that were not actually discussed.');
+    });
+
+    it('should attach source-validated section review metadata and omit unsupported sections', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_NOTE_MODEL = 'gpt-4o';
+
+      const source = 'Patient reports an itchy rash on both forearms.';
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            chiefComplaint: 'Itchy rash on both forearms',
+            hpi: 'Patient reports an itchy rash on both forearms.',
+            ros: 'Negative except as noted.',
+            physicalExam: '',
+            assessment: 'Dermatitis',
+            plan: '',
+            sectionConfidence: {
+              chiefComplaint: 0.9,
+              hpi: 0.9,
+              ros: 0.9,
+              physicalExam: 0.9,
+              assessment: 0.9,
+              plan: 0.9,
+            },
+            sectionReview: {
+              chiefComplaint: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: 'Patient reports an itchy rash on both forearms.' }],
+              },
+              hpi: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: source }],
+              },
+              ros: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: 'This was not said.' }],
+              },
+              physicalExam: { status: 'not_documented', confidence: 0, evidence: [] },
+              assessment: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'transcript', excerpt: 'This diagnosis was not said.' }],
+              },
+              plan: { status: 'not_documented', confidence: 0, evidence: [] },
+            },
+            notDocumentedSections: ['physicalExam', 'plan'],
+            suggestedIcd10: [],
+            suggestedCpt: [],
+            medications: [],
+            allergies: [],
+            followUpTasks: [],
+            differentialDiagnoses: [],
+            recommendedTests: [],
+            patientSummary: {
+              whatWeDiscussed: 'Rash',
+              yourConcerns: ['Itchy rash'],
+              treatmentPlan: '',
+              followUp: '',
+            },
+          }) } }],
+        }),
+      });
+
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'patient',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
+
+      expect(result.sectionReview.chiefComplaint.evidence).toEqual([
+        { source: 'transcript', excerpt: source },
+      ]);
+      expect(result.sectionReview.ros.evidence).toEqual([]);
+      expect(result.sectionReview.ros.confidence).toBeLessThanOrEqual(0.5);
+      expect(result.sectionReview.physicalExam.status).toBe('not_documented');
+      expect(result.sectionReview.plan.status).toBe('not_documented');
+      expect(result.notDocumentedSections).toEqual(expect.arrayContaining(['physicalExam', 'plan']));
     });
 
     it('should handle API errors and fallback to mock', async () => {
@@ -1291,41 +1605,69 @@ describe('AmbientAI Service', () => {
       expect(result.chiefComplaint.length).toBeGreaterThan(0);
     });
 
-    it('should generate HPI with OLDCARTS format', async () => {
-      const result = await ambientAI.generateClinicalNote('rash', []);
+    it('should generate HPI from the current patient statement only', async () => {
+      const source = 'The rash started two days ago and is itchy.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'patient',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.hpi).toContain('ONSET');
-      expect(result.hpi).toContain('LOCATION');
-      expect(result.hpi).toContain('DURATION');
-      expect(result.hpi).toContain('CHARACTER');
+      expect(result.hpi).toContain(source);
+      expect(result.hpi).not.toContain('ONSET');
+      expect(result.sectionReview.hpi.status).toBe('drafted');
     });
 
-    it('should generate complete ROS', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should leave ROS undocumented when it was not discussed', async () => {
+      const result = await ambientAI.generateClinicalNote('small talk only', []);
 
-      expect(result.ros).toContain('CONSTITUTIONAL');
-      expect(result.ros).toContain('SKIN');
+      expect(result.ros).toBe('');
+      expect(result.sectionReview.ros.status).toBe('not_documented');
+      expect(result.notDocumentedSections).toContain('ros');
     });
 
-    it('should generate physical exam with dermatologic terms', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should generate physical exam only from an explicit clinician observation', async () => {
+      const source = 'Exam shows an erythematous papule on the left cheek.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'doctor',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.physicalExam).toBeTruthy();
-      expect(result.physicalExam.length).toBeGreaterThan(0);
+      expect(result.physicalExam).toContain(source);
+      expect(result.sectionReview.physicalExam.status).toBe('drafted');
     });
 
-    it('should generate assessment with diagnosis', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should generate assessment only when the clinician states one', async () => {
+      const source = 'Assessment: contact dermatitis.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'doctor',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.assessment).toBeTruthy();
-      expect(result.assessment.length).toBeGreaterThan(0);
+      expect(result.assessment).toContain(source);
+      expect(result.sectionReview.assessment.status).toBe('drafted');
     });
 
-    it('should generate plan with medications and instructions', async () => {
-      const result = await ambientAI.generateClinicalNote('test', []);
+    it('should generate plan only from explicit clinician instructions', async () => {
+      const source = 'Start the documented cream and return in two weeks.';
+      const result = await ambientAI.generateClinicalNote(source, [{
+        speaker: 'doctor',
+        text: source,
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      }]);
 
-      expect(result.plan).toBeTruthy();
-      expect(result.plan.length).toBeGreaterThan(0);
+      expect(result.plan).toContain(source);
+      expect(result.sectionReview.plan.status).toBe('drafted');
     });
   });
 

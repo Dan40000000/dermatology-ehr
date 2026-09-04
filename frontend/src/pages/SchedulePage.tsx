@@ -7,9 +7,15 @@ import { Search, Sparkles } from 'lucide-react';
 import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate, formatPhone } from '../utils/export';
 import {
+  DEFAULT_PRACTICE_TIME_ZONE,
+  formatDateInPracticeTimeZone,
+  formatDateTimeInPracticeTimeZone,
+  formatTimeInPracticeTimeZone,
   getDateKeyInPracticeTimeZone,
+  getDayOfWeekForDateKey,
   getDayOffsetFromClinicToday,
-  ISO_DATE_PATTERN,
+  getPracticeDateKey,
+  getPracticeDateTime,
 } from '../utils/practiceDateTime';
 import {
   deliverCombinedDowntimePackets,
@@ -29,6 +35,7 @@ import { TimeBlockModal, type TimeBlockFormData } from '../components/schedule/T
 import { RescheduleModal, type RescheduleFormData } from '../components/schedule/RescheduleModal';
 import {
   fetchAppointments,
+  fetchCommandCenterSummary,
   fetchFrontDeskSchedule,
   fetchPriorAuths,
   fetchProviders,
@@ -112,6 +119,17 @@ function toInputDateValue(date: Date): string {
   const month = `${date.getMonth() + 1}`.padStart(2, '0');
   const day = `${date.getDate()}`.padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function dateFromDateKey(dateKey: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, (month || 1) - 1, day || 1, 12, 0, 0, 0);
+}
+
+function getScheduleDate(dayOffset: number, practiceTimeZone?: string | null): Date {
+  const clinicToday = dateFromDateKey(getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone));
+  clinicToday.setDate(clinicToday.getDate() + dayOffset);
+  return clinicToday;
 }
 
 function getViewRange(
@@ -390,6 +408,7 @@ export function SchedulePage() {
   });
 
   const [loading, setLoading] = useState(true);
+  const [practiceTimeZone, setPracticeTimeZone] = useState<string | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -473,6 +492,34 @@ export function SchedulePage() {
   // Appointment Finder states
   const [showAppointmentFinder, setShowAppointmentFinder] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!session) {
+      setPracticeTimeZone(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setPracticeTimeZone(null);
+    void fetchCommandCenterSummary(session.tenantId, session.accessToken)
+      .then((summary) => {
+        if (!cancelled) {
+          setPracticeTimeZone(summary.practiceTimeZone || DEFAULT_PRACTICE_TIME_ZONE);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPracticeTimeZone(DEFAULT_PRACTICE_TIME_ZONE);
+          showError('Practice time zone unavailable; displaying Mountain Time.');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, showError]);
+
   // Reschedule form (legacy - keeping for compatibility)
   const [rescheduleData, setRescheduleData] = useState({
     date: '',
@@ -499,11 +546,11 @@ export function SchedulePage() {
   }, [viewParam]);
 
   useEffect(() => {
-    if (!dateParam || !ISO_DATE_PATTERN.test(dateParam)) return;
-    const nextOffset = getDayOffsetFromClinicToday(dateParam);
+    if (!practiceTimeZone || !dateParam || getPracticeDateKey(dateParam) !== dateParam) return;
+    const nextOffset = getDayOffsetFromClinicToday(dateParam, practiceTimeZone);
     setDayOffset(nextOffset);
     setViewMode('day');
-  }, [dateParam]);
+  }, [dateParam, practiceTimeZone]);
 
   useEffect(() => {
     if (dateParam) return;
@@ -575,11 +622,8 @@ export function SchedulePage() {
   }, [setSearchParams]);
 
   const currentDate = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + dayOffset);
-    date.setHours(0, 0, 0, 0);
-    return date;
-  }, [dayOffset]);
+    return getScheduleDate(dayOffset, practiceTimeZone);
+  }, [dayOffset, practiceTimeZone]);
 
   const clearScheduleDateParam = useCallback(() => {
     setSearchParams((prev) => {
@@ -591,12 +635,9 @@ export function SchedulePage() {
   }, [setSearchParams]);
 
   const setScheduleDate = useCallback((date: Date) => {
-    const today = startOfDay(new Date());
-    const target = startOfDay(date);
-    const diffDays = Math.round((target.getTime() - today.getTime()) / DAY_MS);
-    setDayOffset(diffDays);
+    setDayOffset(getDayOffsetFromClinicToday(toInputDateValue(date), practiceTimeZone));
     clearScheduleDateParam();
-  }, [clearScheduleDateParam]);
+  }, [clearScheduleDateParam, practiceTimeZone]);
 
   const handleScheduleDateInput = useCallback((value: string) => {
     if (!value) return;
@@ -611,8 +652,8 @@ export function SchedulePage() {
   );
 
   const filteredAppointments = useMemo(() => {
-    const startMs = activeViewRange.start.getTime();
-    const endMs = activeViewRange.end.getTime();
+    const startDateKey = toInputDateValue(activeViewRange.start);
+    const endDateKey = toInputDateValue(activeViewRange.end);
 
     return appointments
       .filter((appointment) => {
@@ -627,12 +668,13 @@ export function SchedulePage() {
           telehealthOverride;
         if (!providerOk || !typeOk || !locationOk) return false;
 
-        const appointmentStart = new Date(appointment.scheduledStart).getTime();
-        if (Number.isNaN(appointmentStart)) return false;
-        return appointmentStart >= startMs && appointmentStart <= endMs;
+        const appointmentStart = new Date(appointment.scheduledStart);
+        if (Number.isNaN(appointmentStart.getTime())) return false;
+        const appointmentDateKey = getDateKeyInPracticeTimeZone(appointmentStart, practiceTimeZone);
+        return appointmentDateKey >= startDateKey && appointmentDateKey <= endDateKey;
       })
       .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
-  }, [appointments, providerFilter, typeFilter, locationFilter, activeViewRange]);
+  }, [appointments, providerFilter, typeFilter, locationFilter, activeViewRange, practiceTimeZone]);
 
   const selectedLocation = useMemo(
     () => (locationFilter === 'all' ? null : locations.find((location) => location.id === locationFilter) || null),
@@ -686,20 +728,21 @@ export function SchedulePage() {
 
   const locationScopedProviderIds = useMemo(() => {
     if (locationFilter === 'all') return null;
-    const startMs = activeViewRange.start.getTime();
-    const endMs = activeViewRange.end.getTime();
+    const startDateKey = toInputDateValue(activeViewRange.start);
+    const endDateKey = toInputDateValue(activeViewRange.end);
     const ids = new Set<string>();
 
     appointments.forEach((appointment) => {
       if (appointment.locationId !== locationFilter || !appointment.providerId) return;
-      const appointmentStart = new Date(appointment.scheduledStart).getTime();
-      if (Number.isNaN(appointmentStart)) return;
-      if (appointmentStart < startMs || appointmentStart > endMs) return;
+      const appointmentStart = new Date(appointment.scheduledStart);
+      if (Number.isNaN(appointmentStart.getTime())) return;
+      const appointmentDateKey = getDateKeyInPracticeTimeZone(appointmentStart, practiceTimeZone);
+      if (appointmentDateKey < startDateKey || appointmentDateKey > endDateKey) return;
       ids.add(appointment.providerId);
     });
 
     return ids;
-  }, [appointments, locationFilter, activeViewRange]);
+  }, [appointments, locationFilter, activeViewRange, practiceTimeZone]);
 
   const calendarProviders = useMemo(() => {
     if (providerFilter !== 'all') {
@@ -714,8 +757,8 @@ export function SchedulePage() {
   );
 
   const calendarTimeBlocks = useMemo(() => {
-    const startMs = activeViewRange.start.getTime();
-    const endMs = activeViewRange.end.getTime();
+    const startDateKey = toInputDateValue(activeViewRange.start);
+    const endDateKey = toInputDateValue(activeViewRange.end);
 
     return timeBlocks.filter((block) => {
       const providerMatches =
@@ -724,11 +767,12 @@ export function SchedulePage() {
           : block.providerId === providerFilter;
       if (!providerMatches) return false;
 
-      const blockStart = new Date(block.startTime).getTime();
-      if (Number.isNaN(blockStart)) return false;
-      return blockStart >= startMs && blockStart <= endMs;
+      const blockStart = new Date(block.startTime);
+      if (Number.isNaN(blockStart.getTime())) return false;
+      const blockDateKey = getDateKeyInPracticeTimeZone(blockStart, practiceTimeZone);
+      return blockDateKey >= startDateKey && blockDateKey <= endDateKey;
     });
-  }, [timeBlocks, providerFilter, calendarProviderIdSet, activeViewRange]);
+  }, [timeBlocks, providerFilter, calendarProviderIdSet, activeViewRange, practiceTimeZone]);
 
   // Auto-select first visible provider when switching to month view if "all" is selected
   useEffect(() => {
@@ -768,13 +812,11 @@ export function SchedulePage() {
   }, [filteredAppointments, selectedAppt]);
 
   const loadData = useCallback(async () => {
-    if (!session) return;
+    if (!session || !practiceTimeZone) return;
     setLoading(true);
     try {
       // Calculate date range based on view mode
-      const selectedDate = new Date();
-      selectedDate.setDate(selectedDate.getDate() + dayOffset);
-      selectedDate.setHours(0, 0, 0, 0);
+      const selectedDate = getScheduleDate(dayOffset, practiceTimeZone);
 
       // Determine start and end dates based on view mode
       let startDate: Date;
@@ -796,7 +838,7 @@ export function SchedulePage() {
         endDate.setDate(endDate.getDate() + 60);
       }
 
-      const formatDate = (d: Date) => d.toISOString().split('T')[0];
+      const formatDate = (d: Date) => toInputDateValue(d);
 
       const canLoadPriorAuths =
         !session.user
@@ -851,7 +893,7 @@ export function SchedulePage() {
     } finally {
       setLoading(false);
     }
-  }, [session, showError, dayOffset, viewMode]);
+  }, [session, showError, dayOffset, viewMode, practiceTimeZone]);
 
   useEffect(() => {
     loadData();
@@ -1289,7 +1331,7 @@ export function SchedulePage() {
         // Check for proper overlap: appointments overlap if one starts before the other ends AND vice versa
         if (currentStart < nextEnd && currentEnd > nextStart) {
           const providerName = current.providerName || 'Provider';
-          const startLabel = new Date(current.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const startLabel = formatTimeInPracticeTimeZone(current.scheduledStart, practiceTimeZone);
           const key = `${providerName}-${startLabel}`;
           const existing = conflictMap.get(key) || { provider: providerName, time: startLabel, count: 0, patients: new Set<string>() };
           existing.count++;
@@ -1306,7 +1348,7 @@ export function SchedulePage() {
       count: c.count,
       patients: Array.from(c.patients),
     })));
-  }, [filteredAppointments]);
+  }, [filteredAppointments, practiceTimeZone]);
 
   const isAppointmentOverdueCheckIn = useCallback((appt: Appointment): boolean => {
     if (appt.status !== 'scheduled') return false;
@@ -1320,31 +1362,31 @@ export function SchedulePage() {
     if (!appt?.scheduledStart) return null;
     const scheduledStart = new Date(appt.scheduledStart);
     if (Number.isNaN(scheduledStart.getTime())) return null;
-    return getDateKeyInPracticeTimeZone(scheduledStart);
-  }, []);
+    return getDateKeyInPracticeTimeZone(scheduledStart, practiceTimeZone);
+  }, [practiceTimeZone]);
 
   const isAppointmentPastDay = useCallback((appt: Appointment): boolean => {
     const scheduledDateKey = getAppointmentDateKey(appt);
     if (!scheduledDateKey) return false;
-    return scheduledDateKey < getDateKeyInPracticeTimeZone();
-  }, [getAppointmentDateKey]);
+    return scheduledDateKey < getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone);
+  }, [getAppointmentDateKey, practiceTimeZone]);
 
   const isAppointmentToday = useCallback((appt: Appointment | null): boolean => {
     const scheduledDateKey = getAppointmentDateKey(appt);
     if (!scheduledDateKey) return false;
-    return scheduledDateKey === getDateKeyInPracticeTimeZone();
-  }, [getAppointmentDateKey]);
+    return scheduledDateKey === getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone);
+  }, [getAppointmentDateKey, practiceTimeZone]);
 
   const formatAppointmentDateLabel = useCallback((appt: Appointment | null): string => {
     const scheduledStart = appt?.scheduledStart ? new Date(appt.scheduledStart) : null;
     if (!scheduledStart || Number.isNaN(scheduledStart.getTime())) return 'Unknown date';
-    return scheduledStart.toLocaleDateString('en-US', {
+    return formatDateInPracticeTimeZone(scheduledStart, practiceTimeZone, {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     });
-  }, []);
+  }, [practiceTimeZone]);
 
   const formatDateKeyLabel = useCallback((dateKey: string): string => {
     const [year, month, day] = dateKey.split('-').map(Number);
@@ -1722,10 +1764,14 @@ export function SchedulePage() {
   const handleCreateAppointment = async (formData: AppointmentFormData) => {
     if (!session) return;
 
-    const startDate = new Date(`${formData.date}T${formData.time}:00`);
+    const startDate = getPracticeDateTime(formData.date, formData.time, practiceTimeZone);
+    if (!startDate) {
+      showError('Invalid or unavailable clinic date and time');
+      return;
+    }
     const endDate = new Date(startDate.getTime() + formData.duration * 60000);
 
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    if (isNaN(endDate.getTime())) {
       showError('Invalid date or time');
       return;
     }
@@ -1814,10 +1860,14 @@ export function SchedulePage() {
     }
 
     const originalDuration = new Date(selectedAppt.scheduledEnd).getTime() - new Date(selectedAppt.scheduledStart).getTime();
-    const newStart = new Date(`${formData.date}T${formData.time}:00`);
+    const newStart = getPracticeDateTime(formData.date, formData.time, practiceTimeZone);
+    if (!newStart) {
+      showError('Invalid or unavailable clinic date and time');
+      return;
+    }
     const newEnd = new Date(newStart.getTime() + originalDuration);
 
-    if (isNaN(originalDuration) || isNaN(newStart.getTime()) || isNaN(newEnd.getTime())) {
+    if (isNaN(originalDuration) || isNaN(newEnd.getTime())) {
       showError('Invalid date or time');
       return;
     }
@@ -2053,13 +2103,10 @@ const handleUndoNoShow = async (appt: Appointment) => {
     const provider = providers.find(p => p.id === providerId);
     if (!provider) return;
 
-    const slotDate = new Date(date);
-    slotDate.setHours(hour, minute, 0, 0);
-
     setNewAppt({
       ...newAppt,
       providerId: providerId,
-      date: slotDate.toISOString().split('T')[0],
+      date: toInputDateValue(date),
       time: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
     });
     setShowNewApptModal(true);
@@ -2068,15 +2115,21 @@ const handleUndoNoShow = async (appt: Appointment) => {
   const handleSaveTimeBlock = async (formData: TimeBlockFormData) => {
     if (!session) return;
 
-    const startDateTime = new Date(`${formData.date}T${formData.startTime}:00`);
-    const endDateTime = new Date(`${formData.date}T${formData.endTime}:00`);
+    const startDateTime = getPracticeDateTime(formData.date, formData.startTime, practiceTimeZone);
+    const endDateTime = getPracticeDateTime(formData.date, formData.endTime, practiceTimeZone);
+    if (!startDateTime || !endDateTime || endDateTime <= startDateTime) {
+      showError('Invalid or unavailable clinic time block');
+      return;
+    }
+    const dayOfWeek = getDayOfWeekForDateKey(formData.date);
+    const dayOfMonth = Number(formData.date.slice(-2));
     const recurrencePattern = formData.isRecurring && formData.recurrencePattern
       ? {
           pattern: formData.recurrencePattern,
           days: formData.recurrencePattern === 'weekly' || formData.recurrencePattern === 'biweekly'
-            ? [startDateTime.getDay()]
+            ? dayOfWeek === null ? undefined : [dayOfWeek]
             : undefined,
-          dayOfMonth: formData.recurrencePattern === 'monthly' ? startDateTime.getDate() : undefined,
+          dayOfMonth: formData.recurrencePattern === 'monthly' ? dayOfMonth : undefined,
           until: formData.recurrenceEndDate || undefined,
         }
       : undefined;
@@ -2149,15 +2202,55 @@ const handleUndoNoShow = async (appt: Appointment) => {
   const modalIsNonTodayAppointment = Boolean(copayCheckInAppointment && !isAppointmentToday(copayCheckInAppointment));
   const modalAppointmentDateLabel = formatAppointmentDateLabel(copayCheckInAppointment);
   const nonTodayWarningDateLabel = formatAppointmentDateLabel(nonTodayCheckInAppointment);
-  const todayDateLabel = formatDateKeyLabel(getDateKeyInPracticeTimeZone());
+  const todayDateLabel = formatDateKeyLabel(getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone));
   const selectedIsLaserVisit = isLaserAppointmentType(selectedAppt?.appointmentTypeName);
   const selectedIsNoShow = selectedAppt?.status === 'no_show';
   const selectedCanMarkNoShow = Boolean(selectedAppt && isAppointmentOverdueCheckIn(selectedAppt));
   const selectedIsCompletedOrCancelled = selectedAppt?.status === 'completed' || selectedAppt?.status === 'cancelled';
   const selectedCanCheckIn = selectedAppt?.status === 'scheduled';
+  const scheduleStatusMessage = !practiceTimeZone
+    ? 'Loading practice time zone and schedule.'
+    : loading
+      ? `Updating schedule for ${dateLabel}.`
+      : `Schedule updated for ${dateLabel} in ${practiceTimeZone}.`;
 
   return (
-    <div className="schedule-page" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div
+      className="schedule-page"
+      aria-busy={loading || !practiceTimeZone}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+    >
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: 'hidden',
+          clip: 'rect(0, 0, 0, 0)',
+          whiteSpace: 'nowrap',
+          border: 0,
+        }}
+      >
+        {scheduleStatusMessage}
+      </div>
+      <fieldset
+        disabled={!practiceTimeZone}
+        style={{
+          border: 0,
+          padding: 0,
+          margin: 0,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+        }}
+      >
+        <legend className="sr-only">Schedule controls</legend>
       {/* Action Buttons Row */}
       <div className="ema-action-bar" style={{ background: 'linear-gradient(to bottom, #f9fafb 0%, #f3f4f6 100%)', borderBottom: '2px solid #e5e7eb', gap: '0.5rem', padding: '0.75rem 1.5rem' }}>
         <button
@@ -2433,7 +2526,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
           flexWrap: 'wrap',
         }}
       >
-        <span>Schedule - {dateLabel}</span>
+        <h1 id="schedule-heading" style={{ margin: 0, fontSize: 'inherit', fontWeight: 'inherit' }}>Schedule - {dateLabel}</h1>
         <label
           style={{
             display: 'inline-flex',
@@ -2529,8 +2622,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
                 onClick={() => {
                   clearScheduleDateParam();
                   if (viewMode === 'month') {
-                    const current = new Date();
-                    current.setDate(current.getDate() + dayOffset);
+                    const current = new Date(currentDate);
                     current.setMonth(current.getMonth() - 1);
                     setScheduleDate(current);
                   } else if (viewMode === 'week') {
@@ -2558,8 +2650,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
                 onClick={() => {
                   clearScheduleDateParam();
                   if (viewMode === 'month') {
-                    const current = new Date();
-                    current.setDate(current.getDate() + dayOffset);
+                    const current = new Date(currentDate);
                     current.setMonth(current.getMonth() + 1);
                     setScheduleDate(current);
                   } else if (viewMode === 'week') {
@@ -2580,6 +2671,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'day' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'day'}
                 onClick={() => updateViewMode('day')}
               >
                 Day
@@ -2587,6 +2679,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'week' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'week'}
                 onClick={() => updateViewMode('week')}
               >
                 Week
@@ -2594,6 +2687,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'month' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'month'}
                 onClick={() => updateViewMode('month')}
               >
                 Month
@@ -2725,6 +2819,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
             <>
 <Calendar
   currentDate={currentDate}
+  practiceTimeZone={practiceTimeZone}
   viewMode={viewMode}
   showWeekends={showWeekends}
   appointments={calendarAppointments}
@@ -2743,6 +2838,10 @@ const handleUndoNoShow = async (appt: Appointment) => {
   onAppointmentUndoNoShow={handleUndoNoShow}
   onAppointmentCancel={handleCancelAppt}
   onAppointmentReschedule={openRescheduleModal}
+  onDayClick={(date) => {
+    setScheduleDate(date);
+    updateViewMode('day');
+  }}
 />
             </>
           )}
@@ -2750,21 +2849,22 @@ const handleUndoNoShow = async (appt: Appointment) => {
       </div>
 
       {/* Appointments Table */}
-      <div className="ema-section-header">Appointments List</div>
+      <h2 className="ema-section-header">Appointments List</h2>
 
       <table className="ema-table">
+        <caption className="sr-only">Appointments for {dateLabel}</caption>
         <thead>
           <tr>
-            <th style={{ width: '40px' }}>
+            <th scope="col" style={{ width: '40px' }}>
               <span className="sr-only">Selection</span>
             </th>
-            <th>Time</th>
-            <th>Patient</th>
-            <th>Provider</th>
-            <th>Type</th>
-            <th>Location</th>
-            <th>Status</th>
-            <th>Actions</th>
+            <th scope="col">Time</th>
+            <th scope="col">Patient</th>
+            <th scope="col">Provider</th>
+            <th scope="col">Type</th>
+            <th scope="col">Location</th>
+            <th scope="col">Status</th>
+            <th scope="col">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -2810,12 +2910,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
                     />
                   </td>
                   <td>
-                    {new Date(a.scheduledStart).toLocaleString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
+                    {formatDateTimeInPracticeTimeZone(a.scheduledStart, practiceTimeZone)}
                   </td>
                   <td>
                     {(() => {
@@ -3571,12 +3666,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
           <div style={{ marginBottom: '0.75rem', color: '#1f2937' }}>
             <strong>Scheduled time:</strong>{' '}
             {noShowAppointment
-              ? new Date(noShowAppointment.scheduledStart).toLocaleString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })
+              ? formatDateTimeInPracticeTimeZone(noShowAppointment.scheduledStart, practiceTimeZone)
               : 'N/A'}
           </div>
           <div style={{ marginBottom: '0.75rem', color: '#9a3412', fontSize: '0.875rem', fontWeight: 600 }}>
@@ -3679,12 +3769,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
                   <div style={{ minWidth: 0 }}>
                     <strong style={{ display: 'block', color: '#111827' }}>{appt.patientName}</strong>
                     <span style={{ display: 'block', color: '#6b7280', fontSize: '0.82rem' }}>
-                      {new Date(appt.scheduledStart).toLocaleString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}{' '}
+                      {formatDateTimeInPracticeTimeZone(appt.scheduledStart, practiceTimeZone)}{' '}
                       · {appt.providerName || 'Provider'} · {appt.appointmentTypeName || 'Visit'}
                     </span>
                   </div>
@@ -3765,6 +3850,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
           appointments={appointments}
           timeBlocks={timeBlocks}
           availability={availability}
+          practiceTimeZone={practiceTimeZone}
           defaultLocationId={locationFilter === 'all' ? undefined : locationFilter}
           defaultProviderId={providerFilter === 'all' ? undefined : providerFilter}
           onUseSlot={handleUseFinderSlot}
@@ -3787,6 +3873,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
         availability={availability}
         appointments={appointments}
         timeBlocks={timeBlocks}
+        practiceTimeZone={practiceTimeZone}
         initialData={{
           patientId: newAppt.patientId,
           providerId: newAppt.providerId,
@@ -3808,6 +3895,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
         providers={providers}
         availability={availability}
         appointments={appointments}
+        practiceTimeZone={practiceTimeZone}
       />
 
       {/* Time Block Modal */}
@@ -3823,7 +3911,9 @@ const handleUndoNoShow = async (appt: Appointment) => {
         providers={providers}
         timeBlock={selectedTimeBlock}
         initialData={timeBlockInitialData}
+        practiceTimeZone={practiceTimeZone}
       />
+      </fieldset>
     </div>
   );
 }

@@ -9,6 +9,14 @@ import type {
   Provider,
 } from '../../types';
 import { formatPhone } from '../../utils/export';
+import {
+  formatDateInPracticeTimeZone,
+  getDateKeyInPracticeTimeZone,
+  getDayOfWeekForDateKey,
+  getPracticeDateKey,
+  getPracticeDateTime,
+  getTimePartsInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
 
 type FinderSearchMode = 'next_available' | 'specific_time' | 'time_window';
 type FinderWeekdayPreference = 'Any Day' | 'Weekdays' | 'Weekends';
@@ -44,6 +52,7 @@ interface AppointmentFinderWorkspaceProps {
   onCreatePatient?: (draft: QuickCreatePatientDraft) => Promise<Patient | void> | Patient | void;
   onShowSuccess?: (message: string) => void;
   onShowError?: (message: string) => void;
+  practiceTimeZone?: string | null;
 }
 
 interface FinderCriteria {
@@ -94,12 +103,6 @@ const SPECIFIC_WEEKDAY_OPTIONS = [
   { value: 6, label: 'Sat' },
   { value: 0, label: 'Sun' },
 ];
-
-function startOfDay(date: Date): Date {
-  const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
-  return result;
-}
 
 function toLocalDateKey(date: Date): string {
   const year = date.getFullYear();
@@ -215,8 +218,9 @@ function orderSpecificWeekdays(selectedWeekdays: number[]): number[] {
   return SPECIFIC_WEEKDAY_OPTIONS.map((option) => option.value).filter((day) => selectedWeekdays.includes(day));
 }
 
-function weekdayMatches(date: Date, preference: FinderWeekdayPreference, selectedWeekdays: number[]): boolean {
-  const dayOfWeek = date.getDay();
+function weekdayMatches(dateKey: string, preference: FinderWeekdayPreference, selectedWeekdays: number[]): boolean {
+  const dayOfWeek = getDayOfWeekForDateKey(dateKey);
+  if (dayOfWeek === null) return false;
   if (selectedWeekdays.length > 0) return selectedWeekdays.includes(dayOfWeek);
   if (preference === 'Weekdays') return dayOfWeek >= 1 && dayOfWeek <= 5;
   if (preference === 'Weekends') return dayOfWeek === 0 || dayOfWeek === 6;
@@ -274,10 +278,11 @@ function buildInitialCriteria(
 
 function getAvailabilityWindows(
   providerId: string,
-  date: Date,
+  dateKey: string,
   availability: Availability[]
 ): Array<{ start: number; end: number }> {
-  const dayOfWeek = date.getDay();
+  const dayOfWeek = getDayOfWeekForDateKey(dateKey);
+  if (dayOfWeek === null) return [];
   const providerAvailabilities = availability.filter(
     (entry) => entry.providerId === providerId && entry.dayOfWeek === dayOfWeek
   );
@@ -301,7 +306,6 @@ function getAvailabilityWindows(
 
 function getBlockedRanges(
   providerId: string,
-  dateKey: string,
   appointments: Appointment[],
   timeBlocks: TimeBlock[]
 ): Array<{ start: number; end: number }> {
@@ -309,33 +313,33 @@ function getBlockedRanges(
     .filter((appointment) => {
       if (appointment.providerId !== providerId) return false;
       if (appointment.status === 'cancelled' || appointment.status === 'no_show') return false;
-      return toLocalDateKey(new Date(appointment.scheduledStart)) === dateKey;
+      return true;
     })
     .map((appointment) => {
       const startDate = new Date(appointment.scheduledStart);
       const endDate = new Date(appointment.scheduledEnd);
       return {
-        start: startDate.getHours() * 60 + startDate.getMinutes(),
-        end: endDate.getHours() * 60 + endDate.getMinutes(),
+        start: startDate.getTime(),
+        end: endDate.getTime(),
       };
     })
-    .filter((range) => range.end > range.start);
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start);
 
   const timeBlockRanges = timeBlocks
     .filter((block) => {
       if (block.providerId !== providerId) return false;
       if (block.status && block.status !== 'active') return false;
-      return toLocalDateKey(new Date(block.startTime)) === dateKey;
+      return true;
     })
     .map((block) => {
       const startDate = new Date(block.startTime);
       const endDate = new Date(block.endTime);
       return {
-        start: startDate.getHours() * 60 + startDate.getMinutes(),
-        end: endDate.getHours() * 60 + endDate.getMinutes(),
+        start: startDate.getTime(),
+        end: endDate.getTime(),
       };
     })
-    .filter((range) => range.end > range.start);
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start);
 
   return [...appointmentRanges, ...timeBlockRanges];
 }
@@ -361,23 +365,29 @@ function formatPatientDob(value?: string | null): string {
   }).format(date);
 }
 
-function formatAppointmentDateTime(startValue: string, endValue?: string): string {
+function formatAppointmentDateTime(
+  startValue: string,
+  endValue?: string,
+  practiceTimeZone?: string | null
+): string {
   const startDate = new Date(startValue);
   const endDate = endValue ? new Date(endValue) : null;
   if (Number.isNaN(startDate.getTime())) return 'Date unavailable';
 
-  const dateLabel = new Intl.DateTimeFormat('en-US', {
+  const dateLabel = formatDateInPracticeTimeZone(startDate, practiceTimeZone, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
-  }).format(startDate);
-  const startLabel = minutesToDisplay(startDate.getHours() * 60 + startDate.getMinutes());
+  });
+  const startParts = getTimePartsInPracticeTimeZone(startDate, practiceTimeZone);
+  const startLabel = minutesToDisplay(startParts.hour * 60 + startParts.minute);
 
   if (!endDate || Number.isNaN(endDate.getTime())) {
     return `${dateLabel} at ${startLabel}`;
   }
 
-  const endLabel = minutesToDisplay(endDate.getHours() * 60 + endDate.getMinutes());
+  const endParts = getTimePartsInPracticeTimeZone(endDate, practiceTimeZone);
+  const endLabel = minutesToDisplay(endParts.hour * 60 + endParts.minute);
   return `${dateLabel}, ${startLabel} - ${endLabel}`;
 }
 
@@ -404,6 +414,7 @@ export function AppointmentFinderWorkspace({
   onCreatePatient,
   onShowSuccess,
   onShowError,
+  practiceTimeZone,
 }: AppointmentFinderWorkspaceProps) {
   const [criteria, setCriteria] = useState<FinderCriteria>(() =>
     buildInitialCriteria(appointmentTypes, defaultLocationId, defaultProviderId)
@@ -483,7 +494,7 @@ export function AppointmentFinderWorkspace({
   const selectedPatientCurrentAppointments = useMemo(() => {
     if (!selectedPatient) return [];
 
-    const today = startOfDay(new Date());
+    const todayKey = getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone);
 
     return appointments
       .filter((appointment) => {
@@ -493,10 +504,11 @@ export function AppointmentFinderWorkspace({
         const appointmentStart = new Date(appointment.scheduledStart);
         if (Number.isNaN(appointmentStart.getTime())) return false;
 
-        return startOfDay(appointmentStart).getTime() >= today.getTime();
+        const appointmentDateKey = getPracticeDateKey(appointmentStart, practiceTimeZone);
+        return Boolean(appointmentDateKey && appointmentDateKey >= todayKey);
       })
       .sort((left, right) => new Date(left.scheduledStart).getTime() - new Date(right.scheduledStart).getTime());
-  }, [appointments, selectedPatient]);
+  }, [appointments, practiceTimeZone, selectedPatient]);
 
   const searchResults = useMemo(() => {
     if (!selectedAppointmentType) return [];
@@ -510,11 +522,10 @@ export function AppointmentFinderWorkspace({
       locations.find((location) => location.id === locationId)?.name ||
       (locations.length === 1 ? locations[0].name : 'Selected location');
     const now = new Date();
-    const today = startOfDay(now);
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const baseDate = criteria.preferredDate
-      ? startOfDay(new Date(`${criteria.preferredDate}T00:00:00`))
-      : today;
+    const todayKey = getDateKeyInPracticeTimeZone(now, practiceTimeZone);
+    const baseDateKey = criteria.preferredDate || todayKey;
+    const [baseYear, baseMonth, baseDay] = baseDateKey.split('-').map(Number);
+    const baseDate = new Date(baseYear, baseMonth - 1, baseDay, 12);
     const desiredMinutes = parseTimeToMinutes(criteria.preferredTime);
     const windowStart = parseTimeToMinutes(criteria.windowStart);
     const windowEnd = parseTimeToMinutes(criteria.windowEnd);
@@ -524,24 +535,31 @@ export function AppointmentFinderWorkspace({
     for (let offset = 0; offset < SEARCH_HORIZON_DAYS; offset += 1) {
       const searchDate = new Date(baseDate);
       searchDate.setDate(baseDate.getDate() + offset);
-      if (searchDate < today) continue;
-      if (!weekdayMatches(searchDate, criteria.weekdayPreference, criteria.selectedWeekdays)) continue;
-
       const dateKey = toLocalDateKey(searchDate);
-      const isToday = dateKey === toLocalDateKey(today);
-
+      if (dateKey < todayKey) continue;
+      if (!weekdayMatches(dateKey, criteria.weekdayPreference, criteria.selectedWeekdays)) continue;
       for (const provider of providerPool) {
-        const windows = getAvailabilityWindows(provider.id, searchDate, availability);
+        const windows = getAvailabilityWindows(provider.id, dateKey, availability);
         if (windows.length === 0) continue;
-        const blockedRanges = getBlockedRanges(provider.id, dateKey, appointments, timeBlocks);
+        const blockedRanges = getBlockedRanges(
+          provider.id,
+          appointments,
+          timeBlocks
+        );
 
         for (const window of windows) {
           const latestStart = window.end - duration;
           for (let slotStart = window.start; slotStart <= latestStart; slotStart += SLOT_INTERVAL_MINUTES) {
-            if (isToday && slotStart < currentMinutes) continue;
+            const slotStartDate = getPracticeDateTime(
+              dateKey,
+              minutesToTimeValue(slotStart),
+              practiceTimeZone
+            );
+            if (!slotStartDate || slotStartDate < now) continue;
             const slotEnd = slotStart + duration;
+            const slotEndDate = new Date(slotStartDate.getTime() + duration * 60_000);
             const overlapsBlock = blockedRanges.some((range) =>
-              rangesOverlap(slotStart, slotEnd, range.start, range.end)
+              rangesOverlap(slotStartDate.getTime(), slotEndDate.getTime(), range.start, range.end)
             );
             if (overlapsBlock) continue;
 
@@ -617,6 +635,7 @@ export function AppointmentFinderWorkspace({
     defaultLocationId,
     locations,
     providers,
+    practiceTimeZone,
     selectedAppointmentType,
     timeBlocks,
   ]);
@@ -988,7 +1007,7 @@ export function AppointmentFinderWorkspace({
                           >
                             <div style={{ minWidth: 0 }}>
                               <div style={{ fontWeight: 900, color: '#0f172a' }}>
-                                {formatAppointmentDateTime(appointment.scheduledStart, appointment.scheduledEnd)}
+                                {formatAppointmentDateTime(appointment.scheduledStart, appointment.scheduledEnd, practiceTimeZone)}
                               </div>
                               <div style={{ marginTop: '0.25rem', color: '#475569', fontSize: '0.9rem' }}>
                                 {appointmentTypeName} • {providerName} • {locationName}

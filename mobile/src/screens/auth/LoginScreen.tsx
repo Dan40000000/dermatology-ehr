@@ -153,7 +153,7 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>HIPAA Compliant</Text>
+          <Text style={styles.footerText}>Protected sign-in</Text>
           <MaterialCommunityIcons name="shield-check" size={16} color="#4caf50" />
         </View>
       </View>

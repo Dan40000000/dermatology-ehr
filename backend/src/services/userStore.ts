@@ -8,18 +8,21 @@ const DEFAULT_PASSWORD = loadEnv().DEFAULT_USER_PASSWORD;
 const USER_SELECT_FULL = `select id, tenant_id as "tenantId", email, full_name as "fullName", role,
               coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles",
               password_hash as "passwordHash",
-              coalesce(force_password_reset, false) as "forcePasswordReset"
+              coalesce(force_password_reset, false) as "forcePasswordReset",
+              coalesce(is_active, true) as "isActive"
        from users`;
 
 const USER_SELECT_WITH_SECONDARY_ROLES = `select id, tenant_id as "tenantId", email, full_name as "fullName", role,
               coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles",
               password_hash as "passwordHash",
-              false as "forcePasswordReset"
+              false as "forcePasswordReset",
+              coalesce(is_active, true) as "isActive"
        from users`;
 
 const USER_SELECT_LEGACY = `select id, tenant_id as "tenantId", email, full_name as "fullName", role,
               password_hash as "passwordHash",
-              false as "forcePasswordReset"
+              false as "forcePasswordReset",
+              coalesce(is_active, true) as "isActive"
        from users`;
 
 function isMissingColumn(error: unknown, columnName: string): boolean {

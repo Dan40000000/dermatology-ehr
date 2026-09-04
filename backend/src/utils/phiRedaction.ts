@@ -134,6 +134,80 @@ export function hashValue(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
+/**
+ * Return a stable opaque identifier for an error without exposing its message,
+ * stack, provider response, or any values that may be present in the error.
+ * This is intentionally safe to use in logs, audit records, and client-facing
+ * telemetry.  Callers can correlate repeated failures with the code while the
+ * original exception remains in process memory only.
+ */
+export function safeErrorCode(error: unknown, fallback = 'ERR_UNKNOWN'): string {
+  if (error === null || error === undefined) {
+    return fallback;
+  }
+
+  const candidate = error instanceof Error
+    ? `${error.name}:${error.message}`
+    : typeof error === 'string'
+      ? error
+      : (() => {
+          try {
+            return JSON.stringify(error);
+          } catch {
+            return Object.prototype.toString.call(error);
+          }
+        })();
+
+  const digest = hashValue(String(candidate)).toUpperCase();
+  return `ERR_${digest}`;
+}
+
+/**
+ * Sanitize arbitrary values before they are handed to a logger/telemetry
+ * transport.  Error-like fields are converted to opaque codes rather than
+ * merely regex-redacted: upstream SDKs routinely put PHI in provider messages
+ * and stack frames that cannot be reliably recognised with patterns alone.
+ */
+export function sanitizeLogValue(value: any, fieldName?: string, depth = 0): any {
+  if (depth > 10) {
+    return '[MAX_DEPTH_REACHED]';
+  }
+
+  const normalizedField = String(fieldName || '').toLowerCase();
+  const errorField = /^(?:error|err|exception|cause|reason|failure|stack|trace|throwable|originalerror|original_error)$/.test(normalizedField)
+    || normalizedField.endsWith('error')
+    || normalizedField.endsWith('exception');
+
+  if (errorField) {
+    if (value instanceof Error || typeof value === 'string' || (value && typeof value === 'object')) {
+      return safeErrorCode(value);
+    }
+    return value;
+  }
+
+  if (isPHIField(String(fieldName || ''))) {
+    return redactWithFieldContext(value, String(fieldName), depth + 1);
+  }
+
+  if (value instanceof Error) {
+    return safeErrorCode(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeLogValue(item, fieldName, depth + 1));
+  }
+
+  if (value && typeof value === 'object') {
+    const sanitized: Record<string, any> = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      sanitized[key] = sanitizeLogValue(nestedValue, key, depth + 1);
+    }
+    return sanitized;
+  }
+
+  return redactValue(value, fieldName);
+}
+
 function redactWithFieldContext(value: any, fieldName: string, depth: number): any {
   if (depth > 10) {
     return '[MAX_DEPTH_REACHED]';

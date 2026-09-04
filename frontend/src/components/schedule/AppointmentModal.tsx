@@ -14,6 +14,13 @@ import {
   getRecommendedAppointmentDuration,
   hasAccessibilityNeeds,
 } from '../../utils/accessibilityAccommodations';
+import {
+  getDateKeyInPracticeTimeZone,
+  getDayOfWeekForDateKey,
+  getPracticeDateTime,
+  getTimePartsInPracticeTimeZone,
+  ISO_DATE_PATTERN,
+} from '../../utils/practiceDateTime';
 import { PatientLookupSelect } from '../patients/PatientLookupSelect';
 
 interface AppointmentModalProps {
@@ -28,6 +35,7 @@ interface AppointmentModalProps {
   availability?: Availability[];
   appointments?: Appointment[];
   timeBlocks?: TimeBlock[];
+  practiceTimeZone?: string | null;
   initialData?: {
     patientId?: string;
     providerId?: string;
@@ -43,13 +51,6 @@ interface AppointmentModalProps {
 const SLOT_INTERVAL_MINUTES = 5;
 const DEFAULT_START_MINUTES = 8 * 60; // 08:00
 const DEFAULT_END_MINUTES = 17 * 60; // 17:00
-
-function toLocalDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
 function parseTimeToMinutes(value?: string): number | null {
   if (!value) return null;
@@ -80,12 +81,14 @@ function rangesOverlap(startA: number, endA: number, startB: number, endB: numbe
 
 function formatPatientDob(value?: string | null): string {
   if (!value) return 'N/A';
-  const date = new Date(value);
+  const isDateOnly = ISO_DATE_PATTERN.test(value);
+  const date = new Date(isDateOnly ? `${value}T12:00:00.000Z` : value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+    timeZone: isDateOnly ? 'UTC' : undefined,
   }).format(date);
 }
 
@@ -112,6 +115,7 @@ export function AppointmentModal({
   availability = [],
   appointments = [],
   timeBlocks = [],
+  practiceTimeZone,
   initialData,
 }: AppointmentModalProps) {
   const [formData, setFormData] = useState<AppointmentFormData>({
@@ -150,11 +154,11 @@ export function AppointmentModal({
           providerId: appointment.providerId,
           appointmentTypeId: appointment.appointmentTypeId,
           locationId: appointment.locationId,
-          date: startDate.toISOString().split('T')[0],
-          time: `${startDate.getHours().toString().padStart(2, '0')}:${startDate
-            .getMinutes()
-            .toString()
-            .padStart(2, '0')}`,
+          date: getDateKeyInPracticeTimeZone(startDate, practiceTimeZone),
+          time: (() => {
+            const { hour, minute } = getTimePartsInPracticeTimeZone(startDate, practiceTimeZone);
+            return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+          })(),
           duration,
           notes: '',
         });
@@ -178,7 +182,7 @@ export function AppointmentModal({
           providerId: providers[0]?.id || '',
           appointmentTypeId: appointmentTypes[0]?.id || '',
           locationId: locations[0]?.id || '',
-          date: new Date().toISOString().split('T')[0],
+          date: getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone),
           time: '09:00',
           duration: 30,
           notes: '',
@@ -186,7 +190,7 @@ export function AppointmentModal({
       }
       setErrors({});
     }
-  }, [isOpen, appointment, initialData, providers, locations, appointmentTypes]);
+  }, [isOpen, appointment, initialData, providers, locations, appointmentTypes, practiceTimeZone]);
 
   // Update duration when appointment type changes
   useEffect(() => {
@@ -243,9 +247,8 @@ export function AppointmentModal({
 
   const availabilityWindows = useMemo(() => {
     if (!formData.providerId || !formData.date) return [];
-    const selectedDate = new Date(`${formData.date}T00:00:00`);
-    if (Number.isNaN(selectedDate.getTime())) return [];
-    const dayOfWeek = selectedDate.getDay();
+    const dayOfWeek = getDayOfWeekForDateKey(formData.date);
+    if (dayOfWeek === null) return [];
     const providerAvailabilities = availability.filter(
       (entry) => entry.providerId === formData.providerId && entry.dayOfWeek === dayOfWeek
     );
@@ -270,55 +273,50 @@ export function AppointmentModal({
 
   const blockedRanges = useMemo(() => {
     if (!formData.providerId || !formData.date) return [];
-    const selectedDate = formData.date;
 
     const appointmentRanges = appointments
       .filter((appt) => {
         if (appt.id === appointment?.id) return false;
         if (appt.providerId !== formData.providerId) return false;
         if (appt.status === 'cancelled' || appt.status === 'no_show') return false;
-        const apptDate = toLocalDateKey(new Date(appt.scheduledStart));
-        return apptDate === selectedDate;
+        return true;
       })
       .map((appt) => {
         const startDate = new Date(appt.scheduledStart);
         const endDate = new Date(appt.scheduledEnd);
         return {
-          start: startDate.getHours() * 60 + startDate.getMinutes(),
-          end: endDate.getHours() * 60 + endDate.getMinutes(),
+          start: startDate.getTime(),
+          end: endDate.getTime(),
         };
       })
-      .filter((range) => range.end > range.start);
+      .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start);
 
     const timeBlockRanges = timeBlocks
       .filter((block) => {
         if (block.providerId !== formData.providerId) return false;
         if (block.status && block.status !== 'active') return false;
-        const blockDate = toLocalDateKey(new Date(block.startTime));
-        return blockDate === selectedDate;
+        return true;
       })
       .map((block) => {
         const startDate = new Date(block.startTime);
         const endDate = new Date(block.endTime);
         return {
-          start: startDate.getHours() * 60 + startDate.getMinutes(),
-          end: endDate.getHours() * 60 + endDate.getMinutes(),
+          start: startDate.getTime(),
+          end: endDate.getTime(),
         };
       })
-      .filter((range) => range.end > range.start);
+      .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start);
 
     return [...appointmentRanges, ...timeBlockRanges];
-  }, [appointments, appointment?.id, formData.providerId, formData.date, timeBlocks]);
+  }, [appointments, appointment?.id, formData.providerId, formData.date, timeBlocks, practiceTimeZone]);
 
   const availableTimeOptions = useMemo(() => {
     if (!formData.providerId || !formData.date || !formData.duration) return [];
 
-    const selectedDate = new Date(`${formData.date}T00:00:00`);
-    if (Number.isNaN(selectedDate.getTime())) return [];
+    if (getDayOfWeekForDateKey(formData.date) === null) return [];
 
     const now = new Date();
-    const isToday = toLocalDateKey(now) === formData.date;
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const isToday = getDateKeyInPracticeTimeZone(now, practiceTimeZone) === formData.date;
     const optionMap = new Map<string, string>();
 
     for (const window of availabilityWindows) {
@@ -328,13 +326,14 @@ export function AppointmentModal({
         slotStart <= latestStart;
         slotStart += SLOT_INTERVAL_MINUTES
       ) {
-        if (isToday && slotStart < nowMinutes) continue;
-        const slotEnd = slotStart + formData.duration;
+        const value = minutesToTimeValue(slotStart);
+        const slotStartDate = getPracticeDateTime(formData.date, value, practiceTimeZone);
+        if (!slotStartDate || (isToday && slotStartDate < now)) continue;
+        const slotEndDate = new Date(slotStartDate.getTime() + formData.duration * 60_000);
         const isBlocked = blockedRanges.some((range) =>
-          rangesOverlap(slotStart, slotEnd, range.start, range.end)
+          rangesOverlap(slotStartDate.getTime(), slotEndDate.getTime(), range.start, range.end)
         );
         if (isBlocked) continue;
-        const value = minutesToTimeValue(slotStart);
         if (!optionMap.has(value)) {
           optionMap.set(value, minutesToDisplay(slotStart));
         }
@@ -348,6 +347,7 @@ export function AppointmentModal({
     formData.duration,
     availabilityWindows,
     blockedRanges,
+    practiceTimeZone,
   ]);
 
   const hasResolvedTimeOptions =

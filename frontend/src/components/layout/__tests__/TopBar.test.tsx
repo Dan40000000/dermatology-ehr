@@ -103,6 +103,13 @@ describe('TopBar feedback flow', () => {
     expect(screen.getByRole('button', { name: /Report issue or suggestion/i })).toBeInTheDocument();
   });
 
+  it('does not override visible text with labels on generic elements', () => {
+    const { container } = renderWithContext();
+
+    expect(container.querySelector('.ema-brand')).not.toHaveAttribute('aria-label');
+    expect(container.querySelector('.ema-user-name')).not.toHaveAttribute('aria-label');
+  });
+
   it('opens screenshot markup before the normal feedback form', async () => {
     const user = userEvent.setup();
     renderWithContext();

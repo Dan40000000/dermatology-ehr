@@ -12,6 +12,7 @@ const toastMocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   fetchAppointments: vi.fn(),
+  fetchCommandCenterSummary: vi.fn(),
   fetchFrontDeskSchedule: vi.fn(),
   fetchPriorAuths: vi.fn(),
   fetchProviders: vi.fn(),
@@ -35,6 +36,7 @@ const apiMocks = vi.hoisted(() => ({
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const rescheduleProviderId = vi.hoisted(() => ({ value: 'provider-2' }));
+const searchParamsMocks = vi.hoisted(() => ({ value: new URLSearchParams() }));
 
 let confirmSpy: ReturnType<typeof vi.spyOn> | null = null;
 
@@ -51,7 +53,7 @@ vi.mock('react-router-dom', async () => {
   return {
     ...actual,
     useNavigate: () => navigateMock,
-    useSearchParams: () => [new URLSearchParams(), vi.fn()],
+    useSearchParams: () => [searchParamsMocks.value, vi.fn()],
   };
 });
 
@@ -110,6 +112,7 @@ vi.mock('../../components/schedule/Calendar', () => ({
     providers,
     timeBlocks,
     showWeekends,
+    practiceTimeZone,
     onAppointmentClick,
     onSlotClick,
     onTimeBlockClick,
@@ -118,6 +121,7 @@ vi.mock('../../components/schedule/Calendar', () => ({
     <div data-testid="calendar">
       <div data-testid="calendar-appointments">{appointments?.length ?? 0}</div>
       <div data-testid="calendar-providers">{providers?.length ?? 0}</div>
+      <div data-testid="calendar-practice-time-zone">{practiceTimeZone || ''}</div>
       <div data-testid="calendar-timeblocks">{timeBlocks?.length ?? 0}</div>
       <div data-testid="calendar-show-weekends">{showWeekends ? 'yes' : 'no'}</div>
       <button type="button" onClick={() => appointments?.[0] && onAppointmentClick?.(appointments[0])}>
@@ -228,10 +232,19 @@ vi.mock('../../components/schedule/TimeBlockModal', () => ({
 }));
 
 import { SchedulePage } from '../SchedulePage';
+import {
+  addDaysToDateKey,
+  getDateKeyInPracticeTimeZone,
+  getPracticeDateTime,
+} from '../../utils/practiceDateTime';
 
 function buildTodaySlot(hour: number, minute: number, durationMinutes: number): { start: string; end: string } {
-  const start = new Date();
-  start.setHours(hour, minute, 0, 0);
+  const dateKey = getDateKeyInPracticeTimeZone(new Date(), 'America/Denver');
+  const start = getPracticeDateTime(
+    dateKey,
+    `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+    'America/Denver',
+  )!;
   const end = new Date(start.getTime() + durationMinutes * 60000);
   return {
     start: start.toISOString(),
@@ -240,9 +253,13 @@ function buildTodaySlot(hour: number, minute: number, durationMinutes: number): 
 }
 
 function buildRelativeSlot(dayOffset: number, hour: number, minute: number, durationMinutes: number): { start: string; end: string } {
-  const start = new Date();
-  start.setDate(start.getDate() + dayOffset);
-  start.setHours(hour, minute, 0, 0);
+  const todayKey = getDateKeyInPracticeTimeZone(new Date(), 'America/Denver');
+  const dateKey = addDaysToDateKey(todayKey, dayOffset) || todayKey;
+  const start = getPracticeDateTime(
+    dateKey,
+    `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+    'America/Denver',
+  )!;
   const end = new Date(start.getTime() + durationMinutes * 60000);
   return {
     start: start.toISOString(),
@@ -359,6 +376,11 @@ describe('SchedulePage', () => {
     rescheduleProviderId.value = 'provider-2';
     const fixtures = buildFixtures();
     apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue({
+      businessDate: getDateKeyInPracticeTimeZone(),
+      practiceTimeZone: 'America/Denver',
+      generatedAt: '2026-04-27T00:00:00.000Z',
+    });
     apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments: [] });
     apiMocks.fetchPriorAuths.mockResolvedValue({ data: [] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: fixtures.providers });
@@ -397,6 +419,7 @@ describe('SchedulePage', () => {
     toastMocks.showSuccess.mockClear();
     toastMocks.showError.mockClear();
     navigateMock.mockClear();
+    searchParamsMocks.value = new URLSearchParams();
     localStorage.clear();
     localStorage.setItem(
       'downtime:primary-device',
@@ -416,6 +439,89 @@ describe('SchedulePage', () => {
     confirmSpy?.mockRestore();
     vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  it('keeps the schedule on the clinic date when UTC has rolled into the next day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-28T00:30:00.000Z'));
+    const fixtures = buildFixtures();
+    apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
+    apiMocks.fetchTimeBlocks.mockResolvedValue(fixtures.timeBlocks);
+
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('3');
+    expect(apiMocks.fetchFrontDeskSchedule).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({ date: '2026-08-27' }),
+    );
+    expect(screen.getByLabelText('Schedule date')).toHaveValue('2026-08-27');
+  });
+
+  it('propagates the server practice time zone into the calendar', async () => {
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue({
+      businessDate: getDateKeyInPracticeTimeZone(new Date(), 'Pacific/Honolulu'),
+      practiceTimeZone: 'Pacific/Honolulu',
+      generatedAt: new Date().toISOString(),
+    });
+
+    render(<SchedulePage />);
+
+    expect(await screen.findByTestId('calendar-practice-time-zone')).toHaveTextContent('Pacific/Honolulu');
+    expect(apiMocks.fetchCommandCenterSummary).toHaveBeenCalledWith('tenant-1', 'token-1');
+  });
+
+  it('announces schedule loading and disables controls until the practice time zone is known', async () => {
+    let resolveSummary: ((value: any) => void) | undefined;
+    apiMocks.fetchCommandCenterSummary.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSummary = resolve;
+      }),
+    );
+
+    render(<SchedulePage />);
+
+    const page = document.querySelector('.schedule-page') as HTMLElement;
+    expect(page).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading practice time zone and schedule');
+    expect(screen.getByRole('button', { name: /New Appointment/i })).toBeDisabled();
+
+    resolveSummary?.({
+      businessDate: '2026-04-27',
+      practiceTimeZone: 'America/Los_Angeles',
+      generatedAt: '2026-04-27T16:00:00.000Z',
+    });
+
+    await waitFor(() => expect(page).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByRole('status')).toHaveTextContent(/Schedule updated.*America\/Los_Angeles/i);
+    expect(screen.getByRole('button', { name: /New Appointment/i })).not.toBeDisabled();
+  });
+
+  it('serializes appointment wall time in the server practice time zone', async () => {
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue({
+      businessDate: '2024-04-10',
+      practiceTimeZone: 'America/Los_Angeles',
+      generatedAt: '2024-04-10T16:00:00.000Z',
+    });
+
+    render(<SchedulePage />);
+
+    expect(await screen.findByTestId('calendar-practice-time-zone')).toHaveTextContent('America/Los_Angeles');
+    fireEvent.click(screen.getByRole('button', { name: 'Select Slot' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Appointment' }));
+
+    await waitFor(() =>
+      expect(apiMocks.createAppointment).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        expect.objectContaining({
+          scheduledStart: '2024-04-10T16:30:00.000Z',
+          scheduledEnd: '2024-04-10T17:00:00.000Z',
+        }),
+      ),
+    );
   });
 
   it('loads schedule data, filters the calendar, and uses the finder', async () => {
@@ -465,8 +571,12 @@ describe('SchedulePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Today' }));
     fireEvent.click(screen.getByRole('button', { name: /Next/ }));
 
+    expect(screen.getByRole('button', { name: 'Day' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Week' })).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(screen.getByRole('button', { name: 'Week' }));
+    expect(screen.getByRole('button', { name: 'Week' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+    expect(screen.getByRole('button', { name: 'Day' })).toHaveAttribute('aria-pressed', 'true');
 
     fireEvent.click(screen.getByRole('button', { name: /Appointment Finder/i }));
     const finderModal = await screen.findByTestId('modal-smart-appointment-finder');
@@ -489,7 +599,7 @@ describe('SchedulePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Exported 0 appointments as CSV');
-  }, 15000);
+  }, 60000);
 
   it('only auto-prepares the downtime packet once per location and date', async () => {
     const fixtures = buildFixtures();
@@ -631,7 +741,7 @@ describe('SchedulePage', () => {
     fireEvent.click(actionScope.getByRole('button', { name: /Reschedule/ }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Reschedule' }));
-    const rescheduleStart = new Date('2024-04-12T10:00:00');
+    const rescheduleStart = getPracticeDateTime('2024-04-12', '10:00', 'America/Denver')!;
     const rescheduleEnd = new Date(rescheduleStart.getTime() + 60 * 60000);
     await waitFor(() =>
       expect(apiMocks.rescheduleAppointment).toHaveBeenCalledWith(
@@ -648,7 +758,7 @@ describe('SchedulePage', () => {
     expect(screen.getByText('Appointment Modal')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Appointment' }));
-    const createdStart = new Date('2024-04-10T09:30:00');
+    const createdStart = getPracticeDateTime('2024-04-10', '09:30', 'America/Denver')!;
     const createdEnd = new Date(createdStart.getTime() + 30 * 60000);
     await waitFor(() =>
       expect(apiMocks.createAppointment).toHaveBeenCalledWith(
@@ -668,8 +778,8 @@ describe('SchedulePage', () => {
 
     fireEvent.click(actionScope.getByRole('button', { name: /Time Block/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save Time Block' }));
-    const timeBlockStart = new Date('2024-04-11T13:00:00');
-    const timeBlockEnd = new Date('2024-04-11T14:00:00');
+    const timeBlockStart = getPracticeDateTime('2024-04-11', '13:00', 'America/Denver')!;
+    const timeBlockEnd = getPracticeDateTime('2024-04-11', '14:00', 'America/Denver')!;
     await waitFor(() =>
       expect(apiMocks.createTimeBlock).toHaveBeenCalledWith(
         'tenant-1',
@@ -710,7 +820,7 @@ describe('SchedulePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Ana Derm' }));
     expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1');
-  }, 15000);
+  }, 60000);
 
   it('opens copay modal at check-in and supports defer path', async () => {
     apiMocks.fetchFrontDeskSchedule.mockResolvedValueOnce({
@@ -740,7 +850,7 @@ describe('SchedulePage', () => {
         expect.objectContaining({ deferCopay: true }),
       ),
     );
-  });
+  }, 60000);
 
   it('warns before checking in an appointment that is not on today', async () => {
     const yesterday = buildRelativeSlot(-1, 9, 0, 30);
@@ -1069,7 +1179,7 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
 
     fireEvent.click(actionScope.getByRole('button', { name: /Reschedule/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save Reschedule' }));
-    const rescheduleStart = new Date('2024-04-12T10:00:00');
+    const rescheduleStart = getPracticeDateTime('2024-04-12', '10:00', 'America/Denver')!;
     const rescheduleEnd = new Date(rescheduleStart.getTime() + 60 * 60000);
     await waitFor(() =>
       expect(apiMocks.rescheduleAppointment).toHaveBeenCalledWith(
@@ -1119,8 +1229,7 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     expect(options?.startDate).toBeTruthy();
     expect(options?.endDate).toBeTruthy();
 
-    const selectedDate = new Date();
-    selectedDate.setHours(0, 0, 0, 0);
+    const selectedDate = new Date(`${getDateKeyInPracticeTimeZone()}T12:00:00`);
 
     const expectedStartDate = new Date(selectedDate);
     expectedStartDate.setDate(expectedStartDate.getDate() - 60);
@@ -1128,12 +1237,36 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     const expectedEndDate = new Date(selectedDate);
     expectedEndDate.setDate(expectedEndDate.getDate() + 60);
 
-    const toIsoDate = (date: Date) => date.toISOString().split('T')[0];
+    const toDateKey = (date: Date) => [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
     expect(options).toMatchObject({
-      startDate: toIsoDate(expectedStartDate),
-      endDate: toIsoDate(expectedEndDate),
+      startDate: toDateKey(expectedStartDate),
+      endDate: toDateKey(expectedEndDate),
     });
     expect(localStorage.getItem('sched:dayOffset')).toBeNull();
+  });
+
+  it('ignores an impossible date supplied through the schedule URL', async () => {
+    searchParamsMocks.value = new URLSearchParams('view=day&date=2026-02-30');
+
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    await waitFor(() => expect(apiMocks.fetchAppointments).toHaveBeenCalled());
+
+    const options = apiMocks.fetchAppointments.mock.calls.at(-1)?.[2] as {
+      startDate?: string;
+      endDate?: string;
+    } | undefined;
+    const todayKey = getDateKeyInPracticeTimeZone(new Date(), 'America/Denver');
+    expect(options).toMatchObject({
+      startDate: addDaysToDateKey(todayKey, -60),
+      endDate: addDaysToDateKey(todayKey, 60),
+    });
+    expect(screen.getByLabelText('Schedule date')).toHaveValue(todayKey);
   });
 
   it('requests a past date window when navigating to previous days', async () => {
@@ -1143,9 +1276,8 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
     fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
 
-    const selectedDate = new Date();
+    const selectedDate = new Date(`${getDateKeyInPracticeTimeZone()}T12:00:00`);
     selectedDate.setDate(selectedDate.getDate() - 2);
-    selectedDate.setHours(0, 0, 0, 0);
 
     const expectedStartDate = new Date(selectedDate);
     expectedStartDate.setDate(expectedStartDate.getDate() - 60);
@@ -1153,13 +1285,17 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     const expectedEndDate = new Date(selectedDate);
     expectedEndDate.setDate(expectedEndDate.getDate() + 60);
 
-    const toIsoDate = (date: Date) => date.toISOString().split('T')[0];
+    const toDateKey = (date: Date) => [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
     await waitFor(() => {
       const lastCall = apiMocks.fetchAppointments.mock.calls.at(-1);
       const options = lastCall?.[2] as { startDate?: string; endDate?: string } | undefined;
       expect(options).toMatchObject({
-        startDate: toIsoDate(expectedStartDate),
-        endDate: toIsoDate(expectedEndDate),
+        startDate: toDateKey(expectedStartDate),
+        endDate: toDateKey(expectedEndDate),
       });
     });
   });

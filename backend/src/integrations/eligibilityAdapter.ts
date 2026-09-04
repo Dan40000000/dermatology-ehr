@@ -8,6 +8,10 @@
 import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
+import {
+  assertNonProductionVendorModeAllowed,
+  assertVendorBaaEnabled,
+} from '../services/vendorMockGuard';
 import { BaseAdapter, AdapterOptions } from './baseAdapter';
 
 // ============================================================================
@@ -833,6 +837,12 @@ export class EligibilityAdapter extends BaseAdapter {
       throw new Error('Missing Stedi API key');
     }
 
+    if (apiKey.startsWith('test_')) {
+      assertNonProductionVendorModeAllowed('Stedi eligibility', 'sandbox');
+    }
+
+    assertVendorBaaEnabled('Stedi eligibility', 'STEDI_BAA_ENABLED');
+
     return apiKey;
   }
 
@@ -942,6 +952,10 @@ export class EligibilityAdapter extends BaseAdapter {
   }
 
   private async testStediConnection(): Promise<void> {
+    if (this.isStediTestMode()) {
+      assertNonProductionVendorModeAllowed('Stedi eligibility', 'sandbox');
+    }
+
     if (!this.isStediTestMode()) {
       this.getStediApiKey();
       return;
@@ -951,6 +965,10 @@ export class EligibilityAdapter extends BaseAdapter {
   }
 
   private async requestStediEligibility(request: EligibilityRequest): Promise<any> {
+    if (this.isStediTestMode()) {
+      assertNonProductionVendorModeAllowed('Stedi eligibility', 'sandbox');
+    }
+
     const useApprovedMockRequest = this.isStediTestMode() &&
       this.config?.config?.useApprovedMockRequestForEligibility !== false;
     const body = useApprovedMockRequest

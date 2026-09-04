@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -1642,6 +1642,24 @@ export function ClaimsPage() {
     ? canPostPayerPayment(selectedClaim.claim.status, selectedClaimBalanceCents)
     : false;
 
+  const claimTabs: ActiveTab[] = ['claims', 'payments'];
+  const handleClaimTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? claimTabs.length - 1
+        : event.key === 'ArrowRight'
+          ? (index + 1) % claimTabs.length
+          : (index - 1 + claimTabs.length) % claimTabs.length;
+    const nextTab = claimTabs[nextIndex];
+    if (!nextTab) return;
+    setActiveTab(nextTab);
+    updateUrlFilter('tab', nextTab);
+    window.setTimeout(() => document.getElementById(`claims-tab-${nextTab}`)?.focus(), 0);
+  };
+
   if (loading) {
     return (
       <div className="claims-page">
@@ -1751,31 +1769,43 @@ export function ClaimsPage() {
         </button>
       </div>
 
-      <div className="financial-tabs">
+      <div className="financial-tabs" role="tablist" aria-label="Claims management sections">
         <button
           type="button"
+          id="claims-tab-claims"
+          role="tab"
+          aria-selected={activeTab === 'claims'}
+          aria-controls="claims-panel-claims"
+          tabIndex={activeTab === 'claims' ? 0 : -1}
           className={`tab ${activeTab === 'claims' ? 'active' : ''}`}
           onClick={() => {
             setActiveTab('claims');
             updateUrlFilter('tab', 'claims');
           }}
+          onKeyDown={(event) => handleClaimTabKeyDown(event, 0)}
         >
           Claims Workbench
         </button>
         <button
           type="button"
+          id="claims-tab-payments"
+          role="tab"
+          aria-selected={activeTab === 'payments'}
+          aria-controls="claims-panel-payments"
+          tabIndex={activeTab === 'payments' ? 0 : -1}
           className={`tab ${activeTab === 'payments' ? 'active' : ''}`}
           onClick={() => {
             setActiveTab('payments');
             updateUrlFilter('tab', 'payments');
           }}
+          onKeyDown={(event) => handleClaimTabKeyDown(event, 1)}
         >
           Payment Posting
         </button>
       </div>
 
       {activeTab === 'claims' && (
-        <>
+        <div id="claims-panel-claims" role="tabpanel" aria-labelledby="claims-tab-claims" tabIndex={0}>
           <Panel title="Operational Snapshot">
             <div className="claims-snapshot-grid">
               <div>
@@ -1822,11 +1852,12 @@ export function ClaimsPage() {
               <div>
                 <h2 className="claims-section-heading">A/R Aging Buckets</h2>
                 <table className="claims-compact-table">
+                  <caption className="sr-only">Claims aging buckets</caption>
                   <thead>
                     <tr>
-                      <th>Bucket</th>
-                      <th>Claims</th>
-                      <th>Amount</th>
+                      <th scope="col">Bucket</th>
+                      <th scope="col">Claims</th>
+                      <th scope="col">Amount</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1852,10 +1883,11 @@ export function ClaimsPage() {
                   </div>
                 ) : (
                   <table className="claims-compact-table">
+                    <caption className="sr-only">Denial reasons</caption>
                     <thead>
                       <tr>
-                        <th>Reason</th>
-                        <th>Count</th>
+                        <th scope="col">Reason</th>
+                        <th scope="col">Count</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1880,13 +1912,14 @@ export function ClaimsPage() {
               <div>
                 <h2 className="claims-section-heading">Claims Requiring Action</h2>
                 <table className="claims-compact-table">
+                  <caption className="sr-only">Priority claims</caption>
                   <thead>
                     <tr>
-                      <th>Claim #</th>
-                      <th>Patient</th>
-                      <th>Queue</th>
-                      <th>Age</th>
-                      <th>Balance</th>
+                      <th scope="col">Claim #</th>
+                      <th scope="col">Patient</th>
+                      <th scope="col">Queue</th>
+                      <th scope="col">Age</th>
+                      <th scope="col">Balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1914,12 +1947,13 @@ export function ClaimsPage() {
               <div>
                 <h2 className="claims-section-heading">Payer Performance</h2>
                 <table className="claims-compact-table">
+                  <caption className="sr-only">Payer performance</caption>
                   <thead>
                     <tr>
-                      <th>Payer</th>
-                      <th>Open</th>
-                      <th>Denied</th>
-                      <th>Outstanding</th>
+                      <th scope="col">Payer</th>
+                      <th scope="col">Open</th>
+                      <th scope="col">Denied</th>
+                      <th scope="col">Outstanding</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1949,9 +1983,9 @@ export function ClaimsPage() {
             <div className="claims-filters">
               <div className="filter-row">
                 <div className="form-field">
-                  <label>Status Filter</label>
+                  <label htmlFor="claims-status-filter">Status Filter</label>
                   <select
-                    aria-label="Claim status filter"
+                    id="claims-status-filter"
                     value={statusFilter}
                     onChange={(event) => {
                       const nextStatus = event.target.value as ClaimUiStatus | 'all';
@@ -1972,8 +2006,9 @@ export function ClaimsPage() {
                   </select>
                 </div>
                 <div className="form-field">
-                  <label>Search</label>
+                  <label htmlFor="claims-search">Search</label>
                   <input
+                    id="claims-search"
                     type="text"
                     placeholder="Search by claim #, patient, or provider..."
                     value={searchTerm}
@@ -2017,13 +2052,14 @@ export function ClaimsPage() {
               </div>
               {queueDrilldown.topClaims.length > 0 && (
                 <table className="claims-compact-table claims-drilldown-table">
+                  <caption className="sr-only">Claims drilldown</caption>
                   <thead>
                     <tr>
-                      <th>Claim #</th>
-                      <th>Patient</th>
-                      <th>Payer</th>
-                      <th>Balance</th>
-                      <th>Next Action</th>
+                      <th scope="col">Claim #</th>
+                      <th scope="col">Patient</th>
+                      <th scope="col">Payer</th>
+                      <th scope="col">Balance</th>
+                      <th scope="col">Next Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2043,21 +2079,22 @@ export function ClaimsPage() {
 
             <div className="claims-table">
               <table>
+                <caption className="sr-only">Claims workbench</caption>
                 <thead>
                   <tr>
-                    <th>Claim #</th>
-                    <th>DOS</th>
-                    <th>Patient</th>
-                    <th>Payer</th>
-                    <th>Eligibility</th>
-                    <th>Status</th>
-                    <th>Queue</th>
-                    <th>Billed</th>
-                    <th>Paid</th>
-                    <th>Balance</th>
-                    <th>Aging</th>
-                    <th>Next Action</th>
-                    <th>Actions</th>
+                    <th scope="col">Claim #</th>
+                    <th scope="col">DOS</th>
+                    <th scope="col">Patient</th>
+                    <th scope="col">Payer</th>
+                    <th scope="col">Eligibility</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Queue</th>
+                    <th scope="col">Billed</th>
+                    <th scope="col">Paid</th>
+                    <th scope="col">Balance</th>
+                    <th scope="col">Aging</th>
+                    <th scope="col">Next Action</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2143,21 +2180,22 @@ export function ClaimsPage() {
               </table>
             </div>
           </Panel>
-        </>
+        </div>
       )}
 
       {activeTab === 'payments' && (
-        <div className="claims-payments-grid">
+        <div id="claims-panel-payments" role="tabpanel" aria-labelledby="claims-tab-payments" tabIndex={0} className="claims-payments-grid">
           <Panel title="Payment Posting Queue">
             <div className="payments-table">
               <table>
+                <caption className="sr-only">Payment posting queue</caption>
                 <thead>
                   <tr>
-                    <th>Claim #</th>
-                    <th>Patient</th>
-                    <th>Payer</th>
-                    <th>Balance</th>
-                    <th>Action</th>
+                    <th scope="col">Claim #</th>
+                    <th scope="col">Patient</th>
+                    <th scope="col">Payer</th>
+                    <th scope="col">Balance</th>
+                    <th scope="col">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2199,12 +2237,13 @@ export function ClaimsPage() {
           <Panel title="Recent Payments">
             <div className="payments-table">
               <table>
+                <caption className="sr-only">Recent payments</caption>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Claim #</th>
-                    <th>Patient</th>
-                    <th>Amount</th>
+                    <th scope="col">Date</th>
+                    <th scope="col">Claim #</th>
+                    <th scope="col">Patient</th>
+                    <th scope="col">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2349,8 +2388,8 @@ export function ClaimsPage() {
                 </div>
               </div>
 
-              <div className="status-actions">
-                <label>Update Status:</label>
+              <fieldset className="status-actions">
+                <legend>Update Status</legend>
                 <div className="status-buttons">
                   {(selectedClaim.claim.status === 'coding_review' || selectedClaim.claim.status === 'draft') && (
                     <button
@@ -2386,18 +2425,19 @@ export function ClaimsPage() {
                       );
                     })}
                 </div>
-              </div>
+              </fieldset>
             </div>
 
             <div className="claim-info-section">
               <h3>Diagnoses</h3>
               <table>
+                <caption className="sr-only">Claim diagnoses</caption>
                 <thead>
                   <tr>
-                    <th>#</th>
-                    <th>ICD-10</th>
-                    <th>Description</th>
-                    <th>Primary</th>
+                    <th scope="col">#</th>
+                    <th scope="col">ICD-10</th>
+                    <th scope="col">Description</th>
+                    <th scope="col">Primary</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2421,12 +2461,13 @@ export function ClaimsPage() {
             <div className="claim-info-section">
               <h3>Procedures</h3>
               <table>
+                <caption className="sr-only">Claim charges</caption>
                 <thead>
                   <tr>
-                    <th>CPT</th>
-                    <th>Description</th>
-                    <th>Qty</th>
-                    <th>Charge</th>
+                    <th scope="col">CPT</th>
+                    <th scope="col">Description</th>
+                    <th scope="col">Qty</th>
+                    <th scope="col">Charge</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2450,13 +2491,14 @@ export function ClaimsPage() {
             <div className="claim-info-section">
               <h3>Payments</h3>
               <table>
+                <caption className="sr-only">Claim payments</caption>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Payer</th>
-                    <th>Method</th>
-                    <th>Check #</th>
-                    <th>Amount</th>
+                    <th scope="col">Date</th>
+                    <th scope="col">Payer</th>
+                    <th scope="col">Method</th>
+                    <th scope="col">Check #</th>
+                    <th scope="col">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2559,10 +2601,14 @@ export function ClaimsPage() {
 
             <div className="form-row">
               <div className="form-field">
-                <label>Payer Payment Amount *</label>
+                <label htmlFor="payer-payment-amount">Payer Payment Amount *</label>
                 <input
+                  id="payer-payment-amount"
+                  name="paymentAmount"
                   type="number"
                   step="0.01"
+                  required
+                  aria-required="true"
                   value={paymentAmount}
                   onChange={(event) => setPaymentAmount(event.target.value)}
                   placeholder="0.00"
@@ -2570,9 +2616,13 @@ export function ClaimsPage() {
               </div>
 
               <div className="form-field">
-                <label>Payment Date *</label>
+                <label htmlFor="payer-payment-date">Payment Date *</label>
                 <input
+                  id="payer-payment-date"
+                  name="paymentDate"
                   type="date"
+                  required
+                  aria-required="true"
                   value={paymentDate}
                   onChange={(event) => setPaymentDate(event.target.value)}
                 />
@@ -2581,8 +2631,8 @@ export function ClaimsPage() {
 
             <div className="form-row">
               <div className="form-field">
-                <label>Payment Method</label>
-                <select aria-label="Payment method" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                <label htmlFor="payer-payment-method">Payment Method</label>
+                <select id="payer-payment-method" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
                   <option value="">Select...</option>
                   <option value="check">Check</option>
                   <option value="eft">EFT</option>
@@ -2592,8 +2642,9 @@ export function ClaimsPage() {
               </div>
 
               <div className="form-field">
-                <label>Payer Name</label>
+                <label htmlFor="payer-name">Payer Name</label>
                 <input
+                  id="payer-name"
                   type="text"
                   value={paymentPayer}
                   onChange={(event) => setPaymentPayer(event.target.value)}
@@ -2604,8 +2655,9 @@ export function ClaimsPage() {
 
             <div className="form-row">
               <div className="form-field">
-                <label>Check Number</label>
+                <label htmlFor="payer-check-number">Check Number</label>
                 <input
+                  id="payer-check-number"
                   type="text"
                   value={checkNumber}
                   onChange={(event) => setCheckNumber(event.target.value)}
@@ -2615,8 +2667,9 @@ export function ClaimsPage() {
             </div>
 
             <div className="form-field">
-              <label>Notes</label>
+              <label htmlFor="payer-payment-notes">Notes</label>
               <textarea
+                id="payer-payment-notes"
                 value={paymentNotes}
                 onChange={(event) => setPaymentNotes(event.target.value)}
                 placeholder="Optional notes about this payment"

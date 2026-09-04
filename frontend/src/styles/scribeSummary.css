@@ -420,7 +420,7 @@
 
 .scribe-note-section__empty {
   font-size: 0.85rem;
-  color: var(--gray-400);
+  color: var(--gray-600);
   font-style: italic;
 }
 
@@ -664,7 +664,7 @@
 }
 
 .scribe-review-edit-time {
-  color: var(--gray-400);
+  color: var(--gray-600);
 }
 
 .scribe-review-confidence {
@@ -734,11 +734,11 @@
 }
 
 .scribe-review-action-button--primary {
-  background: var(--primary-600);
+  background: #0369a1;
 }
 
 .scribe-review-action-button--success {
-  background: var(--success-600);
+  background: #047857;
 }
 
 .scribe-review-action-button--danger {

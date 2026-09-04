@@ -57,7 +57,7 @@ describe('Modal Component', () => {
     expect(handleClose).not.toHaveBeenCalled();
   });
 
-  it('does not close when Escape is pressed', async () => {
+  it('closes when Escape is pressed', async () => {
     const handleClose = vi.fn();
     const user = userEvent.setup();
 
@@ -69,7 +69,7 @@ describe('Modal Component', () => {
 
     await user.keyboard('{Escape}');
 
-    expect(handleClose).not.toHaveBeenCalled();
+    expect(handleClose).toHaveBeenCalledTimes(1);
   });
 
   it('renders children content', () => {

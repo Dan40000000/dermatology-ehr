@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
-import { parseHL7Message, validateHL7Message, generateACK } from "../services/hl7Parser";
+import { parseHL7Message, validateHL7Message, generateACK, type HL7Message } from "../services/hl7Parser";
 import { processHL7Message } from "../services/hl7Processor";
 import {
   enqueueHL7Message,
@@ -11,25 +11,33 @@ import {
 } from "../services/hl7Queue";
 import { createAuditLog } from "../services/audit";
 import { logger } from "../lib/logger";
+import { hashValue, safeErrorCode } from "../utils/phiRedaction";
 
 export const hl7Router = Router();
 
-function toSafeErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  return "Unknown error";
-}
-
 function logHl7Error(message: string, error: unknown): void {
   logger.error(message, {
-    error: toSafeErrorMessage(error),
+    errorCode: safeErrorCode(error),
   });
+}
+
+function hashControlId(messageControlId: string | undefined): string | undefined {
+  return messageControlId ? `hl7-${hashValue(messageControlId)}` : undefined;
+}
+
+function getTenantId(req: AuthedRequest): string | undefined {
+  const tenantId = req.user?.tenantId || req.tenantId;
+  return typeof tenantId === "string" && tenantId.trim() ? tenantId : undefined;
+}
+
+function requestedBodyTenant(req: Request): string | undefined {
+  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) return undefined;
+  const candidate = (req.body as any).tenantId || (req.body as any).tenant_id;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+function ackIfAddressable(message: HL7Message | undefined, code: "AA" | "AE" | "AR"): string | undefined {
+  return message?.messageControlId ? generateACK(message, code) : undefined;
 }
 
 /**
@@ -39,9 +47,14 @@ function logHl7Error(message: string, error: unknown): void {
  */
 hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    const tenantId = req.user?.tenantId;
+    const tenantId = getTenantId(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const bodyTenant = requestedBodyTenant(req);
+    if (bodyTenant && bodyTenant !== tenantId) {
+      return res.status(403).json({ error: "Invalid tenant" });
     }
 
     // Get raw message - could be in body as string or in a field
@@ -69,18 +82,16 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
         action: "HL7_PARSE_ERROR",
         resourceType: "hl7_message",
         metadata: {
-          error: error instanceof Error ? error.message : String(error),
-          rawMessage: rawMessage.substring(0, 500), // Log first 500 chars
+          errorCode: safeErrorCode(error),
+          messageLength: Buffer.byteLength(rawMessage, "utf8"),
         },
         severity: "error",
         status: "failure",
       });
 
-      const nackMessage = `MSH|^~\\&|DERMAPP|DERM|SENDER|SENDER|${new Date().toISOString()}||ACK|${Date.now()}|P|2.5\rMSA|AR|UNKNOWN|Invalid HL7 format`;
       return res.status(400).json({
         error: "Invalid HL7 message format",
-        details: error instanceof Error ? error.message : String(error),
-        ack: nackMessage,
+        errorCode: safeErrorCode(error),
       });
     }
 
@@ -91,7 +102,7 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
         userId: req.user?.id || null,
         action: "HL7_VALIDATION_ERROR",
         resourceType: "hl7_message",
-        resourceId: parsed.messageControlId,
+        resourceId: hashControlId(parsed.messageControlId),
         metadata: {
           errors: validation.errors,
           messageType: parsed.messageType,
@@ -100,11 +111,12 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
         status: "failure",
       });
 
-      const nackMessage = generateACK(parsed, "AR"); // Application Reject
+      const nack = ackIfAddressable(parsed, "AR");
+
       return res.status(400).json({
         error: "HL7 message validation failed",
         validationErrors: validation.errors,
-        ack: nackMessage,
+        ...(nack ? { ack: nack } : {}),
       });
     }
 
@@ -120,7 +132,7 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
       resourceId: messageId,
       metadata: {
         messageType: parsed.messageType,
-        messageControlId: parsed.messageControlId,
+        messageControlIdHash: hashControlId(parsed.messageControlId),
         sendingApplication: parsed.sendingApplication,
         sendingFacility: parsed.sendingFacility,
       },
@@ -155,9 +167,14 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
  */
 hl7Router.post("/inbound/sync", requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    const tenantId = req.user?.tenantId;
+    const tenantId = getTenantId(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const bodyTenant = requestedBodyTenant(req);
+    if (bodyTenant && bodyTenant !== tenantId) {
+      return res.status(403).json({ error: "Invalid tenant" });
     }
 
     let rawMessage: string;
@@ -169,16 +186,25 @@ hl7Router.post("/inbound/sync", requireAuth, async (req: AuthedRequest, res: Res
       return res.status(400).json({ error: "Missing HL7 message in request body" });
     }
 
-    // Parse and validate
-    const parsed = parseHL7Message(rawMessage);
+    // Parse and validate. Parsing failures are client errors and must not
+    // reach processing or produce an ACK with an invented control id.
+    let parsed: ReturnType<typeof parseHL7Message>;
+    try {
+      parsed = parseHL7Message(rawMessage);
+    } catch (error) {
+      return res.status(400).json({
+        error: "Invalid HL7 message format",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
     const validation = validateHL7Message(parsed);
 
     if (!validation.valid) {
-      const nackMessage = generateACK(parsed, "AR");
+      const nack = ackIfAddressable(parsed, "AR");
       return res.status(400).json({
         error: "HL7 message validation failed",
         validationErrors: validation.errors,
-        ack: nackMessage,
+        ...(nack ? { ack: nack } : {}),
       });
     }
 
@@ -191,7 +217,7 @@ hl7Router.post("/inbound/sync", requireAuth, async (req: AuthedRequest, res: Res
         userId: req.user?.id || null,
         action: "HL7_MESSAGE_PROCESSED_SYNC",
         resourceType: "hl7_message",
-        resourceId: parsed.messageControlId,
+        resourceId: hashControlId(parsed.messageControlId),
         metadata: {
           messageType: parsed.messageType,
           resourceId: result.resourceId,
@@ -229,7 +255,7 @@ hl7Router.post("/inbound/sync", requireAuth, async (req: AuthedRequest, res: Res
  */
 hl7Router.get("/messages", requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    const tenantId = req.user?.tenantId;
+    const tenantId = getTenantId(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -264,7 +290,7 @@ hl7Router.get("/messages", requireAuth, async (req: AuthedRequest, res: Response
  */
 hl7Router.get("/messages/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    const tenantId = req.user?.tenantId;
+    const tenantId = getTenantId(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -289,7 +315,7 @@ hl7Router.get("/messages/:id", requireAuth, async (req: AuthedRequest, res: Resp
  */
 hl7Router.post("/messages/:id/reprocess", requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    const tenantId = req.user?.tenantId;
+    const tenantId = getTenantId(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -327,7 +353,7 @@ hl7Router.post("/messages/:id/reprocess", requireAuth, async (req: AuthedRequest
  */
 hl7Router.get("/statistics", requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    const tenantId = req.user?.tenantId;
+    const tenantId = getTenantId(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -345,13 +371,26 @@ hl7Router.get("/statistics", requireAuth, async (req: AuthedRequest, res: Respon
  * All message types should use the main /inbound endpoint
  * These endpoints are deprecated and will be removed in a future version
  *
- * Note: These legacy endpoints don't require authentication for backwards compatibility
- * They accept messages without tenant validation (tenant determined from message content)
+ * Legacy clients retain the endpoint paths, but authentication and an
+ * authenticated tenant are required before any message is parsed or queued.
  */
 
-// Helper function for legacy endpoints - processes HL7 without auth
-const legacyHL7Handler = async (req: Request, res: Response) => {
+// Helper function for legacy endpoints - processes HL7 for an authenticated tenant
+const legacyHL7Handler = async (req: AuthedRequest, res: Response) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    // The authenticated identity is authoritative. A body-supplied tenant is
+    // accepted only as a consistency check and can never select the storage
+    // tenant (preventing cross-tenant writes through legacy clients).
+    const bodyTenant = requestedBodyTenant(req);
+    if (bodyTenant && bodyTenant !== tenantId) {
+      return res.status(403).json({ error: "Invalid tenant" });
+    }
+
     // Extract message from request body
     let rawMessage: string;
     if (typeof req.body === "string") {
@@ -362,22 +401,27 @@ const legacyHL7Handler = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Missing HL7 message in request body" });
     }
 
-    // Parse the message to extract metadata (including potential tenant info)
-    const parsed = parseHL7Message(rawMessage);
+    // Parse the message to extract metadata (including potential tenant info).
+    // Invalid messages are rejected before queueing or ACK generation.
+    let parsed: ReturnType<typeof parseHL7Message>;
+    try {
+      parsed = parseHL7Message(rawMessage);
+    } catch (error) {
+      return res.status(400).json({
+        error: "Invalid HL7 message format",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
     const validation = validateHL7Message(parsed);
 
     if (!validation.valid) {
-      const nackMessage = generateACK(parsed, "AR");
+      const nack = ackIfAddressable(parsed, "AR");
       return res.status(400).json({
         error: "HL7 message validation failed",
         validationErrors: validation.errors,
-        ack: nackMessage,
+        ...(nack ? { ack: nack } : {}),
       });
     }
-
-    // For legacy endpoints, we'll use a default tenant or extract from message
-    // In production, this would come from the message headers or a configured mapping
-    const tenantId = "default"; // TODO: Extract from message routing info
 
     // Enqueue the message
     const messageId = await enqueueHL7Message(rawMessage, tenantId);
@@ -402,13 +446,13 @@ const legacyHL7Handler = async (req: Request, res: Response) => {
 };
 
 // ADT - Patient Administration Messages
-hl7Router.post("/adt", legacyHL7Handler);
+hl7Router.post("/adt", requireAuth, legacyHL7Handler);
 
 // SIU - Scheduling Information Unsolicited
-hl7Router.post("/siu", legacyHL7Handler);
+hl7Router.post("/siu", requireAuth, legacyHL7Handler);
 
 // DFT - Detailed Financial Transaction
-hl7Router.post("/dft", legacyHL7Handler);
+hl7Router.post("/dft", requireAuth, legacyHL7Handler);
 
 // ORU - Observation Result (lab results)
-hl7Router.post("/oru", legacyHL7Handler);
+hl7Router.post("/oru", requireAuth, legacyHL7Handler);

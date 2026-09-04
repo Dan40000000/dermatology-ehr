@@ -180,7 +180,7 @@ describe('MailPage', () => {
     const modal = await screen.findByTestId('modal-new-message');
 
     const user = userEvent.setup();
-    const recipientSelect = within(modal).getByRole('listbox');
+    const recipientSelect = within(modal).getByRole('listbox', { name: 'To (Staff Members)' });
     await user.selectOptions(recipientSelect, ['user-2']);
 
     fireEvent.change(within(modal).getByPlaceholderText('Message subject...'), {

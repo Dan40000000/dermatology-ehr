@@ -5,6 +5,7 @@ import { AuthenticatedRequestUser } from "../types";
 import { logger } from "../lib/logger";
 import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
 import { isCookieAuthPlaceholder, STAFF_ACCESS_COOKIE } from "../auth/cookies";
+import { safeErrorCode } from "../utils/phiRedaction";
 
 export interface AuthenticatedSocket extends Socket {
   user?: AuthenticatedRequestUser;
@@ -52,6 +53,16 @@ export function authenticateSocket(socket: AuthenticatedSocket, next: (err?: Err
     // Verify JWT token
     const decoded = jwt.verify(token, env.jwtSecret) as AuthenticatedRequestUser;
 
+    const tokenStatus = String((decoded as any).status || '').toLowerCase();
+    if ((decoded as any).isActive === false || (decoded as any).deactivatedAt || tokenStatus === 'deactivated' || tokenStatus === 'disabled') {
+      logger.warn("WebSocket connection blocked for inactive user", {
+        socketId: socket.id,
+        userId: decoded.id,
+        tenantId: decoded.tenantId,
+      });
+      return next(new Error("Account is inactive"));
+    }
+
     // Validate tenant ID matches token
     if (decoded.tenantId !== tenantId) {
       logger.warn("WebSocket connection attempted with mismatched tenant ID", {
@@ -91,7 +102,7 @@ export function authenticateSocket(socket: AuthenticatedSocket, next: (err?: Err
   } catch (err: any) {
     logger.error("WebSocket authentication failed", {
       socketId: socket.id,
-      error: err.message,
+      errorCode: safeErrorCode(err),
     });
     next(new Error("Invalid authentication token"));
   }

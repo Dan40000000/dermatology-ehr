@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { fetchAccessSettings } from '../api';
 import {
   canAccessCommandCenterSection as canAccessCommandCenterSectionWithSettings,
+  canAccessMipsReportingWithSettings,
   canAccessModuleWithSettings,
   resolveCommandCenterAccess,
   resolveModuleAccess,
@@ -70,7 +71,10 @@ export function AccessControlProvider({ children }: { children: ReactNode }) {
 
   const canAccessModule = useCallback(
     (moduleKey: ModuleKey, roles?: Role | Role[]) => {
-      return canAccessModuleWithSettings(roles || effectiveRoles, moduleKey, settings.moduleAccess);
+      const requestedRoles = roles || effectiveRoles;
+      return moduleKey === 'quality'
+        ? canAccessMipsReportingWithSettings(requestedRoles, settings.moduleAccess)
+        : canAccessModuleWithSettings(requestedRoles, moduleKey, settings.moduleAccess);
     },
     [effectiveRoles, settings.moduleAccess],
   );
@@ -110,7 +114,9 @@ export function useAccessControl(): AccessControlContextValue {
       isLoading: false,
       error: null,
       reload: async () => {},
-      canAccessModule: (moduleKey, roles) => canAccessModuleWithSettings(roles, moduleKey, defaultSettings.moduleAccess),
+      canAccessModule: (moduleKey, roles) => moduleKey === 'quality'
+        ? canAccessMipsReportingWithSettings(roles, defaultSettings.moduleAccess)
+        : canAccessModuleWithSettings(roles, moduleKey, defaultSettings.moduleAccess),
       canAccessCommandCenterSection: (sectionKey, roles) =>
         canAccessCommandCenterSectionWithSettings(roles, sectionKey, defaultSettings.commandCenterAccess),
     };

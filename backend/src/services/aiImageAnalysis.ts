@@ -1,9 +1,10 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
-import { isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
+import { isClinicalAiProviderAllowed, isHipaaClinicalAiEnabled } from "../utils/aiPhiGuard";
 import { getEnabledAnthropicApiKey, getEnabledOpenAiApiKey } from "../utils/externalAiGate";
 import { meteredOpenAiFetch } from "../utils/openAiSpendGuard";
+import { safeErrorCode } from "../utils/phiRedaction";
 
 /**
  * AI Image Analysis Service for Dermatology
@@ -29,6 +30,9 @@ interface AIAnalysisResult {
 }
 
 function toSafeErrorMessage(error: unknown): string {
+  if (process.env.NODE_ENV !== "test") {
+    return safeErrorCode(error);
+  }
   if (error instanceof Error) {
     return error.message;
   }
@@ -44,6 +48,19 @@ function logAIImageAnalysisError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+function isSyntheticAiRuntime(): boolean {
+  const nodeEnv = String(process.env.NODE_ENV || "development").trim().toLowerCase();
+  if (nodeEnv === "production") {
+    return false;
+  }
+  if (nodeEnv === "test" || nodeEnv === "development" || nodeEnv === "demo") {
+    return true;
+  }
+
+  const mode = String(process.env.CLINICAL_AI_MODE || process.env.AI_MODE || "").trim().toLowerCase();
+  return mode === "mock" || mode === "demo";
 }
 
 export class AIImageAnalysisService {
@@ -152,15 +169,24 @@ export class AIImageAnalysisService {
     photoId: string
   ): Promise<AIAnalysisResult> {
     // Only send patient images to OpenAI when a HIPAA/BAA-covered mode is explicitly enabled.
-    if (this.openaiApiKey && isHipaaClinicalAiEnabled()) {
+    const openAiAllowed = Boolean(
+      this.openaiApiKey
+      && isClinicalAiProviderAllowed("openai", this.openaiApiKey)
+      && isHipaaClinicalAiEnabled()
+    );
+
+    if (openAiAllowed) {
       return await this.analyzeWithOpenAI(imageUrl, tenantId, analyzedBy, photoId);
     }
     if (this.openaiApiKey) {
       logger.warn("OpenAI image analysis skipped because HIPAA/BAA mode is not enabled");
     }
 
-    // Otherwise, return mock analysis for development
-    return this.getMockAnalysis();
+    if (isSyntheticAiRuntime()) {
+      return this.getMockAnalysis();
+    }
+
+    throw new Error("AI image analysis provider is unavailable");
   }
 
   /**
@@ -182,6 +208,7 @@ export class AIImageAnalysisService {
         },
         body: JSON.stringify({
           model,
+          store: false,
           messages: [
             {
               role: "system",
@@ -259,8 +286,10 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
       };
     } catch (error) {
       logAIImageAnalysisError("OpenAI Vision API Error", error);
-      // Fall back to mock analysis
-      return this.getMockAnalysis();
+      if (isSyntheticAiRuntime()) {
+        return this.getMockAnalysis();
+      }
+      throw error;
     }
   }
 

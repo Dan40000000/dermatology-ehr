@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
+import { Button, StyleSheet, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
@@ -26,9 +27,82 @@ import ProviderProfileScreen from '../screens/provider/ProviderProfileScreen';
 // Shared Screens
 import AINoteTakingScreen from '../screens/AINoteTakingScreen';
 import AINoteReviewScreen from '../screens/AINoteReviewScreen';
+import { Patient } from '../types';
 
-const Stack = createStackNavigator();
+type AINoteTakingParams = {
+  patient: Patient;
+  encounterId?: string;
+};
+
+type AINoteReviewParams = {
+  transcriptId: string;
+  recordingId: string;
+  encounterId?: string;
+};
+
+type RootStackParamList = {
+  MainTabs: undefined;
+  AINoteTaking: AINoteTakingParams | undefined;
+  AINoteReview: AINoteReviewParams | undefined;
+  Login: undefined;
+};
+
+const Stack = createStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
+
+function MissingNoteContext({ navigation }: { navigation: any }) {
+  return (
+    <View style={styles.missingContext}>
+      <Text style={styles.missingContextTitle}>Select a patient first</Text>
+      <Text style={styles.missingContextText}>
+        Voice documentation must be linked to a patient before recording begins.
+      </Text>
+      <Button title="Go back" onPress={() => navigation.goBack()} />
+    </View>
+  );
+}
+
+function AINoteTakingRoute({ navigation, route }: StackScreenProps<RootStackParamList, 'AINoteTaking'>) {
+  const { user } = useAuth();
+  const patient = route.params?.patient;
+
+  if (!user || !patient) {
+    return <MissingNoteContext navigation={navigation} />;
+  }
+
+  return (
+    <AINoteTakingScreen
+      patient={patient}
+      providerId={user.id}
+      encounterId={route.params?.encounterId}
+      onCancel={() => navigation.goBack()}
+      onComplete={(transcriptId, recordingId) =>
+        navigation.replace('AINoteReview', {
+          transcriptId,
+          recordingId,
+          encounterId: route.params?.encounterId,
+        })
+      }
+    />
+  );
+}
+
+function AINoteReviewRoute({ navigation, route }: StackScreenProps<RootStackParamList, 'AINoteReview'>) {
+  const params = route.params;
+  if (!params?.transcriptId || !params.recordingId) {
+    return <MissingNoteContext navigation={navigation} />;
+  }
+
+  return (
+    <AINoteReviewScreen
+      transcriptId={params.transcriptId}
+      recordingId={params.recordingId}
+      encounterId={params.encounterId}
+      onCancel={() => navigation.goBack()}
+      onComplete={() => navigation.popToTop()}
+    />
+  );
+}
 
 function PatientTabs() {
   return (
@@ -109,12 +183,12 @@ function MainStack() {
       <Stack.Screen name="MainTabs" component={isProvider ? ProviderTabs : PatientTabs} />
       <Stack.Screen
         name="AINoteTaking"
-        component={AINoteTakingScreen}
+        component={AINoteTakingRoute}
         options={{ presentation: 'modal' }}
       />
       <Stack.Screen
         name="AINoteReview"
-        component={AINoteReviewScreen}
+        component={AINoteReviewRoute}
         options={{ presentation: 'modal' }}
       />
     </Stack.Navigator>
@@ -133,7 +207,7 @@ export default function AppNavigator() {
     return () => {
       // Cleanup
     };
-  }, []);
+  }, [resetTimer]);
 
   if (isLoading) {
     return null; // Or a loading screen
@@ -151,3 +225,22 @@ export default function AppNavigator() {
     </NavigationContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  missingContext: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+    gap: 12,
+    backgroundColor: '#fff',
+  },
+  missingContextTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#222',
+  },
+  missingContextText: {
+    fontSize: 16,
+    color: '#444',
+  },
+});

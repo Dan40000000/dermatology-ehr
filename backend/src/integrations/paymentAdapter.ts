@@ -12,6 +12,7 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { BaseAdapter, AdapterOptions, saveIntegrationConfig } from './baseAdapter';
 import { scanAiPhi } from '../utils/aiPhiGuard';
+import { assertSyntheticVendorMockAllowed } from '../services/vendorMockGuard';
 
 // ============================================================================
 // Types
@@ -302,6 +303,9 @@ export class PaymentAdapter extends BaseAdapter {
     try {
       const safeInput = { ...input, metadata: this.normalizeMetadata(input.metadata) };
       const useMockCheckout = this.useMock || !this.hasStripeCredentials();
+      if (useMockCheckout) {
+        assertSyntheticVendorMockAllowed('Stripe checkout');
+      }
       const session = useMockCheckout
         ? await this.mockCreateCheckoutSession(safeInput, amountCents)
         : await this.withRetry(() => this.realCreateCheckoutSession(safeInput));
@@ -329,6 +333,7 @@ export class PaymentAdapter extends BaseAdapter {
 
   async retrieveCheckoutSession(sessionId: string): Promise<CheckoutSessionResult> {
     if (this.useMock || sessionId.startsWith('cs_mock_') || !this.hasStripeCredentials()) {
+      assertSyntheticVendorMockAllowed('Stripe checkout verification');
       return {
         id: sessionId,
         paymentStatus: 'paid',

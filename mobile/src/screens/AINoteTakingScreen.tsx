@@ -9,7 +9,13 @@ import {
   ScrollView,
   Dimensions,
 } from 'react-native';
-import { Audio } from 'expo-av';
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from 'expo-audio';
 import { aiNotesApi } from '../api/aiNotes';
 import { Recording, Patient } from '../types';
 
@@ -22,6 +28,10 @@ interface Props {
 }
 
 const { width } = Dimensions.get('window');
+const recordingOptions = {
+  ...RecordingPresets.HIGH_QUALITY,
+  isMeteringEnabled: true,
+};
 
 export default function AINoteTakingScreen({ 
   patient, 
@@ -32,32 +42,32 @@ export default function AINoteTakingScreen({
 }: Props) {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [duration, setDuration] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState('');
   const [consentGiven, setConsentGiven] = useState(false);
-  const [audioLevel, setAudioLevel] = useState(0);
-  
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const audioRecorder = useAudioRecorder(recordingOptions);
+  const recorderState = useAudioRecorderState(audioRecorder, 100);
+  const duration = Math.floor(recorderState.durationMillis / 1000);
+  const audioLevel = recorderState.metering === undefined
+    ? 0
+    : Math.max(0, Math.min(100, (recorderState.metering + 160) * 0.625));
   const recordingDataRef = useRef<Recording | null>(null);
-  const audioLevelTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     return () => {
-      if (durationTimerRef.current) {
-        clearInterval(durationTimerRef.current);
+      if (audioRecorder.isRecording) {
+        void audioRecorder.stop();
       }
-      if (audioLevelTimerRef.current) {
-        clearInterval(audioLevelTimerRef.current);
+      if (recordingDataRef.current) {
+        void aiNotesApi.deleteRecording(recordingDataRef.current.id);
       }
-      stopRecording();
     };
-  }, []);
+  }, [audioRecorder]);
 
   const requestPermissions = async () => {
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== 'granted') {
+    const { granted } = await AudioModule.requestRecordingPermissionsAsync();
+    if (!granted) {
       Alert.alert(
         'Permission Required',
         'Microphone access is required to record clinical notes.',
@@ -68,137 +78,112 @@ export default function AINoteTakingScreen({
     return true;
   };
 
-  const startRecording = async () => {
-    if (!consentGiven) {
-      Alert.alert(
-        'Patient Consent Required',
-        'Please confirm that the patient has consented to this recording.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Patient Consents', 
-            onPress: () => {
-              setConsentGiven(true);
-              setTimeout(() => startRecording(), 100);
-            }
-          },
-        ]
-      );
-      return;
-    }
-
+  const beginRecording = async () => {
     const hasPermission = await requestPermissions();
     if (!hasPermission) return;
 
+    let recordingData: Recording | null = null;
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      
-      await recording.startAsync();
-      recordingRef.current = recording;
-
-      const recordingData = await aiNotesApi.startRecording({
+      recordingData = await aiNotesApi.startRecording({
         patientId: patient.id,
         providerId,
         encounterId,
         consentObtained: true,
         consentMethod: 'verbal',
       });
-      
       recordingDataRef.current = recordingData;
 
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+
       setIsRecording(true);
-      setDuration(0);
-
-      durationTimerRef.current = setInterval(() => {
-        setDuration((prev) => prev + 1);
-      }, 1000);
-
-      startAudioLevelMonitoring();
-    } catch (error) {
-      console.error('Failed to start recording:', error);
+      setIsPaused(false);
+    } catch {
+      if (audioRecorder.isRecording) {
+        await audioRecorder.stop();
+      }
+      if (recordingData) {
+        await aiNotesApi.deleteRecording(recordingData.id).catch(() => undefined);
+      }
+      recordingDataRef.current = null;
       Alert.alert('Error', 'Failed to start recording. Please try again.');
     }
   };
 
-  const startAudioLevelMonitoring = () => {
-    audioLevelTimerRef.current = setInterval(async () => {
-      if (recordingRef.current) {
-        const status = await recordingRef.current.getStatusAsync();
-        if (status.isRecording && status.metering !== undefined) {
-          const normalized = Math.max(0, Math.min(100, (status.metering + 160) * 2));
-          setAudioLevel(normalized);
-        }
-      }
-    }, 100);
+  const startRecording = () => {
+    if (!consentGiven) {
+      Alert.alert(
+        'Patient Consent Required',
+        'Please confirm that the patient has consented to this recording.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Patient Consents',
+            onPress: () => {
+              setConsentGiven(true);
+              void beginRecording();
+            }
+          },
+        ]
+      );
+      return;
+    }
+    void beginRecording();
   };
 
   const pauseRecording = async () => {
-    if (!recordingRef.current) return;
-    
     try {
-      await recordingRef.current.pauseAsync();
+      audioRecorder.pause();
       setIsPaused(true);
-      if (durationTimerRef.current) {
-        clearInterval(durationTimerRef.current);
-      }
-      if (audioLevelTimerRef.current) {
-        clearInterval(audioLevelTimerRef.current);
-      }
-    } catch (error) {
-      console.error('Failed to pause recording:', error);
+    } catch {
+      Alert.alert('Error', 'Failed to pause recording.');
     }
   };
 
   const resumeRecording = async () => {
-    if (!recordingRef.current) return;
-    
     try {
-      await recordingRef.current.startAsync();
+      audioRecorder.record();
       setIsPaused(false);
-      
-      durationTimerRef.current = setInterval(() => {
-        setDuration((prev) => prev + 1);
-      }, 1000);
-      
-      startAudioLevelMonitoring();
-    } catch (error) {
-      console.error('Failed to resume recording:', error);
+    } catch {
+      Alert.alert('Error', 'Failed to resume recording.');
     }
   };
 
   const stopRecording = async () => {
-    if (!recordingRef.current) return;
+    if (!recordingDataRef.current) return;
 
     try {
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
-      
-      if (durationTimerRef.current) {
-        clearInterval(durationTimerRef.current);
-      }
-      if (audioLevelTimerRef.current) {
-        clearInterval(audioLevelTimerRef.current);
-      }
+      await audioRecorder.stop();
+      const uri = audioRecorder.uri;
+      const recordingData = recordingDataRef.current;
+      recordingDataRef.current = null;
 
       setIsRecording(false);
       setIsPaused(false);
-      setAudioLevel(0);
 
-      if (uri && recordingDataRef.current) {
-        await processRecording(uri, recordingDataRef.current);
+      if (uri) {
+        await processRecording(uri, recordingData);
       }
-    } catch (error) {
-      console.error('Failed to stop recording:', error);
+    } catch {
       Alert.alert('Error', 'Failed to stop recording.');
     }
+  };
+
+  const discardRecording = async () => {
+    const recordingData = recordingDataRef.current;
+    recordingDataRef.current = null;
+    if (audioRecorder.isRecording || isPaused) {
+      await audioRecorder.stop().catch(() => undefined);
+    }
+    if (recordingData) {
+      await aiNotesApi.deleteRecording(recordingData.id).catch(() => undefined);
+    }
+    setIsRecording(false);
+    setIsPaused(false);
   };
 
   const processRecording = async (uri: string, recordingData: Recording) => {
@@ -206,18 +191,18 @@ export default function AINoteTakingScreen({
     
     try {
       setProcessingStage('Uploading recording...');
-      await aiNotesApi.uploadRecording(recordingData.id, uri, duration);
+      const upload = await aiNotesApi.uploadRecording(recordingData.id, uri, duration);
       
       setProcessingStage('Transcribing audio...');
-      const transcript = await aiNotesApi.transcribeRecording(recordingData.id);
+      const transcriptId = upload.transcriptId
+        || (await aiNotesApi.transcribeRecording(recordingData.id)).id;
       
       setProcessingStage('Complete!');
       
       setTimeout(() => {
-        onComplete(transcript.id, recordingData.id);
+        onComplete(transcriptId, recordingData.id);
       }, 500);
-    } catch (error) {
-      console.error('Failed to process recording:', error);
+    } catch {
       Alert.alert(
         'Processing Error',
         'Failed to process the recording. Please try again.',
@@ -250,7 +235,7 @@ export default function AINoteTakingScreen({
             text: 'Cancel Recording', 
             style: 'destructive',
             onPress: async () => {
-              await stopRecording();
+              await discardRecording();
               onCancel();
             }
           },

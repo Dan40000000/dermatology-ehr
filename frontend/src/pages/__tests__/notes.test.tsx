@@ -132,10 +132,10 @@ describe('NotesPage', () => {
     expect(within(rows[1]).getByText('Skin, Ben')).toBeInTheDocument();
 
     fireEvent.change(providerSelect, { target: { value: 'provider-2' } });
-    const patientLookup = screen.getByRole('textbox', { name: 'Search patient filter' });
+    const patientLookup = screen.getByLabelText('Patient filter');
     fireEvent.focus(patientLookup);
     fireEvent.change(patientLookup, { target: { value: 'Ben' } });
-    fireEvent.click(screen.getByRole('button', { name: /Skin, Ben/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Skin, Ben/ }));
 
     const searchInput = screen.getByPlaceholderText('Search by patient name, chief complaint, or provider...');
     fireEvent.change(searchInput, { target: { value: 'Follow up' } });

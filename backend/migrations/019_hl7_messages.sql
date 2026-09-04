@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS hl7_messages (
 
   -- Message identification
   message_type VARCHAR(50) NOT NULL,
-  message_control_id VARCHAR(100),
+  message_control_id VARCHAR(100) NOT NULL,
   sending_application VARCHAR(255),
   sending_facility VARCHAR(255),
   receiving_application VARCHAR(255),

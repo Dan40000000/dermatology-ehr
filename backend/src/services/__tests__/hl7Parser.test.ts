@@ -89,6 +89,20 @@ describe("hl7Parser", () => {
     expect(validation.errors).toContain("Message type is required");
   });
 
+  it("rejects a supported message with a missing MSH-10 control id", () => {
+    const missingControlId =
+      "MSH|^~\\&|APP|FAC|REC|RFAC|20250101120000||ADT^A04||P|2.5\rPID|1||patient-1||DOE^JANE";
+
+    expect(() => parseHL7Message(missingControlId)).toThrow("MSH-10 message control ID is required");
+  });
+
+  it("rejects unsupported message types before they can be acknowledged", () => {
+    const unsupported =
+      "MSH|^~\\&|APP|FAC|REC|RFAC|20250101120000||DFT^P03|CTRL-1|P|2.5";
+
+    expect(() => parseHL7Message(unsupported)).toThrow("Unsupported HL7 message type: DFT^P03");
+  });
+
   it("generates ACK messages with mirrored sender and control id", () => {
     const parsed = parseHL7Message(ADT_A04_REGISTER_PATIENT);
     const ack = generateACK(parsed, "AA");

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 import { loadEnv } from '../config/validate';
+import { assertSyntheticVendorMockAllowed } from './vendorMockGuard';
 
 export type EligibilityProvider = 'stedi' | 'surescripts' | 'mock';
 export type PrescribingProvider = 'dosespot' | 'surescripts' | 'mock';
@@ -172,10 +173,6 @@ const formatProviderMessage = (provider: string, workflow: string) =>
     ? undefined
     : `${provider} ${workflow} adapter is not configured yet; returned mock data through the vendor-neutral interface.`;
 
-function envFlagEnabled(value: string | undefined): boolean {
-  return String(value || '').trim().toLowerCase() === 'true';
-}
-
 function isProductionLikeEnvironment(): boolean {
   const environment = (
     process.env.DEPLOYMENT_ENV ||
@@ -189,6 +186,7 @@ function isProductionLikeEnvironment(): boolean {
 
 function assertVendorMockFallbackAllowed(provider: string, workflow: string): void {
   if (provider === 'mock') {
+    assertSyntheticVendorMockAllowed(workflow);
     return;
   }
 
@@ -196,13 +194,9 @@ function assertVendorMockFallbackAllowed(provider: string, workflow: string): vo
     return;
   }
 
-  if (envFlagEnabled(process.env.ALLOW_VENDOR_MOCK_FALLBACKS)) {
-    return;
-  }
-
   throw new Error(
     `${workflow} provider is set to "${provider}", but only mock scaffolding is implemented. ` +
-      'Set the provider to "mock" for demos or enable ALLOW_VENDOR_MOCK_FALLBACKS=true explicitly.',
+      'Configure and validate the live vendor adapter before using this workflow.',
   );
 }
 

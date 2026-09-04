@@ -102,7 +102,7 @@ export default function ProviderHomeScreen({ navigation }: any) {
       <View style={styles.quickActions}>
         <TouchableOpacity
           style={styles.actionButton}
-          onPress={() => navigation.navigate('AINoteTaking')}
+          onPress={() => navigation.navigate('Patients')}
         >
           <MaterialCommunityIcons name="microphone" size={28} color="#fff" />
           <Text style={styles.actionButtonText}>Voice Note</Text>

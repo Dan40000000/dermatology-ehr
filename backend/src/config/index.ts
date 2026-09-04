@@ -169,6 +169,10 @@ export const config = {
     schedule: envVars.BACKUP_SCHEDULE,
     retentionDays: envVars.BACKUP_RETENTION_DAYS,
     bucket: envVars.BACKUP_BUCKET || '',
+    encryptionEnabled: envVars.BACKUP_ENCRYPTION_ENABLED || envVars.BACKUP_ENCRYPTED || Boolean(envVars.BACKUP_KMS_KEY_ID || envVars.AWS_BACKUP_KMS_KEY_ID),
+    kmsKeyId: envVars.BACKUP_KMS_KEY_ID || envVars.AWS_BACKUP_KMS_KEY_ID || '',
+    restoreVerifiedAt: envVars.BACKUP_RESTORE_VERIFIED_AT || '',
+    restoreEvidenceUrl: envVars.BACKUP_RESTORE_EVIDENCE_URL || '',
   },
 
   // Feature Flags

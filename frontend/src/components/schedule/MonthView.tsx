@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { Appointment, Provider } from '../../types';
+import {
+  formatTimeInPracticeTimeZone,
+  getDateKeyInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
 
 interface MonthViewProps {
   currentDate: Date;
@@ -8,15 +12,22 @@ interface MonthViewProps {
   selectedAppointment: Appointment | null;
   onAppointmentClick: (appointment: Appointment) => void;
   onDayClick: (date: Date) => void;
+  practiceTimeZone?: string | null;
+}
+
+function toCivilDateKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 export function MonthView({
   currentDate,
   appointments,
-  providers,
   selectedAppointment,
   onAppointmentClick,
   onDayClick,
+  practiceTimeZone,
 }: MonthViewProps) {
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
 
@@ -66,7 +77,10 @@ export function MonthView({
 
     appointments.forEach((appt) => {
       const apptDate = new Date(appt.scheduledStart);
-      const dateKey = `${apptDate.getFullYear()}-${apptDate.getMonth()}-${apptDate.getDate()}`;
+      if (Number.isNaN(apptDate.getTime())) {
+        return;
+      }
+      const dateKey = getDateKeyInPracticeTimeZone(apptDate, practiceTimeZone);
 
       if (!map.has(dateKey)) {
         map.set(dateKey, []);
@@ -75,22 +89,17 @@ export function MonthView({
     });
 
     return map;
-  }, [appointments]);
+  }, [appointments, practiceTimeZone]);
 
   // Get appointments for a specific date
   const getAppointmentsForDate = (date: Date) => {
-    const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    const dateKey = toCivilDateKey(date);
     return appointmentsByDate.get(dateKey) || [];
   };
 
   // Check if date is today
   const isToday = (date: Date) => {
-    const today = new Date();
-    return (
-      date.getDate() === today.getDate() &&
-      date.getMonth() === today.getMonth() &&
-      date.getFullYear() === today.getFullYear()
-    );
+    return toCivilDateKey(date) === getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone);
   };
 
   // Get status color
@@ -125,15 +134,8 @@ export function MonthView({
     if (appointment.status !== 'scheduled') return false;
     const appointmentDate = new Date(appointment.scheduledStart);
     if (Number.isNaN(appointmentDate.getTime())) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    appointmentDate.setHours(0, 0, 0, 0);
-    return appointmentDate.getTime() < today.getTime();
-  };
-
-  // Format date key for hover state
-  const getDateKey = (date: Date) => {
-    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    return getDateKeyInPracticeTimeZone(appointmentDate, practiceTimeZone)
+      < getDateKeyInPracticeTimeZone(new Date(), practiceTimeZone);
   };
 
   return (
@@ -158,7 +160,7 @@ export function MonthView({
       <div className="month-view-grid">
         {calendarDays.map(({ date, isCurrentMonth }, index) => {
           const dayAppointments = getAppointmentsForDate(date);
-          const dateKey = getDateKey(date);
+          const dateKey = toCivilDateKey(date);
           const today = isToday(date);
 
           return (
@@ -167,13 +169,26 @@ export function MonthView({
               className={`month-view-day ${!isCurrentMonth ? 'other-month' : ''} ${
                 today ? 'today' : ''
               } ${hoveredDate === dateKey ? 'hovered' : ''}`}
+              role="group"
+              aria-label={`${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}, ${dayAppointments.length} appointment${dayAppointments.length === 1 ? '' : 's'}`}
               onMouseEnter={() => setHoveredDate(dateKey)}
               onMouseLeave={() => setHoveredDate(null)}
               onClick={() => onDayClick(date)}
             >
+              <button
+                type="button"
+                className="month-view-day-open"
+                aria-current={today ? 'date' : undefined}
+                aria-label={`Open ${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDayClick(date);
+                }}
+              >
+                {date.getDate()}
+              </button>
               {/* Day number */}
               <div className="month-view-day-number">
-                {date.getDate()}
                 {dayAppointments.length > 0 && (
                   <span className="month-view-day-count">
                     {dayAppointments.length}
@@ -189,6 +204,10 @@ export function MonthView({
                     className={`month-view-appointment ${
                       selectedAppointment?.id === appt.id ? 'selected' : ''
                     }`}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={selectedAppointment?.id === appt.id}
+                    aria-label={`${appt.patientName}, ${appt.appointmentTypeName}, ${formatTimeInPracticeTimeZone(appt.scheduledStart, practiceTimeZone)}, ${appt.status.replace(/_/g, ' ')}`}
                     style={{
                       backgroundColor: isHistoricalScheduledAppointment(appt) ? '#cbd5e1' : getStatusColor(appt.status),
                       borderLeft: `3px solid ${isHistoricalScheduledAppointment(appt) ? '#94a3b8' : getStatusColor(appt.status)}`,
@@ -198,16 +217,16 @@ export function MonthView({
                       e.stopPropagation();
                       onAppointmentClick(appt);
                     }}
-                    title={`${new Date(appt.scheduledStart).toLocaleTimeString('en-US', {
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    })} - ${isTelehealthAppointment(appt) ? 'Video • ' : ''}${appt.patientName}`}
+                    onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onAppointmentClick(appt);
+                    }}
+                    title={`${formatTimeInPracticeTimeZone(appt.scheduledStart, practiceTimeZone)} - ${isTelehealthAppointment(appt) ? 'Video • ' : ''}${appt.patientName}`}
                   >
                     <span className="appointment-time">
-                      {new Date(appt.scheduledStart).toLocaleTimeString('en-US', {
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
+                      {formatTimeInPracticeTimeZone(appt.scheduledStart, practiceTimeZone)}
                     </span>
                     <span className="appointment-patient">
                       {isTelehealthAppointment(appt) ? 'Video ' : ''}
@@ -216,9 +235,17 @@ export function MonthView({
                   </div>
                 ))}
                 {dayAppointments.length > 3 && (
-                  <div className="month-view-more">
+                  <button
+                    type="button"
+                    className="month-view-more"
+                    aria-label={`Open ${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} to view ${dayAppointments.length - 3} more appointments`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDayClick(date);
+                    }}
+                  >
                     +{dayAppointments.length - 3} more
-                  </div>
+                  </button>
                 )}
               </div>
             </div>

@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { Readable } from 'stream';
 import jwt from 'jsonwebtoken';
+import { logger } from '../../lib/logger';
 import {
   AmbientTranscriptionAdapter,
   hasAmbientTranscriptionCredentials,
@@ -16,6 +17,7 @@ jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn().mockImplementation(() => ({ send: mockedS3Send })),
   PutObjectCommand: jest.fn((input) => ({ input })),
   GetObjectCommand: jest.fn((input) => ({ input })),
+  DeleteObjectCommand: jest.fn((input) => ({ input })),
 }));
 
 jest.mock('@aws-sdk/client-transcribe', () => ({
@@ -39,6 +41,8 @@ jest.mock('../../lib/logger', () => ({
   },
 }));
 
+const mockedLoggerWarn = logger.warn as jest.Mock;
+
 describe('AmbientTranscriptionAdapter providers', () => {
   let mockedFetch: jest.Mock;
 
@@ -48,6 +52,12 @@ describe('AmbientTranscriptionAdapter providers', () => {
   });
 
   beforeEach(() => {
+    process.env.ALLOW_EXTERNAL_AI_IN_TEST = 'true';
+    process.env.EXTERNAL_AI_API_CALLS_ENABLED = 'true';
+    process.env.ABRIDGE_BAA_ENABLED = 'true';
+    process.env.WISPR_FLOW_BAA_ENABLED = 'true';
+    process.env.NABLA_BAA_ENABLED = 'true';
+    process.env.AWS_HEALTHSCRIBE_BAA_ENABLED = 'true';
     delete process.env.AMBIENT_TRANSCRIPTION_PROVIDER;
     delete process.env.ABRIDGE_API_KEY;
     delete process.env.ABRIDGE_ACCESS_TOKEN;
@@ -68,6 +78,7 @@ describe('AmbientTranscriptionAdapter providers', () => {
     mockedFetch.mockReset();
     mockedS3Send.mockReset();
     mockedTranscribeSend.mockReset();
+    mockedLoggerWarn.mockReset();
     mockedFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -82,6 +93,15 @@ describe('AmbientTranscriptionAdapter providers', () => {
         },
       }),
     } as Response);
+  });
+
+  afterAll(() => {
+    delete process.env.ALLOW_EXTERNAL_AI_IN_TEST;
+    delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+    delete process.env.ABRIDGE_BAA_ENABLED;
+    delete process.env.WISPR_FLOW_BAA_ENABLED;
+    delete process.env.NABLA_BAA_ENABLED;
+    delete process.env.AWS_HEALTHSCRIBE_BAA_ENABLED;
   });
 
   function createWisprAdapter(): AmbientTranscriptionAdapter {
@@ -113,6 +133,43 @@ describe('AmbientTranscriptionAdapter providers', () => {
 
     return adapter;
   }
+
+  it('blocks raw audio before transport when provider API calls are disabled', async () => {
+    delete process.env.EXTERNAL_AI_API_CALLS_ENABLED;
+    const adapter = createWisprAdapter();
+
+    await expect(
+      adapter.transcribeBuffer(Buffer.from('patient audio'), 'audio/webm')
+    ).rejects.toThrow('API calls are disabled');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it('blocks a directly constructed live adapter when the deployment provider is explicitly mock', async () => {
+    process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+    process.env.ABRIDGE_API_KEY = 'live-abridge-key';
+    process.env.ABRIDGE_BAA_ENABLED = 'true';
+    process.env.ABRIDGE_API_CALLS_ENABLED = 'true';
+
+    const adapter = new AmbientTranscriptionAdapter({
+      tenantId: 'tenant-demo',
+      useMock: false,
+      provider: 'abridge',
+    });
+
+    await expect(
+      adapter.transcribeBuffer(Buffer.from('patient audio'), 'audio/webm')
+    ).rejects.toThrow('disabled by the explicit mock provider setting');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an explicit mock provider configured for live transport', () => {
+    expect(() => new AmbientTranscriptionAdapter({
+      tenantId: 'tenant-demo',
+      useMock: false,
+      provider: 'mock',
+    })).toThrow('cannot run in live mode');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
 
   it('uploads live audio chunks to the official Wispr multipart endpoint', async () => {
     const adapter = createWisprAdapter();
@@ -399,6 +456,133 @@ describe('AmbientTranscriptionAdapter providers', () => {
       end: 1.5,
     });
     expect(adapter.supportsLiveChunks()).toBe(false);
+    expect(mockedS3Send.mock.calls.slice(2).map(([command]) => command.input)).toEqual([
+      { Bucket: 'demo-input', Key: expect.stringMatching(/^healthscribe\/input\/[0-9a-f-]+\.wav$/) },
+      { Bucket: 'demo-output', Key: 'healthscribe/transcript.json' },
+      { Bucket: 'demo-output', Key: 'healthscribe/clinical-note.json' },
+    ]);
+  });
+
+  it('deletes HealthScribe input audio when the AWS job fails', async () => {
+    mockedS3Send
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('Synthetic cleanup failure'));
+    mockedTranscribeSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        MedicalScribeJob: {
+          MedicalScribeJobStatus: 'FAILED',
+          FailureReason: 'Synthetic provider failure',
+        },
+      });
+
+    const adapter = new AmbientTranscriptionAdapter({
+      tenantId: 'tenant-demo',
+      useMock: false,
+      provider: 'aws_healthscribe',
+      config: {
+        id: 'cfg-aws-failure',
+        tenantId: 'tenant-demo',
+        integrationType: 'ambient_transcription',
+        provider: 'aws_healthscribe',
+        config: {
+          region: 'us-east-1',
+          inputBucket: 'demo-input',
+          outputBucket: 'demo-output',
+          dataAccessRoleArn: 'arn:aws:iam::123456789012:role/demo-healthscribe-role',
+          inputPrefix: 'healthscribe/input',
+          pollIntervalMs: 1,
+          timeoutMs: 2000,
+        },
+        credentialsEncrypted: '',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      } as any,
+    });
+
+    jest.spyOn<any, any>(adapter as any, 'getCredentials').mockReturnValue({
+      accessKeyId: 'test-access-key',
+      secretAccessKey: 'test-secret-key',
+    });
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ambient-aws-failure-'));
+    const audioPath = path.join(tempDir, 'recording.wav');
+    fs.writeFileSync(audioPath, Buffer.from('fake-wav'));
+
+    await expect(adapter.transcribeFile(audioPath)).rejects.toThrow('AWS HealthScribe transcription failed');
+
+    expect(mockedS3Send).toHaveBeenCalledTimes(2);
+    expect(mockedS3Send.mock.calls[1][0].input).toEqual({
+      Bucket: 'demo-input',
+      Key: expect.stringMatching(/^healthscribe\/input\/[0-9a-f-]+\.wav$/),
+    });
+    expect(mockedLoggerWarn).toHaveBeenCalledWith(
+      'AWS HealthScribe object cleanup failed',
+      expect.objectContaining({
+        provider: 'aws_healthscribe',
+        objectKind: 'input_audio',
+        errorCode: expect.stringMatching(/^ERR_/),
+      })
+    );
+    expect(JSON.stringify(mockedLoggerWarn.mock.calls)).not.toContain('demo-input');
+  });
+
+  it('does not expose patient-derived filenames in HealthScribe object keys or job names', async () => {
+    mockedS3Send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Body: Readable.from([JSON.stringify({ transcript: 'Synthetic transcript.' })]),
+      });
+    mockedTranscribeSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        MedicalScribeJob: {
+          MedicalScribeJobStatus: 'COMPLETED',
+          MedicalScribeOutput: {
+            TranscriptFileUri: 's3://demo-output/healthscribe/transcript.json',
+          },
+        },
+      });
+
+    const adapter = new AmbientTranscriptionAdapter({
+      tenantId: 'tenant-demo',
+      useMock: false,
+      provider: 'aws_healthscribe',
+      config: {
+        id: 'cfg-aws-safe-names',
+        tenantId: 'tenant-demo',
+        integrationType: 'ambient_transcription',
+        provider: 'aws_healthscribe',
+        config: {
+          region: 'us-east-1',
+          inputBucket: 'demo-input',
+          outputBucket: 'demo-output',
+          dataAccessRoleArn: 'arn:aws:iam::123456789012:role/demo-healthscribe-role',
+          pollIntervalMs: 1,
+          timeoutMs: 2000,
+        },
+        credentialsEncrypted: '',
+        isActive: true,
+        syncFrequencyMinutes: 60,
+      } as any,
+    });
+
+    jest.spyOn<any, any>(adapter as any, 'getCredentials').mockReturnValue({
+      accessKeyId: 'test-access-key',
+      secretAccessKey: 'test-secret-key',
+    });
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ambient-aws-safe-name-'));
+    const audioPath = path.join(tempDir, 'Jane-Doe-1990-01-01.wav');
+    fs.writeFileSync(audioPath, Buffer.from('fake-wav'));
+
+    await adapter.transcribeFile(audioPath);
+
+    const uploadedObjectKey = mockedS3Send.mock.calls[0][0].input.Key as string;
+    const startedJobName = mockedTranscribeSend.mock.calls[0][0].input.MedicalScribeJobName as string;
+    expect(uploadedObjectKey).not.toContain('Jane-Doe');
+    expect(startedJobName).not.toContain('Jane-Doe');
+    expect(startedJobName).not.toContain('tenant-demo');
   });
 
   it('uses a HealthScribe connection test sample longer than the AWS minimum', async () => {
@@ -554,6 +738,10 @@ describe('AmbientTranscriptionAdapter providers', () => {
     delete process.env.AWS_HEALTHSCRIBE_DATA_ACCESS_ROLE_ARN;
     process.env.WISPR_FLOW_API_KEY = 'wispr-key';
     expect(resolveAmbientTranscriptionProviderFromEnv()).toBe('wispr_flow');
+
+    process.env.AMBIENT_TRANSCRIPTION_PROVIDER = 'mock';
+    process.env.ABRIDGE_API_KEY = 'abridge-key';
+    expect(resolveAmbientTranscriptionProviderFromEnv()).toBeNull();
   });
 
   it('detects whether provider credentials exist in the environment', () => {

@@ -13,6 +13,7 @@ import { invalidateCache } from "../services/redisCache";
 import { revokeRefreshTokensForUser } from "../services/authService";
 import { createTwilioService } from "../services/twilioService";
 import { formatPhoneE164 } from "../utils/phone";
+import { assertSyntheticVendorMockAllowed } from "../services/vendorMockGuard";
 
 const router = Router();
 
@@ -295,6 +296,7 @@ async function deliverStaffTemporaryLogin(params: {
   const useMockSms = settings.is_test_mode === true || !isSmsLiveSendEnabled();
 
   if (useMockSms) {
+    assertSyntheticVendorMockAllowed("Staff temporary-login SMS");
     return {
       method: "sms",
       status: "mocked",

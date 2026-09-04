@@ -11,6 +11,9 @@ export interface AuditColumnMap {
   metadata: string | null;
   severity: string | null;
   status: string | null;
+  previousHash: string | null;
+  recordHash: string | null;
+  createdAt: string | null;
 }
 
 export interface AuditSchemaInfo {
@@ -39,6 +42,9 @@ function buildColumnMap(columns: Set<string>): AuditColumnMap {
     metadata: columns.has("metadata") ? "metadata" : null,
     severity: columns.has("severity") ? "severity" : null,
     status: columns.has("status") ? "status" : null,
+    previousHash: columns.has("previous_hash") ? "previous_hash" : null,
+    recordHash: columns.has("record_hash") ? "record_hash" : null,
+    createdAt: columns.has("created_at") ? "created_at" : null,
   };
 }
 
@@ -73,7 +79,7 @@ export async function getAuditSchemaInfo(forceRefresh = false): Promise<AuditSch
     return info;
   } catch (error) {
     logger.error("Failed to load audit schema metadata", {
-      error: error instanceof Error ? error.message : String(error),
+      errorCode: error instanceof Error ? `AUDIT_${error.name}` : "AUDIT_SCHEMA_UNAVAILABLE",
     });
 
     if (auditSchemaCache) {
@@ -94,6 +100,8 @@ export async function getAuditSchemaInfo(forceRefresh = false): Promise<AuditSch
       "metadata",
       "severity",
       "status",
+      "previous_hash",
+      "record_hash",
     ]);
 
     return {
@@ -102,4 +110,3 @@ export async function getAuditSchemaInfo(forceRefresh = false): Promise<AuditSch
     };
   }
 }
-

@@ -227,7 +227,12 @@ describe("Disease registry routes", () => {
   });
 
   it("POST /disease-registry/chronic-therapy creates entry", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "ct-1", start_date: "2024-01-01", last_tb_screening: null,
+        mips_therapy_classification: null, mips_first_course: null,
+      }] });
 
     const res = await request(app)
       .post("/disease-registry/chronic-therapy")
@@ -242,6 +247,33 @@ describe("Disease registry routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.created).toBe(true);
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /disease-registry/chronic-therapy captures measure 176 only after explicit classification", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "ct-2026", start_date: "2026-09-30", last_tb_screening: "2025-09-30",
+        mips_therapy_classification: "biologic_or_immune_response_modifier", mips_first_course: true,
+        updated_at: "2026-09-02T12:00:00Z",
+      }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "evidence-176", status: "candidate" }] });
+
+    const res = await request(app)
+      .post("/disease-registry/chronic-therapy")
+      .send({
+        patientId: "patient-1", primaryDiagnosis: "Synthetic diagnosis",
+        medicationName: "Synthetic therapy", medicationClass: "Synthetic class",
+        startDate: "2026-09-30", lastTbScreening: "2025-09-30",
+        mipsTherapyClassification: "biologic_or_immune_response_modifier", mipsFirstCourse: true,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.candidateCapture).toMatchObject({ action: "created", status: "candidate" });
+    const insert = queryMock.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO mips_readiness_evidence"));
+    expect(insert?.[1][4]).toBe("176");
+    expect(insert?.[1][10]).toContain('"computedStatus":"met"');
   });
 
   it("GET /disease-registry/pasi-history/:patientId returns history", async () => {

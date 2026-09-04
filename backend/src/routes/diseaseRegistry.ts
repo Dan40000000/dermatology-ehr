@@ -3,9 +3,11 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireModuleAccess } from "../middleware/moduleAccess";
+import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger";
+import { captureTherapyCandidates } from "../services/mipsWorkflowAutomation";
 
 export const diseaseRegistryRouter = Router();
 
@@ -647,7 +649,7 @@ diseaseRegistryRouter.get("/chronic-therapy", async (req: AuthedRequest, res) =>
         p.mrn,
         p.dob
        FROM chronic_therapy_registry ct
-       JOIN patients p ON p.id = ct.patient_id
+       JOIN patients p ON p.id = ct.patient_id AND p.tenant_id = ct.tenant_id
        WHERE ct.tenant_id = $1
        ORDER BY ct.next_lab_due ASC NULLS LAST`,
       [tenantId]
@@ -662,7 +664,7 @@ diseaseRegistryRouter.get("/chronic-therapy", async (req: AuthedRequest, res) =>
 
 // POST /api/disease-registry/chronic-therapy - Add chronic therapy entry
 const chronicTherapySchema = z.object({
-  patientId: z.string(),
+  patientId: z.string().trim().min(1).max(128),
   primaryDiagnosis: z.string(),
   medicationName: z.string(),
   medicationClass: z.string(),
@@ -670,10 +672,28 @@ const chronicTherapySchema = z.object({
   currentDose: z.string().optional(),
   labFrequency: z.string().optional(),
   nextLabDue: z.string().optional(),
+  lastTbScreening: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  mipsTherapyClassification: z.literal('biologic_or_immune_response_modifier').optional(),
+  mipsFirstCourse: z.boolean().optional(),
   notes: z.string().optional(),
+}).superRefine((value, context) => {
+  if (value.mipsFirstCourse && !value.mipsTherapyClassification) {
+    context.addIssue({
+      code: 'custom',
+      path: ['mipsTherapyClassification'],
+      message: 'Explicit therapy classification is required for a first-course MIPS candidate.',
+    });
+  }
+  if (value.mipsFirstCourse && !value.startDate.startsWith('2026-')) {
+    context.addIssue({
+      code: 'custom',
+      path: ['startDate'],
+      message: 'The supported MIPS first-course workflow is limited to the 2026 performance year.',
+    });
+  }
 });
 
-diseaseRegistryRouter.post("/chronic-therapy", async (req: AuthedRequest, res) => {
+diseaseRegistryRouter.post("/chronic-therapy", requireRoles(['admin', 'provider', 'nurse', 'ma']), async (req: AuthedRequest, res) => {
   const parsed = chronicTherapySchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.format() });
@@ -685,12 +705,22 @@ diseaseRegistryRouter.post("/chronic-therapy", async (req: AuthedRequest, res) =
   const id = randomUUID();
 
   try {
-    await pool.query(
+    const patient = await pool.query(
+      `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+      [data.patientId, tenantId]
+    );
+    if (!patient.rows[0]) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    const inserted = await pool.query(
       `INSERT INTO chronic_therapy_registry (
         id, tenant_id, patient_id, primary_diagnosis, medication_name,
         medication_class, start_date, current_dose, lab_frequency,
-        next_lab_due, notes, created_by, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())`,
+        next_lab_due, last_tb_screening, mips_therapy_classification,
+        mips_first_course, notes, created_by, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())
+      RETURNING id, start_date, last_tb_screening, mips_therapy_classification,
+                mips_first_course, updated_at`,
       [
         id,
         tenantId,
@@ -702,13 +732,24 @@ diseaseRegistryRouter.post("/chronic-therapy", async (req: AuthedRequest, res) =
         data.currentDose || null,
         data.labFrequency || null,
         data.nextLabDue || null,
+        data.lastTbScreening || null,
+        data.mipsTherapyClassification || null,
+        data.mipsFirstCourse ?? null,
         data.notes || null,
         userId,
       ]
     );
 
     await auditLog(tenantId, userId, "chronic_therapy_registry_create", "chronic_therapy_registry", id);
-    res.status(201).json({ id, created: true });
+    let candidateCapture = null;
+    try {
+      candidateCapture = (await captureTherapyCandidates(pool, tenantId, userId, inserted.rows[0]))[0] || null;
+    } catch (automationError) {
+      logger.warn('Chronic therapy saved but MIPS candidate capture will require reconciliation', {
+        code: (automationError as { code?: string })?.code || 'UNKNOWN',
+      });
+    }
+    res.status(201).json({ id, created: true, candidateCapture });
   } catch (err) {
     logDiseaseRegistryError("Error saving chronic therapy registry entry:", err);
     res.status(500).json({ error: "Failed to save chronic therapy registry entry" });
@@ -798,7 +839,7 @@ diseaseRegistryRouter.get("/alerts", async (req: AuthedRequest, res) => {
         'chronic_therapy_labs_overdue' as alert_type,
         'Labs overdue for ' || ct.medication_name as alert_message
        FROM chronic_therapy_registry ct
-       JOIN patients p ON p.id = ct.patient_id
+       JOIN patients p ON p.id = ct.patient_id AND p.tenant_id = ct.tenant_id
        WHERE ct.tenant_id = $1 AND ct.next_lab_due < CURRENT_DATE
        ORDER BY ct.next_lab_due`,
       [tenantId]

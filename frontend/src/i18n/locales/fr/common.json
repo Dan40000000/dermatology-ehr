@@ -110,6 +110,7 @@
     "created": "Created successfully"
   },
   "languages": {
+    "changeLanguage": "Changer de langue",
     "en": "Anglais",
     "es": "Espagnol",
     "fr": "Français",

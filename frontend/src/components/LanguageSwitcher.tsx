@@ -12,8 +12,13 @@ export function LanguageSwitcher() {
   const { i18n, t } = useTranslation('common');
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const currentLanguage = LANGUAGES.find(lang => lang.code === i18n.language) || LANGUAGES[0];
+  const translatedChangeLanguage = t('languages.changeLanguage', 'Change language');
+  const changeLanguageLabel = translatedChangeLanguage === 'languages.changeLanguage'
+    ? 'Change language'
+    : translatedChangeLanguage;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -25,6 +30,21 @@ export function LanguageSwitcher() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+
+      event.preventDefault();
+      setIsOpen(false);
+      triggerRef.current?.focus();
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen]);
 
   const changeLanguage = async (languageCode: string) => {
     await i18n.changeLanguage(languageCode);
@@ -38,16 +58,19 @@ export function LanguageSwitcher() {
         type="button"
         className="language-switcher-button"
         onClick={() => setIsOpen(!isOpen)}
-        aria-label={t('languages.changeLanguage')}
+        ref={triggerRef}
+        aria-label={`${changeLanguageLabel}: ${currentLanguage.name} (${currentLanguage.code.toUpperCase()})`}
+        aria-expanded={isOpen}
+        aria-controls="language-switcher-options"
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: '0.5rem',
           padding: '0.5rem 0.75rem',
-          background: 'rgba(255, 255, 255, 0.15)',
-          border: '1px solid rgba(255, 255, 255, 0.3)',
+          background: '#ffffff',
+          border: '1px solid #0369a1',
           borderRadius: '4px',
-          color: 'white',
+          color: '#0369a1',
           cursor: 'pointer',
           fontSize: '0.875rem',
           fontWeight: 500,
@@ -60,6 +83,7 @@ export function LanguageSwitcher() {
 
       {isOpen && (
         <div
+          id="language-switcher-options"
           className="language-switcher-dropdown"
           style={{
             position: 'absolute',
@@ -126,11 +150,11 @@ export function LanguageSwitcher() {
         }
 
         .language-switcher-button:hover {
-          background: rgba(255, 255, 255, 0.25) !important;
+          background: #e0f2fe !important;
         }
 
-        .language-switcher-button:focus {
-          outline: 2px solid rgba(255, 255, 255, 0.5);
+        .language-switcher-button:focus-visible {
+          outline: 2px solid #0c4a6e;
           outline-offset: 2px;
         }
       `}</style>

@@ -6,6 +6,7 @@
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { parseHL7Message, generateACK, parseHL7DateTime, type HL7Message, type OBXSegment } from './hl7Parser';
+import { HL7Service } from './hl7Service';
 import crypto from 'crypto';
 
 // Types
@@ -181,7 +182,7 @@ export class LabIntegrationService {
   /**
    * Send lab order to external lab via HL7
    */
-  async sendToLab(orderId: string, labId: string): Promise<{ success: boolean; messageId: string; acknowledgment?: string }> {
+  async sendToLab(orderId: string, labId: string): Promise<{ success: boolean; messageId: string; acknowledgment?: string; error?: string }> {
     try {
       // Get order details
       const orderResult = await pool.query(
@@ -230,27 +231,44 @@ export class LabIntegrationService {
         `INSERT INTO lab_hl7_messages (
           tenant_id, message_type, message_direction, message_control_id,
           order_id, order_type, lab_interface_id, raw_message, status
-        ) VALUES ($1, 'ORM^O01', 'outbound', $2, $3, 'lab', $4, $5, 'sent')`,
+          ) VALUES ($1, 'ORM^O01', 'outbound', $2, $3, 'lab', $4, $5, 'pending')`,
         [this.tenantId, messageId, orderId, labId, hl7Message]
       );
 
-      // Update order status
-      await pool.query(
-        `UPDATE lab_orders_v2
-        SET status = 'sent', lab_id = $1, hl7_message_id = $2, hl7_sent_at = NOW(), updated_at = NOW()
-        WHERE id = $3`,
-        [labId, messageId, orderId]
+      const transport = await HL7Service.sendHL7Message(
+        hl7Message,
+        order.endpoint || "",
+        order.lab_name || "",
       );
 
-      // Mock successful transmission (in production, would send via MLLP)
-      const mockAck = `MSH|^~\\&|${order.lab_name || 'LAB'}|LAB|DERMEHR|CLINIC|${new Date().toISOString()}||ACK^O01|${messageId}|P|2.5.1\rMSA|AA|${messageId}`;
+      if (!transport.success) {
+        await pool.query(
+          `UPDATE lab_hl7_messages
+           SET status = 'error', error_message = $1
+           WHERE message_control_id = $2 AND tenant_id = $3`,
+          [transport.error || 'HL7 transport failed', messageId, this.tenantId]
+        );
+        logger.warn('Lab order was not transmitted', { orderId, labId, messageId });
+        return {
+          success: false,
+          messageId,
+          error: transport.error || 'HL7 transport failed',
+        };
+      }
+
+      await pool.query(
+        `UPDATE lab_orders_v2
+         SET status = 'sent', lab_id = $1, hl7_message_id = $2, hl7_sent_at = NOW(), updated_at = NOW()
+         WHERE id = $3 AND tenant_id = $4`,
+        [labId, messageId, orderId, this.tenantId]
+      );
 
       logger.info('Lab order sent to lab', { orderId, labId, messageId });
 
       return {
         success: true,
         messageId,
-        acknowledgment: mockAck
+        acknowledgment: transport.acknowledgment,
       };
     } catch (error) {
       logger.error('Error sending lab order', { error: (error as Error).message, orderId, labId });

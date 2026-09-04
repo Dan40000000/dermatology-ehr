@@ -12,6 +12,18 @@ jest.mock('fs', () => ({
     writeFile: jest.fn(),
     readFile: jest.fn(),
   },
+  stat: jest.fn((_path: string, callback: (error: Error | null, stats: { size: number }) => void) => callback(null, { size: 0 })),
+  createWriteStream: jest.fn(() => ({
+    on: jest.fn(function (this: any) { return this; }),
+    once: jest.fn(function (this: any) { return this; }),
+    emit: jest.fn(),
+    write: jest.fn(),
+    end: jest.fn(),
+    destroy: jest.fn(),
+    pipe: jest.fn(),
+    path: '',
+    bytesWritten: 0,
+  })),
 }));
 
 jest.mock('../virusScan', () => ({

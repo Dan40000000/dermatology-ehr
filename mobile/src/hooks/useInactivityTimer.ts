@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const INACTIVITY_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 
 export const useInactivityTimer = (onTimeout: () => void) => {
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef(AppState.currentState);
 
   const resetTimer = () => {

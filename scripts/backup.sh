@@ -64,7 +64,7 @@ if [ -n "${BACKUP_ENCRYPTION_KEY:-}" ]; then
     -pbkdf2 \
     -in "$BACKUP_DIR/$BACKUP_FILE_GZ" \
     -out "$BACKUP_DIR/$BACKUP_FILE_ENCRYPTED" \
-    -k "$BACKUP_ENCRYPTION_KEY"
+    -pass env:BACKUP_ENCRYPTION_KEY
 
   echo "✓ Backup encrypted successfully"
   rm "$BACKUP_DIR/$BACKUP_FILE_GZ"
@@ -82,9 +82,25 @@ if [ -n "${BACKUP_BUCKET:-}" ] && command -v aws &> /dev/null; then
 
   S3_PATH="s3://${BACKUP_BUCKET}/backups/${DATE}/${FINAL_BACKUP}"
 
+  if [ -n "${BACKUP_KMS_KEY_ID:-}" ]; then
+    S3_ENCRYPTION_ARGS=(
+      --sse aws:kms
+      --sse-kms-key-id "$BACKUP_KMS_KEY_ID"
+    )
+  elif [[ "${BACKUP_ENCRYPTION_ENABLED:-}" =~ ^(true|TRUE|True|1|yes|YES|Yes)$ ]]; then
+    # Omitting a key ID intentionally selects the AWS-managed S3 KMS key (aws/s3).
+    S3_ENCRYPTION_ARGS=(
+      --sse aws:kms
+    )
+  else
+    S3_ENCRYPTION_ARGS=(
+      --sse AES256
+    )
+  fi
+
   if aws s3 cp "$BACKUP_DIR/$FINAL_BACKUP" "$S3_PATH" \
     --storage-class STANDARD_IA \
-    --server-side-encryption AES256; then
+    "${S3_ENCRYPTION_ARGS[@]}"; then
     echo "✓ Backup uploaded to S3: $S3_PATH"
 
     # Optionally remove local backup after successful upload

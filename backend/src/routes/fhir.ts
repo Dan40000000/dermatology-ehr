@@ -8,7 +8,13 @@ import { Router } from "express";
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { logger } from "../lib/logger";
-import { requireFHIRAuth, requireFHIRScope, logFHIRAccess, FHIRAuthenticatedRequest } from "../middleware/fhirAuth";
+import {
+  requireFHIRAuth,
+  requireFHIRScope,
+  logFHIRAccess,
+  FHIRAuthenticatedRequest,
+  getFHIRPatientContext,
+} from "../middleware/fhirAuth";
 import {
   mapPatientToFHIR,
   mapPractitionerToFHIR,
@@ -28,6 +34,66 @@ import {
 } from "../services/fhirMapper";
 
 export const fhirRouter = Router();
+
+function normalizeResourceReference(value: unknown, resourceType: string): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const raw = value.trim();
+  const prefix = `${resourceType}/`;
+  return raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
+}
+
+function normalizeTokenValue(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const token = value.trim();
+  return token.includes("|") ? token.slice(token.indexOf("|") + 1) : token;
+}
+
+function parseFHIRPage(value: unknown, fallback: number): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function getSearchPage(req: FHIRAuthenticatedRequest): { count: number; offset: number } {
+  // Keep a conservative server-side cap while retaining the existing _offset
+  // contract for clients that already use it.
+  const count = Math.min(parseFHIRPage(req.query?._count, 50), 100);
+  const offset = parseFHIRPage(req.query?._offset, 0);
+  return { count, offset };
+}
+
+function buildSearchLinks(
+  req: FHIRAuthenticatedRequest,
+  count: number,
+  offset: number,
+  returned: number,
+  total?: number,
+): { self: string; next?: string; previous?: string } {
+  const query = new URLSearchParams();
+  Object.entries(req.query || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => query.append(key, String(item)));
+    } else if (value !== undefined) {
+      query.set(key, String(value));
+    }
+  });
+  query.set("_count", String(count));
+  query.set("_offset", String(offset));
+
+  const base = `${req.protocol}://${req.get("host")}${req.baseUrl}${req.path}`;
+  const links: { self: string; next?: string; previous?: string } = {
+    self: `${base}?${query.toString()}`,
+  };
+  const hasNext = total !== undefined ? offset + returned < total : returned >= count;
+  if (hasNext) {
+    query.set("_offset", String(offset + count));
+    links.next = `${base}?${query.toString()}`;
+  }
+  if (offset > 0) {
+    query.set("_offset", String(Math.max(0, offset - count)));
+    links.previous = `${base}?${query.toString()}`;
+  }
+  return links;
+}
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -56,6 +122,13 @@ fhirRouter.get("/Patient/:id", requireFHIRAuth, requireFHIRScope("Patient", "rea
   try {
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
+    const patientContext = getFHIRPatientContext(req, "Patient", "read");
+
+    if (patientContext && id !== patientContext) {
+      return res.status(403).json(
+        createOperationOutcome("error", "forbidden", "Requested patient is outside the token patient context")
+      );
+    }
 
     const result = await pool.query(
       `SELECT * FROM patients WHERE id = $1 AND tenant_id = $2`,
@@ -82,14 +155,22 @@ fhirRouter.get("/Patient/:id", requireFHIRAuth, requireFHIRScope("Patient", "rea
  * GET /fhir/Patient - Search patients with FHIR search parameters
  * Supported params: name, identifier, birthdate, gender, _count, _offset
  */
-fhirRouter.get("/Patient", requireFHIRAuth, requireFHIRScope("Patient", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Patient", requireFHIRAuth, requireFHIRScope("Patient", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { name, identifier, birthdate, gender, _count = "50", _offset = "0" } = req.query;
+    const { name, identifier, birthdate, gender } = req.query;
+    const { count, offset } = getSearchPage(req);
+    const patientContext = getFHIRPatientContext(req, "Patient", "search");
 
     let query = `SELECT * FROM patients WHERE tenant_id = $1`;
     const params: any[] = [tenantId];
     let paramIndex = 2;
+
+    if (patientContext) {
+      query += ` AND id = $${paramIndex}`;
+      params.push(patientContext);
+      paramIndex++;
+    }
 
     // Apply search filters
     if (name) {
@@ -100,7 +181,7 @@ fhirRouter.get("/Patient", requireFHIRAuth, requireFHIRScope("Patient", "read"),
 
     if (identifier) {
       query += ` AND id = $${paramIndex}`;
-      params.push(identifier);
+      params.push(normalizeTokenValue(identifier));
       paramIndex++;
     }
 
@@ -123,13 +204,13 @@ fhirRouter.get("/Patient", requireFHIRAuth, requireFHIRScope("Patient", "read"),
 
     // Add pagination
     query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
     const resources = result.rows.map(mapPatientToFHIR);
 
     await logFHIRAccess(req, "Patient", undefined, "search");
-    return res.json(createFHIRBundle(resources, "searchset", total));
+    return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
   } catch (error) {
     logFhirError("Error searching patients", error);
     return res.status(500).json(
@@ -173,10 +254,11 @@ fhirRouter.get("/Practitioner/:id", requireFHIRAuth, requireFHIRScope("Practitio
  * GET /fhir/Practitioner - Search practitioners
  * Supported params: name, identifier, _count, _offset
  */
-fhirRouter.get("/Practitioner", requireFHIRAuth, requireFHIRScope("Practitioner", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Practitioner", requireFHIRAuth, requireFHIRScope("Practitioner", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { name, identifier, _count = "50", _offset = "0" } = req.query;
+    const { name, identifier } = req.query;
+    const { count, offset } = getSearchPage(req);
 
     let query = `SELECT * FROM providers WHERE tenant_id = $1`;
     const params: any[] = [tenantId];
@@ -190,7 +272,7 @@ fhirRouter.get("/Practitioner", requireFHIRAuth, requireFHIRScope("Practitioner"
 
     if (identifier) {
       query += ` AND id = $${paramIndex}`;
-      params.push(identifier);
+      params.push(normalizeTokenValue(identifier));
       paramIndex++;
     }
 
@@ -198,13 +280,13 @@ fhirRouter.get("/Practitioner", requireFHIRAuth, requireFHIRScope("Practitioner"
     const total = parseInt(countResult.rows[0].count);
 
     query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
     const resources = result.rows.map(mapPractitionerToFHIR);
 
     await logFHIRAccess(req, "Practitioner", undefined, "search");
-    return res.json(createFHIRBundle(resources, "searchset", total));
+    return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
   } catch (error) {
     logFhirError("Error searching practitioners", error);
     return res.status(500).json(
@@ -222,10 +304,13 @@ fhirRouter.get("/Encounter/:id", requireFHIRAuth, requireFHIRScope("Encounter", 
   try {
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
+    const patientContext = getFHIRPatientContext(req, "Encounter", "read");
 
     const result = await pool.query(
-      `SELECT * FROM encounters WHERE id = $1 AND tenant_id = $2`,
-      [id, tenantId]
+      `SELECT * FROM encounters
+       WHERE id = $1 AND tenant_id = $2
+       ${patientContext ? "AND patient_id = $3" : ""}`,
+      patientContext ? [id, tenantId, patientContext] : [id, tenantId]
     );
 
     if (result.rows.length === 0) {
@@ -248,18 +333,20 @@ fhirRouter.get("/Encounter/:id", requireFHIRAuth, requireFHIRScope("Encounter", 
  * GET /fhir/Encounter - Search encounters
  * Supported params: patient, date, status, _count, _offset
  */
-fhirRouter.get("/Encounter", requireFHIRAuth, requireFHIRScope("Encounter", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Encounter", requireFHIRAuth, requireFHIRScope("Encounter", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { patient, date, status, _count = "50", _offset = "0" } = req.query;
+    const { patient, date, status } = req.query;
+    const { count, offset } = getSearchPage(req);
+    const patientContext = getFHIRPatientContext(req, "Encounter", "search");
 
     let query = `SELECT * FROM encounters WHERE tenant_id = $1`;
     const params: any[] = [tenantId];
     let paramIndex = 2;
 
-    if (patient) {
+    if (patient || patientContext) {
       query += ` AND patient_id = $${paramIndex}`;
-      params.push(patient);
+      params.push(normalizeResourceReference(patient, "Patient") || patientContext);
       paramIndex++;
     }
 
@@ -279,13 +366,13 @@ fhirRouter.get("/Encounter", requireFHIRAuth, requireFHIRScope("Encounter", "rea
     const total = parseInt(countResult.rows[0].count);
 
     query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
     const resources = result.rows.map(mapEncounterToFHIR);
 
     await logFHIRAccess(req, "Encounter", undefined, "search");
-    return res.json(createFHIRBundle(resources, "searchset", total));
+    return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
   } catch (error) {
     logFhirError("Error searching encounters", error);
     return res.status(500).json(
@@ -304,11 +391,12 @@ fhirRouter.get("/Observation/:id", requireFHIRAuth, requireFHIRScope("Observatio
   try {
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
+    const patientContext = getFHIRPatientContext(req, "Observation", "read");
 
     // Parse ID to extract vital ID
     const vitalId = id!.split("-").slice(0, -1).join("-");
 
-    const dbVital = await fetchVitalWithContext(vitalId, tenantId);
+    const dbVital = await fetchVitalWithContext(vitalId, tenantId, patientContext);
 
     if (!dbVital) {
       return res.status(404).json(
@@ -339,10 +427,12 @@ fhirRouter.get("/Observation/:id", requireFHIRAuth, requireFHIRScope("Observatio
  * GET /fhir/Observation - Search observations
  * Supported params: patient, date, code, encounter, _count, _offset
  */
-fhirRouter.get("/Observation", requireFHIRAuth, requireFHIRScope("Observation", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Observation", requireFHIRAuth, requireFHIRScope("Observation", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { patient, date, encounter, _count = "50", _offset = "0" } = req.query;
+    const { patient, date, encounter } = req.query;
+    const { count, offset } = getSearchPage(req);
+    const patientContext = getFHIRPatientContext(req, "Observation", "search");
 
     let query = `
       SELECT v.*, e.patient_id
@@ -353,9 +443,9 @@ fhirRouter.get("/Observation", requireFHIRAuth, requireFHIRScope("Observation", 
     const params: any[] = [tenantId];
     let paramIndex = 2;
 
-    if (patient) {
+    if (patient || patientContext) {
       query += ` AND e.patient_id = $${paramIndex}`;
-      params.push(patient);
+      params.push(normalizeResourceReference(patient, "Patient") || patientContext);
       paramIndex++;
     }
 
@@ -375,7 +465,7 @@ fhirRouter.get("/Observation", requireFHIRAuth, requireFHIRScope("Observation", 
     const total = parseInt(countResult.rows[0].count);
 
     query += ` ORDER BY v.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
 
@@ -383,7 +473,12 @@ fhirRouter.get("/Observation", requireFHIRAuth, requireFHIRScope("Observation", 
     const allObservations = result.rows.flatMap(mapVitalsToFHIRObservations);
 
     await logFHIRAccess(req, "Observation", undefined, "search");
-    return res.json(createFHIRBundle(allObservations, "searchset", total * 5)); // Approximate total
+    return res.json(createFHIRBundle(
+      allObservations,
+      "searchset",
+      undefined,
+      buildSearchLinks(req, count, offset, result.rows.length),
+    ));
   } catch (error) {
     logFhirError("Error searching observations", error);
     return res.status(500).json(
@@ -401,8 +496,9 @@ fhirRouter.get("/Condition/:id", requireFHIRAuth, requireFHIRScope("Condition", 
   try {
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
+    const patientContext = getFHIRPatientContext(req, "Condition", "read");
 
-    const dbDiagnosis = await fetchDiagnosisWithContext(id!, tenantId);
+    const dbDiagnosis = await fetchDiagnosisWithContext(id!, tenantId, patientContext);
 
     if (!dbDiagnosis) {
       return res.status(404).json(
@@ -424,10 +520,12 @@ fhirRouter.get("/Condition/:id", requireFHIRAuth, requireFHIRScope("Condition", 
  * GET /fhir/Condition - Search conditions
  * Supported params: patient, code, encounter, _count, _offset
  */
-fhirRouter.get("/Condition", requireFHIRAuth, requireFHIRScope("Condition", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Condition", requireFHIRAuth, requireFHIRScope("Condition", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { patient, code, encounter, _count = "50", _offset = "0" } = req.query;
+    const { patient, code, encounter } = req.query;
+    const { count, offset } = getSearchPage(req);
+    const patientContext = getFHIRPatientContext(req, "Condition", "search");
 
     let query = `
       SELECT ed.*, e.patient_id
@@ -438,9 +536,9 @@ fhirRouter.get("/Condition", requireFHIRAuth, requireFHIRScope("Condition", "rea
     const params: any[] = [tenantId];
     let paramIndex = 2;
 
-    if (patient) {
+    if (patient || patientContext) {
       query += ` AND e.patient_id = $${paramIndex}`;
-      params.push(patient);
+      params.push(normalizeResourceReference(patient, "Patient") || patientContext);
       paramIndex++;
     }
 
@@ -460,13 +558,13 @@ fhirRouter.get("/Condition", requireFHIRAuth, requireFHIRScope("Condition", "rea
     const total = parseInt(countResult.rows[0].count);
 
     query += ` ORDER BY ed.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
     const resources = result.rows.map(mapDiagnosisToFHIRCondition);
 
     await logFHIRAccess(req, "Condition", undefined, "search");
-    return res.json(createFHIRBundle(resources, "searchset", total));
+    return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
   } catch (error) {
     logFhirError("Error searching conditions", error);
     return res.status(500).json(
@@ -488,8 +586,9 @@ fhirRouter.get(
     try {
       const { id } = req.params;
       const tenantId = req.fhirAuth!.tenantId;
+      const patientContext = getFHIRPatientContext(req, "AllergyIntolerance", "read");
 
-      const allergy = await fetchAllergyWithContext(id!, tenantId);
+      const allergy = await fetchAllergyWithContext(id!, tenantId, patientContext);
       if (!allergy) {
         return res.status(404).json(
           createOperationOutcome("error", "not-found", `AllergyIntolerance with id ${id} not found`)
@@ -514,11 +613,12 @@ fhirRouter.get(
 fhirRouter.get(
   "/AllergyIntolerance",
   requireFHIRAuth,
-  requireFHIRScope("AllergyIntolerance", "read"),
+  requireFHIRScope("AllergyIntolerance", "search"),
   async (req: FHIRAuthenticatedRequest, res) => {
     try {
       const tenantId = req.fhirAuth!.tenantId;
       const patientParam = req.query.patient as string | undefined;
+      const patientContext = getFHIRPatientContext(req, "AllergyIntolerance", "search");
       const clinicalStatusParam =
         (req.query["clinical-status"] as string | undefined) ||
         (req.query.status as string | undefined);
@@ -526,10 +626,9 @@ fhirRouter.get(
       const categoryParam = req.query.category as string | undefined;
       const codeParam = req.query.code as string | undefined;
       const idParam = req.query._id as string | undefined;
-      const _count = (req.query._count as string) || "50";
-      const _offset = (req.query._offset as string) || "0";
+      const { count, offset } = getSearchPage(req);
 
-      const patientId = patientParam ? patientParam.replace("Patient/", "") : undefined;
+      const patientId = normalizeResourceReference(patientParam, "Patient") || patientContext;
 
       let query = `SELECT * FROM patient_allergies WHERE tenant_id = $1`;
       const params: any[] = [tenantId];
@@ -587,13 +686,13 @@ fhirRouter.get(
       const total = parseInt(countResult.rows[0].count);
 
       query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-      params.push(parseInt(_count), parseInt(_offset));
+      params.push(count, offset);
 
       const result = await pool.query(query, params);
       const resources = result.rows.map(mapAllergyToFHIR);
 
       await logFHIRAccess(req, "AllergyIntolerance", undefined, "search");
-      return res.json(createFHIRBundle(resources, "searchset", total));
+      return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
     } catch (error) {
       logFhirError("Error searching allergies", error);
       return res.status(500).json(
@@ -614,6 +713,7 @@ fhirRouter.post(
     try {
       const tenantId = req.fhirAuth!.tenantId;
       const resource = req.body;
+      const patientContext = getFHIRPatientContext(req, "AllergyIntolerance", "write");
 
       if (!resource || resource.resourceType !== "AllergyIntolerance") {
         return res.status(400).json(
@@ -622,10 +722,15 @@ fhirRouter.post(
       }
 
       const patientRef = resource.patient?.reference || resource.subject?.reference;
-      const patientId = patientRef ? String(patientRef).replace("Patient/", "") : undefined;
+      const patientId = normalizeResourceReference(patientRef, "Patient");
       if (!patientId) {
         return res.status(400).json(
           createOperationOutcome("error", "invalid", "Patient reference is required")
+        );
+      }
+      if (patientContext && patientId !== patientContext) {
+        return res.status(403).json(
+          createOperationOutcome("error", "forbidden", "Requested patient is outside the token patient context")
         );
       }
 
@@ -672,7 +777,7 @@ fhirRouter.post(
         ]
       );
 
-      const allergy = await fetchAllergyWithContext(id, tenantId);
+      const allergy = await fetchAllergyWithContext(id, tenantId, patientContext);
       await logFHIRAccess(req, "AllergyIntolerance", id, "write");
       return res.status(201).json(mapAllergyToFHIR(allergy));
     } catch (error) {
@@ -696,6 +801,7 @@ fhirRouter.put(
       const tenantId = req.fhirAuth!.tenantId;
       const id = req.params.id;
       const resource = req.body;
+      const patientContext = getFHIRPatientContext(req, "AllergyIntolerance", "write");
 
       if (!resource || resource.resourceType !== "AllergyIntolerance") {
         return res.status(400).json(
@@ -715,6 +821,14 @@ fhirRouter.put(
       const notes = resource.note?.[0]?.text;
       const onsetDate = resource.onsetDateTime || resource.onsetDate;
       const allergenType = resource.category?.[0];
+      const patientRef = resource.patient?.reference || resource.subject?.reference;
+      const patientId = normalizeResourceReference(patientRef, "Patient");
+
+      if (patientContext && patientId && patientId !== patientContext) {
+        return res.status(403).json(
+          createOperationOutcome("error", "forbidden", "Requested patient is outside the token patient context")
+        );
+      }
 
       const updates: string[] = [];
       const values: any[] = [];
@@ -750,11 +864,16 @@ fhirRouter.put(
       }
 
       updates.push("updated_at = now()");
+      const idParam = paramIndex++;
+      const tenantParam = paramIndex++;
+      const patientParam = patientContext ? paramIndex++ : undefined;
       values.push(id, tenantId);
+      if (patientContext) values.push(patientContext);
 
       const result = await pool.query(
         `UPDATE patient_allergies SET ${updates.join(", ")}
-         WHERE id = $${paramIndex++} AND tenant_id = $${paramIndex}
+         WHERE id = $${idParam} AND tenant_id = $${tenantParam}
+         ${patientParam ? `AND patient_id = $${patientParam}` : ""}
          RETURNING *`,
         values
       );
@@ -787,10 +906,14 @@ fhirRouter.delete(
     try {
       const tenantId = req.fhirAuth!.tenantId;
       const id = req.params.id;
+      const patientContext = getFHIRPatientContext(req, "AllergyIntolerance", "write");
 
       const result = await pool.query(
-        `DELETE FROM patient_allergies WHERE id = $1 AND tenant_id = $2 RETURNING id`,
-        [id, tenantId]
+        `DELETE FROM patient_allergies
+         WHERE id = $1 AND tenant_id = $2
+         ${patientContext ? "AND patient_id = $3" : ""}
+         RETURNING id`,
+        patientContext ? [id, tenantId, patientContext] : [id, tenantId]
       );
 
       if (!result.rowCount) {
@@ -819,8 +942,9 @@ fhirRouter.get("/Procedure/:id", requireFHIRAuth, requireFHIRScope("Procedure", 
   try {
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
+    const patientContext = getFHIRPatientContext(req, "Procedure", "read");
 
-    const dbCharge = await fetchChargeWithContext(id!, tenantId);
+    const dbCharge = await fetchChargeWithContext(id!, tenantId, patientContext);
 
     if (!dbCharge) {
       return res.status(404).json(
@@ -842,10 +966,12 @@ fhirRouter.get("/Procedure/:id", requireFHIRAuth, requireFHIRScope("Procedure", 
  * GET /fhir/Procedure - Search procedures
  * Supported params: patient, date, code, encounter, _count, _offset
  */
-fhirRouter.get("/Procedure", requireFHIRAuth, requireFHIRScope("Procedure", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Procedure", requireFHIRAuth, requireFHIRScope("Procedure", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { patient, date, code, encounter, _count = "50", _offset = "0" } = req.query;
+    const { patient, date, code, encounter } = req.query;
+    const { count, offset } = getSearchPage(req);
+    const patientContext = getFHIRPatientContext(req, "Procedure", "search");
 
     let query = `
       SELECT c.*, e.patient_id
@@ -856,9 +982,9 @@ fhirRouter.get("/Procedure", requireFHIRAuth, requireFHIRScope("Procedure", "rea
     const params: any[] = [tenantId];
     let paramIndex = 2;
 
-    if (patient) {
+    if (patient || patientContext) {
       query += ` AND e.patient_id = $${paramIndex}`;
-      params.push(patient);
+      params.push(normalizeResourceReference(patient, "Patient") || patientContext);
       paramIndex++;
     }
 
@@ -884,13 +1010,13 @@ fhirRouter.get("/Procedure", requireFHIRAuth, requireFHIRScope("Procedure", "rea
     const total = parseInt(countResult.rows[0].count);
 
     query += ` ORDER BY c.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
     const resources = result.rows.map(mapChargeToProcedure);
 
     await logFHIRAccess(req, "Procedure", undefined, "search");
-    return res.json(createFHIRBundle(resources, "searchset", total));
+    return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
   } catch (error) {
     logFhirError("Error searching procedures", error);
     return res.status(500).json(
@@ -908,13 +1034,15 @@ fhirRouter.get("/Appointment/:id", requireFHIRAuth, requireFHIRScope("Appointmen
   try {
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
+    const patientContext = getFHIRPatientContext(req, "Appointment", "read");
 
     const result = await pool.query(
       `SELECT a.*, at.name as appointment_type_name
        FROM appointments a
        LEFT JOIN appointment_types at ON at.id = a.appointment_type_id
-       WHERE a.id = $1 AND a.tenant_id = $2`,
-      [id, tenantId]
+       WHERE a.id = $1 AND a.tenant_id = $2
+       ${patientContext ? "AND a.patient_id = $3" : ""}`,
+      patientContext ? [id, tenantId, patientContext] : [id, tenantId]
     );
 
     if (result.rows.length === 0) {
@@ -937,10 +1065,12 @@ fhirRouter.get("/Appointment/:id", requireFHIRAuth, requireFHIRScope("Appointmen
  * GET /fhir/Appointment - Search appointments
  * Supported params: patient, date, status, practitioner, _count, _offset
  */
-fhirRouter.get("/Appointment", requireFHIRAuth, requireFHIRScope("Appointment", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Appointment", requireFHIRAuth, requireFHIRScope("Appointment", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { patient, date, status, practitioner, _count = "50", _offset = "0" } = req.query;
+    const { patient, date, status, practitioner } = req.query;
+    const { count, offset } = getSearchPage(req);
+    const patientContext = getFHIRPatientContext(req, "Appointment", "search");
 
     let query = `
       SELECT a.*, at.name as appointment_type_name
@@ -951,9 +1081,9 @@ fhirRouter.get("/Appointment", requireFHIRAuth, requireFHIRScope("Appointment", 
     const params: any[] = [tenantId];
     let paramIndex = 2;
 
-    if (patient) {
+    if (patient || patientContext) {
       query += ` AND a.patient_id = $${paramIndex}`;
-      params.push(patient);
+      params.push(normalizeResourceReference(patient, "Patient") || patientContext);
       paramIndex++;
     }
 
@@ -979,13 +1109,13 @@ fhirRouter.get("/Appointment", requireFHIRAuth, requireFHIRScope("Appointment", 
     const total = parseInt(countResult.rows[0].count);
 
     query += ` ORDER BY a.scheduled_start DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
     const resources = result.rows.map(mapAppointmentToFHIR);
 
     await logFHIRAccess(req, "Appointment", undefined, "search");
-    return res.json(createFHIRBundle(resources, "searchset", total));
+    return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
   } catch (error) {
     logFhirError("Error searching appointments", error);
     return res.status(500).json(
@@ -1012,8 +1142,8 @@ fhirRouter.get("/Organization/:id", requireFHIRAuth, requireFHIRScope("Organizat
 
     if (result.rows.length === 0) {
       result = await pool.query(
-        `SELECT * FROM tenants WHERE id = $1`,
-        [id]
+        `SELECT * FROM tenants WHERE id = $1 AND id = $2`,
+        [id, tenantId]
       );
     }
 
@@ -1036,10 +1166,11 @@ fhirRouter.get("/Organization/:id", requireFHIRAuth, requireFHIRScope("Organizat
 /**
  * GET /fhir/Organization - Search organizations
  */
-fhirRouter.get("/Organization", requireFHIRAuth, requireFHIRScope("Organization", "read"), async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Organization", requireFHIRAuth, requireFHIRScope("Organization", "search"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
-    const { name, _count = "50", _offset = "0" } = req.query;
+    const { name } = req.query;
+    const { count, offset } = getSearchPage(req);
 
     let query = `SELECT * FROM locations WHERE tenant_id = $1`;
     const params: any[] = [tenantId];
@@ -1055,13 +1186,13 @@ fhirRouter.get("/Organization", requireFHIRAuth, requireFHIRScope("Organization"
     const total = parseInt(countResult.rows[0].count);
 
     query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(parseInt(_count as string), parseInt(_offset as string));
+    params.push(count, offset);
 
     const result = await pool.query(query, params);
     const resources = result.rows.map(mapOrganizationToFHIR);
 
     await logFHIRAccess(req, "Organization", undefined, "search");
-    return res.json(createFHIRBundle(resources, "searchset", total));
+    return res.json(createFHIRBundle(resources, "searchset", total, buildSearchLinks(req, count, offset, resources.length, total)));
   } catch (error) {
     logFhirError("Error searching organizations", error);
     return res.status(500).json(
@@ -1071,6 +1202,19 @@ fhirRouter.get("/Organization", requireFHIRAuth, requireFHIRScope("Organization"
 });
 
 // ==================== METADATA / CAPABILITY STATEMENT ====================
+
+/**
+ * SMART discovery is intentionally not advertised until authorization and
+ * token endpoints are implemented. Returning an explicit 404 keeps clients
+ * from treating this resource server as a SMART-conformant authorization
+ * server.
+ */
+fhirRouter.get("/.well-known/smart-configuration", (_req, res) => {
+  return res.status(404).json({
+    error: "not_found",
+    error_description: "SMART App Launch discovery is not implemented",
+  });
+});
 
 /**
  * GET /fhir/metadata - FHIR Capability Statement
@@ -1104,12 +1248,13 @@ fhirRouter.get("/metadata", async (req, res) => {
                 {
                   system: "http://terminology.hl7.org/CodeSystem/restful-security-service",
                   code: "OAuth",
-                  display: "OAuth2 using SMART-on-FHIR profile",
+                  display: "OAuth 2.0 bearer token",
                 },
               ],
             },
           ],
-          description: "OAuth 2.0 Bearer token authentication with SMART on FHIR scopes",
+          description:
+            "OAuth 2.0 bearer tokens are validated against configured FHIR token records. SMART App Launch authorization, token, and discovery endpoints are not implemented.",
         },
         resource: [
           {
@@ -1175,7 +1320,6 @@ fhirRouter.get("/metadata", async (req, res) => {
             searchParam: [
               { name: "patient", type: "reference" },
               { name: "date", type: "date" },
-              { name: "code", type: "token" },
               { name: "encounter", type: "reference" },
             ],
           },
@@ -1237,7 +1381,7 @@ fhirRouter.get("/metadata", async (req, res) => {
 // ==================== LEGACY ENDPOINTS (for backward compatibility) ====================
 
 // Keep existing simple bundle endpoint for demos
-fhirRouter.get("/Bundle/summary", requireFHIRAuth, async (req: FHIRAuthenticatedRequest, res) => {
+fhirRouter.get("/Bundle/summary", requireFHIRAuth, requireFHIRScope("Bundle", "read"), async (req: FHIRAuthenticatedRequest, res) => {
   try {
     const tenantId = req.fhirAuth!.tenantId;
     const [patientRes, providerRes, encounterRes, appointmentRes, vitalsRes] = await Promise.all([

@@ -22,6 +22,25 @@ global.fetch = jest.fn();
 
 const queryMock = pool.query as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
+const originalAiEnvironment = {
+  nodeEnv: process.env.NODE_ENV,
+  openAiApiKey: process.env.OPENAI_API_KEY,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  openAiCallsEnabled: process.env.OPENAI_API_CALLS_ENABLED,
+  openAiBaaEnabled: process.env.OPENAI_BAA_ENABLED,
+  openAiApprovedEndpoints: process.env.OPENAI_BAA_APPROVED_ENDPOINTS,
+  openAiApprovedModels: process.env.OPENAI_BAA_APPROVED_MODELS,
+  clinicalAiMode: process.env.CLINICAL_AI_MODE,
+  aiMode: process.env.AI_MODE,
+};
+
+function restoreEnvironmentValue(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 describe('AINoteDraftingService', () => {
   let service: AINoteDraftingService;
@@ -31,10 +50,30 @@ describe('AINoteDraftingService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    queryMock.mockReset();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_CALLS_ENABLED;
+    delete process.env.OPENAI_BAA_ENABLED;
+    delete process.env.OPENAI_BAA_APPROVED_ENDPOINTS;
+    delete process.env.OPENAI_BAA_APPROVED_MODELS;
+    delete process.env.CLINICAL_AI_MODE;
+    delete process.env.AI_MODE;
     loggerMock.error.mockReset();
+    (global.fetch as jest.Mock).mockReset();
     service = new AINoteDraftingService();
+  });
+
+  afterEach(() => {
+    restoreEnvironmentValue('NODE_ENV', originalAiEnvironment.nodeEnv);
+    restoreEnvironmentValue('OPENAI_API_KEY', originalAiEnvironment.openAiApiKey);
+    restoreEnvironmentValue('ANTHROPIC_API_KEY', originalAiEnvironment.anthropicApiKey);
+    restoreEnvironmentValue('OPENAI_API_CALLS_ENABLED', originalAiEnvironment.openAiCallsEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_ENABLED', originalAiEnvironment.openAiBaaEnabled);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_ENDPOINTS', originalAiEnvironment.openAiApprovedEndpoints);
+    restoreEnvironmentValue('OPENAI_BAA_APPROVED_MODELS', originalAiEnvironment.openAiApprovedModels);
+    restoreEnvironmentValue('CLINICAL_AI_MODE', originalAiEnvironment.clinicalAiMode);
+    restoreEnvironmentValue('AI_MODE', originalAiEnvironment.aiMode);
   });
 
   describe('generateNoteDraft', () => {
@@ -71,6 +110,20 @@ describe('AINoteDraftingService', () => {
       expect(result).toHaveProperty('confidenceScore');
       expect(result).toHaveProperty('suggestions');
       expect(Array.isArray(result.suggestions)).toBe(true);
+    });
+
+    it('should fail closed in production when no provider is configured', async () => {
+      process.env.NODE_ENV = 'production';
+      queryMock
+        .mockResolvedValueOnce({ rows: [{}] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+      service = new AINoteDraftingService();
+
+      await expect(service.generateNoteDraft(request, tenantId)).rejects.toThrow(
+        'Failed to generate note draft'
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('should use OpenAI when API key is available', async () => {
@@ -173,6 +226,118 @@ describe('AINoteDraftingService', () => {
       expect(result.chiefComplaint).toBe('Skin concern');
     });
 
+    it('filters section evidence to exact current-source excerpts and caps unsupported drafts', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      service = new AINoteDraftingService();
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ first_name: 'Jane', last_name: 'Smith' }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            chiefComplaint: 'Rash on arms',
+            hpi: 'Patient reports itching',
+            ros: 'Negative except as noted',
+            exam: '',
+            assessmentPlan: 'Contact dermatitis; start treatment',
+            sectionReview: {
+              chiefComplaint: {
+                status: 'drafted',
+                confidence: 0.92,
+                evidence: [
+                  { source: 'chief_complaint', excerpt: 'Rash on arms' },
+                  { source: 'chief_complaint', excerpt: 'unrelated conversation' },
+                ],
+              },
+              hpi: {
+                status: 'drafted',
+                confidence: 0.88,
+                evidence: [{ source: 'brief_notes', excerpt: 'Patient reports itch' }],
+              },
+              ros: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'brief_notes', excerpt: 'not in brief notes' }],
+              },
+              exam: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'brief_notes', excerpt: 'not in brief notes' }],
+              },
+              assessmentPlan: {
+                status: 'drafted',
+                confidence: 0.9,
+                evidence: [{ source: 'chief_complaint', excerpt: 'not in complaint' }],
+              },
+            },
+          }) } }],
+        }),
+      });
+
+      const result = await service.generateNoteDraft({
+        patientId,
+        providerId,
+        chiefComplaint: 'Rash on arms',
+        briefNotes: 'Patient reports itch',
+      }, tenantId);
+
+      expect(result.sectionReview.chiefComplaint.evidence).toEqual([
+        { source: 'chief_complaint', excerpt: 'Rash on arms' },
+      ]);
+      expect(result.sectionReview.hpi.evidence).toEqual([
+        { source: 'brief_notes', excerpt: 'Patient reports itch' },
+      ]);
+      expect(result.sectionReview.ros.evidence).toEqual([]);
+      expect(result.sectionReview.ros.confidence).toBeLessThanOrEqual(0.5);
+      expect(result.sectionReview.exam.status).toBe('not_documented');
+      expect(result.sectionReview.assessmentPlan.confidence).toBeLessThanOrEqual(0.5);
+    });
+
+    it('averages confidence across documented sections only', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      service = new AINoteDraftingService();
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ first_name: 'Jane', last_name: 'Smith' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            chiefComplaint: 'Rash on arms',
+            hpi: '',
+            ros: '',
+            exam: '',
+            assessmentPlan: '',
+            sectionReview: {
+              chiefComplaint: {
+                status: 'drafted',
+                confidence: 0.8,
+                evidence: [{ source: 'chief_complaint', excerpt: 'Rash on arms' }],
+              },
+              hpi: { status: 'not_documented', confidence: 0, evidence: [] },
+              ros: { status: 'not_documented', confidence: 0, evidence: [] },
+              exam: { status: 'not_documented', confidence: 0, evidence: [] },
+              assessmentPlan: { status: 'not_documented', confidence: 0, evidence: [] },
+            },
+          }) } }],
+        }),
+      });
+
+      const result = await service.generateNoteDraft({
+        patientId,
+        providerId,
+        chiefComplaint: 'Rash on arms',
+      }, tenantId);
+
+      expect(result.confidenceScore).toBe(0.8);
+    });
+
     it('should include template when provided', async () => {
       const mockPatient = { first_name: 'John', last_name: 'Doe', date_of_birth: '1990-01-01', sex: 'M' };
       const mockTemplate = { chiefComplaint: 'Template CC', hpi: 'Template HPI' };
@@ -212,9 +377,29 @@ describe('AINoteDraftingService', () => {
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: mockPriorNotes });
 
-      const result = await service.generateNoteDraft(request, tenantId);
+      const result = await service.generateNoteDraft({
+        ...request,
+        priorEncounterIds: ['prior-encounter-123'],
+      }, tenantId);
 
       expect(result).toBeDefined();
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining('e.patient_id = $3'),
+        [['prior-encounter-123'], tenantId, patientId]
+      );
+    });
+
+    it('does not fetch recent encounter notes without explicit IDs', async () => {
+      const mockPatient = { first_name: 'John', last_name: 'Doe', date_of_birth: '1990-01-01', sex: 'M' };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [mockPatient] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.generateNoteDraft(request, tenantId);
+
+      expect(queryMock).toHaveBeenCalledTimes(2);
+      expect(queryMock.mock.calls[1][0]).toEqual(expect.stringContaining('join users u'));
     });
 
     it('should include provider writing style', async () => {
@@ -235,6 +420,11 @@ describe('AINoteDraftingService', () => {
         expect.stringContaining('from encounters'),
         [providerId, tenantId]
       );
+      const providerStyleQuery = queryMock.mock.calls[1][0] as string;
+      expect(providerStyleQuery).toContain('p.user_id');
+      expect(providerStyleQuery).toContain('coalesce(e.updated_at, e.created_at)');
+      expect(providerStyleQuery).not.toContain('e.soap_note');
+      expect(providerStyleQuery).not.toContain('e.encounter_date');
       expect(result).toBeDefined();
     });
 
@@ -257,6 +447,30 @@ describe('AINoteDraftingService', () => {
       await expect(service.generateNoteDraft(request, tenantId)).rejects.toThrow(
         'OpenAI API error: Bad Request'
       );
+    });
+
+    it('should fail closed in production when the provider request fails', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.OPENAI_API_KEY = 'sk-production-test-key';
+      process.env.OPENAI_API_CALLS_ENABLED = 'true';
+      process.env.OPENAI_BAA_ENABLED = 'true';
+      process.env.OPENAI_BAA_APPROVED_ENDPOINTS = '/v1/chat/completions';
+      process.env.OPENAI_BAA_APPROVED_MODELS = 'gpt-4o-mini';
+      service = new AINoteDraftingService();
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [{}] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        statusText: 'Bad Gateway',
+      });
+
+      await expect(service.generateNoteDraft(request, tenantId)).rejects.toThrow(
+        'OpenAI API error: Bad Gateway'
+      );
+      expect(global.fetch).toHaveBeenCalled();
     });
 
     it('should handle invalid OpenAI response', async () => {
@@ -317,6 +531,7 @@ Assessment and Plan: Contact dermatitis, prescribe topical steroid`;
         ...request,
         chiefComplaint: 'Jane Doe has itchy rash; phone 415-555-1234.',
         briefNotes: 'SSN 123-45-6789 and email jane.doe@example.com. Eczema flare.',
+        priorEncounterIds: ['prior-encounter-123'],
       };
       const mockPatient = {
         first_name: 'Jane',
@@ -550,6 +765,30 @@ Assessment and Plan: Contact dermatitis, prescribe topical steroid`;
       const result = await service.generateNoteDraft(request, tenantId);
 
       expect(result.chiefComplaint).toContain('Specific complaint text');
+    });
+
+    it('does not use template filler or generic negatives in the synthetic draft', async () => {
+      const mockPatient = { first_name: 'John', last_name: 'Doe', date_of_birth: '1990-01-01', sex: 'M' };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [mockPatient] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await service.generateNoteDraft({
+        patientId,
+        providerId,
+        chiefComplaint: 'Rash on arms',
+        briefNotes: 'Patient reports itch',
+      }, tenantId);
+
+      expect(result.chiefComplaint).toBe('Rash on arms');
+      expect(result.hpi).toBe('Patient reports itch');
+      expect(result.ros).toBe('');
+      expect(result.exam).toBe('');
+      expect(result.assessmentPlan).toBe('');
+      expect(result.sectionReview.ros.status).toBe('not_documented');
+      expect(result.sectionReview.exam.status).toBe('not_documented');
     });
   });
 

@@ -7,12 +7,9 @@ import {
   Badge,
   Chip,
   Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   ToggleButton,
-  ToggleButtonGroup
+  ToggleButtonGroup,
+  ButtonBase
 } from '@mui/material';
 import {
   Warning as WarningIcon,
@@ -126,6 +123,45 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
 
     if (lesionCount === 0) return null;
 
+    const markerLabel = `${regionCode}: ${lesionCount} lesion${lesionCount === 1 ? '' : 's'}${alertCount ? `, ${alertCount} active alert${alertCount === 1 ? '' : 's'}` : ''}`;
+    const markerSx = {
+      position: 'absolute',
+      left: `${region.x}%`,
+      top: `${region.y}%`,
+      width: `${region.width}%`,
+      height: `${region.height}%`,
+      bgcolor: getRegionColor(regionCode),
+      border: hoveredRegion === regionCode ? '2px solid #1976d2' : '1px solid rgba(0,0,0,0.2)',
+      borderRadius: 1,
+      cursor: regionLesions.length === 1 ? 'pointer' : 'default',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'all 0.2s',
+      '&:hover': regionLesions.length === 1
+        ? {
+            transform: 'scale(1.05)',
+            zIndex: 10,
+          }
+        : undefined,
+    } as const;
+    const markerContent = (
+      <Badge
+        badgeContent={alertCount > 0 ? <WarningIcon sx={{ fontSize: 12 }} /> : null}
+        color="warning"
+      >
+        <Chip
+          label={lesionCount}
+          size="small"
+          sx={{
+            bgcolor: 'background.paper',
+            minWidth: 24,
+            height: 24,
+          }}
+        />
+      </Badge>
+    );
+
     return (
       <Tooltip
         key={regionCode}
@@ -154,49 +190,29 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
         }
         arrow
       >
-        <Box
-          onClick={() => {
-            if (regionLesions.length === 1) {
-              onSelectLesion(regionLesions[0]!);
-            }
-          }}
-          onMouseEnter={() => setHoveredRegion(regionCode)}
-          onMouseLeave={() => setHoveredRegion(null)}
-          sx={{
-            position: 'absolute',
-            left: `${region.x}%`,
-            top: `${region.y}%`,
-            width: `${region.width}%`,
-            height: `${region.height}%`,
-            bgcolor: getRegionColor(regionCode),
-            border: hoveredRegion === regionCode ? '2px solid #1976d2' : '1px solid rgba(0,0,0,0.2)',
-            borderRadius: 1,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            transition: 'all 0.2s',
-            '&:hover': {
-              transform: 'scale(1.05)',
-              zIndex: 10
-            }
-          }}
-        >
-          <Badge
-            badgeContent={alertCount > 0 ? <WarningIcon sx={{ fontSize: 12 }} /> : null}
-            color="warning"
+        {regionLesions.length === 1 ? (
+          <ButtonBase
+            type="button"
+            aria-label={markerLabel}
+            onClick={() => onSelectLesion(regionLesions[0]!)}
+            onMouseEnter={() => setHoveredRegion(regionCode)}
+            onMouseLeave={() => setHoveredRegion(null)}
+            sx={markerSx}
           >
-            <Chip
-              label={lesionCount}
-              size="small"
-              sx={{
-                bgcolor: 'background.paper',
-                minWidth: 24,
-                height: 24
-              }}
-            />
-          </Badge>
-        </Box>
+            {markerContent}
+          </ButtonBase>
+        ) : (
+          <Box
+            component="span"
+            role="img"
+            aria-label={markerLabel}
+            onMouseEnter={() => setHoveredRegion(regionCode)}
+            onMouseLeave={() => setHoveredRegion(null)}
+            sx={markerSx}
+          >
+            {markerContent}
+          </Box>
+        )}
       </Tooltip>
     );
   };
@@ -277,10 +293,15 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                     {regionCode} ({regionLesions.length})
                   </Typography>
                   {regionLesions.map(lesion => (
-                    <Paper
+                    <ButtonBase
                       key={lesion.id}
-                      variant="outlined"
+                      type="button"
+                      aria-label={`${lesion.bodyLocationDescription}, suspicion level ${lesion.suspicionLevel}, ${lesion.status}`}
                       sx={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        border: '1px solid',
                         p: 1.5,
                         mb: 1,
                         cursor: 'pointer',
@@ -293,8 +314,8 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                       }}
                       onClick={() => onSelectLesion(lesion)}
                     >
-                      <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Box>
+                      <Box component="span" display="flex" justifyContent="space-between" alignItems="center">
+                        <Box component="span">
                           <Typography variant="body2" fontWeight="medium">
                             {lesion.bodyLocationDescription}
                           </Typography>
@@ -302,14 +323,14 @@ const BodyMapLesions: React.FC<BodyMapLesionsProps> = ({
                             Level {lesion.suspicionLevel} - {lesion.status}
                           </Typography>
                         </Box>
-                        <Box display="flex" alignItems="center" gap={1}>
+                        <Box component="span" display="flex" alignItems="center" gap={1}>
                           {alerts.some(a => a.lesionId === lesion.id) && (
                             <WarningIcon color="warning" fontSize="small" />
                           )}
                           <ViewIcon color="action" fontSize="small" />
                         </Box>
                       </Box>
-                    </Paper>
+                    </ButtonBase>
                   ))}
                 </Box>
               ))}

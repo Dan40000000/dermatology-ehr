@@ -15,11 +15,12 @@ import {
 } from "../services/availabilityService";
 import { getPracticeTimeZone } from "../lib/practiceTimeZone";
 import { logger } from "../lib/logger";
-import { env } from "../config/env";
 import { notificationService } from "../services/integrations/notificationService";
 import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import { emitAppointmentCreated } from "../websocket/emitter";
 import { createLateFeeBillIfNeeded } from "../services/cancellationFeeService";
+import { resolvePublicTenantBinding } from "../utils/publicTenantBinding";
+import { safeErrorCode } from "../utils/phiRedaction";
 
 // ============================================================================
 // PATIENT PORTAL ROUTES (Public-facing for patients)
@@ -47,31 +48,22 @@ type PublicBookingSettings = {
 };
 
 function toSafeErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  return "Unknown error";
+  return safeErrorCode(error);
 }
 
 function logPatientSchedulingError(message: string, error: unknown): void {
   logger.error(message, {
-    error: toSafeErrorMessage(error),
+    errorCode: toSafeErrorMessage(error),
   });
 }
 
 function resolveTenantId(req: { header: (name: string) => string | undefined; query?: any }): string | null {
-  const headerTenantId = req.header(env.tenantHeader);
-  if (headerTenantId) {
-    return headerTenantId;
-  }
+  const resolved = resolvePublicTenantBinding(req);
+  return resolved.tenantId;
+}
 
-  const queryTenantId = typeof req.query?.tenantId === "string" ? req.query.tenantId.trim() : "";
-  return queryTenantId || null;
+function publicTenantErrorStatus(req: { header: (name: string) => string | undefined; query?: any }): number {
+  return resolvePublicTenantBinding(req).hadUnverifiedHint ? 403 : 400;
 }
 
 async function getPublicBookingSettings(tenantId: string): Promise<PublicBookingSettings> {
@@ -283,7 +275,7 @@ patientSchedulingRouter.get(
   async (req, res) => {
     const tenantId = resolveTenantId(req);
     if (!tenantId) {
-      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+      return res.status(publicTenantErrorStatus(req)).json({ error: publicTenantErrorStatus(req) === 403 ? 'Invalid public booking site' : 'Public booking site binding required' });
     }
 
     try {
@@ -302,7 +294,7 @@ patientSchedulingRouter.get(
   async (req, res) => {
     const tenantId = resolveTenantId(req);
     if (!tenantId) {
-      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+      return res.status(publicTenantErrorStatus(req)).json({ error: publicTenantErrorStatus(req) === 403 ? 'Invalid public booking site' : 'Public booking site binding required' });
     }
 
     try {
@@ -321,7 +313,7 @@ patientSchedulingRouter.get(
   async (req, res) => {
     const tenantId = resolveTenantId(req);
     if (!tenantId) {
-      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+      return res.status(publicTenantErrorStatus(req)).json({ error: publicTenantErrorStatus(req) === 403 ? 'Invalid public booking site' : 'Public booking site binding required' });
     }
 
     try {
@@ -381,7 +373,7 @@ patientSchedulingRouter.get(
   async (req, res) => {
     const tenantId = resolveTenantId(req);
     if (!tenantId) {
-      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+      return res.status(publicTenantErrorStatus(req)).json({ error: publicTenantErrorStatus(req) === 403 ? 'Invalid public booking site' : 'Public booking site binding required' });
     }
 
     const parsed = availableDatesSchema.safeParse(req.query);
@@ -460,7 +452,7 @@ patientSchedulingRouter.get(
   async (req, res) => {
     const tenantId = resolveTenantId(req);
     if (!tenantId) {
-      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+      return res.status(publicTenantErrorStatus(req)).json({ error: publicTenantErrorStatus(req) === 403 ? 'Invalid public booking site' : 'Public booking site binding required' });
     }
 
     const parsed = availabilitySchema.safeParse(req.query);
@@ -828,7 +820,7 @@ patientSchedulingRouter.post(
   async (req, res) => {
     const tenantId = resolveTenantId(req);
     if (!tenantId) {
-      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+      return res.status(publicTenantErrorStatus(req)).json({ error: publicTenantErrorStatus(req) === 403 ? 'Invalid public booking site' : 'Public booking site binding required' });
     }
 
     const parsed = guestBookingSchema.safeParse(req.body);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -6,6 +6,7 @@ import { Skeleton } from '../ui';
 import {
   fetchAmbientNote,
   fetchPatientSummaries,
+  sharePatientSummary,
   type AmbientGeneratedNote,
   type PatientSummary
 } from '../../api';
@@ -25,9 +26,13 @@ interface PatientScribeSummariesProps {
   refreshSignal?: number;
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function PatientScribeSummaries({ patientId, patientName, refreshSignal = 0 }: PatientScribeSummariesProps) {
   const { session } = useAuth();
-  const { showError } = useToast();
+  const { showError, showSuccess } = useToast();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [summaries, setSummaries] = useState<PatientSummary[]>([]);
@@ -35,8 +40,11 @@ export function PatientScribeSummaries({ patientId, patientName, refreshSignal =
   const [noteMap, setNoteMap] = useState<Record<string, AmbientGeneratedNote>>({});
   const [noteLoading, setNoteLoading] = useState<Record<string, boolean>>({});
   const [noteErrors, setNoteErrors] = useState<Record<string, boolean>>({});
+  const [sharingId, setSharingId] = useState<string | null>(null);
 
-  const loadSummaries = async () => {
+  const canShareSummaries = ['provider', 'admin'].includes(String(session?.user?.role || '').toLowerCase());
+
+  const loadSummaries = useCallback(async () => {
     if (!session) return;
     setLoading(true);
     try {
@@ -46,16 +54,16 @@ export function PatientScribeSummaries({ patientId, patientName, refreshSignal =
       if (data.summaries?.length) {
         setExpandedId((prev) => prev ?? data.summaries[0].id);
       }
-    } catch (error: any) {
-      showError(error.message || 'Failed to load patient summaries');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to load patient summaries'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [patientId, session, showError]);
 
   useEffect(() => {
-    loadSummaries();
-  }, [session, patientId, refreshSignal]);
+    void loadSummaries();
+  }, [loadSummaries, refreshSignal]);
 
   useEffect(() => {
     if (!session || !expandedId) return;
@@ -75,6 +83,22 @@ export function PatientScribeSummaries({ patientId, patientName, refreshSignal =
         setNoteLoading((prev) => ({ ...prev, [noteId]: false }));
       });
   }, [expandedId, summaries, session, noteMap, noteLoading, noteErrors]);
+
+  const handleShareSummary = useCallback(async (summaryId: string) => {
+    if (!session || sharingId) return;
+    setSharingId(summaryId);
+    try {
+      const result = await sharePatientSummary(session.tenantId, session.accessToken, summaryId);
+      setSummaries((current) => current.map((summary) => summary.id === summaryId
+        ? { ...summary, sharedAt: summary.sharedAt || new Date().toISOString() }
+        : summary));
+      showSuccess(result.message || 'Summary shared to the patient portal');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to share patient summary'));
+    } finally {
+      setSharingId(null);
+    }
+  }, [session, sharingId, showError, showSuccess]);
 
   const summaryCards = useMemo(() => {
     return summaries.map((summary) => {
@@ -106,6 +130,16 @@ export function PatientScribeSummaries({ patientId, patientName, refreshSignal =
               onClick={() => navigate(`/ambient-scribe?noteId=${summary.ambientNoteId}`)}
             >
               View Note
+            </button>
+          )}
+          {!summary.sharedAt && canShareSummaries && (!summary.ambientNoteId || note?.reviewStatus === 'approved') && (
+            <button
+              type="button"
+              className="scribe-summary-button"
+              onClick={() => void handleShareSummary(summary.id)}
+              disabled={sharingId === summary.id}
+            >
+              {sharingId === summary.id ? 'Sharing…' : 'Share to Portal'}
             </button>
           )}
           <button
@@ -145,19 +179,19 @@ export function PatientScribeSummaries({ patientId, patientName, refreshSignal =
         />
       );
     });
-  }, [summaries, noteMap, expandedId, navigate, patientId, patientName, noteLoading, noteErrors]);
+  }, [summaries, noteMap, expandedId, navigate, patientId, patientName, noteLoading, noteErrors, sharingId, canShareSummaries, handleShareSummary]);
 
   return (
     <div className="scribe-summary-panel">
       <div className="scribe-summary-panel__header">
         <div>
-          <div className="scribe-summary-panel__title">AI Scribe Archive</div>
+          <h2 className="scribe-summary-panel__title">AI Scribe Archive</h2>
           <div className="scribe-summary-panel__subtitle">
             Patient-friendly visit summaries stored in {patientName}'s profile.
           </div>
         </div>
         <div className="scribe-summary-panel__actions">
-          <button type="button" className="scribe-summary-button" onClick={loadSummaries}>
+          <button type="button" className="scribe-summary-button" onClick={() => void loadSummaries()}>
             Refresh
           </button>
         </div>

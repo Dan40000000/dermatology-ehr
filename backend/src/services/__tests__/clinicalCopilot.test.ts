@@ -1,4 +1,4 @@
-import { askClinicalCopilot } from '../clinicalCopilot';
+import { askClinicalCopilot, reviseClinicalNote } from '../clinicalCopilot';
 import { AiPhiBlockError } from '../../utils/aiPhiGuard';
 
 describe('clinicalCopilot', () => {
@@ -121,5 +121,67 @@ describe('clinicalCopilot', () => {
     expect(serialized).toContain('itchy plaques on elbows');
     expect(serialized).not.toContain('James Ward');
     expect(serialized).not.toContain('01/02/1980');
+  });
+
+  it('returns an honest unavailable preview when no live revision provider is configured', async () => {
+    const result = await reviseClinicalNote({
+      instruction: 'Make the plan concise',
+      sections: ['plan'],
+      currentNote: { plan: 'Continue the current treatment plan and return as needed.' },
+    });
+
+    expect(result.available).toBe(false);
+    expect(result.suggestedUpdates).toEqual({});
+    expect(result.warning).toMatch(/not configured/i);
+  });
+
+  it('returns only requested note section revisions and transcript evidence', async () => {
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestedUpdates: {
+                assessment: 'Neoplasm of uncertain behavior of skin.',
+                plan: 'Shave biopsy performed; await pathology.',
+                hpi: 'This unrequested section must be ignored.',
+              },
+              rationale: 'Removed repetition without changing clinical meaning.',
+              evidenceBySection: {
+                assessment: ['changing lesion on the upper back'],
+                plan: ['shave biopsy today', 'patient consented after a full risk discussion'],
+              },
+              missingData: ['Confirm lesion size.'],
+            }),
+          },
+        }],
+      }),
+    });
+    global.fetch = fetchMock as any;
+
+    const result = await reviseClinicalNote({
+      instruction: 'Make the assessment and plan concise',
+      sections: ['assessment', 'plan'],
+      currentNote: {
+        assessment: 'Changing lesion. Neoplasm of uncertain behavior.',
+        plan: 'A shave biopsy was performed today. We will wait for pathology results.',
+      },
+      transcriptExcerpt: 'The lesion has changed. We will do a shave biopsy today.',
+      tenantId: 'tenant-1',
+      userId: 'provider-1',
+      resourceId: 'note-1',
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.suggestedUpdates).toEqual({
+      assessment: 'Neoplasm of uncertain behavior of skin.',
+      plan: 'Shave biopsy performed; await pathology.',
+    });
+    expect(result.suggestedUpdates).not.toHaveProperty('hpi');
+    expect(result.evidenceBySection.assessment).toBeUndefined();
+    expect(result.evidenceBySection.plan).toEqual(['shave biopsy today']);
+    expect(result.missingData).toEqual(['Confirm lesion size.']);
   });
 });

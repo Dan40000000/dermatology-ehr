@@ -10,6 +10,7 @@ import { DiagnosisSearchModal, PerformedWorkModal, ProcedureSearchModal } from '
 import { InventoryUsageList, InventoryUsageModal } from '../components/inventory';
 import { EncounterPrescriptions } from '../components/prescriptions';
 import { ScribePanel } from '../components/ScribePanel';
+import { PreVisitBriefPanel } from '../components/PreVisitBriefPanel';
 import { ClinicalCopilotPanel } from '../components/ClinicalCopilotPanel';
 import {
   fetchPatients,
@@ -1284,7 +1285,7 @@ export function EncounterPage() {
       <PatientBanner patient={patient} compact />
 
       {/* Action Bar */}
-      <div className="ema-action-bar">
+      <div className="ema-action-bar encounter-action-bar">
         <button
           type="button"
           className="ema-action-btn"
@@ -1309,7 +1310,7 @@ export function EncounterPage() {
 
         {/* Autosave Status Indicator */}
         {!isNew && !isLocked && (
-          <div style={{
+          <div className="encounter-action-bar__autosave" style={{
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
@@ -1507,7 +1508,7 @@ export function EncounterPage() {
       )}
 
       {/* Vitals Strip */}
-      <div style={{
+      <div className="encounter-vitals-strip" style={{
         background: '#f0fdf4',
         borderLeft: '4px solid #10b981',
         padding: '0.75rem 1rem',
@@ -1533,7 +1534,13 @@ export function EncounterPage() {
       </div>
 
       {!isNew && patient && (
-        <div style={{ marginTop: '1rem' }}>
+        <div style={{ marginTop: '1rem', display: 'grid', gap: '1rem' }}>
+          <PreVisitBriefPanel
+            patient={patient}
+            encounter={encounter}
+            diagnosisHistory={patientDiagnosisHistory}
+            orders={orders}
+          />
           <ScribePanel
             patientId={patient.id}
             patientName={`${patient.firstName} ${patient.lastName}`}

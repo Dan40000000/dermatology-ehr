@@ -4790,6 +4790,43 @@ pre {
   gap: 1rem;
 }
 
+.encounter-action-bar,
+.encounter-vitals-strip {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .encounter-action-bar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 0.75rem;
+  }
+
+  .encounter-action-bar__autosave {
+    grid-column: 1 / -1;
+    justify-content: center;
+    order: -1;
+  }
+
+  .encounter-action-bar .ema-action-btn {
+    justify-content: center;
+    min-height: 44px;
+    min-width: 0;
+    padding: 0.5rem 0.65rem;
+    text-align: center;
+  }
+
+  .encounter-vitals-strip {
+    gap: 0.65rem 1rem !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .encounter-action-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .encounter-header {
   display: flex;
   align-items: center;

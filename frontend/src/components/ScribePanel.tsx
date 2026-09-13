@@ -5,7 +5,7 @@
  * Reusable component that wraps recording functionality
  */
 
-import { useState, useRef, useEffect, forwardRef } from 'react';
+import { useState, useRef, useEffect, useId, useCallback, forwardRef, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -62,6 +62,98 @@ interface LiveTranscriptLine {
 }
 
 type ConsentMethod = 'verbal' | 'written' | 'electronic';
+const MAX_RECORDING_SECONDS = 30 * 60;
+const SILENCE_PROMPT_SECONDS = 5 * 60;
+
+interface ScribeDialogProps {
+  title: string;
+  description: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function ScribeDialog({ title, description, onClose, children }: ScribeDialogProps) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!previousFocusRef.current && document.activeElement instanceof HTMLElement) {
+      previousFocusRef.current = document.activeElement;
+    }
+    const dialog = dialogRef.current;
+    const focusableSelector = [
+      'button:not([disabled])',
+      'select:not([disabled])',
+      'input:not([disabled])',
+      'textarea:not([disabled])',
+      '[href]',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) || []);
+    (dialog?.querySelector<HTMLElement>('[data-dialog-initial-focus]') || focusable()[0] || dialog)?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      if (elements.length === 0) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+      const first = elements[0]!;
+      const last = elements[elements.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      window.setTimeout(() => {
+        if (!dialog?.isConnected) previousFocusRef.current?.focus();
+      }, 0);
+    };
+  }, []);
+
+  return (
+    <div className="scribe-panel__modal-overlay" role="presentation">
+      <div
+        ref={dialogRef}
+        className="scribe-panel__modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+      >
+        <h2 id={titleId} className="scribe-panel__modal-title">{title}</h2>
+        <div id={descriptionId} className="scribe-panel__modal-text">{description}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   patientId,
@@ -111,9 +203,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   const streamRef = useRef<MediaStream | null>(null);
   const chunkIndexRef = useRef(0);
   const silenceMonitorRef = useRef<SilenceMonitor | null>(null);
-
-  const MAX_RECORDING_SECONDS = 30 * 60;
-  const SILENCE_PROMPT_SECONDS = 5 * 60;
+  const stopRecordingRef = useRef<() => void>(() => undefined);
 
   // Fetch default provider on mount if not provided
   useEffect(() => {
@@ -133,7 +223,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopRecording();
+      stopRecordingRef.current();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -254,8 +344,8 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
       }, 1000);
 
       showSuccess(`Recording started for ${patientName}`);
-    } catch (error: any) {
-      showError('Failed to start recording: ' + error.message);
+    } catch (error: unknown) {
+      showError(`Failed to start recording: ${getErrorMessage(error, 'Unknown recording error')}`);
       resetRecording();
       setIsRecording(false);
     }
@@ -270,7 +360,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
     setShowConsentPrompt(true);
   }, [autoStart, session, effectiveProviderId, isRecording, isUploading]);
 
-  const stopRecording = () => {
+  const stopRecording = useCallback(() => {
     const isActive = mediaRecorderRef.current?.state === 'recording';
     const activeRecordingId = recordingIdRef.current || recordingId;
     const safeDurationSeconds = Math.max(1, Math.round(Number(duration) || 0));
@@ -308,7 +398,11 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
     setLiveInsights(null);
     setLiveStatus('idle');
     setLiveError(null);
-  };
+  }, [duration, emit, recordingId, session, setIsRecording]);
+
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording;
+  }, [stopRecording]);
 
   useEffect(() => {
     if (!encounterStatus || !isRecording || !recordingId) return;
@@ -360,8 +454,8 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
       setShowContinuePrompt(false);
       setPromptReason(null);
       setDurationPrompted(false);
-    } catch (error: any) {
-      showError(error.message || 'Failed to upload recording');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to upload recording'));
     } finally {
       setIsUploading(false);
     }
@@ -497,18 +591,18 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
         {/* Header */}
         <div className="scribe-panel__header">
           <div className="scribe-panel__header-left">
-            <div className="scribe-panel__icon">
+            <div className="scribe-panel__icon" aria-hidden="true">
               {isUploading ? '⏳' : isRecording ? '🔴' : '🎙️'}
             </div>
             <div className="scribe-panel__title-group">
-              <div className="scribe-panel__title">AI Scribe</div>
+              <h2 className="scribe-panel__title">AI Scribe</h2>
               <div className="scribe-panel__subtitle">{patientName}</div>
             </div>
           </div>
 
           <div className="scribe-panel__header-right">
             <div className={`scribe-panel__status ${statusInfo.className}`}>
-              <span className="scribe-panel__status-dot" />
+              <span className="scribe-panel__status-dot" aria-hidden="true" />
               {statusInfo.label}
             </div>
             {isRecording && (
@@ -521,8 +615,10 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
         <div className="scribe-panel__body">
           {/* CTA Button */}
           <button
+            type="button"
             onClick={handleButtonClick}
             disabled={isUploading}
+            aria-haspopup={!isRecording ? 'dialog' : undefined}
             className={`scribe-panel__cta ${
               isUploading
                 ? 'scribe-panel__cta--uploading'
@@ -533,17 +629,17 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
           >
             {isUploading ? (
               <>
-                <span className="scribe-panel__spinner" />
+                <span className="scribe-panel__spinner" aria-hidden="true" />
                 <span>Processing...</span>
               </>
             ) : isRecording ? (
               <>
-                <span className="scribe-panel__cta-icon">⏹️</span>
+                <span className="scribe-panel__cta-icon" aria-hidden="true">⏹️</span>
                 <span>Stop & Generate Notes</span>
               </>
             ) : (
               <>
-                <span className="scribe-panel__cta-icon">🎙️</span>
+                <span className="scribe-panel__cta-icon" aria-hidden="true">🎙️</span>
                 <span>Start Recording</span>
               </>
             )}
@@ -552,9 +648,9 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
           {/* Live Draft */}
           {ENABLE_LIVE_DRAFT && (isRecording || liveTranscript.length > 0) && (
             <div className="scribe-panel__live-stack">
-              <div className="scribe-panel__draft">
+              <div className="scribe-panel__draft" role="region" aria-label="Live visit transcript" tabIndex={0}>
                 <div className="scribe-panel__draft-header">
-                  <span className="scribe-panel__draft-title">Live Transcript</span>
+                  <h3 className="scribe-panel__draft-title">Live Transcript</h3>
                   <span className={`scribe-panel__draft-status ${
                     liveStatus === 'streaming'
                       ? 'scribe-panel__draft-status--streaming'
@@ -616,14 +712,23 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
         </div>
       </div>
 
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {isUploading
+          ? 'Recording stopped. Audio is uploading for note generation.'
+          : isRecording
+            ? 'Recording in progress.'
+            : liveStatus === 'error'
+              ? `Live transcription paused. ${liveError || 'Check the connection.'}`
+              : 'AI scribe is ready.'}
+      </div>
+
       {/* Consent Prompt Modal */}
       {showConsentPrompt && (
-        <div className="scribe-panel__modal-overlay">
-          <div className="scribe-panel__modal">
-            <h3 className="scribe-panel__modal-title">Confirm patient consent</h3>
-            <p className="scribe-panel__modal-text">
-              Confirm consent has been obtained before starting the AI scribe recording.
-            </p>
+        <ScribeDialog
+          title="Confirm patient consent"
+          description="Confirm consent has been obtained before starting the AI scribe recording."
+          onClose={() => setShowConsentPrompt(false)}
+        >
             <label className="scribe-panel__consent-label" htmlFor="scribe-consent-method">
               Consent method
             </label>
@@ -640,6 +745,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
             <div className="scribe-panel__modal-actions">
               <button
                 type="button"
+                data-dialog-initial-focus
                 onClick={() => setShowConsentPrompt(false)}
                 className="scribe-panel__modal-btn scribe-panel__modal-btn--secondary"
               >
@@ -653,22 +759,28 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
                 Start Recording
               </button>
             </div>
-          </div>
-        </div>
+        </ScribeDialog>
       )}
 
       {/* Continue Prompt Modal */}
       {showContinuePrompt && (
-        <div className="scribe-panel__modal-overlay">
-          <div className="scribe-panel__modal">
-            <h3 className="scribe-panel__modal-title">Continue recording?</h3>
-            <p className="scribe-panel__modal-text">
-              {promptReason === 'duration'
-                ? 'You have been recording for 30 minutes. Do you want to keep recording?'
-                : 'No speech detected for 5 minutes. Do you want to keep recording?'}
-            </p>
+        <ScribeDialog
+          title="Continue recording?"
+          description={
+            promptReason === 'duration'
+              ? 'You have been recording for 30 minutes. Do you want to keep recording?'
+              : 'No speech detected for 5 minutes. Do you want to keep recording?'
+          }
+          onClose={() => {
+            setShowContinuePrompt(false);
+            setPromptReason(null);
+            silenceMonitorRef.current?.resetTimer();
+          }}
+        >
             <div className="scribe-panel__modal-actions">
               <button
+                type="button"
+                data-dialog-initial-focus
                 onClick={() => {
                   setShowContinuePrompt(false);
                   setPromptReason(null);
@@ -679,6 +791,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
                 Continue
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setShowContinuePrompt(false);
                   setPromptReason(null);
@@ -689,8 +802,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
                 Stop & Upload
               </button>
             </div>
-          </div>
-        </div>
+        </ScribeDialog>
       )}
     </>
   );

@@ -7,7 +7,7 @@ import { pool } from '../../db/pool';
 import { auditLog } from '../../services/audit';
 import * as ambientAI from '../../services/ambientAI';
 import { agentConfigService } from '../../services/agentConfigService';
-import { askClinicalCopilot } from '../../services/clinicalCopilot';
+import { askClinicalCopilot, reviseClinicalNote } from '../../services/clinicalCopilot';
 import { createFinancialWorkQueueItem } from '../../services/financialWorkQueueService';
 
 // Mock auth middleware
@@ -59,6 +59,8 @@ jest.mock('../../services/agentConfigService', () => ({
 
 jest.mock('../../services/clinicalCopilot', () => ({
   askClinicalCopilot: jest.fn(),
+  reviseClinicalNote: jest.fn(),
+  CLINICAL_NOTE_SECTIONS: ['chiefComplaint', 'hpi', 'ros', 'physicalExam', 'assessment', 'plan'],
 }));
 
 jest.mock('../../services/financialWorkQueueService', () => ({
@@ -120,6 +122,7 @@ const getConfigurationForAppointmentTypeMock = agentConfigService.getConfigurati
 const getConfigurationForSpecialtyFocusMock = agentConfigService.getConfigurationForSpecialtyFocus as jest.Mock;
 const getDefaultConfigurationMock = agentConfigService.getDefaultConfiguration as jest.Mock;
 const askClinicalCopilotMock = askClinicalCopilot as jest.Mock;
+const reviseClinicalNoteMock = reviseClinicalNote as jest.Mock;
 const createFinancialWorkQueueItemMock = createFinancialWorkQueueItem as jest.Mock;
 
 const flushPromises = () => new Promise(resolve => setImmediate(resolve));
@@ -135,6 +138,7 @@ beforeEach(() => {
   getConfigurationForSpecialtyFocusMock.mockReset();
   getDefaultConfigurationMock.mockReset();
   askClinicalCopilotMock.mockReset();
+  reviseClinicalNoteMock.mockReset();
   createFinancialWorkQueueItemMock.mockReset();
   unlinkMock.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
@@ -168,6 +172,21 @@ beforeEach(() => {
     chartEvidence: ['Itchy rash on hands'],
     provider: 'mock',
     model: 'test-copilot',
+  });
+  reviseClinicalNoteMock.mockResolvedValue({
+    available: true,
+    suggestedUpdates: {
+      assessment: 'Neoplasm of uncertain behavior of skin.',
+      plan: 'Shave biopsy performed; await pathology.',
+    },
+    rationale: 'Made the assessment and plan concise without adding facts.',
+    evidenceBySection: {
+      assessment: ['changing lesion on the upper back'],
+      plan: ['we will do a shave biopsy today'],
+    },
+    missingData: [],
+    provider: 'openai',
+    model: 'test-model',
   });
 });
 
@@ -1856,6 +1875,26 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(auditMock).toHaveBeenCalled();
     });
 
+    it('rejects a stale Magic Edit preview before it can overwrite a newer edit', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ id: 'note-1', review_status: 'pending', plan: 'Newer clinician-authored plan' }],
+        rowCount: 1,
+      });
+
+      const res = await request(app)
+        .patch('/api/ambient/notes/note-1')
+        .send({
+          plan: 'Older AI suggestion',
+          expectedCurrent: { plan: 'Old plan' },
+          editReason: 'Clinician accepted Magic Edit preview',
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('STALE_NOTE_PREVIEW');
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      expect(auditMock).not.toHaveBeenCalled();
+    });
+
     it('should handle database errors', async () => {
       queryMock.mockRejectedValueOnce(new Error('Database error'));
       const res = await request(app)
@@ -1863,6 +1902,75 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
         .send({ chiefComplaint: 'Updated' });
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Failed to update note');
+    });
+  });
+
+  describe('POST /api/ambient/notes/:id/magic-edit', () => {
+    it('rejects invalid revision instructions', async () => {
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/magic-edit')
+        .send({ instruction: 'x', sections: [] });
+
+      expect(res.status).toBe(400);
+      expect(reviseClinicalNoteMock).not.toHaveBeenCalled();
+    });
+
+    it('does not revise an approved note', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ review_status: 'approved' }], rowCount: 1 });
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/magic-edit')
+        .send({ instruction: 'Make the plan concise', sections: ['plan'] });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/addendum/i);
+      expect(reviseClinicalNoteMock).not.toHaveBeenCalled();
+    });
+
+    it('returns a preview without updating the note', async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ review_status: 'pending' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({
+          rows: [{
+            noteId: 'note-1',
+            encounterId: 'enc-1',
+            patientId: 'patient-1',
+            providerId: 'provider-1',
+            recordingId: 'recording-1',
+            transcriptText: 'The lesion has changed. We will do a shave biopsy today.',
+            assessment: 'Neoplasm of uncertain behavior.',
+            plan: 'Shave biopsy.',
+            suggestedIcd10Codes: [],
+            suggestedCptCodes: [],
+            followUpTasks: [],
+            recommendedTests: [],
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/magic-edit')
+        .send({ instruction: 'Make the assessment and plan concise', sections: ['assessment', 'plan'] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.suggestedUpdates.plan).toMatch(/await pathology/i);
+      expect(reviseClinicalNoteMock).toHaveBeenCalledWith(expect.objectContaining({
+        instruction: 'Make the assessment and plan concise',
+        sections: ['assessment', 'plan'],
+        currentNote: expect.objectContaining({ assessment: 'Neoplasm of uncertain behavior.' }),
+      }));
+      expect(queryMock.mock.calls.some(([sql]) => /UPDATE ambient_generated_notes/i.test(String(sql)))).toBe(false);
+      expect(auditMock).toHaveBeenCalledWith(
+        'tenant-1',
+        'user-1',
+        'ambient_note_magic_edit_preview',
+        'ambient_note',
+        'note-1'
+      );
     });
   });
 
@@ -2185,10 +2293,29 @@ describe('Ambient Scribe Routes - Patient Summary Endpoints', () => {
   });
 
   it('POST /api/ambient/patient-summaries/:summaryId/share marks shared', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: 'summary-1' }], rowCount: 1 });
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ id: 'summary-1', ambient_note_id: 'note-1', review_status: 'approved', shared_at: null }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ id: 'summary-1' }], rowCount: 1 });
     const res = await request(app).post('/api/ambient/patient-summaries/summary-1/share');
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it('POST /api/ambient/patient-summaries/:summaryId/share rejects an unapproved linked note', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: 'summary-1', ambient_note_id: 'note-1', review_status: 'pending', shared_at: null }],
+      rowCount: 1,
+    });
+
+    const res = await request(app).post('/api/ambient/patient-summaries/summary-1/share');
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/must be approved/i);
+    expect(queryMock.mock.calls.some(([sql]) => /UPDATE visit_summaries/i.test(String(sql)))).toBe(false);
+    expect(auditMock).not.toHaveBeenCalled();
   });
 });

@@ -18,6 +18,7 @@ type OpenAiFeature =
   | "ai_note_drafting"
   | "ambient_live_insights"
   | "ambient_live_transcription"
+  | "ambient_note_magic_edit"
   | "ambient_note_generation"
   | "ambient_transcription"
   | "clinical_copilot"

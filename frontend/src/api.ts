@@ -7182,6 +7182,21 @@ export interface AmbientNoteEdit {
   createdAt: string;
 }
 
+export type ClinicalNoteSection = 'chiefComplaint' | 'hpi' | 'ros' | 'physicalExam' | 'assessment' | 'plan';
+
+export interface AmbientNoteRevisionPreview {
+  available: boolean;
+  noteId: string;
+  suggestedUpdates: Partial<Record<ClinicalNoteSection, string>>;
+  rationale: string;
+  evidenceBySection: Partial<Record<ClinicalNoteSection, string[]>>;
+  missingData: string[];
+  provider: 'openai' | 'anthropic' | 'mock';
+  model: string;
+  warning?: string;
+  message?: string;
+}
+
 export interface PatientSummary {
   id: string;
   encounterId?: string | null;
@@ -7602,6 +7617,7 @@ export async function updateAmbientNote(
     assessment?: string;
     plan?: string;
     editReason?: string;
+    expectedCurrent?: Partial<Record<ClinicalNoteSection, string>>;
   }
 ): Promise<{ success: boolean; message: string }> {
   const res = await fetch(`${API_BASE}/api/ambient/notes/${noteId}`, {
@@ -7617,6 +7633,35 @@ export async function updateAmbientNote(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to update note');
+  }
+  return res.json();
+}
+
+/**
+ * Prepare a natural-language note revision preview. This never mutates the chart.
+ */
+export async function previewAmbientNoteRevision(
+  tenantId: string,
+  accessToken: string,
+  noteId: string,
+  data: {
+    instruction: string;
+    sections: ClinicalNoteSection[];
+  }
+): Promise<AmbientNoteRevisionPreview> {
+  const res = await fetch(`${API_BASE}/api/ambient/notes/${noteId}/magic-edit`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw buildClinicalCopilotError(payload, 'Failed to prepare note revision');
   }
   return res.json();
 }
@@ -7731,6 +7776,29 @@ export async function fetchPatientSummaries(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to fetch patient summaries');
+  }
+  return res.json();
+}
+
+/**
+ * Release an approved patient-friendly summary to the patient portal.
+ */
+export async function sharePatientSummary(
+  tenantId: string,
+  accessToken: string,
+  summaryId: string
+): Promise<{ success: boolean; message: string; alreadyShared?: boolean }> {
+  const res = await fetch(`${API_BASE}/api/ambient/patient-summaries/${summaryId}/share`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to share patient summary');
   }
   return res.json();
 }

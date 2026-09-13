@@ -23,7 +23,13 @@ import {
   TranscriptionResult
 } from '../services/ambientAI';
 import { AgentConfiguration, agentConfigService } from '../services/agentConfigService';
-import { askClinicalCopilot, type ClinicalCopilotContext, type ClinicalCopilotResult } from '../services/clinicalCopilot';
+import {
+  askClinicalCopilot,
+  CLINICAL_NOTE_SECTIONS,
+  reviseClinicalNote,
+  type ClinicalCopilotContext,
+  type ClinicalCopilotResult,
+} from '../services/clinicalCopilot';
 import { createFinancialWorkQueueItem } from '../services/financialWorkQueueService';
 import { immutableEncounterErrorMessage, isImmutableEncounterStatus } from '../lib/clinicalWorkflow';
 import { AiPhiBlockError, assertClinicalAiPromptIsSafeForExternalAi } from '../utils/aiPhiGuard';
@@ -87,7 +93,21 @@ const updateNoteSchema = z.object({
   physicalExam: z.string().optional(),
   assessment: z.string().optional(),
   plan: z.string().optional(),
-  editReason: z.string().optional()
+  editReason: z.string().optional(),
+  expectedCurrent: z.object({
+    chiefComplaint: z.string().max(12000).optional(),
+    hpi: z.string().max(12000).optional(),
+    ros: z.string().max(12000).optional(),
+    physicalExam: z.string().max(12000).optional(),
+    assessment: z.string().max(12000).optional(),
+    plan: z.string().max(12000).optional(),
+  }).strict().optional(),
+}).strict();
+
+const magicEditNoteSchema = z.object({
+  instruction: z.string().trim().min(3).max(2000),
+  sections: z.array(z.enum(CLINICAL_NOTE_SECTIONS)).min(1).max(CLINICAL_NOTE_SECTIONS.length)
+    .default([...CLINICAL_NOTE_SECTIONS]),
 }).strict();
 
 const reviewActionSchema = z.object({
@@ -2226,6 +2246,19 @@ router.patch('/notes/:id', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]),
     }
 
     const currentNote = current.rows[0];
+    if (['approved', 'rejected'].includes(currentNote.review_status)) {
+      return res.status(409).json({ error: 'Approved or rejected notes cannot be edited. Create an addendum instead.' });
+    }
+
+    for (const [key, expectedValue] of Object.entries(updates.expectedCurrent || {})) {
+      const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      if (String(currentNote[dbKey] ?? '') !== String(expectedValue ?? '')) {
+        return res.status(409).json({
+          error: 'This note changed after the preview was created. Review the latest note and prepare a new preview.',
+          code: 'STALE_NOTE_PREVIEW',
+        });
+      }
+    }
 
     // Update note
     const updateFields: string[] = [];
@@ -2233,7 +2266,7 @@ router.patch('/notes/:id', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]),
     let paramIndex = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined && key !== 'editReason') {
+      if (value !== undefined && key !== 'editReason' && key !== 'expectedCurrent') {
         const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase(); // camelCase to snake_case
         updateFields.push(`${dbKey} = $${paramIndex++}`);
         updateValues.push(value);
@@ -2245,17 +2278,29 @@ router.patch('/notes/:id', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]),
     }
 
     updateFields.push(`updated_at = NOW()`);
+    const whereConditions = [`id = $${paramIndex++}`, `tenant_id = $${paramIndex++}`];
     updateValues.push(noteId, tenantId);
+    for (const [key, expectedValue] of Object.entries(updates.expectedCurrent || {})) {
+      const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      whereConditions.push(`COALESCE(${dbKey}, '') = $${paramIndex++}`);
+      updateValues.push(expectedValue ?? '');
+    }
 
-    await pool.query(
+    const updateResult = await pool.query(
       `UPDATE ambient_generated_notes SET ${updateFields.join(', ')}
-       WHERE id = $${paramIndex++} AND tenant_id = $${paramIndex++}`,
+       WHERE ${whereConditions.join(' AND ')}`,
       updateValues
     );
+    if (updates.expectedCurrent && updateResult.rowCount === 0) {
+      return res.status(409).json({
+        error: 'This note changed while the suggestions were being applied. Review the latest note and prepare a new preview.',
+        code: 'STALE_NOTE_PREVIEW',
+      });
+    }
 
     // Create audit trail entries for each changed field
     for (const [key, newValue] of Object.entries(updates)) {
-      if (newValue !== undefined && key !== 'editReason') {
+      if (newValue !== undefined && key !== 'editReason' && key !== 'expectedCurrent') {
         const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
         const oldValue = currentNote[dbKey];
 
@@ -2288,6 +2333,78 @@ router.patch('/notes/:id', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]),
   } catch (error: any) {
     logAmbientError('Update note error', error);
     res.status(500).json({ error: 'Failed to update note' });
+  }
+});
+
+/**
+ * POST /api/ambient/notes/:id/magic-edit
+ * Generate a clinician-reviewable revision preview without changing the chart
+ */
+router.post('/notes/:id/magic-edit', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
+  try {
+    const noteId = req.params.id!;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const parsed = magicEditNoteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid note revision request', details: parsed.error.format() });
+    }
+
+    const statusResult = await pool.query(
+      'SELECT review_status FROM ambient_generated_notes WHERE id = $1 AND tenant_id = $2',
+      [noteId, tenantId]
+    );
+    if (!statusResult.rowCount) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+    if (['approved', 'rejected'].includes(statusResult.rows[0].review_status)) {
+      return res.status(409).json({ error: 'Approved or rejected notes cannot be revised. Create an addendum instead.' });
+    }
+
+    const { instruction, sections } = parsed.data;
+    assertClinicalAiPromptIsSafeForExternalAi({ prompt: instruction });
+    await assertClinicalCopilotInputHasNoKnownPatientNames(tenantId, { prompt: instruction });
+
+    const context = await resolveClinicalCopilotContext(tenantId, { noteId });
+    if (!context.note) {
+      return res.status(404).json({ error: 'Note content not found' });
+    }
+
+    const result = await reviseClinicalNote({
+      instruction,
+      sections,
+      currentNote: context.note,
+      transcriptExcerpt: context.transcriptExcerpt,
+      tenantId,
+      userId,
+      resourceId: noteId,
+    });
+
+    await auditLog(
+      tenantId,
+      userId || null,
+      result.available ? 'ambient_note_magic_edit_preview' : 'ambient_note_magic_edit_unavailable',
+      'ambient_note',
+      noteId
+    );
+
+    res.json({
+      ...result,
+      noteId,
+      message: result.available
+        ? 'Revision preview ready. Review and apply selected sections.'
+        : result.warning,
+    });
+  } catch (error: any) {
+    if (error instanceof AiPhiBlockError) {
+      return res.status(422).json({
+        error: error.message,
+        code: error.code,
+        blockedTypes: error.blockedTypes,
+      });
+    }
+    logAmbientError('Magic edit note error', error);
+    res.status(500).json({ error: 'Failed to prepare note revision' });
   }
 });
 
@@ -3881,6 +3998,25 @@ router.post('/patient-summaries/:summaryId/share', requireAuth, requireRoles([..
     const summaryId = req.params.summaryId;
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
+
+    const summaryResult = await pool.query(
+      `SELECT vs.id, vs.shared_at, vs.ambient_note_id, n.review_status
+       FROM visit_summaries vs
+       LEFT JOIN ambient_generated_notes n
+         ON n.id = vs.ambient_note_id AND n.tenant_id = vs.tenant_id
+       WHERE vs.id = $1 AND vs.tenant_id = $2`,
+      [summaryId, tenantId]
+    );
+    if (!summaryResult.rowCount) {
+      return res.status(404).json({ error: 'Summary not found' });
+    }
+    const summary = summaryResult.rows[0];
+    if (summary.ambient_note_id && summary.review_status !== 'approved') {
+      return res.status(409).json({ error: 'The linked note must be approved before sharing its patient summary' });
+    }
+    if (summary.shared_at) {
+      return res.json({ success: true, message: 'Summary was already shared with the patient', alreadyShared: true });
+    }
 
     const result = await pool.query(
       `UPDATE visit_summaries

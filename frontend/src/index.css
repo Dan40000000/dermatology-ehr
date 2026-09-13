@@ -10,6 +10,7 @@
 /* Import ScribePanel Styles */
 @import './styles/scribePanel.css';
 @import './styles/scribeSummary.css';
+@import './styles/preVisitBrief.css';
 
 * {
   box-sizing: border-box;

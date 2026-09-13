@@ -10,20 +10,24 @@
  * - Approve/reject workflow
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import {
   fetchAmbientNote,
   fetchAmbientTranscript,
+  previewAmbientNoteRevision,
   updateAmbientNote,
   reviewAmbientNote,
   generatePatientSummary,
+  sharePatientSummary,
   applyAmbientNoteToEncounter,
   fetchAmbientNoteEdits,
   type AmbientGeneratedNote,
+  type AmbientNoteRevisionPreview,
   type AmbientTranscript,
-  type AmbientNoteEdit
+  type AmbientNoteEdit,
+  type ClinicalNoteSection,
 } from '../api';
 import { ScribeSummaryCard } from './ScribeSummaryCard';
 import {
@@ -36,6 +40,7 @@ import {
   stripStructuredNoteContent
 } from '../utils/scribeSummary';
 import { getScribeSpeakerLabel, getScribeSpeakerToneClass } from '../utils/scribeSpeakers';
+import { buildNoteSectionReviewSignals } from '../utils/noteReview';
 
 interface NoteReviewEditorProps {
   noteId: string;
@@ -43,11 +48,23 @@ interface NoteReviewEditorProps {
   onRejected?: () => void;
 }
 
-type Section = 'chiefComplaint' | 'hpi' | 'ros' | 'physicalExam' | 'assessment' | 'plan';
+type Section = ClinicalNoteSection;
+
+const MAGIC_EDIT_PRESETS = [
+  'Make the selected sections more concise without changing clinical meaning.',
+  'Improve clarity and organization while preserving every documented fact.',
+  'Remove repetition and keep the assessment and plan problem-oriented.',
+];
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewEditorProps) {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const sessionTenantId = session?.tenantId;
+  const sessionAccessToken = session?.accessToken;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -60,9 +77,25 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
   const [editReason, setEditReason] = useState('');
   const [showTranscript, setShowTranscript] = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [magicInstruction, setMagicInstruction] = useState('');
+  const [magicSections, setMagicSections] = useState<Section[]>(['assessment', 'plan']);
+  const [magicPreview, setMagicPreview] = useState<AmbientNoteRevisionPreview | null>(null);
+  const [selectedMagicUpdates, setSelectedMagicUpdates] = useState<Section[]>([]);
+  const [magicStatus, setMagicStatus] = useState('');
+  const [patientSummaryShared, setPatientSummaryShared] = useState(false);
+  const [postActionOptions, setPostActionOptions] = useState({
+    diagnoses: true,
+    orders: true,
+    tasks: true,
+    billingReview: true,
+  });
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editButtonRefs = useRef<Partial<Record<Section, HTMLButtonElement | null>>>({});
+  const magicInstructionRef = useRef<HTMLTextAreaElement | null>(null);
+  const magicPreviewTitleRef = useRef<HTMLHeadingElement | null>(null);
 
-  const loadData = async () => {
-    if (!session) {
+  const loadData = useCallback(async () => {
+    if (!sessionTenantId || !sessionAccessToken) {
       setLoading(true);
       return;
     }
@@ -70,8 +103,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     try {
       setLoading(true);
       const [noteData, editsData] = await Promise.all([
-        fetchAmbientNote(session.tenantId, session.accessToken, noteId),
-        fetchAmbientNoteEdits(session.tenantId, session.accessToken, noteId)
+        fetchAmbientNote(sessionTenantId, sessionAccessToken, noteId),
+        fetchAmbientNoteEdits(sessionTenantId, sessionAccessToken, noteId)
       ]);
 
       setNote(noteData.note);
@@ -80,22 +113,28 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       // Load transcript
       if (noteData.note.transcriptId) {
         const transcriptData = await fetchAmbientTranscript(
-          session.tenantId,
-          session.accessToken,
+          sessionTenantId,
+          sessionAccessToken,
           noteData.note.transcriptId
         );
         setTranscript(transcriptData.transcript);
       }
-    } catch (error: any) {
-      showError(error.message || 'Failed to load note');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to load note'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [noteId, sessionAccessToken, sessionTenantId, showError]);
 
   useEffect(() => {
     void loadData();
-  }, [noteId, session?.tenantId, session?.accessToken]);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (editMode) {
+      editTextareaRef.current?.focus();
+    }
+  }, [editMode]);
 
   const handleEdit = (section: Section) => {
     setEditMode(section);
@@ -105,6 +144,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
   const handleSaveEdit = async () => {
     if (!editMode || !note || !session) return;
+    const editedSection = editMode;
 
     try {
       setSaving(true);
@@ -122,8 +162,89 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       setEditMode(null);
       showSuccess('Note updated successfully');
       await loadData(); // Reload to get updated edit history
-    } catch (error: any) {
-      showError(error.message || 'Failed to update note');
+      window.setTimeout(() => editButtonRefs.current[editedSection]?.focus(), 0);
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to update note'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    const editedSection = editMode;
+    setEditMode(null);
+    if (editedSection) {
+      window.setTimeout(() => editButtonRefs.current[editedSection]?.focus(), 0);
+    }
+  };
+
+  const toggleMagicSection = (section: Section) => {
+    setMagicSections((current) => current.includes(section)
+      ? current.filter((item) => item !== section)
+      : [...current, section]);
+    setMagicPreview(null);
+    setSelectedMagicUpdates([]);
+  };
+
+  const handleMagicPreview = async () => {
+    const instruction = magicInstruction.trim();
+    if (!session || !instruction || magicSections.length === 0) return;
+
+    try {
+      setSaving(true);
+      setMagicStatus('Preparing a revision preview. The chart has not been changed.');
+      const preview = await previewAmbientNoteRevision(
+        session.tenantId,
+        session.accessToken,
+        noteId,
+        { instruction, sections: magicSections }
+      );
+      setMagicPreview(preview);
+      const changedSections = Object.keys(preview.suggestedUpdates) as Section[];
+      setSelectedMagicUpdates(changedSections);
+      setMagicStatus(preview.available
+        ? `${changedSections.length} suggested section ${changedSections.length === 1 ? 'change is' : 'changes are'} ready for review.`
+        : preview.warning || 'Live AI note revision is unavailable.');
+      window.setTimeout(() => magicPreviewTitleRef.current?.focus(), 0);
+    } catch (error: unknown) {
+      setMagicPreview(null);
+      setSelectedMagicUpdates([]);
+      setMagicStatus('Revision preview could not be prepared.');
+      showError(getErrorMessage(error, 'Failed to prepare note revision'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleApplyMagicPreview = async () => {
+    if (!session || !magicPreview || selectedMagicUpdates.length === 0) return;
+    const updates = Object.fromEntries(
+      selectedMagicUpdates
+        .map((section) => [section, magicPreview.suggestedUpdates[section]])
+        .filter((entry): entry is [Section, string] => typeof entry[1] === 'string')
+    ) as Partial<Record<Section, string>>;
+    const expectedCurrent = Object.fromEntries(
+      selectedMagicUpdates.map((section) => [section, String(note?.[section] || '')])
+    ) as Partial<Record<Section, string>>;
+
+    try {
+      setSaving(true);
+      setMagicStatus('Applying selected suggestions to the draft note.');
+      await updateAmbientNote(session.tenantId, session.accessToken, noteId, {
+        ...updates,
+        expectedCurrent,
+        editReason: `Clinician accepted Magic Edit preview: ${magicInstruction.trim().slice(0, 500)}`,
+      });
+      setMagicPreview(null);
+      setSelectedMagicUpdates([]);
+      setMagicInstruction('');
+      setMagicStatus('Selected suggestions applied to the draft. Clinician review is still required.');
+      showSuccess('Selected Magic Edit suggestions applied to the draft');
+      await loadData();
+      window.setTimeout(() => magicInstructionRef.current?.focus(), 0);
+    } catch (error: unknown) {
+      setMagicStatus('Selected suggestions could not be applied.');
+      showError(getErrorMessage(error, 'Failed to apply note revision'));
     } finally {
       setSaving(false);
     }
@@ -154,8 +275,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             noteId
           );
           successMessage = `Note approved - ${summaryResult.message}`;
-        } catch (summaryError: any) {
-          showError(summaryError.message || 'Note approved, but summary generation failed');
+        } catch (summaryError: unknown) {
+          showError(getErrorMessage(summaryError, 'Note approved, but summary generation failed'));
         }
       }
 
@@ -168,8 +289,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       }
 
       await loadData();
-    } catch (error: any) {
-      showError(error.message || 'Failed to review note');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to review note'));
     } finally {
       setSaving(false);
     }
@@ -204,11 +325,11 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       }
 
       const applyResult = await applyAmbientNoteToEncounter(session.tenantId, session.accessToken, noteId, {
-        applyStructuredActions: true,
-        includeDiagnoses: true,
-        includeOrders: true,
-        includeTasks: true,
-        includeBillingReview: true,
+        applyStructuredActions: Object.values(postActionOptions).some(Boolean),
+        includeDiagnoses: postActionOptions.diagnoses,
+        includeOrders: postActionOptions.orders,
+        includeTasks: postActionOptions.tasks,
+        includeBillingReview: postActionOptions.billingReview,
       });
 
       let summaryMessage = 'patient summary saved';
@@ -219,9 +340,9 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
           noteId
         );
         summaryMessage = summaryResult.existing ? 'existing patient summary kept' : 'patient summary saved';
-      } catch (summaryError: any) {
+      } catch (summaryError: unknown) {
         summaryMessage = 'patient summary needs review';
-        showError(summaryError.message || 'Note posted, but patient summary publishing failed');
+        showError(getErrorMessage(summaryError, 'Note posted, but patient summary publishing failed'));
       }
 
       const actions = applyResult.structuredActions;
@@ -230,8 +351,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         : 'structured actions reviewed';
       showSuccess(`AI note posted to appointment; ${summaryMessage}; ${actionMessage}`);
       await loadData();
-    } catch (error: any) {
-      showError(error.message || 'Failed to post AI note to appointment');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to post AI note to appointment'));
     } finally {
       setSaving(false);
     }
@@ -251,8 +372,31 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       );
       showSuccess(summaryResult.message || 'Patient summary saved to profile');
       await loadData();
-    } catch (error: any) {
-      showError(error.message || 'Failed to publish patient summary');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to publish patient summary'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleShareSummary = async () => {
+    if (!note || !session || note.reviewStatus !== 'approved') return;
+    try {
+      setSaving(true);
+      const summaryResult = await generatePatientSummary(
+        session.tenantId,
+        session.accessToken,
+        noteId
+      );
+      const shareResult = await sharePatientSummary(
+        session.tenantId,
+        session.accessToken,
+        summaryResult.summaryId
+      );
+      setPatientSummaryShared(true);
+      showSuccess(shareResult.message || 'Summary shared to the patient portal');
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Failed to share patient summary'));
     } finally {
       setSaving(false);
     }
@@ -290,6 +434,10 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
   const clinicalEditSections = new Set(['chief_complaint', 'hpi', 'ros', 'physical_exam', 'assessment', 'plan']);
   const noteForPreview: AmbientGeneratedNote = editMode ? { ...note, [editMode]: editValue } : note;
   const hasClinicalEdits = Boolean(editMode) || edits.some((edit) => clinicalEditSections.has(edit.section));
+  const reviewSignals = buildNoteSectionReviewSignals(noteForPreview, edits);
+  const missingSignals = reviewSignals.filter((signal) => signal.status === 'missing');
+  const needsReviewSignals = reviewSignals.filter((signal) => signal.status === 'needs_review');
+  const reviewedSignalCount = reviewSignals.filter((signal) => ['ready', 'clinician_edited'].includes(signal.status)).length;
   const summaryNote = hasClinicalEdits ? stripStructuredNoteContent(noteForPreview) : noteForPreview;
   const summarySymptoms = buildSymptoms(summaryNote, null);
   const summaryDiagnoses = buildDiagnoses(summaryNote, null);
@@ -302,6 +450,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     : note.reviewStatus === 'approved'
       ? 'Post to Appointment'
       : 'Approve & Post to Appointment';
+  const showSidebar = showTranscript || showSuggestions || edits.length > 0;
 
   return (
     <div style={{ background: 'white', borderRadius: '0.5rem', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}>
@@ -331,21 +480,27 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         {/* Controls */}
         <div className="scribe-review-controls">
           <button
+            type="button"
             onClick={() => setShowTranscript(!showTranscript)}
             className="scribe-review-toggle"
+            aria-expanded={showTranscript}
+            aria-controls="scribe-review-transcript"
           >
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
           <button
+            type="button"
             onClick={() => setShowSuggestions(!showSuggestions)}
             className="scribe-review-toggle"
+            aria-expanded={showSuggestions}
+            aria-controls="scribe-review-suggestions"
           >
             {showSuggestions ? 'Hide' : 'Show'} Suggestions
           </button>
         </div>
       </div>
 
-      <div className={`scribe-review-layout ${showTranscript ? '' : 'scribe-review-layout--single'}`}>
+      <div className={`scribe-review-layout ${showSidebar ? '' : 'scribe-review-layout--single'}`}>
         {/* Main Note Content */}
         <div className="scribe-review-main">
           <div className="space-y-6">
@@ -359,6 +514,205 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                 {getConfidenceLabel(note.overallConfidence)} confidence - Review carefully
               </p>
             </div>
+
+            <section className="scribe-review-readiness" aria-labelledby="scribe-review-readiness-title">
+              <div className="scribe-review-readiness__header">
+                <div>
+                  <h3 id="scribe-review-readiness-title">Review readiness</h3>
+                  <p>Missing and low-confidence sections stay visible until a clinician reviews them.</p>
+                </div>
+                <strong>{reviewedSignalCount} of {reviewSignals.length} ready</strong>
+              </div>
+              <div className="scribe-review-readiness__summary" aria-label="Note review status summary">
+                <span className="scribe-review-readiness__count scribe-review-readiness__count--missing">
+                  {missingSignals.length} missing
+                </span>
+                <span className="scribe-review-readiness__count scribe-review-readiness__count--review">
+                  {needsReviewSignals.length} needs review
+                </span>
+                <span className="scribe-review-readiness__count scribe-review-readiness__count--ready">
+                  {reviewedSignalCount} ready or edited
+                </span>
+              </div>
+              {(missingSignals.length > 0 || needsReviewSignals.length > 0) && (
+                <ul className="scribe-review-readiness__list">
+                  {[...missingSignals, ...needsReviewSignals].map((signal) => (
+                    <li key={signal.section}>
+                      <strong>{signal.label}:</strong>{' '}
+                      {signal.status === 'missing' ? 'not documented' : `${Math.round(signal.confidence * 100)}% AI confidence; verify against the transcript`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {note.reviewStatus !== 'approved' && note.reviewStatus !== 'rejected' && (
+              <section className="scribe-magic-edit" aria-labelledby="scribe-magic-edit-title">
+                <div className="scribe-magic-edit__header">
+                  <div>
+                    <h3 id="scribe-magic-edit-title">Magic Edit</h3>
+                    <p>Describe a wording or organization change. Nothing changes until you review and apply the preview.</p>
+                  </div>
+                  <span className="scribe-magic-edit__safety">Preview only</span>
+                </div>
+
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleMagicPreview();
+                  }}
+                >
+                  <label htmlFor="magic-edit-instruction" className="scribe-magic-edit__label">
+                    Revision instruction
+                  </label>
+                  <textarea
+                    id="magic-edit-instruction"
+                    ref={magicInstructionRef}
+                    value={magicInstruction}
+                    onChange={(event) => {
+                      setMagicInstruction(event.target.value);
+                      setMagicPreview(null);
+                      setSelectedMagicUpdates([]);
+                    }}
+                    rows={3}
+                    maxLength={2000}
+                    placeholder="For example: Make the assessment and plan concise without changing clinical meaning."
+                    className="scribe-magic-edit__input"
+                  />
+
+                  <div className="scribe-magic-edit__presets" aria-label="Suggested revision instructions">
+                    {MAGIC_EDIT_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          setMagicInstruction(preset);
+                          setMagicPreview(null);
+                          setSelectedMagicUpdates([]);
+                        }}
+                      >
+                        {preset.split('.')[0]}
+                      </button>
+                    ))}
+                  </div>
+
+                  <fieldset className="scribe-magic-edit__sections">
+                    <legend>Sections to revise</legend>
+                    {sections.map(({ key, label }) => (
+                      <label key={key}>
+                        <input
+                          type="checkbox"
+                          checked={magicSections.includes(key)}
+                          onChange={() => toggleMagicSection(key)}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+
+                  <button
+                    type="submit"
+                    className="scribe-review-action-button scribe-review-action-button--primary"
+                    disabled={saving || magicInstruction.trim().length < 3 || magicSections.length === 0}
+                  >
+                    {saving ? 'Preparing Preview…' : 'Preview Changes'}
+                  </button>
+                </form>
+
+                <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                  {magicStatus}
+                </div>
+
+                {magicPreview && (
+                  <div className="scribe-magic-edit__preview" aria-labelledby="magic-edit-preview-title">
+                    <div className="scribe-magic-edit__preview-header">
+                      <div>
+                        <h4 id="magic-edit-preview-title" ref={magicPreviewTitleRef} tabIndex={-1}>Suggested changes</h4>
+                        <p>{magicPreview.rationale}</p>
+                      </div>
+                      <span>{magicPreview.provider === 'mock' ? 'AI unavailable' : `${magicPreview.provider} · ${magicPreview.model}`}</span>
+                    </div>
+
+                    {magicPreview.warning && (
+                      <p className="scribe-magic-edit__warning" role="alert">{magicPreview.warning}</p>
+                    )}
+
+                    {Object.keys(magicPreview.suggestedUpdates).length > 0 ? (
+                      <div className="scribe-magic-edit__changes">
+                        {(Object.entries(magicPreview.suggestedUpdates) as Array<[Section, string]>).map(([section, value]) => {
+                          const definition = sections.find((item) => item.key === section);
+                          const evidence = magicPreview.evidenceBySection[section] || [];
+                          return (
+                            <article key={section} className="scribe-magic-edit__change">
+                              <label className="scribe-magic-edit__change-title">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedMagicUpdates.includes(section)}
+                                  onChange={() => setSelectedMagicUpdates((current) => current.includes(section)
+                                    ? current.filter((item) => item !== section)
+                                    : [...current, section])}
+                                />
+                                <span>Apply {definition?.label || section}</span>
+                              </label>
+                              <div className="scribe-magic-edit__comparison">
+                                <div>
+                                  <strong>Current</strong>
+                                  <p>{note[section] || 'Not documented'}</p>
+                                </div>
+                                <div>
+                                  <strong>Suggested</strong>
+                                  <p>{value}</p>
+                                </div>
+                              </div>
+                              {evidence.length > 0 && (
+                                <details>
+                                  <summary>Supporting transcript excerpts</summary>
+                                  <ul>{evidence.map((item) => <li key={item}>{item}</li>)}</ul>
+                                </details>
+                              )}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : magicPreview.available ? (
+                      <p className="scribe-magic-edit__empty">The AI did not propose a safe change. Adjust the instruction or edit the section manually.</p>
+                    ) : null}
+
+                    {magicPreview.missingData.length > 0 && (
+                      <div className="scribe-magic-edit__missing">
+                        <strong>Confirm before applying</strong>
+                        <ul>{magicPreview.missingData.map((item) => <li key={item}>{item}</li>)}</ul>
+                      </div>
+                    )}
+
+                    {Object.keys(magicPreview.suggestedUpdates).length > 0 && (
+                      <div className="scribe-magic-edit__actions">
+                        <button
+                          type="button"
+                          className="scribe-review-action-button scribe-review-action-button--primary"
+                          onClick={() => void handleApplyMagicPreview()}
+                          disabled={saving || selectedMagicUpdates.length === 0}
+                        >
+                          {saving ? 'Applying…' : `Apply ${selectedMagicUpdates.length} Selected`}
+                        </button>
+                        <button
+                          type="button"
+                          className="scribe-review-toggle"
+                          onClick={() => {
+                            setMagicPreview(null);
+                            setSelectedMagicUpdates([]);
+                            setMagicStatus('Revision preview discarded.');
+                            window.setTimeout(() => magicInstructionRef.current?.focus(), 0);
+                          }}
+                        >
+                          Discard Preview
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
 
             <ScribeSummaryCard
               title="Patient Summary Preview"
@@ -378,6 +732,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
               const confidence = note.sectionConfidence?.[key] || 0;
               const isEditing = editMode === key;
               const confidenceTone = getConfidenceTone(confidence);
+              const reviewSignal = reviewSignals.find((signal) => signal.section === key);
 
               return (
                 <div key={key} className="scribe-note-section">
@@ -387,9 +742,16 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                       <span className={`scribe-note-section__confidence scribe-note-section__confidence--${confidenceTone}`}>
                         {(confidence * 100).toFixed(0)}% confidence
                       </span>
+                      {reviewSignal && (
+                        <span className={`scribe-note-section__source scribe-note-section__source--${reviewSignal.status}`}>
+                          {reviewSignal.sourceLabel}
+                        </span>
+                      )}
                     </div>
                     {!isEditing && note.reviewStatus !== 'approved' && (
                       <button
+                        type="button"
+                        ref={(element) => { editButtonRefs.current[key] = element; }}
                         onClick={() => handleEdit(key)}
                         className="scribe-summary-button"
                       >
@@ -400,13 +762,22 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                   <div className="scribe-note-section__body">
                     {isEditing ? (
                       <div className="space-y-3 scribe-note-section__edit">
+                        <label className="scribe-note-section__edit-label" htmlFor={`note-edit-${key}`}>
+                          {label} note text
+                        </label>
                         <textarea
+                          id={`note-edit-${key}`}
+                          ref={editTextareaRef}
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                           rows={8}
                         />
+                        <label className="scribe-note-section__edit-label" htmlFor={`note-edit-reason-${key}`}>
+                          Reason for editing {label} <span>(optional)</span>
+                        </label>
                         <input
+                          id={`note-edit-reason-${key}`}
                           type="text"
                           value={editReason}
                           onChange={(e) => setEditReason(e.target.value)}
@@ -415,6 +786,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                         />
                         <div className="flex space-x-2">
                           <button
+                            type="button"
                             onClick={handleSaveEdit}
                             disabled={saving}
                             className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300"
@@ -422,7 +794,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                             {saving ? 'Saving...' : 'Save'}
                           </button>
                           <button
-                            onClick={() => setEditMode(null)}
+                            type="button"
+                            onClick={handleCancelEdit}
                             className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
                           >
                             Cancel
@@ -505,12 +878,51 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             {/* Action Buttons */}
             <div className="scribe-review-workflow-card">
               <div>
-                <div className="scribe-review-workflow-title">Doctor posting workflow</div>
+                <h3 className="scribe-review-workflow-title">Doctor posting workflow</h3>
                 <div className="scribe-review-workflow-copy">
-                  Edit any section above, save the edit, then post the approved note into the linked appointment encounter.
+                  The clinical note will post to the appointment. Choose which draft actions should also be created for review.
                 </div>
+                <fieldset className="scribe-review-workflow-options">
+                  <legend>Draft actions to create</legend>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={postActionOptions.diagnoses}
+                      onChange={(event) => setPostActionOptions((current) => ({ ...current, diagnoses: event.target.checked }))}
+                    />
+                    <span>Diagnoses ({note.suggestedIcd10Codes?.length || 0})</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={postActionOptions.orders}
+                      onChange={(event) => setPostActionOptions((current) => ({ ...current, orders: event.target.checked }))}
+                    />
+                    <span>Orders ({note.recommendedTests?.length || 0})</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={postActionOptions.tasks}
+                      onChange={(event) => setPostActionOptions((current) => ({ ...current, tasks: event.target.checked }))}
+                    />
+                    <span>Follow-up tasks ({note.followUpTasks?.length || 0})</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={postActionOptions.billingReview}
+                      onChange={(event) => setPostActionOptions((current) => ({ ...current, billingReview: event.target.checked }))}
+                    />
+                    <span>Billing review ({note.suggestedCptCodes?.length || 0})</span>
+                  </label>
+                </fieldset>
+                <p className="scribe-review-workflow-safety">
+                  These are review items only. Nothing is prescribed, sent, billed, or signed automatically.
+                </p>
               </div>
               <button
+                type="button"
                 onClick={handleApproveAndPostToAppointment}
                 disabled={saving || !note.encounterId || note.reviewStatus === 'rejected'}
                 className="scribe-review-action-button scribe-review-action-button--primary"
@@ -522,6 +934,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             {note.reviewStatus === 'pending' && (
               <div className="scribe-review-action-row">
                 <button
+                  type="button"
                   onClick={() => handleReview('approve')}
                   disabled={saving}
                   className="scribe-review-action-button scribe-review-action-button--success"
@@ -529,6 +942,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                   Approve Note Only
                 </button>
                 <button
+                  type="button"
                   onClick={() => handleReview('request_regeneration')}
                   disabled={saving}
                   className="scribe-review-action-button scribe-review-action-button--primary"
@@ -536,6 +950,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                   Regenerate
                 </button>
                 <button
+                  type="button"
                   onClick={() => handleReview('reject')}
                   disabled={saving}
                   className="scribe-review-action-button scribe-review-action-button--danger"
@@ -548,11 +963,20 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             {note.reviewStatus === 'approved' && (
               <div className="scribe-review-action-row">
                 <button
+                  type="button"
                   onClick={handlePublishSummary}
                   disabled={saving}
                   className="scribe-review-action-button scribe-review-action-button--success"
                 >
-                  Publish to Patient Profile
+                  Save Summary to Profile
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShareSummary}
+                  disabled={saving || patientSummaryShared}
+                  className="scribe-review-action-button scribe-review-action-button--primary"
+                >
+                  {patientSummaryShared ? 'Shared to Patient Portal' : 'Review & Share to Patient Portal'}
                 </button>
               </div>
             )}
@@ -560,13 +984,13 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         </div>
 
         {/* Sidebar */}
-        {showTranscript && (
+        {showSidebar && (
           <div className="scribe-review-sidebar">
             {/* Transcript */}
-            {transcript && (
-              <div className="scribe-review-sidebar-card">
-                <h4 className="scribe-review-sidebar-title">Transcript</h4>
-                <div className="scribe-review-transcript-list">
+            {showTranscript && transcript && (
+              <section id="scribe-review-transcript" className="scribe-review-sidebar-card" aria-labelledby="scribe-review-transcript-title">
+                <h3 id="scribe-review-transcript-title" className="scribe-review-sidebar-title">Transcript</h3>
+                <div className="scribe-review-transcript-list" role="region" aria-label="Visit transcript segments" tabIndex={0}>
                   {transcript.transcriptSegments.map((segment, idx) => (
                     <div key={idx} className={`scribe-review-transcript-segment ${getScribeSpeakerToneClass(segment)}`}>
                       <div className="scribe-review-transcript-meta">
@@ -579,12 +1003,12 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                     </div>
                   ))}
                 </div>
-              </div>
+              </section>
             )}
 
             {/* Suggestions */}
             {showSuggestions && (
-              <>
+              <section id="scribe-review-suggestions" className="scribe-review-sidebar-group" aria-label="AI suggestions for clinician review">
                 {/* ICD-10 Codes */}
                 {note.suggestedIcd10Codes && note.suggestedIcd10Codes.length > 0 && (
                   <div className="scribe-review-sidebar-card">
@@ -668,14 +1092,14 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                     </div>
                   </div>
                 )}
-              </>
+              </section>
             )}
 
             {/* Edit History */}
             {edits.length > 0 && (
               <div className="scribe-review-sidebar-card">
-                <h4 className="scribe-review-sidebar-title">Edit History</h4>
-                <div className="scribe-review-edit-list">
+                <h3 className="scribe-review-sidebar-title">Edit History</h3>
+                <div className="scribe-review-edit-list" role="region" aria-label="Note edit history" tabIndex={0}>
                   {edits.map((edit) => (
                     <div key={edit.id} className="scribe-review-edit-row">
                       <div className="scribe-review-edit-section">{edit.section.replace(/_/g, ' ')}</div>
